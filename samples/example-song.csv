@@ -1,0 +1,9 @@
+note,time,duration,velocity,hand
+C4,0,0.5,0.8,left
+E4,0.5,0.5,0.8,right
+G4,1,0.5,0.85,right
+C5,1.5,1,0.9,right
+A3,2.8,0.6,0.75,left
+C4,3.2,0.6,0.75,right
+E4,3.6,0.6,0.8,right
+A4,4,1.2,0.92,right

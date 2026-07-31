@@ -1,0 +1,10 @@
+{
+  "title": "Four Chord Guitar Practice",
+  "bpm": 78,
+  "events": [
+    { "time": 0, "chord": "C", "duration": 2, "direction": "down", "velocity": 0.8 },
+    { "time": 2, "chord": "G", "duration": 2, "direction": "down", "velocity": 0.82 },
+    { "time": 4, "chord": "Am", "duration": 2, "direction": "up", "velocity": 0.78 },
+    { "time": 6, "chord": "F", "duration": 2, "direction": "down", "velocity": 0.84 }
+  ]
+}

@@ -1,0 +1,156 @@
+{
+  "instrument": "flute",
+  "version": 1,
+  "license": "CC0-1.0",
+  "attribution": "Versilian Studios \u2014 VSCO 2 Community Edition \u00b7 LDFlute susvib (CC0)",
+  "sourceLibrary": "VSCO 2 Community Edition",
+  "sourceUrl": "https://github.com/sgossner/VSCO-2-CE",
+  "sampleRate": 48000,
+  "totalSizeMB": 4.464,
+  "source": "hf",
+  "zones": [
+    {
+      "file": "samples/48_v0-127_rr1.wav",
+      "rootPitch": 48,
+      "lowPitch": 24,
+      "highPitch": 50,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "e081db993feea4e74de6eed1b9f0b0acaf1a0c5346987c7eda1ea89493ea82c1"
+    },
+    {
+      "file": "samples/52_v0-127_rr1.wav",
+      "rootPitch": 52,
+      "lowPitch": 51,
+      "highPitch": 54,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "4c60df6f195ec2d62d94c1fe3ecfe10cb18461251a9b2166a08fde8b0e29141d"
+    },
+    {
+      "file": "samples/57_v0-127_rr1.wav",
+      "rootPitch": 57,
+      "lowPitch": 55,
+      "highPitch": 58,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "d2cdd292344d7d25640238fa08c8c2a4c2e6c14fb4ae62511f6152eff19878cd"
+    },
+    {
+      "file": "samples/60_v0-127_rr1.wav",
+      "rootPitch": 60,
+      "lowPitch": 59,
+      "highPitch": 62,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "e7b36ac08d550d90ad15cfe9a2daa0c345e2f4c0865e327de17e4b9c336426d9"
+    },
+    {
+      "file": "samples/60_v0-127_rr2.wav",
+      "rootPitch": 60,
+      "lowPitch": 59,
+      "highPitch": 62,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 2,
+      "sizeBytes": 360044,
+      "sha256": "28b34eb1700945aaa03c6e95fa76073025020c24f6d56c13fa10559fdb53f223"
+    },
+    {
+      "file": "samples/64_v0-127_rr1.wav",
+      "rootPitch": 64,
+      "lowPitch": 63,
+      "highPitch": 66,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "13a87cb4d7546298c5284c69ac53376e757bbea661134aba919283e72ae47011"
+    },
+    {
+      "file": "samples/64_v0-127_rr2.wav",
+      "rootPitch": 64,
+      "lowPitch": 63,
+      "highPitch": 66,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 2,
+      "sizeBytes": 360044,
+      "sha256": "528b8b8c6c5dd9d193f120116f5d9a348b42b456e4d4c19d84abf9bb5b9464b3"
+    },
+    {
+      "file": "samples/69_v0-127_rr1.wav",
+      "rootPitch": 69,
+      "lowPitch": 67,
+      "highPitch": 70,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "13eb20d67b2258a57da7e97e27b6ad1f72b2b8d4fdafa6c4399a053208312561"
+    },
+    {
+      "file": "samples/72_v0-127_rr1.wav",
+      "rootPitch": 72,
+      "lowPitch": 71,
+      "highPitch": 74,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "dc23c0c00b364ab8d986d97b1259ae28d110bbdff7e1d430510ea23b52142b1f"
+    },
+    {
+      "file": "samples/76_v0-127_rr1.wav",
+      "rootPitch": 76,
+      "lowPitch": 75,
+      "highPitch": 78,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "05d7eb99f82005608b49a5609b2a12ee5aa9560629a0d78d88df7408b04d9efe"
+    },
+    {
+      "file": "samples/76_v0-127_rr2.wav",
+      "rootPitch": 76,
+      "lowPitch": 75,
+      "highPitch": 78,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 2,
+      "sizeBytes": 360044,
+      "sha256": "ee415034f66a53f212382b84725a309d8a7a5e89bddd012a1a0d0c14626d7842"
+    },
+    {
+      "file": "samples/81_v0-127_rr1.wav",
+      "rootPitch": 81,
+      "lowPitch": 79,
+      "highPitch": 82,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "d0d10261b59d6f22eafb53a80768369f27938dc9aa44ab431b114205682a5661"
+    },
+    {
+      "file": "samples/84_v0-127_rr1.wav",
+      "rootPitch": 84,
+      "lowPitch": 83,
+      "highPitch": 108,
+      "lowVelocity": 0,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "ab0c9161ce7e367e3ea0700044e86ab3b91aa01234ba678043a2041f830ec9f2"
+    }
+  ]
+}

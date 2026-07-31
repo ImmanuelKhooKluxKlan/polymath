@@ -1,0 +1,31 @@
+{
+  "name": "polymath-musician",
+  "version": "3.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Polymath Musician: unified JSON/MIDI performance engine, studio piano tails, responsive visual instrument teaching, free ready-to-play songs, OpenAI PDF translation, marketplace Mcoins, and PayPal subscriptions.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+    "acquire:iowa-mf": "node scripts/acquireIowaMf.js --range=A0-C8",
+    "acquire:iowa-88": "node scripts/acquireIowaMf.js --range=A0-C8",
+    "acquire:iowa-song-range": "node scripts/acquireIowaMf.js --range=A1-C7",
+    "server": "npm --prefix server start",
+    "server:dev": "npm --prefix server run dev"
+  },
+  "dependencies": {
+    "@tonejs/midi": "^2.0.28",
+    "@vitejs/plugin-react": "6.0.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "vite": "8.0.16"
+  },
+  "devDependencies": {
+    "eslint": "9.39.4",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.2"
+  }
+}

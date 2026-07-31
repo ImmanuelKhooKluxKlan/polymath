@@ -1,0 +1,16 @@
+FSS Steel-String Acoustic Guitar
+
+Copyright 2008 Gary Campion.
+Modified 2016-2020 by roberto@zenvoid.org for the FreePats project.
+
+Distributed under GNU GPL version 3 or later with this special sound exception:
+
+As a special exception, if you create a composition which uses these sounds,
+and mix these sounds or unaltered portions of these sounds into the composition,
+these sounds do not by themselves cause the entire composition as a whole to
+be covered by the GNU General Public License. This exception does not however
+invalidate any other reasons why the composition might be covered by the GNU
+General Public License.
+
+Source and full details:
+https://freepats.zenvoid.org/Guitar/steel-acoustic-guitar.html

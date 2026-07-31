@@ -1,0 +1,649 @@
+{
+  "id": "saxophone",
+  "version": 1,
+  "license": "CC0-1.0",
+  "attribution": "Karoryfer Lecolds Bear Sax",
+  "sourceUrl": "https://github.com/sfzinstruments/karoryfer.bear-sax",
+  "zones": [
+    {
+      "file": "zone-001-38.wav",
+      "rootPitch": 38,
+      "lowPitch": 36,
+      "highPitch": 36,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 558902,
+      "sha256": "c9f3c2c708599c6f1a1928c7432dc24bebce646c14d42bf4639a7f77f32fd3e1"
+    },
+    {
+      "file": "zone-002-38.wav",
+      "rootPitch": 38,
+      "lowPitch": 36,
+      "highPitch": 36,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 558902,
+      "sha256": "7aae0e36bb8161d8d3e326adbeeda442dc9dd92b703f3d0c175839a8a447cdfa"
+    },
+    {
+      "file": "zone-003-37.wav",
+      "rootPitch": 37,
+      "lowPitch": 37,
+      "highPitch": 37,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 574430,
+      "sha256": "a7d9e4a36ee454a9d573f91b39da66022f99dc967ed15db5c026faf51804e274"
+    },
+    {
+      "file": "zone-004-37.wav",
+      "rootPitch": 37,
+      "lowPitch": 37,
+      "highPitch": 37,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 574430,
+      "sha256": "98dcf5f101759b6374a3eb022c6878d36936a730e63eb3923fa75577b1eacb5a"
+    },
+    {
+      "file": "zone-005-38.wav",
+      "rootPitch": 38,
+      "lowPitch": 38,
+      "highPitch": 38,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 558902,
+      "sha256": "c9f3c2c708599c6f1a1928c7432dc24bebce646c14d42bf4639a7f77f32fd3e1"
+    },
+    {
+      "file": "zone-006-38.wav",
+      "rootPitch": 38,
+      "lowPitch": 38,
+      "highPitch": 38,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 558902,
+      "sha256": "7aae0e36bb8161d8d3e326adbeeda442dc9dd92b703f3d0c175839a8a447cdfa"
+    },
+    {
+      "file": "zone-007-39.wav",
+      "rootPitch": 39,
+      "lowPitch": 39,
+      "highPitch": 39,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 643334,
+      "sha256": "639038ae0e7fefeada1548175207e68faff6c5acc19d4738cc321e10ee85b573"
+    },
+    {
+      "file": "zone-008-39.wav",
+      "rootPitch": 39,
+      "lowPitch": 39,
+      "highPitch": 39,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 643334,
+      "sha256": "1a3e3584ba380fd9c92c3e2cee09d09332e3a8788ba87917f1c4d6d5fe7ae80f"
+    },
+    {
+      "file": "zone-009-40.wav",
+      "rootPitch": 40,
+      "lowPitch": 40,
+      "highPitch": 40,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 664976,
+      "sha256": "5048f01f24b98207b9a85055c1a3839bdbcbd6aaa540c42f5e5a71d6ef2707d7"
+    },
+    {
+      "file": "zone-010-40.wav",
+      "rootPitch": 40,
+      "lowPitch": 40,
+      "highPitch": 40,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 664976,
+      "sha256": "bd51e1dde2a9690c9095111d643c6d5452ac0329075296bcb5b8e3a945153d49"
+    },
+    {
+      "file": "zone-011-41.wav",
+      "rootPitch": 41,
+      "lowPitch": 41,
+      "highPitch": 41,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 698956,
+      "sha256": "1a2559274a2079d061b435ec5693c442bdd0c90e698dd37e0982e3ab66d7fd60"
+    },
+    {
+      "file": "zone-012-41.wav",
+      "rootPitch": 41,
+      "lowPitch": 41,
+      "highPitch": 41,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 698956,
+      "sha256": "616e0f8ce1a4a42f4dc3499b3c5e53cf8159c9b760f996dfd93b2eefe93e41b8"
+    },
+    {
+      "file": "zone-013-42.wav",
+      "rootPitch": 42,
+      "lowPitch": 42,
+      "highPitch": 42,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 777298,
+      "sha256": "824c679f88406c8a4df028cce8242f59b7e62d3dadf9edf6ccd3d950fb7508ec"
+    },
+    {
+      "file": "zone-014-42.wav",
+      "rootPitch": 42,
+      "lowPitch": 42,
+      "highPitch": 42,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 777298,
+      "sha256": "569d72a59bbcf6bad343464ad92f230d2c4c667242544e5feb2614af4af2537c"
+    },
+    {
+      "file": "zone-015-43.wav",
+      "rootPitch": 43,
+      "lowPitch": 43,
+      "highPitch": 43,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 797520,
+      "sha256": "06df95078a68090ab154e3d1c17b114c23ef91c552900fa23e82a35dd5083a84"
+    },
+    {
+      "file": "zone-016-43.wav",
+      "rootPitch": 43,
+      "lowPitch": 43,
+      "highPitch": 43,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 797520,
+      "sha256": "10de33a6f9ef9673abac48090a48d71bed469eb2ea3ab89c0e6e9edbbf26e1b1"
+    },
+    {
+      "file": "zone-017-44.wav",
+      "rootPitch": 44,
+      "lowPitch": 44,
+      "highPitch": 44,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 603236,
+      "sha256": "15ea91d05425141b4d4bd072aa6ce2bdcdf13f67722590e94539570873790249"
+    },
+    {
+      "file": "zone-018-44.wav",
+      "rootPitch": 44,
+      "lowPitch": 44,
+      "highPitch": 44,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 603236,
+      "sha256": "746a2c0baafd1bc52651e52f869900f0884571330626bffc96a9d2860214f21a"
+    },
+    {
+      "file": "zone-019-45.wav",
+      "rootPitch": 45,
+      "lowPitch": 45,
+      "highPitch": 45,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 897806,
+      "sha256": "e6c180056219eb1d8033d52ecf50e4de250e4b7b993a660e04843a3595f7f588"
+    },
+    {
+      "file": "zone-020-45.wav",
+      "rootPitch": 45,
+      "lowPitch": 45,
+      "highPitch": 45,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 897806,
+      "sha256": "9ed8c2ee0f35f38faa1266de2a36f3e522f94faba0359da88886ce5ed3cb229e"
+    },
+    {
+      "file": "zone-021-46.wav",
+      "rootPitch": 46,
+      "lowPitch": 46,
+      "highPitch": 46,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 633118,
+      "sha256": "3fe4a4187e5d5cfb430e4d6390510670ee3f87c8bf6346bc95152d71bb7cce3f"
+    },
+    {
+      "file": "zone-022-46.wav",
+      "rootPitch": 46,
+      "lowPitch": 46,
+      "highPitch": 46,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 633118,
+      "sha256": "bb64b23ea5df64d2713ebbf7ebeb174f3b3191adea58f63da0d9df9b06360597"
+    },
+    {
+      "file": "zone-023-47.wav",
+      "rootPitch": 47,
+      "lowPitch": 47,
+      "highPitch": 47,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 680312,
+      "sha256": "c34c49264f24f4dc465d71eea244479a1298a117c17ea42ca4a2df692dd869bc"
+    },
+    {
+      "file": "zone-024-47.wav",
+      "rootPitch": 47,
+      "lowPitch": 47,
+      "highPitch": 47,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 680312,
+      "sha256": "20ed2321445a20cb98cbb7952e139570953e6fec2f821cde7c71379255aefac7"
+    },
+    {
+      "file": "zone-025-48.wav",
+      "rootPitch": 48,
+      "lowPitch": 48,
+      "highPitch": 48,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1014344,
+      "sha256": "f1e7dc8442a8a9c4c63a935755bf87bc54a2f810400ecde0b6b912366bc3741a"
+    },
+    {
+      "file": "zone-026-48.wav",
+      "rootPitch": 48,
+      "lowPitch": 48,
+      "highPitch": 48,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1014344,
+      "sha256": "040e99f82463796f554707f50860ee268a976d2f02647b5fa8d3ffa89dea24fe"
+    },
+    {
+      "file": "zone-027-49.wav",
+      "rootPitch": 49,
+      "lowPitch": 49,
+      "highPitch": 49,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 955892,
+      "sha256": "e9515f8c1fba481e659b38f519521b470fc66abd5c958ee7276b24d0f958469a"
+    },
+    {
+      "file": "zone-028-49.wav",
+      "rootPitch": 49,
+      "lowPitch": 49,
+      "highPitch": 49,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 955892,
+      "sha256": "580182852cb6882821ce08433424294688a0dad6e2f4ce009354144ff1d67089"
+    },
+    {
+      "file": "zone-029-50.wav",
+      "rootPitch": 50,
+      "lowPitch": 50,
+      "highPitch": 50,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 683264,
+      "sha256": "32196afeac06c465284a44d28c03dbe5709c6fb9843551e8640446770a8f3b71"
+    },
+    {
+      "file": "zone-030-50.wav",
+      "rootPitch": 50,
+      "lowPitch": 50,
+      "highPitch": 50,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 683264,
+      "sha256": "3c98953ec7f9b2d8eb91a4eedececfb883d1204fa09b378270685a96aec427d5"
+    },
+    {
+      "file": "zone-031-51.wav",
+      "rootPitch": 51,
+      "lowPitch": 51,
+      "highPitch": 51,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1194052,
+      "sha256": "a7588689285345728e3d85dd04522dcc40b4e38a0c5816c21618fa5d5f6dcd92"
+    },
+    {
+      "file": "zone-032-51.wav",
+      "rootPitch": 51,
+      "lowPitch": 51,
+      "highPitch": 51,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1194052,
+      "sha256": "79ca4ca725d26d3c3946c534327d7d0495ab48f7bdcbf024019169bd78170929"
+    },
+    {
+      "file": "zone-033-52.wav",
+      "rootPitch": 52,
+      "lowPitch": 52,
+      "highPitch": 52,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 797510,
+      "sha256": "6d78dd036d49b64beb35cb4bda1014fdafcc69a8d81241cb3228d87588745317"
+    },
+    {
+      "file": "zone-034-52.wav",
+      "rootPitch": 52,
+      "lowPitch": 52,
+      "highPitch": 52,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 797510,
+      "sha256": "4ecf2b92064f13a8e43883e4cc259e0b30450fd07fb890d48f966931912090b9"
+    },
+    {
+      "file": "zone-035-53.wav",
+      "rootPitch": 53,
+      "lowPitch": 53,
+      "highPitch": 53,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 691238,
+      "sha256": "b0d7e17a68ec866335def0bd0bc32a379087b2728651242475e77d7123bbd91e"
+    },
+    {
+      "file": "zone-036-53.wav",
+      "rootPitch": 53,
+      "lowPitch": 53,
+      "highPitch": 53,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 691238,
+      "sha256": "a0d13a0e9bfb057abc600c16d88df6b22139ce782b7a4cfadde3a64ffa7b36ae"
+    },
+    {
+      "file": "zone-037-54.wav",
+      "rootPitch": 54,
+      "lowPitch": 54,
+      "highPitch": 54,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 884696,
+      "sha256": "9b1f6d7c9b42256bb5c044b6bf86465ba28bd98bb9b2c7b55761447919c9fa75"
+    },
+    {
+      "file": "zone-038-54.wav",
+      "rootPitch": 54,
+      "lowPitch": 54,
+      "highPitch": 54,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 884696,
+      "sha256": "18e66d4d578d6daeea22ab92d37cd27cb1b36cd10452d55bd4e80a0c8597fb3c"
+    },
+    {
+      "file": "zone-039-55.wav",
+      "rootPitch": 55,
+      "lowPitch": 55,
+      "highPitch": 55,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 759826,
+      "sha256": "f2f52f2d934a4e74fc1cda9194f30bd5904d9a05e447dde8a350347f8e4ca2e5"
+    },
+    {
+      "file": "zone-040-55.wav",
+      "rootPitch": 55,
+      "lowPitch": 55,
+      "highPitch": 55,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 759826,
+      "sha256": "e0c745a81fd3722e8e2780cdef4630c0c1da91c93a8f5dd4228e5042480cbdcf"
+    },
+    {
+      "file": "zone-041-56.wav",
+      "rootPitch": 56,
+      "lowPitch": 56,
+      "highPitch": 56,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1104106,
+      "sha256": "48095ec2512529167fd8bd4a55862542fa13a50ef1151dda4df30ea5d8a39b95"
+    },
+    {
+      "file": "zone-042-56.wav",
+      "rootPitch": 56,
+      "lowPitch": 56,
+      "highPitch": 56,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1104106,
+      "sha256": "a55d79466c34c9c2ef4f332e59b17e0642ee152df480d13963dbdf1286e99061"
+    },
+    {
+      "file": "zone-043-57.wav",
+      "rootPitch": 57,
+      "lowPitch": 57,
+      "highPitch": 57,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1304960,
+      "sha256": "f14a4c3c33b3793a6a7d070d71b90e04fbd8e0efea245f6916c8bd830921e7f0"
+    },
+    {
+      "file": "zone-044-57.wav",
+      "rootPitch": 57,
+      "lowPitch": 57,
+      "highPitch": 57,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1304958,
+      "sha256": "3ebc50a1cd8f1c2182988f987202e9ae806923db39262f5e60e2ed610aa42a44"
+    },
+    {
+      "file": "zone-045-58.wav",
+      "rootPitch": 58,
+      "lowPitch": 58,
+      "highPitch": 58,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1261076,
+      "sha256": "0f1fc621b23b5e433f350eb4e35aa930e484a44f871196f4347e7bf78ed96bf6"
+    },
+    {
+      "file": "zone-046-58.wav",
+      "rootPitch": 58,
+      "lowPitch": 58,
+      "highPitch": 58,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1261076,
+      "sha256": "c660d588731302248269ead3db1b5f3fe0e3d4aacc5e0afadc274dba6eb1652c"
+    },
+    {
+      "file": "zone-047-59.wav",
+      "rootPitch": 59,
+      "lowPitch": 59,
+      "highPitch": 59,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1211750,
+      "sha256": "e543d877e696492bda7fc91e130ab47a5c5af0e58f0be0b7d9e5f9d18cb72e51"
+    },
+    {
+      "file": "zone-048-59.wav",
+      "rootPitch": 59,
+      "lowPitch": 59,
+      "highPitch": 59,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1211750,
+      "sha256": "23c535bb7247a6d77a0b255ae80085eeb00c30c92be6dddf45c652ed8d1ede64"
+    },
+    {
+      "file": "zone-049-61.wav",
+      "rootPitch": 61,
+      "lowPitch": 61,
+      "highPitch": 61,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 797266,
+      "sha256": "0f79fe2e0e9ffbd6d4e6c5eae6cb5835c7865dd945e489ff8a3d41a19df7e8bf"
+    },
+    {
+      "file": "zone-050-61.wav",
+      "rootPitch": 61,
+      "lowPitch": 61,
+      "highPitch": 61,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 797266,
+      "sha256": "22d86788704c97ce1b6739462e7ef4882d2416996aac2c936750ca95114c02bc"
+    },
+    {
+      "file": "zone-051-62.wav",
+      "rootPitch": 62,
+      "lowPitch": 62,
+      "highPitch": 62,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 849744,
+      "sha256": "a0184da99b9a21d320cb618eabb9fe6260012f66a0f26a34731baed1d25205cc"
+    },
+    {
+      "file": "zone-052-62.wav",
+      "rootPitch": 62,
+      "lowPitch": 62,
+      "highPitch": 62,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 849744,
+      "sha256": "e10e337a993bd358d880225c1bf463f7a6d48e9061db3b274fe56966d7de5481"
+    },
+    {
+      "file": "zone-053-63.wav",
+      "rootPitch": 63,
+      "lowPitch": 63,
+      "highPitch": 63,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1110488,
+      "sha256": "b8ef1a088bab24a6fa3467e02a3cdaf8dcda2673e3a52c19917c1fecc0169d6a"
+    },
+    {
+      "file": "zone-054-63.wav",
+      "rootPitch": 63,
+      "lowPitch": 63,
+      "highPitch": 63,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1110488,
+      "sha256": "699f098da6419cbcf0a176675ff9e33e5a948e30d27adc42fdc0dc068483d646"
+    },
+    {
+      "file": "zone-055-64.wav",
+      "rootPitch": 64,
+      "lowPitch": 64,
+      "highPitch": 64,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1029138,
+      "sha256": "736e0539d289fc45870d847d53a4808189991533ccc0171f9e7b73d7d6b376a5"
+    },
+    {
+      "file": "zone-056-64.wav",
+      "rootPitch": 64,
+      "lowPitch": 64,
+      "highPitch": 64,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1029138,
+      "sha256": "3f9f9aafdd7187aa61e181fabf8f6f7650fb0d515a7c79fd8b656a9a109a8e04"
+    },
+    {
+      "file": "zone-057-65.wav",
+      "rootPitch": 65,
+      "lowPitch": 65,
+      "highPitch": 65,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 940762,
+      "sha256": "840c40a6d9c9238acd77d64e00472c2b7cfb38ac5d64c1c60c9681247003f7a3"
+    },
+    {
+      "file": "zone-058-65.wav",
+      "rootPitch": 65,
+      "lowPitch": 65,
+      "highPitch": 65,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 940762,
+      "sha256": "2141d8e322515f2fc4354b0a14e11769008b01ae38f706c1825f8357a6b3c2dd"
+    },
+    {
+      "file": "zone-059-66.wav",
+      "rootPitch": 66,
+      "lowPitch": 66,
+      "highPitch": 66,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 968876,
+      "sha256": "bac214e33eb2db20c25aee9e6cf442efcb3d24fe1ca7c683ddca1d74122e03d3"
+    },
+    {
+      "file": "zone-060-66.wav",
+      "rootPitch": 66,
+      "lowPitch": 66,
+      "highPitch": 66,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 968876,
+      "sha256": "e153fda325f626a1a11e5ea3d3cff51edb75297d685d46dde77a355cda967a6e"
+    },
+    {
+      "file": "zone-061-67.wav",
+      "rootPitch": 67,
+      "lowPitch": 67,
+      "highPitch": 67,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1089584,
+      "sha256": "13509de11bbb272b4de2712240f1022bb75772169117cac3e5fe4722f0037042"
+    },
+    {
+      "file": "zone-062-67.wav",
+      "rootPitch": 67,
+      "lowPitch": 67,
+      "highPitch": 67,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1089584,
+      "sha256": "032838c2ee05839510a5b22de9e79500fe6494e9bbffc5e1ed4ecd54e04e6bee"
+    },
+    {
+      "file": "zone-063-68.wav",
+      "rootPitch": 68,
+      "lowPitch": 68,
+      "highPitch": 68,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1555504,
+      "sha256": "aff28802c752bee8e05b066d48ada90e8df9c36964225fea82b727c53b9451f9"
+    },
+    {
+      "file": "zone-064-68.wav",
+      "rootPitch": 68,
+      "lowPitch": 68,
+      "highPitch": 68,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "sizeBytes": 1555504,
+      "sha256": "6d297c91cf78c1477dba3a9539cda436345ef3e60aa501ef0bfd79d7e0c663a9"
+    }
+  ]
+}

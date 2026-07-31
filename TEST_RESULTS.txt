@@ -1,0 +1,23 @@
+Polymath Musician 3.1 unified MIDI/JSON audio validation — 25 July 2026
+
+PASS: TypeScript's JSX/JavaScript parser checked all 36 frontend source modules with no syntax errors.
+PASS: Node syntax validation completed for the MIDI parser, scheduler, piano engine, guitar engine, ensemble engine, song library, server, and sample-acquisition script.
+PASS: All six bundled ready-to-play song JSON files parse successfully.
+PASS: Piano library validation:
+  - Enchanted: 2,253 notes, 236 normalized pedal events.
+  - Kiss Me: 2,249 notes.
+  - Stay Stay Stay: 1,973 notes, 152 normalized pedal events.
+  - Style: 1,093 notes.
+  - We Are Never Getting Back Together: 2,358 notes, 140 normalized pedal events.
+PASS: Guitar library validation:
+  - Wildest Dreams: 700 playable guitar events.
+PASS: Handcrafted Standard MIDI validation passed for tempo, 4/4 time signature, note-on/note-off pairing, velocity shaping, program/channel metadata, sustain CC64, exact 0.5-second duration, and normalized-to-JSON metadata.
+PASS: Structured JSON songs preserve their score/audio/visual durations unless a song explicitly opts out.
+PASS: Piano playback applies a musical release floor to short JSON/MIDI tails while keeping retrigger, stop, and voice-stealing releases strict and fast.
+PASS: Piano room tone and pedal resonance are deterministic; no refresh-to-refresh random reverb change was introduced.
+PASS: Guitar playback includes fuller body response, deterministic strum humanization, and a safer natural release floor.
+PASS: Ensemble playback includes a shared studio EQ, deterministic room convolution, compression, limiting, and smoother instrument releases.
+PASS: Existing account, marketplace, OpenAI PDF translation, PayPal, YouTube comparison, upload, export, mobile, and visual-teacher source files remain present.
+PASS: No node_modules, dist, local .env, database.json, session data, or user-uploaded runtime assets are included.
+
+ENVIRONMENT NOTE: A fresh npm production build could not be run because the validation environment's npm package gateway returned HTTP 503 while downloading convert-source-map. Static JSX/JavaScript parsing, Node syntax checks, JSON checks, MIDI behavior tests, and asset-path checks all passed. The included GitLab CI remains responsible for npm ci, lint, and the production Vite build in a clean environment.

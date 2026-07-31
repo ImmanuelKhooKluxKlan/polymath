@@ -1,0 +1,15 @@
+{
+  "title": "Uploaded Example - Calm Bells",
+  "composer": "You",
+  "bpm": 84,
+  "notes": [
+    { "note": "C4", "time": 0, "duration": 0.5, "velocity": 0.8, "hand": "left" },
+    { "note": "E4", "time": 0.5, "duration": 0.5, "velocity": 0.8, "hand": "right" },
+    { "note": "G4", "time": 1, "duration": 0.5, "velocity": 0.85, "hand": "right" },
+    { "note": "C5", "time": 1.5, "duration": 1, "velocity": 0.9, "hand": "right" },
+    { "note": "A3", "time": 2.8, "duration": 0.6, "velocity": 0.75, "hand": "left" },
+    { "note": "C4", "time": 3.2, "duration": 0.6, "velocity": 0.75, "hand": "right" },
+    { "note": "E4", "time": 3.6, "duration": 0.6, "velocity": 0.8, "hand": "right" },
+    { "note": "A4", "time": 4, "duration": 1.2, "velocity": 0.92, "hand": "right" }
+  ]
+}

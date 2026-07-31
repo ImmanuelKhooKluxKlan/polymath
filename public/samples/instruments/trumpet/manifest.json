@@ -1,0 +1,233 @@
+{
+  "instrument": "trumpet",
+  "version": 1,
+  "license": "CC0-1.0",
+  "attribution": "Versilian Studios \u2014 VSCO 2 Community Edition \u00b7 SHTrumpet sus (CC0)",
+  "sourceLibrary": "VSCO 2 Community Edition",
+  "sourceUrl": "https://github.com/sgossner/VSCO-2-CE",
+  "sampleRate": 48000,
+  "totalSizeMB": 6.867,
+  "source": "hf",
+  "zones": [
+    {
+      "file": "samples/41_v0-63_rr1.wav",
+      "rootPitch": 41,
+      "lowPitch": 17,
+      "highPitch": 43,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "e159d06984ce1e22ae1ae272376cf1a9ecda433ca6cae98fea11e998e066cfcf"
+    },
+    {
+      "file": "samples/41_v64-127_rr1.wav",
+      "rootPitch": 41,
+      "lowPitch": 17,
+      "highPitch": 43,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "20a53f317b5184b2c18044cdccef633c114d5e46b28adaaa939eee2dd5575b98"
+    },
+    {
+      "file": "samples/45_v0-63_rr1.wav",
+      "rootPitch": 45,
+      "lowPitch": 44,
+      "highPitch": 46,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "0a1e51d3df1aa2d456865a4ac1a59453a50d181bd0ee1dfda237c536ef7b767c"
+    },
+    {
+      "file": "samples/45_v64-127_rr1.wav",
+      "rootPitch": 45,
+      "lowPitch": 44,
+      "highPitch": 46,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "e94c93920bd24de6739d5f8c0ddf6cd2411795c7dc840623b987e341b7874bae"
+    },
+    {
+      "file": "samples/48_v0-63_rr1.wav",
+      "rootPitch": 48,
+      "lowPitch": 47,
+      "highPitch": 49,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "ee7f6e84a466f514527bf5b4ff84ead538e218431a17e4ce77fed4e0331ee6be"
+    },
+    {
+      "file": "samples/48_v64-127_rr1.wav",
+      "rootPitch": 48,
+      "lowPitch": 47,
+      "highPitch": 49,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "47016d1f83f8666d25e40292fdd856f6ecb5ac5d75089d49be9ff80e1b08ee28"
+    },
+    {
+      "file": "samples/51_v0-63_rr1.wav",
+      "rootPitch": 51,
+      "lowPitch": 50,
+      "highPitch": 53,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "a7ea6d2b883739f7ca9efe2168d698a04abc26f863efef65f75b27c9dec50538"
+    },
+    {
+      "file": "samples/51_v64-127_rr1.wav",
+      "rootPitch": 51,
+      "lowPitch": 50,
+      "highPitch": 53,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "b97adb2ae10b371ad108e7733788918b4d7e202859c70661e36790dc4499254b"
+    },
+    {
+      "file": "samples/55_v0-63_rr1.wav",
+      "rootPitch": 55,
+      "lowPitch": 54,
+      "highPitch": 56,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "009c148751c4e8c5742ea23eef3d09e3df6c837353f75531e1da22f8680ac9e1"
+    },
+    {
+      "file": "samples/55_v64-127_rr1.wav",
+      "rootPitch": 55,
+      "lowPitch": 54,
+      "highPitch": 56,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "591dcfc0efbaf0a17b46117403ca1b93c9f4308f23e398f2d9e6a4342726f370"
+    },
+    {
+      "file": "samples/58_v0-63_rr1.wav",
+      "rootPitch": 58,
+      "lowPitch": 57,
+      "highPitch": 60,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "eaf14510d4bc6a624d5ce663d246675c4a234ed82b84f7b622366ac644de6928"
+    },
+    {
+      "file": "samples/58_v64-127_rr1.wav",
+      "rootPitch": 58,
+      "lowPitch": 57,
+      "highPitch": 60,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "fa4cb97d9a2219f8ef2dc9380c3ff121cbdc0c32aafba413630487eceba97e50"
+    },
+    {
+      "file": "samples/62_v0-63_rr1.wav",
+      "rootPitch": 62,
+      "lowPitch": 61,
+      "highPitch": 63,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "5377464413fd89fec03be6789e75d86a888fe4f2127ce885e86d379ab8c66a91"
+    },
+    {
+      "file": "samples/62_v64-127_rr1.wav",
+      "rootPitch": 62,
+      "lowPitch": 61,
+      "highPitch": 63,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "832a3b79247e25ce0a6499d6ea6aebcee13186b5d3396d89b45ee7c36b1326ac"
+    },
+    {
+      "file": "samples/65_v0-63_rr1.wav",
+      "rootPitch": 65,
+      "lowPitch": 64,
+      "highPitch": 67,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "d5395d353fafb2fe9d31b93ccfb5b919dba4a36aa5369b9c9b9c9c967ae43a3b"
+    },
+    {
+      "file": "samples/65_v64-127_rr1.wav",
+      "rootPitch": 65,
+      "lowPitch": 64,
+      "highPitch": 67,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "13d49f099bcd13c8a17431d007369dd22d85b81b7379a0559999f582d4f0048b"
+    },
+    {
+      "file": "samples/69_v0-63_rr1.wav",
+      "rootPitch": 69,
+      "lowPitch": 68,
+      "highPitch": 70,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "f61f6d13bd8b79cd0b679eaa14c5967f6d8dc4ba18b211c3d9fdbabdf3aa05a0"
+    },
+    {
+      "file": "samples/69_v64-127_rr1.wav",
+      "rootPitch": 69,
+      "lowPitch": 68,
+      "highPitch": 70,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "0044eef652034cd72b33869a53b7cb6a956d1bce311e39cf41046994b05c46c6"
+    },
+    {
+      "file": "samples/72_v0-63_rr1.wav",
+      "rootPitch": 72,
+      "lowPitch": 71,
+      "highPitch": 96,
+      "lowVelocity": 0,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "01151e0ba5956d39354988f2d5951c8864b8f10599221c2c5c24bffa0b642542"
+    },
+    {
+      "file": "samples/72_v64-127_rr1.wav",
+      "rootPitch": 72,
+      "lowPitch": 71,
+      "highPitch": 96,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 360044,
+      "sha256": "753c5c6fcbe873d2b37d806f1e2af31a61ace92a8062a054c208451a50228a0d"
+    }
+  ]
+}

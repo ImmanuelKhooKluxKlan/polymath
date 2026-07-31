@@ -1,0 +1,194 @@
+{
+  "id": "studio-acoustic",
+  "label": "Studio Acoustic",
+  "version": 1,
+  "license": "CC0-1.0",
+  "attribution": "tidalcycles/Dirt-Samples (Public Domain CC0)",
+  "sourceLibrary": "tidalcycles/Dirt-Samples",
+  "sourceUrl": "https://github.com/tidalcycles/Dirt-Samples",
+  "sampleRate": 44100,
+  "totalSizeMB": 1.905,
+  "source": "hf",
+  "category": "acoustic",
+  "pads": [
+    {
+      "slot": 0,
+      "label": "Jazz Kick",
+      "shortLabel": "BD",
+      "color": "#7f1d1d",
+      "defaultMidiNote": 36,
+      "synthFallback": "kick",
+      "fallbackPitch": 80,
+      "fallbackDecay": 0.55
+    },
+    {
+      "slot": 1,
+      "label": "Jazz Snare",
+      "shortLabel": "SD",
+      "color": "#dc2626",
+      "defaultMidiNote": 38,
+      "synthFallback": "snare",
+      "fallbackPitch": 210,
+      "fallbackDecay": 0.28
+    },
+    {
+      "slot": 2,
+      "label": "Jazz HH Cl",
+      "shortLabel": "HH",
+      "color": "#0ea5e9",
+      "defaultMidiNote": 42,
+      "synthFallback": "hihat-closed",
+      "fallbackDecay": 0.05,
+      "chokeGroup": 1
+    },
+    {
+      "slot": 3,
+      "label": "Jazz HH Op",
+      "shortLabel": "OH",
+      "color": "#0284c7",
+      "defaultMidiNote": 46,
+      "synthFallback": "hihat-open",
+      "fallbackDecay": 0.4,
+      "chokeGroup": 1
+    },
+    {
+      "slot": 4,
+      "label": "Cymbal",
+      "shortLabel": "CY",
+      "color": "#fde68a",
+      "defaultMidiNote": 49,
+      "synthFallback": "cymbal",
+      "fallbackDecay": 1.4
+    },
+    {
+      "slot": 5,
+      "label": "Brush Snare Ghost",
+      "shortLabel": "GH",
+      "color": "#fca5a5",
+      "defaultMidiNote": 37,
+      "synthFallback": "rim",
+      "fallbackDecay": 0.08
+    },
+    {
+      "slot": 6,
+      "label": "Brush Tom Lo",
+      "shortLabel": "LT",
+      "color": "#059669",
+      "defaultMidiNote": 41,
+      "synthFallback": "tom-lo",
+      "fallbackPitch": 100,
+      "fallbackDecay": 0.4
+    },
+    {
+      "slot": 7,
+      "label": "Brush Tom Hi",
+      "shortLabel": "HT",
+      "color": "#34d399",
+      "defaultMidiNote": 48,
+      "synthFallback": "tom-hi",
+      "fallbackPitch": 180,
+      "fallbackDecay": 0.3
+    }
+  ],
+  "zones": [
+    {
+      "file": "slot0_v1-127_rr1.wav",
+      "slot": 0,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 25352,
+      "sha256": "109785b7ea6b6350bd261c62596d8e45fe827cdb0e620047de0215a0c20562dc"
+    },
+    {
+      "file": "slot1_v1-63_rr1.wav",
+      "slot": 1,
+      "lowVelocity": 1,
+      "highVelocity": 63,
+      "roundRobin": 1,
+      "sizeBytes": 10924,
+      "sha256": "060457762e07355dbf8c530fa59fe0181487561fae89bd1403873df566362336"
+    },
+    {
+      "file": "slot1_v64-127_rr1.wav",
+      "slot": 1,
+      "lowVelocity": 64,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 348988,
+      "sha256": "7ec199d14deee636603447c59a57b332bbcc5e653bc6033e50338d451e747ebe"
+    },
+    {
+      "file": "slot2_v1-42_rr1.wav",
+      "slot": 2,
+      "lowVelocity": 1,
+      "highVelocity": 42,
+      "roundRobin": 1,
+      "sizeBytes": 4420,
+      "sha256": "020b400ab6d2799f48f79e98db188937fe2e65a30187ecfd5cf68cf2ee3babee"
+    },
+    {
+      "file": "slot2_v43-84_rr1.wav",
+      "slot": 2,
+      "lowVelocity": 43,
+      "highVelocity": 84,
+      "roundRobin": 1,
+      "sizeBytes": 151228,
+      "sha256": "95a68105a558e8d961434a9d5add1bea0d38e523070560be4596e68c8e868409"
+    },
+    {
+      "file": "slot2_v85-127_rr1.wav",
+      "slot": 2,
+      "lowVelocity": 85,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 143040,
+      "sha256": "a11beb05f7dfdfd1d5d706cd471e1463fbc0381d1e783868782d6e1885365faa"
+    },
+    {
+      "file": "slot3_v1-127_rr1.wav",
+      "slot": 3,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 68268,
+      "sha256": "2de55dfd49f9421a9865f3b6609e72422c3162c59a8a8c33a5920c70412f0c75"
+    },
+    {
+      "file": "slot4_v1-127_rr1.wav",
+      "slot": 4,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 397500,
+      "sha256": "17f98260b24ce36da90de8c8686113f9dc07a9f93d24f9c8f1f2fa1436f4395a"
+    },
+    {
+      "file": "slot5_v1-127_rr1.wav",
+      "slot": 5,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 216628,
+      "sha256": "d62a1e75a2ffeb6e29849523275d1eb017c97537432132faba201feb0b73f461"
+    },
+    {
+      "file": "slot6_v1-127_rr1.wav",
+      "slot": 6,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 317148,
+      "sha256": "cf114ec409adfc70e8c831a418cc88b62c09718073a56b7f68abf765a00d1f86"
+    },
+    {
+      "file": "slot7_v1-127_rr1.wav",
+      "slot": 7,
+      "lowVelocity": 1,
+      "highVelocity": 127,
+      "roundRobin": 1,
+      "sizeBytes": 314456,
+      "sha256": "047b972a443ded7457d9c032548d50dbb03cd771676b6b731bcc3d13e3801653"
+    }
+  ]
+}

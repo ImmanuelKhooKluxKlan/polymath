@@ -1,0 +1,25 @@
+{
+  "title": "Pedal JSON Test",
+  "composer": "Muse Market",
+  "bpm": 84,
+  "performance": {
+    "preserveScoreDurations": true,
+    "defaultAutoplayReleaseSeconds": 0.62
+  },
+  "pedals": [
+    { "time": 0, "down": true },
+    { "time": 2.75, "down": false },
+    { "time": 3, "down": true },
+    { "time": 5.8, "down": false }
+  ],
+  "notes": [
+    { "note": "C3", "time": 0, "duration": 2.6, "velocity": 0.64, "hand": "left" },
+    { "note": "C4", "time": 0, "duration": 0.7, "velocity": 0.78, "hand": "right" },
+    { "note": "E4", "time": 0.8, "duration": 0.7, "velocity": 0.8, "hand": "right" },
+    { "note": "G4", "time": 1.6, "duration": 0.7, "velocity": 0.84, "hand": "right" },
+    { "note": "F3", "time": 3, "duration": 2.6, "velocity": 0.63, "hand": "left" },
+    { "note": "A4", "time": 3, "duration": 0.7, "velocity": 0.8, "hand": "right" },
+    { "note": "C5", "time": 3.8, "duration": 0.7, "velocity": 0.84, "hand": "right" },
+    { "note": "F5", "time": 4.6, "duration": 1.1, "velocity": 0.88, "hand": "right" }
+  ]
+}

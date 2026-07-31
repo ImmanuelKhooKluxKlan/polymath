@@ -1,0 +1,24 @@
+stages:
+  - validate
+  - build
+
+validate_app:
+  image: node:24
+  stage: validate
+  script:
+    - npm ci
+    - npm --prefix server ci
+    - npm run lint
+    - node --check server/server.js
+
+build_app:
+  image: node:24
+  stage: build
+  needs: [validate_app]
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - dist
+    expire_in: 1 week
