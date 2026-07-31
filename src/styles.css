@@ -1156,6 +1156,36 @@ button:disabled {
   flex: 1 1 180px;
 }
 
+.band-media-translator {
+  grid-column: 1 / -1;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.band-media-translator > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 850;
+}
+
+.band-media-translator[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.band-media-translator .media-translation-panel {
+  padding: 14px;
+}
+
+.band-media-translator.part-translator {
+  grid-column: auto;
+}
+
+.band-media-translator.part-translator .media-analysis-grid {
+  grid-template-columns: 1fr;
+}
+
 @media (max-width: 680px) {
   .media-analysis-grid {
     grid-template-columns: 1fr;

@@ -1,22 +1,82 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { transcribeMediaFile } from '../utils/mediaTranscriber.js';
+import { midiToNote } from '../engine/noteMath.js';
 
 const MAX_MEDIA_BYTES = 350 * 1024 * 1024;
 const MEDIA_ACCEPT = '.mp3,.wav,.m4a,.aac,.ogg,.flac,.mp4,.webm,.mov';
+const INSTRUMENT_RANGES = {
+  piano: [21, 108],
+  guitar: [40, 79],
+  'electric-guitar': [40, 79],
+  fiddle: [48, 88],
+  violin: [55, 88],
+  cello: [36, 75],
+  banjo: [50, 79],
+  mandolin: [55, 88],
+  dobro: [43, 74],
+  'upright-bass': [28, 61],
+  ukulele: [60, 81],
+  synth: [48, 84],
+  flute: [60, 96],
+  saxophone: [46, 82],
+  trumpet: [52, 82],
+  clarinet: [50, 88],
+};
 
 function percent(value) {
   return `${Math.round((Number(value) || 0) * 100)}%`;
+}
+
+function defaultTarget(instrument) {
+  if (instrument === 'drums') return 'drums';
+  if (['upright-bass', 'bass-guitar', 'cello'].includes(instrument)) return 'bass';
+  return 'melody';
+}
+
+function adaptDraftToInstrument(song, instrument) {
+  if (instrument === 'drums' || !INSTRUMENT_RANGES[instrument]) {
+    return { ...song, instrument };
+  }
+  const [minimum, maximum] = INSTRUMENT_RANGES[instrument];
+  return {
+    ...song,
+    instrument,
+    notes: song.notes.map((note) => {
+      const originalMidi = Number(note.midi);
+      let midi = originalMidi;
+      while (midi < minimum) midi += 12;
+      while (midi > maximum) midi -= 12;
+      if (midi < minimum) midi = minimum;
+      if (midi > maximum) midi = maximum;
+      return {
+        ...note,
+        note: midiToNote(midi),
+        midi,
+        originalMidi: midi === originalMidi ? undefined : originalMidi,
+      };
+    }),
+    transcription: {
+      ...song.transcription,
+      destinationInstrument: instrument,
+      playableRange: [minimum, maximum],
+    },
+  };
 }
 
 export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano' }) {
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState('');
   const [youtubeUrl, setYoutubeUrl] = useState('');
-  const [target, setTarget] = useState(instrument === 'upright-bass' ? 'bass' : 'melody');
+  const [target, setTarget] = useState(defaultTarget(instrument));
   const [busy, setBusy] = useState(false);
   const [hasRights, setHasRights] = useState(false);
   const [status, setStatus] = useState('Choose a recording you own or have permission to process.');
   const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    setTarget(defaultTarget(instrument));
+    setResult(null);
+  }, [instrument]);
 
   function chooseFile(event) {
     const selected = event.target.files?.[0] || null;
@@ -42,7 +102,8 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
     setResult(null);
     setStatus('Listening for stable pitches, note changes, attacks, and tempo. Keep this tab open…');
     try {
-      const song = await transcribeMediaFile(file, { target, title, youtubeUrl });
+      const rawSong = await transcribeMediaFile(file, { target, title, youtubeUrl });
+      const song = adaptDraftToInstrument(rawSong, instrument);
       setResult(song);
       setStatus(`Draft complete: ${song.notes.length} playable notes at approximately ${song.bpm} BPM.`);
     } catch (error) {
@@ -52,10 +113,17 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
     }
   }
 
-  function loadDraft() {
+  async function loadDraft() {
     if (!result) return;
-    onReadyFile(result);
-    setStatus(`Loaded ${result.title} into Polymath Musician. Press Play to audition the draft.`);
+    setBusy(true);
+    try {
+      await onReadyFile(result);
+      setStatus(`Loaded ${result.title} into Polymath Musician. Press Play to audition the draft.`);
+    } catch (error) {
+      setStatus(error.message || 'The playable draft could not be loaded into this instrument.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function downloadDraft() {
@@ -95,6 +163,7 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
           <select value={target} onChange={(event) => setTarget(event.target.value)} disabled={busy}>
             <option value="melody">Lead melody</option>
             <option value="bass">Bass line</option>
+            <option value="drums">Rhythm / drum hits</option>
           </select>
         </label>
       </div>

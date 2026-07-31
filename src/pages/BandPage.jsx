@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import InstrumentIcon from '../components/InstrumentIcon.jsx';
 import InstrumentTeacherSurface from '../components/InstrumentTeacherSurface.jsx';
+import MediaTranslationPanel from '../components/MediaTranslationPanel.jsx';
 import { INSTRUMENTS } from '../data/instruments.js';
 import { pianoAudio } from '../engine/audioEngine.js';
 import { ensembleAudio } from '../engine/ensembleEngine.js';
@@ -84,6 +85,8 @@ function guitarEventsToSong(data, filename) {
 }
 
 async function readBandScore(file) {
+  const isBrowserFile = file && typeof file.arrayBuffer === 'function' && typeof file.name === 'string';
+  if (!isBrowserFile && Array.isArray(file?.notes)) return normalizeSong(file);
   if (/\.json$/i.test(file.name)) {
     const data = JSON.parse(await file.text());
     if (Array.isArray(data?.events) || Array.isArray(data?.tabs)) {
@@ -415,7 +418,8 @@ export default function BandPage({ user, setUser, onNavigate }) {
 
   async function uploadPart(part, file) {
     if (!file) return;
-    setStatus(`Reading ${file.name} for ${part.name}…`);
+    const sourceName = file.name || file.title || 'audio draft';
+    setStatus(`Reading ${sourceName} for ${part.name}…`);
     try {
       const parsed = await readBandScore(file);
       if (!parsed.notes.length) throw new Error('No playable notes were found in that file.');
@@ -442,7 +446,7 @@ export default function BandPage({ user, setUser, onNavigate }) {
 
   async function uploadGeneralScore(file) {
     if (!file) return;
-    setStatus(`Reading general music sheet: ${file.name}…`);
+    setStatus(`Reading general music sheet: ${file.name || file.title || 'audio draft'}…`);
     try {
       const parsed = await readBandScore(file);
       if (!parsed.notes.length) throw new Error('No playable notes were found in that sheet.');
@@ -722,6 +726,10 @@ export default function BandPage({ user, setUser, onNavigate }) {
                         <input type="file" accept=".json,.mid,.midi" onChange={(event) => uploadGeneralScore(event.target.files?.[0])} />
                         {selectedBand.generalScore ? 'Replace general sheet' : 'Upload JSON / MIDI'}
                       </label>
+                      <details className="band-media-translator">
+                        <summary>Translate audio or video for the whole band</summary>
+                        <MediaTranslationPanel instrument="piano" onReadyFile={uploadGeneralScore} />
+                      </details>
                     </div>
                     <div className="band-stage-heading">
                       <div><p className="eyebrow">Band arrangement</p><h2>{selectedBand.instruments.length ? `${selectedBand.instruments.length} instrument parts` : 'The stage is empty'}</h2></div>
@@ -761,6 +769,13 @@ export default function BandPage({ user, setUser, onNavigate }) {
                             <input type="file" accept=".json,.csv,.mid,.midi,.musicxml,.xml" onChange={(event) => uploadPart(part, event.target.files?.[0])} />
                             {part.score ? 'Replace sheet' : 'Upload MIDI / JSON'}
                           </label>
+                          <details className="band-media-translator part-translator">
+                            <summary>Translate recording for {part.name}</summary>
+                            <MediaTranslationPanel
+                              instrument={part.instrument}
+                              onReadyFile={(draft) => uploadPart(part, draft)}
+                            />
+                          </details>
                           <div className="band-part-controls">
                             <button className="ghost" type="button" onClick={() => updatePart(part, { muted: !part.muted })}>{part.muted ? 'Unmute' : 'Mute'}</button>
                             <button className="ghost" type="button" onClick={() => updatePart(part, { visualEnabled: !part.visualEnabled })}>{part.visualEnabled ? 'Hide instrument' : 'Show instrument'}</button>

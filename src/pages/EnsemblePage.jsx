@@ -412,7 +412,8 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
   }
 
   async function loadReadySheet(file) {
-    const parsed = await parseUploadedSongFile(file);
+    const isBrowserFile = file && typeof file.arrayBuffer === 'function' && typeof file.name === 'string';
+    const parsed = isBrowserFile ? await parseUploadedSongFile(file) : file;
     if (!parsed.notes?.length) throw new Error('No playable note events were found in this ready-to-play sheet.');
     const normalized = normalizeSong(parsed);
     stopPlayback();
@@ -591,6 +592,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
             onNavigate={onNavigate}
             instrument={instrument}
             onReadyFile={loadReadySheet}
+            enableMedia
           />
         </aside>
       </div>

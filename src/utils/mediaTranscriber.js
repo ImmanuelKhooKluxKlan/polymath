@@ -171,8 +171,32 @@ function segmentPitchFrames(frames, duration, target) {
   return notes;
 }
 
+function buildDrumDraft(onsets, bpm, duration) {
+  const beatSeconds = 60 / Math.max(40, bpm || 120);
+  const minimumSpacing = Math.max(0.07, beatSeconds / 8);
+  const filtered = onsets.filter((time, index) => !index || time - onsets[index - 1] >= minimumSpacing);
+  return filtered.map((time, index) => {
+    const halfBeat = Math.round(time / (beatSeconds / 2));
+    const isSubdivision = Math.abs(time - halfBeat * (beatSeconds / 2)) < beatSeconds * 0.16
+      ? halfBeat % 2 === 1
+      : index % 3 === 2;
+    const beatIndex = Math.round(time / beatSeconds) % 4;
+    const note = isSubdivision ? 'F#2' : beatIndex === 1 || beatIndex === 3 ? 'D2' : 'C2';
+    return {
+      note,
+      midi: note === 'C2' ? 36 : note === 'D2' ? 38 : 42,
+      time: Number(time.toFixed(3)),
+      duration: note === 'F#2' ? 0.1 : 0.18,
+      velocity: note === 'C2' ? 0.9 : note === 'D2' ? 0.84 : 0.68,
+      hand: 'right',
+      confidence: 0.48,
+      source: 'on-device-rhythm-analysis',
+    };
+  }).filter((note) => note.time <= duration);
+}
+
 export function transcribePcmSamples(input, inputSampleRate, options = {}) {
-  const target = options.target === 'bass' ? 'bass' : 'melody';
+  const target = ['bass', 'drums'].includes(options.target) ? options.target : 'melody';
   const duration = input.length / inputSampleRate;
   if (!Number.isFinite(duration) || duration <= 0) throw new Error('No usable audio was found.');
   if (duration > 12 * 60) throw new Error('The first version supports recordings up to 12 minutes.');
@@ -199,7 +223,7 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
     if (rms > voicedThreshold && rms > previousRms * 1.42 && rms - previousRms > 0.006) {
       onsets.push(time);
     }
-    const pitch = rms > voicedThreshold
+    const pitch = target !== 'drums' && rms > voicedThreshold
       ? estimatePitch(mono, offset, pitchRange.minimum, pitchRange.maximum)
       : null;
     frames.push({ time, rms, pitch });
@@ -207,7 +231,9 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
   }
 
   const tempo = estimateTempo(onsets, duration);
-  const notes = segmentPitchFrames(frames, duration, target);
+  const notes = target === 'drums'
+    ? buildDrumDraft(onsets, tempo.bpm, duration)
+    : segmentPitchFrames(frames, duration, target);
   const averageConfidence = notes.length
     ? notes.reduce((sum, note) => sum + note.confidence, 0) / notes.length
     : 0;
@@ -233,7 +259,9 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
       tempoConfidence: Number(tempo.confidence.toFixed(3)),
       noteConfidence: Number(averageConfidence.toFixed(3)),
       limitations: [
-        'First-version analysis follows one dominant pitch line.',
+        target === 'drums'
+          ? 'First-version rhythm analysis estimates kick, snare, and hi-hat positions from attacks.'
+          : 'First-version analysis follows one dominant pitch line.',
         'Full-band recordings can create missing or incorrect notes.',
         'YouTube links are stored as references and are not downloaded.',
       ],

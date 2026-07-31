@@ -559,8 +559,11 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   }, [readLessonFile, user?.user_id]);
 
   async function loadReadyLesson(file) {
-    setStatus(`Reading ${file.name}…`);
-    const parsed = await readLessonFile(file);
+    const isBrowserFile = file && typeof file.arrayBuffer === 'function' && typeof file.name === 'string';
+    setStatus(isBrowserFile ? `Reading ${file.name}…` : `Mapping ${file?.title || 'audio draft'} onto guitar strings…`);
+    const parsed = isBrowserFile
+      ? await readLessonFile(file)
+      : songToGuitarLesson(file, { sourceFileName: file?.transcription?.sourceFileName || file?.title });
     if (!parsed.events.length) throw new Error('No playable guitar events were found.');
     stopLesson();
     setLesson(parsed);
@@ -783,6 +786,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
             onNavigate={onNavigate}
             instrument="guitar"
             onReadyFile={loadReadyLesson}
+            enableMedia
             readyDescription="A guitar ready-to-play sheet can contain chord/tab events or standard notes that Polymath Musician maps onto strings and frets."
           />
 
