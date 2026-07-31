@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import PdfTranslationPanel from './PdfTranslationPanel.jsx';
+import MediaTranslationPanel from './MediaTranslationPanel.jsx';
 
 export default function MusicUploadPanel({
   user,
@@ -11,6 +12,7 @@ export default function MusicUploadPanel({
   readyFormats = 'JSON · CSV · MIDI · MusicXML',
   readyDescription = 'A ready-to-play sheet can be read and played immediately by Polymath Musician.',
   compact = false,
+  enableMedia = false,
 }) {
   const [mode, setMode] = useState('ready');
   const [status, setStatus] = useState('Choose a ready-to-play sheet or translate a PDF music sheet.');
@@ -32,6 +34,11 @@ export default function MusicUploadPanel({
       setBusy(false);
       event.target.value = '';
     }
+  }
+
+  function handleMediaDraft(song) {
+    const result = onReadyFile(song);
+    return result || song;
   }
 
   return (
@@ -57,6 +64,18 @@ export default function MusicUploadPanel({
           <strong>Translate to a Ready-to-Play Sheet</strong>
           <small>Convert an instrumental PDF music sheet</small>
         </button>
+        {enableMedia && (
+          <button
+            type="button"
+            className={mode === 'media' ? 'active' : ''}
+            onClick={() => setMode('media')}
+            role="tab"
+            aria-selected={mode === 'media'}
+          >
+            <strong>Listen to Audio or Video</strong>
+            <small>Create a playable draft from your recording</small>
+          </button>
+        )}
       </div>
 
       {mode === 'ready' ? (
@@ -77,6 +96,10 @@ export default function MusicUploadPanel({
           </div>
           <p className="form-status">{status}</p>
         </div>
+      ) : mode === 'pdf' ? (
+        <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} />
+      ) : enableMedia ? (
+        <MediaTranslationPanel instrument={instrument} onReadyFile={handleMediaDraft} />
       ) : (
         <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} />
       )}

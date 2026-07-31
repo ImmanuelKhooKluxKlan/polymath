@@ -9,7 +9,8 @@ export default function SongUploader({ onUpload, user, setUser, onNavigate }) {
   const [status, setStatus] = useState('Ready for a playable sheet or song/style folder.');
 
   async function loadReadySheet(file) {
-    const song = await parseUploadedSongFile(file);
+    const isBrowserFile = file && typeof file.arrayBuffer === 'function' && typeof file.name === 'string';
+    const song = isBrowserFile ? await parseUploadedSongFile(file) : file;
     onUpload(song);
     return song;
   }
@@ -72,6 +73,7 @@ export default function SongUploader({ onUpload, user, setUser, onNavigate }) {
         onNavigate={onNavigate}
         instrument="piano"
         onReadyFile={loadReadySheet}
+        enableMedia
       />
 
       <label className="upload-folder-button">

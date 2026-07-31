@@ -1075,6 +1075,93 @@ button:disabled {
   gap: 9px;
 }
 
+.media-translation-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.media-analysis-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(150px, 0.6fr);
+  gap: 12px;
+}
+
+.media-analysis-grid label,
+.media-youtube-reference {
+  display: grid;
+  gap: 7px;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.media-analysis-grid input,
+.media-analysis-grid select,
+.media-youtube-reference input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 11px 12px;
+  font: inherit;
+}
+
+.media-youtube-reference span,
+.media-youtube-reference small {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.rights-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-weight: 750;
+}
+
+.rights-confirmation input {
+  margin-top: 3px;
+}
+
+.media-result-card {
+  display: grid;
+  gap: 11px;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+
+.media-result-card > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.media-result-card span,
+.media-result-card p {
+  color: var(--muted);
+}
+
+.media-confidence,
+.media-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.media-result-actions button {
+  flex: 1 1 180px;
+}
+
+@media (max-width: 680px) {
+  .media-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .upload-mode-grid > button {
   display: grid;
   min-width: 0;
