@@ -10,6 +10,7 @@ import { parseNote, midiToNote } from '../engine/noteMath.js';
 import { getSongDuration, normalizeSong } from '../engine/scheduler.js';
 import { apiRequest } from '../services/api.js';
 import { parseUploadedSongFile } from '../utils/songParser.js';
+import { estimateBandLoudness } from '../utils/bandLoudness.js';
 
 const GUITAR_TUNING = [40, 45, 50, 55, 59, 64];
 const ACCESS_LABELS = {
@@ -129,6 +130,10 @@ export default function BandPage({ user, setUser, onNavigate }) {
 
   const selectedBand = bands.find((band) => band.id === selectedId) || bands[0] || null;
   const duration = useMemo(() => bandDuration(selectedBand), [selectedBand]);
+  const balanceEstimates = useMemo(() => estimateBandLoudness(selectedBand), [selectedBand]);
+  const balanceByPartId = useMemo(() => (
+    new Map(balanceEstimates.map((estimate) => [estimate.partId, estimate]))
+  ), [balanceEstimates]);
 
   async function loadBands(preferredId = '') {
     setLoading(true);
@@ -486,6 +491,39 @@ export default function BandPage({ user, setUser, onNavigate }) {
     }
   }
 
+  async function autoBalanceBand() {
+    const estimates = balanceEstimates;
+    if (!estimates.length) {
+      setStatus('Load at least one playable band part before auto-balancing.');
+      return;
+    }
+    const volumeById = new Map(estimates.map((estimate) => [estimate.partId, estimate.volume]));
+    try {
+      if (selectedBand.localOnly) {
+        replaceBand({
+          ...selectedBand,
+          instruments: selectedBand.instruments.map((part) => (
+            volumeById.has(part.id) ? { ...part, volume: volumeById.get(part.id) } : part
+          )),
+        });
+      } else {
+        let latestBand = selectedBand;
+        for (const part of selectedBand.instruments) {
+          if (!volumeById.has(part.id)) continue;
+          const data = await apiRequest(`/api/bands/${selectedBand.id}/instruments/${part.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ volume: volumeById.get(part.id) }),
+          });
+          latestBand = data.band;
+        }
+        replaceBand(latestBand);
+      }
+      setStatus(`Smart balance applied to ${estimates.length} active part${estimates.length === 1 ? '' : 's'} with mix headroom protected.`);
+    } catch (error) {
+      setStatus(error.message || 'The band could not be auto-balanced.');
+    }
+  }
+
   async function removePart(part) {
     try {
       if (selectedBand.localOnly) {
@@ -734,6 +772,9 @@ export default function BandPage({ user, setUser, onNavigate }) {
                     <div className="band-stage-heading">
                       <div><p className="eyebrow">Band arrangement</p><h2>{selectedBand.instruments.length ? `${selectedBand.instruments.length} instrument parts` : 'The stage is empty'}</h2></div>
                       <div className="band-add-instrument">
+                        <button className="ghost" type="button" onClick={autoBalanceBand} disabled={!duration}>
+                          Smart auto-balance
+                        </button>
                         <select value={newInstrument} onChange={(event) => setNewInstrument(event.target.value)}>
                           {INSTRUMENTS.map((instrument) => <option key={instrument.id} value={instrument.id}>{instrument.label}</option>)}
                         </select>
@@ -780,6 +821,12 @@ export default function BandPage({ user, setUser, onNavigate }) {
                             <button className="ghost" type="button" onClick={() => updatePart(part, { muted: !part.muted })}>{part.muted ? 'Unmute' : 'Mute'}</button>
                             <button className="ghost" type="button" onClick={() => updatePart(part, { visualEnabled: !part.visualEnabled })}>{part.visualEnabled ? 'Hide instrument' : 'Show instrument'}</button>
                             <label><span>Volume {Math.round((part.volume ?? 0.82) * 100)}%</span><input type="range" min="0" max="1.2" step="0.05" value={part.volume ?? 0.82} onChange={(event) => updatePart(part, { volume: Number(event.target.value) })} /></label>
+                            {balanceByPartId.has(part.id) && (
+                              <small className="band-balance-hint">
+                                Suggested {Math.round(balanceByPartId.get(part.id).volume * 100)}%
+                                {' · '}{balanceByPartId.get(part.id).reasons.join(' · ')}
+                              </small>
+                            )}
                           </div>
                           {part.visualEnabled && (
                             <div className="band-instrument-visual">

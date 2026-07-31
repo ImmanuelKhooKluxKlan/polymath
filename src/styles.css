@@ -2352,7 +2352,7 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
 .band-bluegrass-preset p:last-child { max-width: 720px; color: var(--muted); line-height: 1.5; }
 .band-bluegrass-preset .primary { flex: 0 0 auto; }
 .band-stage-heading h2 { margin-top: 4px; }
-.band-add-instrument { display: grid; grid-template-columns: minmax(170px, 1fr) auto; gap: 8px; }
+.band-add-instrument { display: grid; grid-template-columns: auto minmax(170px, 1fr) auto; gap: 8px; }
 .band-empty-state {
   display: grid;
   min-height: 240px;
@@ -2428,6 +2428,11 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
 .band-part-controls { display: grid; grid-template-columns: auto auto 1fr; align-items: end; gap: 9px; }
 .band-part-controls label { display: grid; gap: 5px; color: var(--muted); font-size: 0.68rem; font-weight: 800; }
 .band-part-controls input { width: 100%; }
+.band-balance-hint {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  line-height: 1.45;
+}
 .band-part-card.visual-part { grid-column: 1 / -1; }
 .band-instrument-visual { overflow: hidden; border-radius: 18px; }
 .band-instrument-visual .instrument-teacher-surface { min-height: 0; }

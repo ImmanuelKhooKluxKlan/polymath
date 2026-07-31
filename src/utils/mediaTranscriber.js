@@ -373,6 +373,9 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
   const sortedRms = [...rmsValues].sort((a, b) => a - b);
   const noiseFloor = sortedRms[Math.floor(sortedRms.length * 0.05)] || 0;
   const medianRms = sortedRms[Math.floor(sortedRms.length * 0.5)] || 0;
+  const loudRms = sortedRms[Math.floor(sortedRms.length * 0.9)] || medianRms;
+  const sourceLoudnessDb = 20 * Math.log10(Math.max(loudRms, 1e-6));
+  const sourceNoiseFloorDb = 20 * Math.log10(Math.max(noiseFloor, 1e-6));
   const voicedThreshold = Math.max(0.008, Math.min(noiseFloor * 2.6, medianRms * 0.35));
   const pitchRange = target === 'bass'
     ? { minimum: 38, maximum: 260 }
@@ -444,6 +447,12 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
       detectedKey: cleaned.key ? `${cleaned.key.tonic} ${cleaned.key.mode}` : '',
       keyConfidence: Number((cleaned.key?.confidence || 0).toFixed(3)),
       cleanup: cleaned.diagnostics,
+      sourceAudio: {
+        loudnessDb: Number(sourceLoudnessDb.toFixed(2)),
+        noiseFloorDb: Number(sourceNoiseFloorDb.toFixed(2)),
+        dynamicRangeDb: Number(Math.max(0, sourceLoudnessDb - sourceNoiseFloorDb).toFixed(2)),
+        analysis: 'RMS estimate; not broadcast-standard LUFS',
+      },
       limitations: [
         target === 'drums'
           ? 'Rhythm analysis estimates kick, snare, and hi-hat positions from broadband attacks.'
