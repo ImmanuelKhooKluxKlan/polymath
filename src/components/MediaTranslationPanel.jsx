@@ -68,6 +68,7 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
   const [title, setTitle] = useState('');
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [target, setTarget] = useState(defaultTarget(instrument));
+  const [qualityMode, setQualityMode] = useState('clean');
   const [busy, setBusy] = useState(false);
   const [hasRights, setHasRights] = useState(false);
   const [status, setStatus] = useState('Choose a recording you own or have permission to process.');
@@ -100,9 +101,14 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
     if (!file || busy) return;
     setBusy(true);
     setResult(null);
-    setStatus('Listening for stable pitches, note changes, attacks, and tempo. Keep this tab open…');
+    setStatus('Listening for stable pitches, repairing octave errors, and aligning timing. Keep this tab open…');
     try {
-      const rawSong = await transcribeMediaFile(file, { target, title, youtubeUrl });
+      const rawSong = await transcribeMediaFile(file, {
+        target,
+        title,
+        youtubeUrl,
+        qualityMode,
+      });
       const song = adaptDraftToInstrument(rawSong, instrument);
       setResult(song);
       setStatus(`Draft complete: ${song.notes.length} playable notes at approximately ${song.bpm} BPM.`);
@@ -142,8 +148,8 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
         <p className="eyebrow">Audio/video to playable draft</p>
         <h3>Let Polymath listen to your recording</h3>
         <p className="muted">
-          This first version privately detects one dominant melody or bass line in your browser.
-          Clear solo recordings work best; full-band recordings need review.
+          Private on-device analysis follows one dominant melody or bass line, repairs likely
+          octave errors, infers the key, and cleans unstable notes. Clear stems still work best.
         </p>
       </div>
 
@@ -164,6 +170,14 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
             <option value="melody">Lead melody</option>
             <option value="bass">Bass line</option>
             <option value="drums">Rhythm / drum hits</option>
+          </select>
+        </label>
+        <label>
+          Draft cleanup
+          <select value={qualityMode} onChange={(event) => setQualityMode(event.target.value)} disabled={busy}>
+            <option value="clean">Clean — recommended for full mixes</option>
+            <option value="detailed">Detailed — keep more ornaments</option>
+            <option value="raw">Raw — diagnostic comparison</option>
           </select>
         </label>
       </div>
@@ -210,7 +224,21 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
           <div className="media-confidence">
             <span>Note confidence <strong>{percent(result.transcription.noteConfidence)}</strong></span>
             <span>Tempo confidence <strong>{percent(result.transcription.tempoConfidence)}</strong></span>
+            {result.transcription.detectedKey && (
+              <span>
+                Likely key <strong>{result.transcription.detectedKey}</strong>
+                {' '}({percent(result.transcription.keyConfidence)})
+              </span>
+            )}
           </div>
+          {result.transcription.cleanup && (
+            <p>
+              Cleanup: {result.transcription.cleanup.rawNotes} detected → {result.notes.length} playable;
+              {' '}{result.transcription.cleanup.rejected} unstable removed,
+              {' '}{result.transcription.cleanup.octaveRepairs} octave repairs,
+              {' '}{result.transcription.cleanup.merged} fragments merged.
+            </p>
+          )}
           <p>
             Confidence measures signal stability, not guaranteed musical correctness. Audition and edit dense band recordings.
           </p>

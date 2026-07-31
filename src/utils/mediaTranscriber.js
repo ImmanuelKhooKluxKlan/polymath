@@ -3,6 +3,8 @@ const FRAME_SIZE = 1024;
 const HOP_SIZE = 512;
 const MIN_NOTE_SECONDS = 0.09;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -171,21 +173,179 @@ function segmentPitchFrames(frames, duration, target) {
   return notes;
 }
 
-function buildDrumDraft(onsets, bpm, duration) {
+function inferKey(notes) {
+  const histogram = Array(12).fill(0);
+  notes.forEach((note) => {
+    histogram[((note.midi % 12) + 12) % 12] += note.duration * (0.35 + note.confidence);
+  });
+  const total = histogram.reduce((sum, value) => sum + value, 0);
+  if (!total) return null;
+
+  const candidates = [];
+  [MAJOR_PROFILE, MINOR_PROFILE].forEach((profile, modeIndex) => {
+    for (let tonic = 0; tonic < 12; tonic += 1) {
+      let score = 0;
+      for (let pitchClass = 0; pitchClass < 12; pitchClass += 1) {
+        score += histogram[pitchClass] * profile[(pitchClass - tonic + 12) % 12];
+      }
+      candidates.push({ tonic, mode: modeIndex ? 'minor' : 'major', score });
+    }
+  });
+  candidates.sort((first, second) => second.score - first.score);
+  const best = candidates[0];
+  const runnerUp = candidates[1];
+  const intervals = best.mode === 'major' ? [0, 2, 4, 5, 7, 9, 11] : [0, 2, 3, 5, 7, 8, 10];
+  return {
+    tonic: NOTE_NAMES[best.tonic],
+    tonicPitchClass: best.tonic,
+    mode: best.mode,
+    confidence: clamp((best.score - runnerUp.score) / Math.max(best.score, 0.001) * 5, 0.08, 0.85),
+    pitchClasses: intervals.map((interval) => (best.tonic + interval) % 12),
+  };
+}
+
+function nearestOctave(midi, reference) {
+  const choices = [midi - 24, midi - 12, midi, midi + 12, midi + 24];
+  return choices.reduce((best, candidate) => (
+    Math.abs(candidate - reference) < Math.abs(best - reference) ? candidate : best
+  ), midi);
+}
+
+function quantizeTime(value, grid, strength) {
+  const snapped = Math.round(value / grid) * grid;
+  return value + (snapped - value) * strength;
+}
+
+function cleanPitchNotes(notes, bpm, target, qualityMode) {
+  const rawKey = inferKey(notes);
+  if (qualityMode === 'raw') {
+    return {
+      notes,
+      key: rawKey,
+      diagnostics: { rawNotes: notes.length, rejected: 0, octaveRepairs: 0, scaleRepairs: 0, merged: 0 },
+    };
+  }
+
+  const diagnostics = {
+    rawNotes: notes.length,
+    rejected: 0,
+    octaveRepairs: 0,
+    scaleRepairs: 0,
+    merged: 0,
+  };
+  const minimumConfidence = qualityMode === 'detailed' ? 0.19 : target === 'bass' ? 0.24 : 0.29;
+  const minimumDuration = qualityMode === 'detailed' ? 0.085 : 0.115;
+  let filtered = notes.filter((note) => {
+    const keep = note.confidence >= minimumConfidence
+      && (note.duration >= minimumDuration || note.confidence >= 0.62);
+    if (!keep) diagnostics.rejected += 1;
+    return keep;
+  }).map((note) => ({ ...note }));
+
+  const registerCandidates = filtered
+    .filter((note) => note.confidence >= 0.38)
+    .map((note) => note.midi)
+    .sort((first, second) => first - second);
+  const registerCenter = registerCandidates[Math.floor(registerCandidates.length / 2)];
+  if (Number.isFinite(registerCenter)) {
+    filtered.forEach((note) => {
+      const repaired = nearestOctave(note.midi, registerCenter);
+      if (Math.abs(note.midi - registerCenter) > 12 && repaired !== note.midi && note.confidence < 0.68) {
+        note.midi = repaired;
+        note.note = midiToName(repaired);
+        diagnostics.octaveRepairs += 1;
+      }
+    });
+  }
+
+  for (let index = 1; index < filtered.length; index += 1) {
+    const previous = filtered[index - 1];
+    const current = filtered[index];
+    const gap = current.time - (previous.time + previous.duration);
+    if (gap > 2.5) continue;
+    const repaired = nearestOctave(current.midi, previous.midi);
+    const originalLeap = Math.abs(current.midi - previous.midi);
+    const repairedLeap = Math.abs(repaired - previous.midi);
+    if (originalLeap >= 12 && repairedLeap <= 7 && current.confidence < 0.75) {
+      current.midi = repaired;
+      current.note = midiToName(repaired);
+      diagnostics.octaveRepairs += 1;
+    } else if (originalLeap >= 12 && repairedLeap <= 7 && previous.confidence < 0.55) {
+      const repairedPrevious = nearestOctave(previous.midi, current.midi);
+      previous.midi = repairedPrevious;
+      previous.note = midiToName(repairedPrevious);
+      diagnostics.octaveRepairs += 1;
+    }
+  }
+
+  const key = rawKey || inferKey(filtered);
+  if (key && key.confidence >= 0.12) {
+    filtered.forEach((note) => {
+      const pitchClass = ((note.midi % 12) + 12) % 12;
+      if (key.pitchClasses.includes(pitchClass) || note.confidence >= 0.48) return;
+      const down = (pitchClass + 11) % 12;
+      const up = (pitchClass + 1) % 12;
+      if (key.pitchClasses.includes(down)) note.midi -= 1;
+      else if (key.pitchClasses.includes(up)) note.midi += 1;
+      else return;
+      note.note = midiToName(note.midi);
+      diagnostics.scaleRepairs += 1;
+    });
+  }
+
+  const merged = [];
+  filtered.forEach((note) => {
+    const previous = merged[merged.length - 1];
+    const gap = previous ? note.time - (previous.time + previous.duration) : Infinity;
+    const closePitch = previous && Math.abs(note.midi - previous.midi) <= 1;
+    const isShortWobble = note.duration < 0.24 || previous?.duration < 0.24;
+    if (previous && gap <= 0.13 && (note.midi === previous.midi || (closePitch && isShortWobble))) {
+      const previousWeight = previous.duration * previous.confidence;
+      const noteWeight = note.duration * note.confidence;
+      if (noteWeight > previousWeight && note.midi !== previous.midi) {
+        previous.midi = note.midi;
+        previous.note = midiToName(note.midi);
+      }
+      previous.duration = Number((note.time + note.duration - previous.time).toFixed(3));
+      previous.confidence = Number(Math.max(previous.confidence, note.confidence).toFixed(3));
+      previous.velocity = Number(((previous.velocity + note.velocity) / 2).toFixed(3));
+      diagnostics.merged += 1;
+    } else {
+      merged.push(note);
+    }
+  });
+
+  const beatSeconds = 60 / Math.max(40, bpm || 120);
+  const grid = beatSeconds / 4;
+  const quantizeStrength = qualityMode === 'detailed' ? 0.2 : 0.38;
+  merged.forEach((note) => {
+    const end = note.time + note.duration;
+    note.time = Number(Math.max(0, quantizeTime(note.time, grid, quantizeStrength)).toFixed(3));
+    const quantizedEnd = quantizeTime(end, grid, quantizeStrength);
+    note.duration = Number(Math.max(0.1, quantizedEnd - note.time).toFixed(3));
+  });
+
+  diagnostics.outputNotes = merged.length;
+  return { notes: merged, key, diagnostics };
+}
+
+function buildDrumDraft(onsets, bpm, duration, qualityMode) {
   const beatSeconds = 60 / Math.max(40, bpm || 120);
   const minimumSpacing = Math.max(0.07, beatSeconds / 8);
   const filtered = onsets.filter((time, index) => !index || time - onsets[index - 1] >= minimumSpacing);
-  return filtered.map((time, index) => {
+  const strength = qualityMode === 'raw' ? 0 : qualityMode === 'detailed' ? 0.35 : 0.68;
+  const notes = filtered.map((time, index) => {
     const halfBeat = Math.round(time / (beatSeconds / 2));
     const isSubdivision = Math.abs(time - halfBeat * (beatSeconds / 2)) < beatSeconds * 0.16
       ? halfBeat % 2 === 1
       : index % 3 === 2;
     const beatIndex = Math.round(time / beatSeconds) % 4;
     const note = isSubdivision ? 'F#2' : beatIndex === 1 || beatIndex === 3 ? 'D2' : 'C2';
+    const snappedTime = quantizeTime(time, beatSeconds / 4, strength);
     return {
       note,
       midi: note === 'C2' ? 36 : note === 'D2' ? 38 : 42,
-      time: Number(time.toFixed(3)),
+      time: Number(snappedTime.toFixed(3)),
       duration: note === 'F#2' ? 0.1 : 0.18,
       velocity: note === 'C2' ? 0.9 : note === 'D2' ? 0.84 : 0.68,
       hand: 'right',
@@ -193,10 +353,14 @@ function buildDrumDraft(onsets, bpm, duration) {
       source: 'on-device-rhythm-analysis',
     };
   }).filter((note) => note.time <= duration);
+  return notes.filter((note, index) => (
+    !index || note.note !== notes[index - 1].note || note.time - notes[index - 1].time >= 0.07
+  ));
 }
 
 export function transcribePcmSamples(input, inputSampleRate, options = {}) {
   const target = ['bass', 'drums'].includes(options.target) ? options.target : 'melody';
+  const qualityMode = ['raw', 'detailed'].includes(options.qualityMode) ? options.qualityMode : 'clean';
   const duration = input.length / inputSampleRate;
   if (!Number.isFinite(duration) || duration <= 0) throw new Error('No usable audio was found.');
   if (duration > 12 * 60) throw new Error('The first version supports recordings up to 12 minutes.');
@@ -231,9 +395,27 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
   }
 
   const tempo = estimateTempo(onsets, duration);
-  const notes = target === 'drums'
-    ? buildDrumDraft(onsets, tempo.bpm, duration)
+  const rawNotes = target === 'drums'
+    ? buildDrumDraft(onsets, tempo.bpm, duration, 'raw')
     : segmentPitchFrames(frames, duration, target);
+  const drumNotes = target === 'drums'
+    ? buildDrumDraft(onsets, tempo.bpm, duration, qualityMode)
+    : null;
+  const cleaned = target === 'drums'
+    ? {
+      notes: drumNotes,
+      key: null,
+      diagnostics: {
+        rawNotes: rawNotes.length,
+        rejected: rawNotes.length - drumNotes.length,
+        octaveRepairs: 0,
+        scaleRepairs: 0,
+        merged: 0,
+        outputNotes: drumNotes.length,
+      },
+    }
+    : cleanPitchNotes(rawNotes, tempo.bpm, target, qualityMode);
+  const notes = cleaned.notes;
   const averageConfidence = notes.length
     ? notes.reduce((sum, note) => sum + note.confidence, 0) / notes.length
     : 0;
@@ -251,18 +433,22 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
     duration,
     youtubeUrl: options.youtubeUrl?.trim() || '',
     transcription: {
-      version: 1,
-      mode: 'on-device-monophonic-draft',
+      version: 2,
+      mode: 'on-device-monophonic-quality-v2',
       target,
+      qualityMode,
       sourceFileName: options.sourceFileName || '',
       detectedOnsets: onsets.length,
       tempoConfidence: Number(tempo.confidence.toFixed(3)),
       noteConfidence: Number(averageConfidence.toFixed(3)),
+      detectedKey: cleaned.key ? `${cleaned.key.tonic} ${cleaned.key.mode}` : '',
+      keyConfidence: Number((cleaned.key?.confidence || 0).toFixed(3)),
+      cleanup: cleaned.diagnostics,
       limitations: [
         target === 'drums'
-          ? 'First-version rhythm analysis estimates kick, snare, and hi-hat positions from attacks.'
-          : 'First-version analysis follows one dominant pitch line.',
-        'Full-band recordings can create missing or incorrect notes.',
+          ? 'Rhythm analysis estimates kick, snare, and hi-hat positions from broadband attacks.'
+          : 'Analysis follows one dominant pitch line and cannot yet separate simultaneous instruments.',
+        'Cleanup reduces harmonic jumps and unstable fragments but cannot reconstruct notes hidden inside a dense full-band mix.',
         'YouTube links are stored as references and are not downloaded.',
       ],
     },
