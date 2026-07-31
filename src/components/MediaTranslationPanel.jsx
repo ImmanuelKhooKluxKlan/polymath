@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { transcribeMediaFile } from '../utils/mediaTranscriber.js';
+import { alignSongToLyrics, transcribeTimedLyrics } from '../utils/lyricAlignment.js';
 import { midiToNote } from '../engine/noteMath.js';
 
 const MAX_MEDIA_BYTES = 350 * 1024 * 1024;
@@ -69,6 +70,8 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [target, setTarget] = useState(defaultTarget(instrument));
   const [qualityMode, setQualityMode] = useState('clean');
+  const [alignLyrics, setAlignLyrics] = useState(true);
+  const [lyricsHint, setLyricsHint] = useState('');
   const [busy, setBusy] = useState(false);
   const [hasRights, setHasRights] = useState(false);
   const [status, setStatus] = useState('Choose a recording you own or have permission to process.');
@@ -101,15 +104,22 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
     if (!file || busy) return;
     setBusy(true);
     setResult(null);
-    setStatus('Listening for stable pitches, repairing octave errors, and aligning timing. Keep this tab open…');
+    setStatus(alignLyrics
+      ? 'Building the note draft, then using the model to timestamp every sung word…'
+      : 'Listening for stable pitches, repairing octave errors, and aligning timing. Keep this tab open…');
     try {
+      const analysisTarget = alignLyrics && target === 'melody' ? 'vocals' : target;
       const rawSong = await transcribeMediaFile(file, {
-        target,
+        target: analysisTarget,
         title,
         youtubeUrl,
         qualityMode,
       });
-      const song = adaptDraftToInstrument(rawSong, instrument);
+      const lyricResult = alignLyrics && target !== 'drums'
+        ? await transcribeTimedLyrics(file, { language: 'en', lyricsHint })
+        : null;
+      const alignedSong = lyricResult ? alignSongToLyrics(rawSong, lyricResult) : rawSong;
+      const song = adaptDraftToInstrument(alignedSong, instrument);
       setResult(song);
       setStatus(`Draft complete: ${song.notes.length} playable notes at approximately ${song.bpm} BPM.`);
     } catch (error) {
@@ -194,6 +204,36 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
         <small>The link is saved for comparison only. Polymath does not download YouTube media.</small>
       </label>
 
+      {target !== 'drums' && (
+        <div className="media-lyric-alignment">
+          <label className="rights-confirmation">
+            <input
+              type="checkbox"
+              checked={alignLyrics}
+              onChange={(event) => setAlignLyrics(event.target.checked)}
+              disabled={busy}
+            />
+            <span>Model-align instrument notes to each sung word — recommended</span>
+          </label>
+          {alignLyrics && (
+            <label>
+              Known lyrics or difficult words <span>(optional accuracy hint)</span>
+              <textarea
+                value={lyricsHint}
+                onChange={(event) => setLyricsHint(event.target.value)}
+                placeholder="Example: Kiss me down by the bearded barley…"
+                rows="3"
+                disabled={busy}
+              />
+              <small>
+                Paste lyrics you are authorized to use. The model uses them as spelling guidance;
+                timing still comes from the recording.
+              </small>
+            </label>
+          )}
+        </div>
+      )}
+
       <label className="rights-confirmation">
         <input
           type="checkbox"
@@ -238,6 +278,18 @@ export default function MediaTranslationPanel({ onReadyFile, instrument = 'piano
               {' '}{result.transcription.cleanup.octaveRepairs} octave repairs,
               {' '}{result.transcription.cleanup.merged} fragments merged.
             </p>
+          )}
+          {result.lyrics?.words?.length > 0 && (
+            <div className="media-lyrics-result">
+              <strong>{result.lyrics.words.length} words aligned to playable notes</strong>
+              {result.lyrics.hintAlignment?.applied && (
+                <span>
+                  Lyrics hint corrected {result.lyrics.hintAlignment.correctedWords} model word
+                  {result.lyrics.hintAlignment.correctedWords === 1 ? '' : 's'}
+                </span>
+              )}
+              <p>{result.lyrics.text}</p>
+            </div>
           )}
           <p>
             Confidence measures signal stability, not guaranteed musical correctness. Audition and edit dense band recordings.

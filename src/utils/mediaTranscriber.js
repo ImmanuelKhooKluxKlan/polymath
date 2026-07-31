@@ -359,7 +359,7 @@ function buildDrumDraft(onsets, bpm, duration, qualityMode) {
 }
 
 export function transcribePcmSamples(input, inputSampleRate, options = {}) {
-  const target = ['bass', 'drums'].includes(options.target) ? options.target : 'melody';
+  const target = ['bass', 'drums', 'vocals'].includes(options.target) ? options.target : 'melody';
   const qualityMode = ['raw', 'detailed'].includes(options.qualityMode) ? options.qualityMode : 'clean';
   const duration = input.length / inputSampleRate;
   if (!Number.isFinite(duration) || duration <= 0) throw new Error('No usable audio was found.');
@@ -379,7 +379,9 @@ export function transcribePcmSamples(input, inputSampleRate, options = {}) {
   const voicedThreshold = Math.max(0.008, Math.min(noiseFloor * 2.6, medianRms * 0.35));
   const pitchRange = target === 'bass'
     ? { minimum: 38, maximum: 260 }
-    : { minimum: 80, maximum: 1050 };
+    : target === 'vocals'
+      ? { minimum: 130, maximum: 1100 }
+      : { minimum: 80, maximum: 1050 };
   const frames = [];
   const onsets = [];
   let previousRms = 0;

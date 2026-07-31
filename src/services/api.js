@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+const API_BASE = import.meta.env?.VITE_API_BASE_URL || 'http://localhost:3000';
 const TOKEN_KEY = 'polymath_musician_auth_token';
 const LEGACY_TOKEN_KEY = 'polymath_muscian_auth_token';
 

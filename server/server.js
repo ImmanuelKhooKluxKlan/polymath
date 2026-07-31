@@ -33,6 +33,9 @@ const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS 
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
+const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
+const OPENAI_LYRIC_MODEL = String(process.env.OPENAI_LYRIC_MODEL || 'whisper-1').trim();
+const MAX_AUDIO_ANALYSIS_BYTES = 24 * 1024 * 1024;
 const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-5.6').trim();
 const OPENAI_PDF_DETAIL = ['low', 'high', 'auto'].includes(
   String(process.env.OPENAI_PDF_DETAIL || 'high').trim().toLowerCase(),
@@ -542,6 +545,101 @@ function validBandInstrument(value) {
   return Object.prototype.hasOwnProperty.call(INSTRUMENTS, value);
 }
 
+function lyricTokens(text) {
+  return String(text || '')
+    .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || [];
+}
+
+function normalizedLyricToken(token) {
+  return String(token || '').toLowerCase().replace(/[’]/g, "'").replace(/[^\p{L}\p{N}']/gu, '');
+}
+
+function lyricEditDistance(first, second) {
+  const previous = Array.from({ length: second.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= first.length; row += 1) {
+    const current = [row];
+    for (let column = 1; column <= second.length; column += 1) {
+      current[column] = Math.min(
+        current[column - 1] + 1,
+        previous[column] + 1,
+        previous[column - 1] + (first[row - 1] === second[column - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[second.length];
+}
+
+function retimeExpectedLyrics(expected, start, end) {
+  const weights = expected.map((word) => Math.max(1, normalizedLyricToken(word).length));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let cursor = start;
+  return expected.map((word, index) => {
+    const wordEnd = index === expected.length - 1
+      ? end
+      : cursor + (end - start) * weights[index] / total;
+    const result = {
+      word,
+      start: Number(cursor.toFixed(3)),
+      end: Number(wordEnd.toFixed(3)),
+      correctedByLyricsHint: true,
+    };
+    cursor = wordEnd;
+    return result;
+  });
+}
+
+function applyLyricsHint(words, hint) {
+  const expected = lyricTokens(hint);
+  if (expected.length < 2 || !words.length) return { words, correctedWords: 0, matchConfidence: 0 };
+  const recognized = words.map((word) => normalizedLyricToken(word.word));
+  const expectedNormalized = expected.map(normalizedLyricToken);
+  const minimumWindow = Math.max(2, expected.length - Math.ceil(expected.length * 0.2));
+  const maximumWindow = Math.min(words.length, expected.length + Math.ceil(expected.length * 0.2));
+  const candidates = [];
+
+  for (let length = minimumWindow; length <= maximumWindow; length += 1) {
+    for (let start = 0; start + length <= words.length; start += 1) {
+      const candidate = recognized.slice(start, start + length);
+      const distance = lyricEditDistance(candidate, expectedNormalized);
+      const confidence = 1 - distance / Math.max(candidate.length, expectedNormalized.length);
+      if (confidence >= 0.6) candidates.push({ start, length, confidence });
+    }
+  }
+  candidates.sort((first, second) => second.confidence - first.confidence || first.start - second.start);
+  const selected = [];
+  candidates.forEach((candidate) => {
+    const overlaps = selected.some((item) => (
+      candidate.start < item.start + item.length && item.start < candidate.start + candidate.length
+    ));
+    if (!overlaps) selected.push(candidate);
+  });
+  selected.sort((first, second) => first.start - second.start);
+  if (!selected.length) return { words, correctedWords: 0, matchConfidence: 0 };
+
+  const corrected = [];
+  let cursor = 0;
+  let correctedWords = 0;
+  selected.forEach((match) => {
+    corrected.push(...words.slice(cursor, match.start));
+    corrected.push(...retimeExpectedLyrics(
+      expected,
+      words[match.start].start,
+      words[match.start + match.length - 1].end,
+    ));
+    correctedWords += expected.reduce((count, word, index) => (
+      count + (normalizedLyricToken(word) !== recognized[match.start + index] ? 1 : 0)
+    ), 0);
+    cursor = match.start + match.length;
+  });
+  corrected.push(...words.slice(cursor));
+  return {
+    words: corrected,
+    correctedWords,
+    matchConfidence: selected.reduce((sum, match) => sum + match.confidence, 0) / selected.length,
+  };
+}
+
 app.use(cors({
   origin(origin, callback) {
     if (!origin || origin === CLIENT_ORIGIN || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
@@ -552,7 +650,7 @@ app.use(cors({
   },
   credentials: false,
 }));
-app.use(express.json({ limit: '18mb' }));
+app.use(express.json({ limit: '34mb' }));
 
 app.get('/', (req, res) => res.send('Polymath Musician backend is running'));
 app.get('/api/test', (req, res) => res.json({
@@ -561,6 +659,65 @@ app.get('/api/test', (req, res) => res.json({
   openaiConfigured: Boolean(String(process.env.OPENAI_API_KEY || '').trim()),
   openaiModel: OPENAI_MODEL,
 }));
+
+app.post('/api/audio/lyrics', requireAuth, async (req, res) => {
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return res.status(503).json({ error: 'Model lyric analysis is not configured on the server.' });
+  const filename = path.basename(String(req.body.filename || 'recording.wav')).replace(/[^a-z0-9_. -]/gi, '_');
+  const content = Buffer.from(String(req.body.contentBase64 || ''), 'base64');
+  if (!content.length || content.length > MAX_AUDIO_ANALYSIS_BYTES) {
+    return res.status(400).json({ error: 'The prepared analysis audio must be between 1 byte and 24 MB.' });
+  }
+  if (!/^RIFF/.test(content.subarray(0, 4).toString('ascii'))) {
+    return res.status(400).json({ error: 'The prepared lyric-analysis file is not a valid WAV file.' });
+  }
+
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([content], { type: 'audio/wav' }), filename);
+    form.append('model', OPENAI_LYRIC_MODEL);
+    form.append('response_format', 'verbose_json');
+    form.append('timestamp_granularities[]', 'word');
+    form.append('language', /^[a-z]{2}$/i.test(String(req.body.language || '')) ? String(req.body.language).toLowerCase() : 'en');
+    const lyricsHint = String(req.body.lyricsHint || '').trim().slice(0, 4000);
+    if (lyricsHint) form.append('prompt', lyricsHint);
+    const response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(Math.min(OPENAI_TIMEOUT_MS, 10 * 60 * 1000)),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = String(data?.error?.message || `OpenAI transcription failed (${response.status}).`);
+      return res.status(response.status === 401 ? 503 : 502).json({ error: message });
+    }
+    const rawWords = (data.words || []).map((word) => ({
+      word: String(word.word || '').trim(),
+      start: Number(word.start || 0),
+      end: Number(word.end || 0),
+    })).filter((word) => word.word && word.end > word.start);
+    const alignment = lyricsHint
+      ? applyLyricsHint(rawWords, lyricsHint)
+      : { words: rawWords, correctedWords: 0, matchConfidence: 0 };
+    return res.json({
+      text: alignment.words.map((word) => word.word).join(' '),
+      rawText: String(data.text || '').trim(),
+      language: String(data.language || ''),
+      duration: Number(data.duration || 0),
+      words: alignment.words,
+      lyricHintAlignment: {
+        applied: alignment.correctedWords > 0,
+        correctedWords: alignment.correctedWords,
+        matchConfidence: Number(alignment.matchConfidence.toFixed(3)),
+      },
+      provider: 'OpenAI',
+      model: OPENAI_LYRIC_MODEL,
+    });
+  } catch (error) {
+    return res.status(502).json({ error: error.message || 'Model lyric analysis failed.' });
+  }
+});
 
 app.get('/api/catalog', (req, res) => {
   res.json({
@@ -2428,5 +2585,9 @@ function resumePendingTranslationJobs() {
 }
 
 ensureStorage();
-resumePendingTranslationJobs();
-app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
+if (require.main === module) {
+  resumePendingTranslationJobs();
+  app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
+}
+
+module.exports = { app, applyLyricsHint };
