@@ -79,7 +79,6 @@ export default function App() {
   const [toneMode, setToneMode] = useState('pianella');
   const [autoplayVolume, setAutoplayVolume] = useState(1);
   const [pedalDown, setPedalDown] = useState(false);
-  const [autoplayMix, setAutoplayMix] = useState({ melody: 1, inner: 1, bass: 1, repeats: 1 });
   const [playbackEpoch, setPlaybackEpoch] = useState(0);
   const [teachingMode, setTeachingMode] = useState('regular');
   const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(15);
@@ -90,9 +89,7 @@ export default function App() {
   const [portraitDevice, setPortraitDevice] = useState(() => (
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
   ));
-  const [orientationPromptDismissed, setOrientationPromptDismissed] = useState(() => (
-    window.localStorage.getItem('polymath-orientation-prompt-dismissed') === 'true'
-  ));
+  const [orientationPromptDismissed, setOrientationPromptDismissed] = useState(false);
 
   const nextEventIndex = useRef(0);
   const nextPedalIndex = useRef(0);
@@ -133,6 +130,12 @@ export default function App() {
     const onHashChange = () => setRoute(readRoute());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
+    // Dismissal lasts only for this app session. Remove the legacy permanent
+    // preference so the recommendation can return the next time the app opens.
+    window.localStorage.removeItem('polymath-orientation-prompt-dismissed');
   }, []);
 
   useEffect(() => {
@@ -410,16 +413,6 @@ export default function App() {
     return ((now - startStamp.current) / 1000) * speed;
   }
 
-  function roleGainForEvent(event) {
-    const eventRole = String(event.scoreRole || '').toLowerCase();
-    let roleGain = 1;
-    if (eventRole.includes('bass')) roleGain = autoplayMix.bass;
-    else if (eventRole.includes('inner')) roleGain = autoplayMix.inner;
-    else if (eventRole.includes('melody') || eventRole.includes('top')) roleGain = autoplayMix.melody;
-    if (event.wasTrimmedForRetrigger) roleGain *= autoplayMix.repeats;
-    return roleGain;
-  }
-
   function scheduleVisualStrike(event, delaySeconds, visualDuration, runId) {
     const startTimer = window.setTimeout(() => {
       if (playbackRunId.current !== runId) return;
@@ -497,7 +490,7 @@ export default function App() {
         const audioStartAt = audioNow + delaySeconds;
         const noteDuration = Math.max(0.035, (event.audioDuration ?? event.duration) / speed);
         const visualDuration = Math.max(0.035, (event.visualDuration ?? event.duration) / speed);
-        const eventVelocity = Math.max(0.02, Math.min(1.15, Number(event.velocity ?? 0.7) * autoplayVolume * roleGainForEvent(event)));
+        const eventVelocity = Math.max(0.02, Math.min(1.15, Number(event.velocity ?? 0.7) * autoplayVolume));
 
         pianoAudio.playAt(event.note, eventVelocity, noteDuration, audioStartAt, {
           source: 'autoplay',
@@ -543,7 +536,7 @@ export default function App() {
       audioScheduler.current = null;
       animationFrame.current = null;
     };
-  }, [isPlaying, song, playbackNotes, speed, autoplayVolume, autoplayMix, toneMode, playbackEpoch, teachingMode, practiceRange, repeatSection]);
+  }, [isPlaying, song, playbackNotes, speed, autoplayVolume, toneMode, playbackEpoch, teachingMode, practiceRange, repeatSection]);
 
   function selectLearningSection(index) {
     const safeIndex = Math.max(0, Math.min(learningSections.length - 1, index));
@@ -658,8 +651,6 @@ export default function App() {
             setLeadTime={setLeadTime}
             toneMode={toneMode}
             setToneMode={setToneMode}
-            autoplayMix={autoplayMix}
-            setAutoplayMix={setAutoplayMix}
             autoplayVolume={autoplayVolume}
             setAutoplayVolume={setAutoplayVolume}
           />
@@ -712,10 +703,7 @@ export default function App() {
           <button
             type="button"
             className="ghost"
-            onClick={() => {
-              window.localStorage.setItem('polymath-orientation-prompt-dismissed', 'true');
-              setOrientationPromptDismissed(true);
-            }}
+            onClick={() => setOrientationPromptDismissed(true)}
           >
             Ignore
           </button>

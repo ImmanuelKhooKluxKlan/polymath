@@ -16,7 +16,9 @@ const PAYPAL_API_BASE = PAYPAL_ENV === 'sandbox'
   ? 'https://api-m.sandbox.paypal.com'
   : 'https://api-m.paypal.com';
 
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.POLYMATH_DATA_DIR
+  ? path.resolve(process.env.POLYMATH_DATA_DIR)
+  : path.join(__dirname, "data");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const DB_PATH = path.join(DATA_DIR, "database.json");
 
@@ -111,6 +113,19 @@ const PRODUCTS = {
   },
 };
 
+const DEFAULT_SITE_POLICIES = Object.freeze({
+  registrationEnabled: true,
+  minimumSignupAge: 0,
+  minimumPasswordLength: 8,
+  minimumMarketplacePriceMcoins: 10,
+  minimumWithdrawalMcoins: 100,
+  welcomeMcoins: WELCOME_MCOINS,
+  policyNotice: '',
+  termsUrl: '',
+  privacyUrl: '',
+  supportEmail: '',
+});
+
 function ensureStorage() {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   if (!fs.existsSync(DB_PATH)) {
@@ -175,6 +190,11 @@ function ensureStorage() {
       bands: [],
       bandMemberships: [],
       ledger: [],
+      promotions: [],
+      promotionRedemptions: [],
+      passwordResetEvents: [],
+      authEvents: [],
+      settings: { ...DEFAULT_SITE_POLICIES },
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(seed, null, 2));
   }
@@ -230,9 +250,19 @@ function normalizeDb(db) {
     'bands',
     'bandMemberships',
     'ledger',
+    'promotions',
+    'promotionRedemptions',
+    'passwordResetEvents',
+    'authEvents',
   ];
   arrays.forEach((key) => {
     if (!Array.isArray(normalized[key])) normalized[key] = [];
+  });
+  normalized.sessions.forEach((session) => {
+    if (!session.tokenHash && session.token) {
+      session.tokenHash = hashSessionToken(session.token);
+      delete session.token;
+    }
   });
   normalized.users.forEach((user) => {
     user.mcoins = Number(user.mcoins || 0);
@@ -243,6 +273,11 @@ function normalizeDb(db) {
     }
     user.pro = user.proStatus === 'ACTIVE' || user.pro === true;
   });
+  ensureFriendIds(normalized.users);
+  normalized.settings = {
+    ...DEFAULT_SITE_POLICIES,
+    ...(normalized.settings && typeof normalized.settings === 'object' ? normalized.settings : {}),
+  };
   return normalized;
 }
 
@@ -261,9 +296,101 @@ function id(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+function friendIdFromSeed(seed, attempt = 0) {
+  const suffix = crypto.createHash('sha256')
+    .update(`${seed}:${attempt}`)
+    .digest('hex')
+    .slice(0, 5);
+  return `user_${suffix}`;
+}
+
+function createFriendId(users, seed = crypto.randomUUID()) {
+  const used = new Set(users.map((user) => String(user.friendId || '').toLowerCase()).filter(Boolean));
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const candidate = friendIdFromSeed(seed, attempt);
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error('Could not allocate a unique Friend ID.');
+}
+
+function ensureFriendIds(users) {
+  const used = new Set();
+  users.forEach((user) => {
+    if (user.id === 'platform') return;
+    const current = String(user.friendId || '').trim().toLowerCase();
+    if (/^user_[a-f0-9]{5}$/.test(current) && !used.has(current)) {
+      user.friendId = current;
+      used.add(current);
+      return;
+    }
+    let attempt = 0;
+    let candidate;
+    do {
+      candidate = friendIdFromSeed(user.id, attempt);
+      attempt += 1;
+    } while (used.has(candidate));
+    user.friendId = candidate;
+    used.add(candidate);
+  });
+}
+
+function normalizeFriendId(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^user_[a-f0-9]{5}$/.test(normalized) ? normalized : '';
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
   return { salt, hash };
+}
+
+function hashSessionToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function createSession(db, userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  db.sessions.push({
+    tokenHash: hashSessionToken(token),
+    userId,
+    expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+    createdAt: new Date().toISOString(),
+  });
+  return token;
+}
+
+function clampInteger(value, minimum, maximum, fallback) {
+  const number = Math.floor(Number(value));
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(maximum, Math.max(minimum, number));
+}
+
+function sitePolicies(db) {
+  const raw = db?.settings && typeof db.settings === 'object' ? db.settings : {};
+  return {
+    registrationEnabled: raw.registrationEnabled !== false,
+    minimumSignupAge: clampInteger(raw.minimumSignupAge, 0, 120, DEFAULT_SITE_POLICIES.minimumSignupAge),
+    minimumPasswordLength: clampInteger(raw.minimumPasswordLength, 8, 64, DEFAULT_SITE_POLICIES.minimumPasswordLength),
+    minimumMarketplacePriceMcoins: clampInteger(raw.minimumMarketplacePriceMcoins, 1, 100000, DEFAULT_SITE_POLICIES.minimumMarketplacePriceMcoins),
+    minimumWithdrawalMcoins: clampInteger(raw.minimumWithdrawalMcoins, 1, 1000000, DEFAULT_SITE_POLICIES.minimumWithdrawalMcoins),
+    welcomeMcoins: clampInteger(raw.welcomeMcoins, 0, 100000, DEFAULT_SITE_POLICIES.welcomeMcoins),
+    policyNotice: String(raw.policyNotice || '').trim().slice(0, 1000),
+    termsUrl: String(raw.termsUrl || '').trim().slice(0, 500),
+    privacyUrl: String(raw.privacyUrl || '').trim().slice(0, 500),
+    supportEmail: String(raw.supportEmail || '').trim().toLowerCase().slice(0, 254),
+    updatedAt: raw.updatedAt || null,
+    updatedBy: raw.updatedBy || null,
+  };
+}
+
+function ageOnDate(birthDate, now = new Date()) {
+  const born = new Date(`${birthDate}T00:00:00Z`);
+  if (Number.isNaN(born.getTime()) || born > now) return -1;
+  let age = now.getUTCFullYear() - born.getUTCFullYear();
+  const beforeBirthday = now.getUTCMonth() < born.getUTCMonth()
+    || (now.getUTCMonth() === born.getUTCMonth() && now.getUTCDate() < born.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age;
 }
 
 function normalizePhone(phone = '') {
@@ -323,6 +450,7 @@ function restoreTranslationAllowance(user, bucket) {
 function safeUser(user) {
   return {
     user_id: user.id,
+    friend_id: user.friendId || '',
     name: user.name,
     email: user.email,
     phone: user.phone || '',
@@ -346,7 +474,8 @@ function bearerToken(req) {
 function authUser(req, db) {
   const token = bearerToken(req);
   if (!token) return null;
-  const session = db.sessions.find((item) => item.token === token);
+  const tokenHash = hashSessionToken(token);
+  const session = db.sessions.find((item) => item.tokenHash === tokenHash || item.token === token);
   if (!session || new Date(session.expiresAt).getTime() < Date.now()) return null;
   return db.users.find((user) => user.id === session.userId) || null;
 }
@@ -425,6 +554,117 @@ function addLedger(db, userId, amount, type, detail) {
   });
 }
 
+function normalizePromotionCode(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
+}
+
+function promotionRedemptionCounts(db, promotionId, userId = '') {
+  const matching = db.promotionRedemptions.filter((entry) => entry.promotionId === promotionId);
+  return {
+    total: matching.length,
+    user: userId ? matching.filter((entry) => entry.userId === userId).length : 0,
+  };
+}
+
+function publicPromotion(promotion, db) {
+  const counts = promotionRedemptionCounts(db, promotion.id);
+  return {
+    id: promotion.id,
+    code: promotion.code,
+    name: promotion.name,
+    kind: promotion.kind,
+    value: promotion.value,
+    minimumSpendMcoins: promotion.minimumSpendMcoins,
+    minimumAccountAgeDays: promotion.minimumAccountAgeDays,
+    maxRedemptions: promotion.maxRedemptions,
+    perUserLimit: promotion.perUserLimit,
+    startsAt: promotion.startsAt || null,
+    expiresAt: promotion.expiresAt || null,
+    active: promotion.active !== false,
+    redemptionCount: counts.total,
+    createdAt: promotion.createdAt,
+    updatedAt: promotion.updatedAt || null,
+  };
+}
+
+function promotionForUse(db, code, user, expectedKinds, spendMcoins = 0) {
+  const normalizedCode = normalizePromotionCode(code);
+  if (!normalizedCode) return { promotion: null, error: null };
+  const promotion = db.promotions.find((item) => item.code === normalizedCode);
+  if (!promotion) return { promotion: null, error: 'That voucher or coupon code is not valid.' };
+  if (promotion.active === false) return { promotion: null, error: 'That promotion is inactive.' };
+  if (!expectedKinds.includes(promotion.kind)) {
+    return { promotion: null, error: promotion.kind === 'mcoin_credit'
+      ? 'Redeem this Mcoin voucher from your Account page.'
+      : 'This coupon can only be used for a marketplace purchase.' };
+  }
+  const now = Date.now();
+  if (promotion.startsAt && new Date(promotion.startsAt).getTime() > now) {
+    return { promotion: null, error: 'That promotion has not started yet.' };
+  }
+  if (promotion.expiresAt && new Date(promotion.expiresAt).getTime() < now) {
+    return { promotion: null, error: 'That promotion has expired.' };
+  }
+  const counts = promotionRedemptionCounts(db, promotion.id, user.id);
+  if (promotion.maxRedemptions > 0 && counts.total >= promotion.maxRedemptions) {
+    return { promotion: null, error: 'That promotion has reached its redemption limit.' };
+  }
+  if (promotion.perUserLimit > 0 && counts.user >= promotion.perUserLimit) {
+    return { promotion: null, error: 'You have already used that promotion.' };
+  }
+  if (promotion.minimumAccountAgeDays > 0) {
+    const accountAge = (now - new Date(user.createdAt).getTime()) / 86400000;
+    if (!Number.isFinite(accountAge) || accountAge < promotion.minimumAccountAgeDays) {
+      return { promotion: null, error: `This promotion requires an account at least ${promotion.minimumAccountAgeDays} days old.` };
+    }
+  }
+  if (promotion.minimumSpendMcoins > 0 && spendMcoins < promotion.minimumSpendMcoins) {
+    return { promotion: null, error: `This coupon requires a minimum spend of ${promotion.minimumSpendMcoins} Mcoins.` };
+  }
+  return { promotion, error: null };
+}
+
+function friendPromotionForUse(db, friendId, user, spendMcoins = 0) {
+  const normalizedFriendId = normalizeFriendId(friendId);
+  if (!normalizedFriendId) {
+    return { promotion: null, friendUser: null, error: 'Enter a Friend ID in the format user_aa123.' };
+  }
+  const friendUser = db.users.find((candidate) => (
+    candidate.id !== 'platform' && candidate.friendId === normalizedFriendId
+  ));
+  if (!friendUser) {
+    return { promotion: null, friendUser: null, error: 'That Friend ID does not belong to a registered user.' };
+  }
+  if (friendUser.id === user.id) {
+    return { promotion: null, friendUser: null, error: 'Use a friend’s ID, not your own Friend ID.' };
+  }
+  const promotion = db.promotions
+    .filter((item) => item.kind === 'friend_id_percent' && item.active !== false)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+  if (!promotion) {
+    return { promotion: null, friendUser: null, error: 'The Friend ID voucher is not active right now.' };
+  }
+  const result = promotionForUse(
+    db,
+    promotion.code,
+    user,
+    ['friend_id_percent'],
+    spendMcoins,
+  );
+  return { ...result, friendUser };
+}
+
+function recordPromotionRedemption(db, promotion, user, details = {}) {
+  db.promotionRedemptions.push({
+    id: id('promo_use'),
+    promotionId: promotion.id,
+    code: promotion.code,
+    userId: user.id,
+    ...details,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 function sanitizeFilename(filename = 'asset') {
   return filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'asset';
 }
@@ -484,7 +724,9 @@ function publicListing(listing, db, viewerId = null) {
   return {
     ...listing,
     assetPath: undefined,
-    seller: seller ? { user_id: seller.id, name: seller.name } : { user_id: listing.sellerId, name: 'Seller' },
+    seller: seller
+      ? { user_id: seller.id, friend_id: seller.friendId || '', name: seller.name }
+      : { user_id: listing.sellerId, friend_id: '', name: 'Seller' },
     purchased,
     owned: viewerId === listing.sellerId,
   };
@@ -563,6 +805,8 @@ app.get('/api/test', (req, res) => res.json({
 }));
 
 app.get('/api/catalog', (req, res) => {
+  const db = readDb();
+  const { updatedBy: _updatedBy, ...publicPolicies } = sitePolicies(db);
   res.json({
     products: Object.values(PRODUCTS),
     withdrawalFeeRate: WITHDRAWAL_FEE_RATE,
@@ -570,6 +814,7 @@ app.get('/api/catalog', (req, res) => {
     marketplaceFeeRate: MARKETPLACE_FEE_RATE,
     mcoinsPerUsd: MCOINS_PER_USD,
     translationMcoinCost: TRANSLATION_MCOIN_COST,
+    policies: publicPolicies,
   });
 });
 
@@ -578,26 +823,42 @@ app.post('/api/auth/register', (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const phone = String(req.body.phone || '').trim();
   const password = String(req.body.password || '');
+  const birthDate = String(req.body.birthDate || '').trim();
+  const db = readDb();
+  const policies = sitePolicies(db);
+  if (!policies.registrationEnabled) return res.status(403).json({ error: 'New account registration is temporarily closed.' });
   if (name.length < 2) return res.status(400).json({ error: 'Name must contain at least 2 characters.' });
   if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email.' });
   if (!/^\+?[0-9 ()-]{7,24}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid phone number, including country code where possible.' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must contain at least 8 characters.' });
+  if (password.length < policies.minimumPasswordLength) {
+    return res.status(400).json({ error: `Password must contain at least ${policies.minimumPasswordLength} characters.` });
+  }
+  if (policies.minimumSignupAge > 0) {
+    if (!birthDate || ageOnDate(birthDate) < policies.minimumSignupAge) {
+      return res.status(400).json({ error: `You must be at least ${policies.minimumSignupAge} years old to register.` });
+    }
+  }
+  if ((policies.minimumSignupAge > 0 || policies.policyNotice || policies.termsUrl || policies.privacyUrl)
+    && req.body.termsAccepted !== true) {
+    return res.status(400).json({ error: 'Accept the registration rules and policies to continue.' });
+  }
 
-  const db = readDb();
   if (db.users.some((user) => user.email === email)) return res.status(409).json({ error: 'An account already exists for this email.' });
   const normalizedPhone = normalizePhone(phone);
   if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) {
     return res.status(409).json({ error: 'An account already exists for this phone number.' });
   }
   const { salt, hash } = hashPassword(password);
+  const userId = id('user');
   const user = {
-    id: id('user'),
+    id: userId,
+    friendId: createFriendId(db.users, userId),
     name,
     email,
     phone,
     passwordHash: hash,
     passwordSalt: salt,
-    mcoins: WELCOME_MCOINS,
+    mcoins: policies.welcomeMcoins,
     withdrawableMcoins: 0,
     pro: false,
     proStatus: 'INACTIVE',
@@ -607,12 +868,14 @@ app.post('/api/auth/register', (req, res) => {
       freeUsed: 0,
       proUsed: 0,
     },
+    ageRequirementConfirmedAt: policies.minimumSignupAge > 0 ? new Date().toISOString() : null,
+    policyAcceptedAt: req.body.termsAccepted === true ? new Date().toISOString() : null,
     createdAt: new Date().toISOString(),
   };
-  const token = crypto.randomBytes(32).toString('hex');
+  const token = createSession(db, user.id);
   db.users.push(user);
-  db.sessions.push({ token, userId: user.id, expiresAt: new Date(Date.now() + 30 * 86400000).toISOString() });
-  if (WELCOME_MCOINS > 0) addLedger(db, user.id, WELCOME_MCOINS, 'welcome_bonus', 'Configured welcome balance');
+  if (policies.welcomeMcoins > 0) addLedger(db, user.id, policies.welcomeMcoins, 'welcome_bonus', 'Configured welcome balance');
+  db.authEvents.push({ id: id('auth'), userId: user.id, type: 'register', createdAt: new Date().toISOString() });
   writeDb(db);
   res.status(201).json({ token, user: safeUser(user) });
 });
@@ -631,9 +894,15 @@ app.post('/api/auth/login', (req, res) => {
   const { hash } = hashPassword(password, user.passwordSalt);
   const matches = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.passwordHash, 'hex'));
   if (!matches) return res.status(401).json({ error: 'Email/phone or password is incorrect.' });
-  const token = crypto.randomBytes(32).toString('hex');
+  if (req.body.admin && !ADMIN_EMAILS.has(String(user.email || '').toLowerCase())) {
+    return res.status(403).json({ error: ADMIN_EMAILS.size ? 'This account is not an administrator.' : 'Set ADMIN_EMAILS in server/.env first.' });
+  }
+  const token = createSession(db, user.id);
   db.sessions = db.sessions.filter((session) => new Date(session.expiresAt).getTime() >= Date.now());
-  db.sessions.push({ token, userId: user.id, expiresAt: new Date(Date.now() + 30 * 86400000).toISOString() });
+  user.lastLoginAt = new Date().toISOString();
+  user.loginCount = Number(user.loginCount || 0) + 1;
+  db.authEvents.push({ id: id('auth'), userId: user.id, type: req.body.admin ? 'admin_login' : 'login', createdAt: user.lastLoginAt });
+  db.authEvents = db.authEvents.slice(-5000);
   writeDb(db);
   res.json({ token, user: safeUser(user) });
 });
@@ -644,7 +913,8 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 
 app.post('/api/auth/change-password', requireAuth, (req, res) => {
   const password = String(req.body.password || '');
-  if (password.length < 12) return res.status(400).json({ error: 'Your new password must contain at least 12 characters.' });
+  const minimumLength = Math.max(12, sitePolicies(req.db).minimumPasswordLength);
+  if (password.length < minimumLength) return res.status(400).json({ error: `Your new password must contain at least ${minimumLength} characters.` });
   const { salt, hash } = hashPassword(password);
   req.user.passwordHash = hash;
   req.user.passwordSalt = salt;
@@ -657,7 +927,8 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
 
 app.post('/api/auth/logout', requireAuth, (req, res) => {
   const token = bearerToken(req);
-  req.db.sessions = req.db.sessions.filter((session) => session.token !== token);
+  const tokenHash = hashSessionToken(token);
+  req.db.sessions = req.db.sessions.filter((session) => session.tokenHash !== tokenHash && session.token !== token);
   writeDb(req.db);
   res.json({ ok: true });
 });
@@ -711,13 +982,15 @@ app.post('/api/listings', requireAuth, (req, res) => {
   const contentBase64 = String(req.body.contentBase64 || '');
   const rightsConfirmed = req.body.rightsConfirmed === true;
   const feeConfirmed = req.body.feeConfirmed === true;
+  const policies = sitePolicies(req.db);
+  const minimumListingPrice = Math.ceil(policies.minimumMarketplacePriceMcoins / 10) * 10;
 
   if (!artist || !title) return res.status(400).json({ error: 'Artist and song title are required.' });
   if (!rightsConfirmed) return res.status(400).json({ error: 'Confirm that you own the rights or have permission to sell this file.' });
   if (!feeConfirmed) return res.status(400).json({ error: 'Confirm the 10% marketplace fee before publishing.' });
   if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
   if (!['JSON', 'PDF', 'MIDI', 'MUSICXML'].includes(format)) return res.status(400).json({ error: 'Unsupported listing format.' });
-  if (!Number.isFinite(priceMcoins) || priceMcoins < 10 || priceMcoins > 100000 || priceMcoins % 10 !== 0) return res.status(400).json({ error: 'Price must be between 10 and 100,000 Mcoins in 10-Mcoin increments so the 10% fee is exact.' });
+  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments so the 10% fee is exact.` });
   if (!contentBase64) return res.status(400).json({ error: 'Attach the song file before publishing.' });
 
   let bytes;
@@ -770,10 +1043,11 @@ app.put('/api/listings/:listingId', requireAuth, (req, res) => {
   const instrument = String(req.body.instrument ?? listing.instrument).trim().toLowerCase();
   const description = String(req.body.description ?? listing.description).trim().slice(0, 800);
   const priceMcoins = Math.floor(Number(req.body.priceMcoins ?? listing.priceMcoins));
+  const minimumListingPrice = Math.ceil(sitePolicies(req.db).minimumMarketplacePriceMcoins / 10) * 10;
   if (!artist || !title) return res.status(400).json({ error: 'Artist and song title are required.' });
   if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
-  if (!Number.isFinite(priceMcoins) || priceMcoins < 10 || priceMcoins > 100000 || priceMcoins % 10 !== 0) {
-    return res.status(400).json({ error: 'Price must be between 10 and 100,000 Mcoins in 10-Mcoin increments.' });
+  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) {
+    return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments.` });
   }
 
   Object.assign(listing, {
@@ -795,20 +1069,47 @@ app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
   if (listing.sellerId === req.user.id) return res.status(400).json({ error: 'You already own this listing.' });
   const existing = req.db.purchases.find((purchase) => purchase.listingId === listing.id && purchase.buyerId === req.user.id);
   if (existing) return res.json({ purchase: existing, user: safeUser(req.user) });
-  if (req.user.mcoins < listing.priceMcoins) return res.status(402).json({ error: 'Not enough Mcoins.' });
+
+  const promotionCode = String(req.body.promotionCode || '').trim();
+  const requestedFriendId = String(req.body.friendId || '').trim();
+  if (promotionCode && requestedFriendId) {
+    return res.status(400).json({ error: 'Use either a marketplace coupon or a Friend ID voucher, not both together.' });
+  }
+  const promotionResult = requestedFriendId
+    ? friendPromotionForUse(req.db, requestedFriendId, req.user, listing.priceMcoins)
+    : promotionForUse(
+      req.db,
+      promotionCode,
+      req.user,
+      ['marketplace_percent', 'marketplace_fixed'],
+      listing.priceMcoins,
+    );
+  if (promotionResult.error) return res.status(400).json({ error: promotionResult.error });
+  const promotion = promotionResult.promotion;
+  const friendUser = promotionResult.friendUser || null;
+  const discountMcoins = promotion
+    ? Math.min(
+      listing.priceMcoins,
+      ['marketplace_percent', 'friend_id_percent'].includes(promotion.kind)
+        ? Math.floor(listing.priceMcoins * promotion.value / 100)
+        : promotion.value,
+    )
+    : 0;
+  const buyerPaidMcoins = listing.priceMcoins - discountMcoins;
+  if (req.user.mcoins < buyerPaidMcoins) return res.status(402).json({ error: 'Not enough Mcoins.' });
 
   const seller = req.db.users.find((user) => user.id === listing.sellerId);
   const platform = req.db.users.find((user) => user.id === 'platform');
   const platformFeeMcoins = listing.priceMcoins / 10;
   const sellerEarningsMcoins = listing.priceMcoins - platformFeeMcoins;
 
-  req.user.mcoins -= listing.priceMcoins;
+  req.user.mcoins -= buyerPaidMcoins;
   if (seller) {
     seller.mcoins += sellerEarningsMcoins;
     seller.withdrawableMcoins = Number(seller.withdrawableMcoins || 0) + sellerEarningsMcoins;
   }
   if (platform) {
-    platform.mcoins += platformFeeMcoins;
+    platform.mcoins += platformFeeMcoins - discountMcoins;
   }
 
   const purchase = {
@@ -816,10 +1117,16 @@ app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
     listingId: listing.id,
     buyerId: req.user.id,
     sellerId: listing.sellerId,
-    amount: listing.priceMcoins,
+    amount: buyerPaidMcoins,
     currency: 'MCOINS',
-    amountMcoins: listing.priceMcoins,
+    amountMcoins: buyerPaidMcoins,
     grossMcoins: listing.priceMcoins,
+    buyerPaidMcoins,
+    promotionDiscountMcoins: discountMcoins,
+    promotionId: promotion?.id || null,
+    promotionCode: promotion?.code || null,
+    friendUserId: friendUser?.id || null,
+    friendId: friendUser?.friendId || null,
     platformFeeMcoins,
     platformFeeRate: MARKETPLACE_FEE_RATE,
     sellerEarningsMcoins,
@@ -828,11 +1135,21 @@ app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
     createdAt: new Date().toISOString(),
   };
   req.db.purchases.push(purchase);
-  addLedger(req.db, req.user.id, -listing.priceMcoins, 'listing_purchase', `${listing.title} (${listing.format})`);
+  addLedger(req.db, req.user.id, -buyerPaidMcoins, 'listing_purchase', `${listing.title} (${listing.format})${promotion ? `; coupon ${promotion.code}: -${discountMcoins} Mcoins` : ''}`);
   if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; 10% platform fee: ${platformFeeMcoins} Mcoins`);
-  if (platform) addLedger(req.db, platform.id, platformFeeMcoins, 'marketplace_fee', listing.title);
+  if (platform) addLedger(req.db, platform.id, platformFeeMcoins - discountMcoins, 'marketplace_fee', promotion ? `${listing.title}; sponsored discount ${discountMcoins} Mcoins` : listing.title);
+  if (promotion) {
+    recordPromotionRedemption(req.db, promotion, req.user, {
+      listingId: listing.id,
+      discountMcoins,
+      originalSpendMcoins: listing.priceMcoins,
+      finalSpendMcoins: buyerPaidMcoins,
+      friendUserId: friendUser?.id || null,
+      friendId: friendUser?.friendId || null,
+    });
+  }
   writeDb(req.db);
-  res.status(201).json({ purchase, user: safeUser(req.user) });
+  res.status(201).json({ purchase, user: safeUser(req.user), promotion: promotion ? publicPromotion(promotion, req.db) : null });
 });
 
 app.get('/api/listings/:listingId/download', requireAuth, (req, res) => {
@@ -1150,6 +1467,7 @@ app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
     const mcoins = Number(user.mcoins || 0);
     return {
       userId: user.id,
+      friendId: user.friendId || '',
       name: user.name,
       email: user.email,
       phone: user.phone || '',
@@ -1161,6 +1479,9 @@ app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
       purchaseCount: completedOrders.length + marketplacePurchases.length,
       proStatus: user.proStatus || (user.pro ? 'ACTIVE' : 'INACTIVE'),
       createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt || null,
+      loginCount: Number(user.loginCount || 0),
+      passwordResetAt: user.passwordResetAt || null,
     };
   }).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 
@@ -1171,6 +1492,15 @@ app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
   const totalUsdRevenue = rows.reduce((total, row) => total + row.usdSpent, 0);
   res.json({
     rows,
+    configuration: {
+      paypalEnvironment: PAYPAL_ENV,
+      paypalCheckoutConfigured: Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_SECRET_KEY),
+      paypalProPlanConfigured: Boolean(process.env.PAYPAL_PRO_PLAN_ID),
+      paypalWebhookConfigured: Boolean(process.env.PAYPAL_WEBHOOK_ID),
+      persistence: 'Atomic JSON file',
+      databasePath: path.relative(__dirname, DB_PATH).replace(/\\/g, '/'),
+      sessionStorage: 'SHA-256 token hashes with 30-day expiry',
+    },
     footer: {
       userCount: rows.length,
       totalUsdRevenue: Number(totalUsdRevenue.toFixed(2)),
@@ -1182,27 +1512,161 @@ app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
   });
 });
 
+app.get('/api/admin/policies', requireAuth, requireAdmin, (req, res) => {
+  res.json({ policies: sitePolicies(req.db) });
+});
+
+app.put('/api/admin/policies', requireAuth, requireAdmin, (req, res) => {
+  const next = {
+    registrationEnabled: req.body.registrationEnabled !== false,
+    minimumSignupAge: clampInteger(req.body.minimumSignupAge, 0, 120, 0),
+    minimumPasswordLength: clampInteger(req.body.minimumPasswordLength, 8, 64, 8),
+    minimumMarketplacePriceMcoins: clampInteger(req.body.minimumMarketplacePriceMcoins, 1, 100000, 10),
+    minimumWithdrawalMcoins: clampInteger(req.body.minimumWithdrawalMcoins, 1, 1000000, 100),
+    welcomeMcoins: clampInteger(req.body.welcomeMcoins, 0, 100000, 0),
+    policyNotice: String(req.body.policyNotice || '').trim().slice(0, 1000),
+    termsUrl: String(req.body.termsUrl || '').trim().slice(0, 500),
+    privacyUrl: String(req.body.privacyUrl || '').trim().slice(0, 500),
+    supportEmail: String(req.body.supportEmail || '').trim().toLowerCase().slice(0, 254),
+    updatedAt: new Date().toISOString(),
+    updatedBy: req.user.id,
+  };
+  if (next.supportEmail && !/^\S+@\S+\.\S+$/.test(next.supportEmail)) {
+    return res.status(400).json({ error: 'Enter a valid support email or leave it blank.' });
+  }
+  for (const [label, value] of [['Terms', next.termsUrl], ['Privacy', next.privacyUrl]]) {
+    if (value && !/^https?:\/\//i.test(value)) {
+      return res.status(400).json({ error: `${label} URL must begin with http:// or https://.` });
+    }
+  }
+  req.db.settings = next;
+  writeDb(req.db);
+  res.json({ policies: sitePolicies(req.db), message: 'Rules and policies saved.' });
+});
+
+app.get('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
+  const promotions = req.db.promotions
+    .slice()
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map((promotion) => publicPromotion(promotion, req.db));
+  res.json({ promotions });
+});
+
+app.post('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
+  const code = normalizePromotionCode(req.body.code);
+  const name = String(req.body.name || '').trim().slice(0, 100);
+  const kind = String(req.body.kind || '');
+  const isPercentage = ['marketplace_percent', 'friend_id_percent'].includes(kind);
+  const value = clampInteger(req.body.value, 1, isPercentage ? 100 : 100000, 1);
+  const startsAtDate = req.body.startsAt ? new Date(req.body.startsAt) : null;
+  const expiresAtDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
+  if (code.length < 3) return res.status(400).json({ error: 'Promotion code must contain at least 3 letters or numbers.' });
+  if (!name) return res.status(400).json({ error: 'Give the promotion a short name.' });
+  if (!['mcoin_credit', 'marketplace_percent', 'marketplace_fixed', 'friend_id_percent'].includes(kind)) {
+    return res.status(400).json({ error: 'Choose an Mcoin voucher, marketplace coupon, or Friend ID percentage voucher.' });
+  }
+  if (req.db.promotions.some((promotion) => promotion.code === code)) {
+    return res.status(409).json({ error: 'That promotion code already exists.' });
+  }
+  if ((startsAtDate && Number.isNaN(startsAtDate.getTime()))
+    || (expiresAtDate && Number.isNaN(expiresAtDate.getTime()))) {
+    return res.status(400).json({ error: 'Enter valid promotion dates.' });
+  }
+  if (startsAtDate && expiresAtDate && expiresAtDate <= startsAtDate) {
+    return res.status(400).json({ error: 'Expiry must be later than the start date.' });
+  }
+  const startsAt = startsAtDate ? startsAtDate.toISOString() : null;
+  const expiresAt = expiresAtDate ? expiresAtDate.toISOString() : null;
+  const promotion = {
+    id: id('promotion'),
+    code,
+    name,
+    kind,
+    value,
+    minimumSpendMcoins: kind === 'mcoin_credit' ? 0 : clampInteger(req.body.minimumSpendMcoins, 0, 100000, 0),
+    minimumAccountAgeDays: clampInteger(req.body.minimumAccountAgeDays, 0, 3650, 0),
+    maxRedemptions: clampInteger(req.body.maxRedemptions, 0, 1000000, 0),
+    perUserLimit: clampInteger(req.body.perUserLimit, 0, 100, 1),
+    startsAt,
+    expiresAt,
+    active: true,
+    createdBy: req.user.id,
+    createdAt: new Date().toISOString(),
+  };
+  if (kind === 'friend_id_percent') {
+    req.db.promotions
+      .filter((item) => item.kind === 'friend_id_percent' && item.active !== false)
+      .forEach((item) => {
+        item.active = false;
+        item.updatedAt = promotion.createdAt;
+        item.updatedBy = req.user.id;
+      });
+  }
+  req.db.promotions.push(promotion);
+  writeDb(req.db);
+  res.status(201).json({ promotion: publicPromotion(promotion, req.db), message: `${promotion.code} is ready to use.` });
+});
+
+app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, (req, res) => {
+  const promotion = req.db.promotions.find((item) => item.id === req.params.promotionId);
+  if (!promotion) return res.status(404).json({ error: 'Promotion not found.' });
+  if (req.body.active !== undefined) promotion.active = Boolean(req.body.active);
+  promotion.updatedAt = new Date().toISOString();
+  promotion.updatedBy = req.user.id;
+  writeDb(req.db);
+  res.json({
+    promotion: publicPromotion(promotion, req.db),
+    message: `${promotion.code} is now ${promotion.active ? 'active' : 'paused'}.`,
+  });
+});
+
+app.post('/api/promotions/redeem', requireAuth, (req, res) => {
+  const result = promotionForUse(req.db, req.body.code, req.user, ['mcoin_credit']);
+  if (result.error) return res.status(400).json({ error: result.error });
+  if (!result.promotion) return res.status(400).json({ error: 'Enter a voucher code.' });
+  const promotion = result.promotion;
+  req.user.mcoins += promotion.value;
+  addLedger(req.db, req.user.id, promotion.value, 'voucher_redeemed', promotion.code);
+  recordPromotionRedemption(req.db, promotion, req.user, { creditedMcoins: promotion.value });
+  writeDb(req.db);
+  res.json({
+    user: safeUser(req.user),
+    promotion: publicPromotion(promotion, req.db),
+    message: `${promotion.value.toLocaleString()} Mcoins were added to your wallet.`,
+  });
+});
+
 app.post('/api/admin/users/:userId/reset-password', requireAuth, requireAdmin, (req, res) => {
   const user = req.db.users.find((candidate) => candidate.id === req.params.userId && candidate.id !== 'platform');
   if (!user) return res.status(404).json({ error: 'User account not found.' });
   if (user.id === req.user.id) {
     return res.status(400).json({ error: 'Use your own account password-change flow instead of an administrator reset.' });
   }
-  const password = String(req.body.password || '');
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'The password must contain at least 8 characters.' });
+  const minimumLength = sitePolicies(req.db).minimumPasswordLength;
+  const generatedPassword = `PM-${crypto.randomBytes(Math.ceil(minimumLength * 0.8) + 4).toString('base64url')}`
+    .slice(0, Math.max(minimumLength, 15));
+  const password = String(req.body.password || generatedPassword);
+  if (password.length < minimumLength) {
+    return res.status(400).json({ error: `The temporary password must contain at least ${minimumLength} characters.` });
   }
   const { salt, hash } = hashPassword(password);
   user.passwordHash = hash;
   user.passwordSalt = salt;
-  user.mustChangePassword = false;
+  user.mustChangePassword = true;
   user.passwordResetAt = new Date().toISOString();
   user.passwordResetBy = req.user.id;
+  req.db.passwordResetEvents.push({
+    id: id('password_reset'),
+    userId: user.id,
+    adminUserId: req.user.id,
+    createdAt: user.passwordResetAt,
+  });
   req.db.sessions = req.db.sessions.filter((session) => session.userId !== user.id);
   writeDb(req.db);
   res.json({
     userId: user.id,
-    message: `Password updated for ${user.name}. All of their existing sessions were signed out.`,
+    temporaryPassword: password,
+    message: `Temporary password issued for ${user.name}. Existing sessions were signed out and a private password change is required at next sign-in.`,
   });
 });
 
@@ -1215,7 +1679,8 @@ app.post('/api/wallet/buy-pro', requireAuth, (req, res) => {
 app.post('/api/wallet/withdraw', requireAuth, (req, res) => {
   const amountMcoins = Math.floor(Number(req.body.amountMcoins));
   const payoutEmail = String(req.body.payoutEmail || '').trim().toLowerCase();
-  if (!Number.isFinite(amountMcoins) || amountMcoins < 100) return res.status(400).json({ error: 'Minimum withdrawal is 100 Mcoins.' });
+  const minimumWithdrawalMcoins = sitePolicies(req.db).minimumWithdrawalMcoins;
+  if (!Number.isFinite(amountMcoins) || amountMcoins < minimumWithdrawalMcoins) return res.status(400).json({ error: `Minimum withdrawal is ${minimumWithdrawalMcoins.toLocaleString()} Mcoins.` });
   if (req.user.mcoins < amountMcoins) return res.status(402).json({ error: 'Insufficient Mcoin balance.' });
   if (Number(req.user.withdrawableMcoins || 0) < amountMcoins) return res.status(402).json({ error: 'Only Mcoins earned from song sales can be withdrawn.' });
   if (!/^\S+@\S+\.\S+$/.test(payoutEmail)) return res.status(400).json({ error: 'Enter a valid payout email.' });
@@ -2427,6 +2892,11 @@ function resumePendingTranslationJobs() {
     }));
 }
 
-ensureStorage();
-resumePendingTranslationJobs();
-app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
+if (require.main === module) {
+  ensureStorage();
+  writeDb(readDb());
+  resumePendingTranslationJobs();
+  app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
+}
+
+module.exports = { app, ensureStorage, readDb, writeDb };

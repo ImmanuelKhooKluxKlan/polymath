@@ -30,6 +30,8 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
   const [filters, setFilters] = useState({ query: '', artist: '', instrument: '', format: '' });
   const [showPublish, setShowPublish] = useState(false);
   const [status, setStatus] = useState('');
+  const [promotionCode, setPromotionCode] = useState('');
+  const [friendId, setFriendId] = useState('');
   const [publish, setPublish] = useState({
     artistChoice: '',
     artist: '',
@@ -72,9 +74,12 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
       return;
     }
     try {
-      const data = await apiRequest(`/api/listings/${listing.id}/purchase`, { method: 'POST' });
+      const data = await apiRequest(`/api/listings/${listing.id}/purchase`, {
+        method: 'POST',
+        body: JSON.stringify({ promotionCode, friendId }),
+      });
       setUser(data.user);
-      setStatus(`Purchased “${listing.title}”. The ${FORMAT_DETAILS[listing.format]?.label || listing.format} is now available to download.`);
+      setStatus(`Purchased “${listing.title}”${data.purchase.promotionDiscountMcoins ? ` with ${data.purchase.promotionDiscountMcoins} Mcoins off` : ''}. The ${FORMAT_DETAILS[listing.format]?.label || listing.format} is now available to download.`);
       await loadListings();
     } catch (error) {
       setStatus(error.message);
@@ -145,6 +150,15 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
         <span><strong>$1 = 10 Mcoins</strong><small>Clear USD-backed wallet value</small></span>
         <span><strong>10% sale fee</strong><small>Sellers receive 90% of every sale</small></span>
         <span><strong>File type shown</strong><small>Know whether you are buying JSON, MIDI, or PDF</small></span>
+      </div>
+
+      <div className='market-coupon-bar'>
+        <div><p className='eyebrow'>Discount</p><span>Use one standard coupon or one friend’s short ID on your next purchase.</span></div>
+        <label>Coupon code<input value={promotionCode} maxLength='32' placeholder='SHEET20' disabled={Boolean(friendId)} onChange={(event) => setPromotionCode(event.target.value.toUpperCase())} /></label>
+        <span className='promotion-divider'>OR</span>
+        <label>Friend ID<input value={friendId} maxLength='10' placeholder='user_aa123' disabled={Boolean(promotionCode)} onChange={(event) => setFriendId(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 10))} /></label>
+        {(promotionCode || friendId) && <button className='ghost compact-action' type='button' onClick={() => { setPromotionCode(''); setFriendId(''); }}>Clear</button>}
+        {user?.friend_id && <small className='own-friend-id'>Your ID is {user.friend_id}. Self-referrals are not accepted.</small>}
       </div>
 
       {showPublish && (

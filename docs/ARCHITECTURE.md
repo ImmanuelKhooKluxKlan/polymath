@@ -12,6 +12,7 @@ React/Vite single-page application with route state managed in `src/App.jsx`.
 - `components/PdfTranslationPanel.jsx`: allowance/Mcoin choice, progress polling, ETA display, refund/failure messaging, and output download.
 - `pages/MarketplacePage.jsx`: format-aware listings, seller fee preview, purchases, and downloads.
 - `pages/AccountPage.jsx` and `pages/PaymentPage.jsx`: wallet, Pro allowance, USD/Mcoin catalogue, and PayPal entry points.
+- `pages/AdminDatabasePage.jsx`: sectioned administrator console for responsive device previews, promotion management, policy controls, user records, and forced password recovery.
 
 ## Audio and score layer
 
@@ -31,10 +32,11 @@ React/Vite single-page application with route state managed in `src/App.jsx`.
 - marketplace publishing, server-side file validation, exact 10% fee allocation, purchases, and protected downloads;
 - YouTube search proxy;
 - authenticated OpenAI PDF translation jobs, monthly allowance accounting, Mcoin charging, duplicate-job protection, five-minute ETA extensions, strict structured-output validation, and automatic restoration after failure.
+- backend-enforced signup/spending policies, Mcoin vouchers, marketplace coupons, reusable short Friend IDs, Friend ID percentage vouchers, redemption limits, administrator password-reset audits, and hashed 30-day sessions.
 
 ## Current persistence
 
-The bundled development backend uses a local JSON database and filesystem uploads. This keeps setup simple but is not safe for horizontally scaled production traffic.
+The bundled development backend uses an atomically replaced local JSON database and filesystem uploads. Passwords use salted scrypt hashes and new session records contain SHA-256 token hashes. This keeps setup simple but is not safe for horizontally scaled production traffic.
 
 ## Production target
 

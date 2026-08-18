@@ -51,6 +51,10 @@ The frontend only needs `VITE_API_BASE_URL` in the root `.env`.
 
 The backend uses `server/.env` for PayPal, YouTube, and direct OpenAI PDF translation. Create an active **USD 19.99/month** PayPal plan for `PAYPAL_PRO_PLAN_ID`. PDF translation remains safely unavailable, with no user charge, until `OPENAI_API_KEY` is configured.
 
+PayPal is the only checkout provider. Add both `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` for one-time Mcoin checkout. Pro subscriptions also require `PAYPAL_PRO_PLAN_ID`; live webhook updates require `PAYPAL_WEBHOOK_ID`.
+
+For local admin access, the provided `server/.env` authorizes `admin@polymath.local`. Register that account, then use **Admin sign in**. Replace `ADMIN_EMAILS` with your real administrator email before deployment.
+
 Never commit either real `.env` file.
 
 ## Validation commands
@@ -59,7 +63,25 @@ Never commit either real `.env` file.
 npm run lint
 npm run build
 node --check server/server.js
+npm --prefix server test
 ```
+
+## Administrator console
+
+Backend-authorized administrators sign in through **Account > Admin sign in** and use a focused console with separate Overview, Device Preview, Vouchers & Coupons, Rules & Policies, and Users & Passwords workspaces.
+
+- Device Preview covers small phones, modern and large phones, foldables, tablets, iPads, laptops, desktops, large desktops, landscape rotation, and custom CSS viewport sizes.
+- Mcoin vouchers credit a user's wallet from Account. Marketplace percentage and fixed-Mcoin coupons are applied by the backend during a purchase and support minimum spend, account-age, expiry, total-use, and per-user limits.
+- Every account receives a stable public Friend ID in the form `user_aa123`: the `user_` prefix plus exactly five easy-to-type hexadecimal characters. Internal relational IDs remain private and unchanged.
+- A Friend ID percentage voucher lets a signed-in buyer enter another registered user's Friend ID at marketplace checkout. The same Friend ID may be shared with any number of buyers; self-referrals are blocked, and entering an ID never signs in as or exposes the friend's account.
+- Rules control registration availability, minimum signup age, minimum password length, minimum marketplace price, minimum withdrawal, new-user Mcoins, and public policy links/notices.
+- Administrator password resets revoke every existing user session, issue a temporary password, and force the user to choose a private password at next sign-in.
+
+## Local data persistence
+
+The development backend persists registrations, users, salted scrypt password hashes, purchases, Mcoin ledger entries, policies, promotions, redemption records, password-reset audit events, and login events in `server/data/database.json`. Writes use a temporary file followed by a rename so an interrupted write is less likely to leave a partial database.
+
+Browser bearer tokens are returned only to the signed-in client. The database stores a SHA-256 hash of each new session token with its user ID and 30-day expiry rather than storing the raw token. This JSON database is suitable for one local server process; production should use the transactional database and managed session storage described below.
 
 ## Production boundary
 

@@ -1,6 +1,4 @@
 import { TONE_MODE_LABELS } from '../engine/audioEngine.js';
-import { downloadSongJson, downloadSongMidi } from '../utils/exporters.js';
-import YouTubeComparePanel from './YouTubeComparePanel.jsx';
 
 export default function ControlPanel({
   song,
@@ -12,8 +10,6 @@ export default function ControlPanel({
   setToneMode,
   autoplayVolume,
   setAutoplayVolume,
-  autoplayMix,
-  setAutoplayMix,
 }) {
   return (
     <aside className="control-panel">
@@ -51,22 +47,6 @@ export default function ControlPanel({
         </div>
       </details>
 
-      <details className="advanced-controls">
-        <summary>Advanced playback mix</summary>
-        <label className="field">Melody/top: {Math.round((autoplayMix?.melody ?? 1) * 100)}%<input type="range" min="0.35" max="1.25" step="0.05" value={autoplayMix?.melody ?? 1} onChange={(event) => setAutoplayMix({ ...(autoplayMix || {}), melody: Number(event.target.value) })} /></label>
-        <label className="field">Inner notes: {Math.round((autoplayMix?.inner ?? 1) * 100)}%<input type="range" min="0.25" max="1.10" step="0.05" value={autoplayMix?.inner ?? 1} onChange={(event) => setAutoplayMix({ ...(autoplayMix || {}), inner: Number(event.target.value) })} /></label>
-        <label className="field">Bass: {Math.round((autoplayMix?.bass ?? 1) * 100)}%<input type="range" min="0.35" max="1.20" step="0.05" value={autoplayMix?.bass ?? 1} onChange={(event) => setAutoplayMix({ ...(autoplayMix || {}), bass: Number(event.target.value) })} /></label>
-        <label className="field">Repeated-key soften: {Math.round((autoplayMix?.repeats ?? 1) * 100)}%<input type="range" min="0.25" max="1" step="0.05" value={autoplayMix?.repeats ?? 1} onChange={(event) => setAutoplayMix({ ...(autoplayMix || {}), repeats: Number(event.target.value) })} /></label>
-      </details>
-
-      <details className="song-tools">
-        <summary>Compare and export</summary>
-        <div className="transport export-row">
-          <button className="ghost" type="button" onClick={() => downloadSongJson(song)}>Export JSON</button>
-          <button className="ghost" type="button" onClick={() => downloadSongMidi(song)}>Export MIDI</button>
-        </div>
-        <YouTubeComparePanel source={song} instrument="piano" compact />
-      </details>
     </aside>
   );
 }

@@ -1,40 +1,44 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiRequest, setAuthToken } from '../services/api.js';
-
-const DEVICE_PRESETS = [
-  { id: 'phone', label: 'Phone', width: 390, height: 844 },
-  { id: 'large-phone', label: 'Large phone', width: 430, height: 932 },
-  { id: 'tablet', label: 'Tablet', width: 768, height: 1024 },
-  { id: 'ipad', label: 'iPad Pro', width: 1024, height: 1366 },
-  { id: 'laptop', label: 'Laptop', width: 1366, height: 768 },
-  { id: 'desktop', label: 'Desktop', width: 1920, height: 1080 },
-];
 
 export default function AccountPage({ user, setUser, onNavigate }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', identifier: '', email: '', phone: '', password: '' });
+  const [form, setForm] = useState({ name: '', identifier: '', email: '', phone: '', password: '', birthDate: '', termsAccepted: false });
   const [status, setStatus] = useState('');
   const [withdraw, setWithdraw] = useState({ amountMcoins: '', payoutEmail: '' });
   const [newPassword, setNewPassword] = useState({ password: '', confirm: '' });
-  const [deviceId, setDeviceId] = useState('phone');
-  const [previewRoute, setPreviewRoute] = useState('studio');
-  const [landscape, setLandscape] = useState(false);
-  const [previewScale, setPreviewScale] = useState(0.75);
-  const [previewVersion, setPreviewVersion] = useState(0);
+  const [voucherCode, setVoucherCode] = useState('');
+  const [policies, setPolicies] = useState({
+    registrationEnabled: true,
+    minimumSignupAge: 0,
+    minimumPasswordLength: 8,
+    minimumWithdrawalMcoins: 100,
+    policyNotice: '',
+    termsUrl: '',
+    privacyUrl: '',
+  });
+
+  useEffect(() => {
+    apiRequest('/api/catalog')
+      .then((data) => setPolicies((current) => ({ ...current, ...(data.policies || {}) })))
+      .catch(() => {});
+  }, []);
 
   async function submit(event) {
     event.preventDefault();
     setStatus('Working…');
     try {
-      const data = await apiRequest(`/api/auth/${mode}`, {
+      const authPath = mode === 'admin' ? 'login' : mode;
+      const data = await apiRequest(`/api/auth/${authPath}`, {
         method: 'POST',
-        body: JSON.stringify(mode === 'login'
-          ? { identifier: form.identifier, password: form.password }
-          : form),
+        body: JSON.stringify(mode === 'register'
+          ? form
+          : { identifier: form.identifier, password: form.password, admin: mode === 'admin' }),
       });
       setAuthToken(data.token);
       setUser(data.user);
       setStatus(`Welcome, ${data.user.name}.`);
+      if (mode === 'admin') onNavigate('admin-database');
     } catch (error) {
       setStatus(error.message);
     }
@@ -64,6 +68,22 @@ export default function AccountPage({ user, setUser, onNavigate }) {
     }
   }
 
+  async function redeemVoucher(event) {
+    event.preventDefault();
+    setStatus('Checking voucher...');
+    try {
+      const data = await apiRequest('/api/promotions/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ code: voucherCode }),
+      });
+      setUser(data.user);
+      setVoucherCode('');
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
   async function changePassword(event) {
     event.preventDefault();
     if (newPassword.password !== newPassword.confirm) {
@@ -84,31 +104,55 @@ export default function AccountPage({ user, setUser, onNavigate }) {
   }
 
   if (!user) {
+    const heading = mode === 'admin'
+      ? 'Sign in to the administrator dashboard.'
+      : mode === 'login'
+        ? 'Sign in to your music library.'
+        : 'Create your Polymath Musician account.';
+
     return (
       <section className="page-shell narrow-page">
         <div className="page-heading">
           <p className="eyebrow">Account</p>
-          <h1>{mode === 'login' ? 'Sign in to your music library.' : 'Create your Polymath Musician account.'}</h1>
-          <p>Accounts include a secure wallet, purchases, listings, messages, and monthly PDF translation usage.</p>
+          <h1>{heading}</h1>
+          <p>{mode === 'admin' ? 'Only backend-authorized administrator accounts can continue.' : 'Accounts include a secure wallet, purchases, listings, messages, and monthly PDF translation usage.'}</p>
         </div>
         <form className="account-card" onSubmit={submit}>
-          <div className="segmented-control">
+          <div className="segmented-control account-mode-control">
             <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button>
+            <button type="button" className={mode === 'admin' ? 'active' : ''} onClick={() => setMode('admin')}>Admin sign in</button>
             <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Register</button>
           </div>
           {mode === 'register' && (
             <>
+              {!policies.registrationEnabled && <p className='form-status'>New account registration is currently closed by the administrator.</p>}
+              {policies.policyNotice && <p className='policy-notice'>{policies.policyNotice}</p>}
+              {(policies.termsUrl || policies.privacyUrl) && (
+                <p className='policy-links'>
+                  {policies.termsUrl && <a href={policies.termsUrl} target='_blank' rel='noreferrer'>Terms</a>}
+                  {policies.privacyUrl && <a href={policies.privacyUrl} target='_blank' rel='noreferrer'>Privacy policy</a>}
+                </p>
+              )}
+              {policies.minimumSignupAge > 0 && (
+                <label className='field'>Date of birth<input type='date' value={form.birthDate} onChange={(event) => setForm({ ...form, birthDate: event.target.value })} required /></label>
+              )}
+              {(policies.minimumSignupAge > 0 || policies.policyNotice || policies.termsUrl || policies.privacyUrl) && (
+                <label className='rights-check'>
+                  <input type='checkbox' checked={form.termsAccepted} onChange={(event) => setForm({ ...form, termsAccepted: event.target.checked })} required />
+                  <span>I confirm I meet the signup requirements and accept the registration rules and policies.</span>
+                </label>
+              )}
               <label className="field">Display name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></label>
               <label className="field">Phone number<input type="tel" autoComplete="tel" placeholder="+65 8123 4567" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required /></label>
             </>
           )}
-          {mode === 'login' ? (
+          {mode !== 'register' ? (
             <label className="field">Email or phone number<input type="text" autoComplete="username" placeholder="Email or phone number" value={form.identifier} onChange={(event) => setForm({ ...form, identifier: event.target.value })} required /></label>
           ) : (
             <label className="field">Email<input type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label>
           )}
-          <label className="field">Password<input type="password" minLength="8" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
-          <button className="primary" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button>
+          <label className='field'>Password<input type='password' minLength={mode === 'register' ? policies.minimumPasswordLength : 8} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
+          <button className='primary' type='submit' disabled={mode === 'register' && !policies.registrationEnabled}>{mode === 'register' ? 'Create account' : mode === 'admin' ? 'Open admin dashboard' : 'Sign in'}</button>
           {status && <p className="form-status">{status}</p>}
         </form>
       </section>
@@ -124,8 +168,8 @@ export default function AccountPage({ user, setUser, onNavigate }) {
           <p>You signed in with an administrator-issued temporary password. Replace it before continuing.</p>
         </div>
         <form className="account-card" onSubmit={changePassword}>
-          <label className="field">New password<input type="password" minLength="12" autoComplete="new-password" value={newPassword.password} onChange={(event) => setNewPassword({ ...newPassword, password: event.target.value })} required /></label>
-          <label className="field">Confirm new password<input type="password" minLength="12" autoComplete="new-password" value={newPassword.confirm} onChange={(event) => setNewPassword({ ...newPassword, confirm: event.target.value })} required /></label>
+          <label className='field'>New password<input type='password' minLength={Math.max(12, policies.minimumPasswordLength)} autoComplete='new-password' value={newPassword.password} onChange={(event) => setNewPassword({ ...newPassword, password: event.target.value })} required /></label>
+          <label className='field'>Confirm new password<input type='password' minLength={Math.max(12, policies.minimumPasswordLength)} autoComplete='new-password' value={newPassword.confirm} onChange={(event) => setNewPassword({ ...newPassword, confirm: event.target.value })} required /></label>
           <button className="primary" type="submit">Save new password</button>
           {status && <p className="form-status">{status}</p>}
         </form>
@@ -139,21 +183,20 @@ export default function AccountPage({ user, setUser, onNavigate }) {
     remaining: user.pro ? 20 : 1,
     resetAt: '',
   };
-  const selectedDevice = DEVICE_PRESETS.find((device) => device.id === deviceId) || DEVICE_PRESETS[0];
-  const viewportWidth = landscape ? selectedDevice.height : selectedDevice.width;
-  const viewportHeight = landscape ? selectedDevice.width : selectedDevice.height;
-  const previewUrl = `${window.location.origin}${window.location.pathname}#${previewRoute}`;
-
   return (
     <section className="page-shell">
       <div className="page-heading">
         <p className="eyebrow">Account & wallet</p>
         <h1>{user.name}</h1>
-        <p>User ID: <code>{user.user_id}</code></p>
+        <div className='friend-id-card'>
+          <div><p className='eyebrow'>Your Friend ID</p><code>{user.friend_id || 'Loading...'}</code></div>
+          <button className='ghost compact-action' type='button' disabled={!user.friend_id} onClick={() => navigator.clipboard.writeText(user.friend_id)}>Copy</button>
+          <small>Share this short ID with friends. Many friends can use the same ID when an administrator activates a Friend ID voucher.</small>
+        </div>
         <div className="button-row profile-shortcuts">
           <button className="primary" type="button" onClick={() => onNavigate('your-songs')}>Open Your Songs</button>
           <button className="ghost" type="button" onClick={() => onNavigate('published-songs')}>View marketplace listings</button>
-          {user.admin && <button className="ghost" type="button" onClick={() => onNavigate('admin-database')}>Open database table</button>}
+          {user.admin && <button className='ghost' type='button' onClick={() => onNavigate('admin-database')}>Open admin console</button>}
         </div>
       </div>
       <div className="account-grid">
@@ -181,7 +224,7 @@ export default function AccountPage({ user, setUser, onNavigate }) {
           <h2>No additional platform withdrawal fee</h2>
           <p className="muted">The 10% marketplace fee is deducted at the time of sale. Only the seller’s 90% earnings become withdrawable. Payout-provider, tax, or currency-conversion charges may still apply.</p>
           <form onSubmit={requestWithdrawal}>
-            <label className="field">Mcoins to withdraw<input type="number" min="100" value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /></label>
+            <label className='field'>Mcoins to withdraw<input type='number' min={policies.minimumWithdrawalMcoins} value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /></label>
             <label className="field">PayPal payout email<input type="email" value={withdraw.payoutEmail} onChange={(event) => setWithdraw({ ...withdraw, payoutEmail: event.target.value })} required /></label>
             <button className="ghost full" type="submit">Request withdrawal</button>
           </form>
@@ -198,8 +241,18 @@ export default function AccountPage({ user, setUser, onNavigate }) {
           {!user.pro && <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'polymath-pro' })}>Subscribe to Pro</button>}
           <button className="ghost" type="button" onClick={logout}>Sign out</button>
         </article>
+        <article className='wallet-card'>
+          <p className='eyebrow'>Voucher</p>
+          <h2>Redeem Mcoins</h2>
+          <p className='muted'>Enter an administrator-issued Mcoin voucher. Marketplace discount coupons are entered on the Marketplace page.</p>
+          <form onSubmit={redeemVoucher}>
+            <label className='field'>Voucher code<input value={voucherCode} maxLength='32' placeholder='WELCOME50' onChange={(event) => setVoucherCode(event.target.value.toUpperCase())} required /></label>
+            <button className='ghost full' type='submit'>Redeem voucher</button>
+          </form>
+        </article>
       </div>
 
+      {/* Device lab moved to the focused admin console.
       {user.admin && (
         <section className="device-lab">
           <header className="device-lab-heading">
@@ -270,6 +323,7 @@ export default function AccountPage({ user, setUser, onNavigate }) {
           </div>
         </section>
       )}
+      */}
       {status && <p className="form-status centered-status">{status}</p>}
     </section>
   );

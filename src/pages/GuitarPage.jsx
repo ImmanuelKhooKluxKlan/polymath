@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import GuitarFallingNotes from '../components/GuitarFallingNotes.jsx';
 import GuitarTransport from '../components/GuitarTransport.jsx';
-import YouTubeComparePanel from '../components/YouTubeComparePanel.jsx';
 import MusicUploadPanel from '../components/MusicUploadPanel.jsx';
 import LearnModePanel from '../components/LearnModePanel.jsx';
 import { GUITAR_TONE_LABELS, guitarAudio } from '../engine/guitarEngine.js';
@@ -252,7 +251,6 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   const [toneMode, setToneMode] = useState('lounge');
   const [capoFret, setCapoFret] = useState(0);
   const [volume, setVolume] = useState(0.82);
-  const [status, setStatus] = useState('Upload a ready-to-play guitar sheet or choose a chord to begin.');
   const [playbackEpoch, setPlaybackEpoch] = useState(0);
   const [teachingMode, setTeachingMode] = useState('regular');
   const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(15);
@@ -554,35 +552,16 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
         if (cancelled || !loaded.length) return;
         setFreeLessons((previous) => [...previous.filter((candidate) => !loaded.some((item) => item.title === candidate.title)), ...loaded]);
       })
-      .catch((error) => setStatus(`Your purchased guitar songs could not be loaded: ${error.message}`));
+      .catch((error) => console.error(`Your purchased guitar songs could not be loaded: ${error.message}`));
     return () => { cancelled = true; };
   }, [readLessonFile, user?.user_id]);
 
   async function loadReadyLesson(file) {
-    setStatus(`Reading ${file.name}…`);
     const parsed = await readLessonFile(file);
     if (!parsed.events.length) throw new Error('No playable guitar events were found.');
     stopLesson();
     setLesson(parsed);
-    setStatus(`Loaded ${parsed.title} · ${parsed.events.length} events.`);
     return parsed;
-  }
-
-  async function uploadFolder(event) {
-    const files = [...(event.target.files || [])];
-    const file = files.find((candidate) => /\.(json|csv|mid|midi|musicxml|xml)$/i.test(candidate.name));
-    if (!file) {
-      setStatus('No supported ready-to-play guitar JSON, CSV, MIDI, or MusicXML file was found in that folder.');
-      event.target.value = '';
-      return;
-    }
-    try {
-      await loadReadyLesson(file);
-    } catch (error) {
-      setStatus(error.message || 'The guitar sheet could not be loaded.');
-    } finally {
-      event.target.value = '';
-    }
   }
 
   function chooseFreeLesson(title) {
@@ -590,7 +569,6 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     if (!selected) return;
     stopLesson();
     setLesson(selected);
-    setStatus(`Loaded guitar song: ${selected.title}.`);
   }
 
   async function playChord(chord) {
@@ -679,13 +657,12 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
           </details>
 
           <details className="song-tools">
-            <summary>Chord practice and comparison</summary>
+            <summary>Chord practice</summary>
             <div className="guitar-chord-grid">
               {Object.keys(CHORDS).map((chord) => (
                 <button key={chord} type="button" className={selectedChord === chord ? 'active' : ''} onClick={() => playChord(chord)}>{chord}</button>
               ))}
             </div>
-            <YouTubeComparePanel source={lesson} instrument="guitar" compact />
           </details>
         </aside>
 
@@ -770,12 +747,6 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
         </div>
 
         <aside className="guitar-upload-card">
-          <div>
-            <p className="eyebrow">Music sheet tools</p>
-            <h2>Play or translate a guitar sheet</h2>
-            <p className="muted">Upload a ready-to-play guitar sheet now, or translate an instrumental PDF into a ready-to-play sheet.</p>
-          </div>
-
           <MusicUploadPanel
             compact
             user={user}
@@ -783,47 +754,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
             onNavigate={onNavigate}
             instrument="guitar"
             onReadyFile={loadReadyLesson}
-            readyDescription="A guitar ready-to-play sheet can contain chord/tab events or standard notes that Polymath Musician maps onto strings and frets."
           />
-
-          <label className="upload-folder-button">
-            <input type="file" accept=".json,.csv,.mid,.midi,.musicxml,.xml" multiple webkitdirectory="" directory="" onChange={uploadFolder} />
-            Choose a ready-to-play guitar/style folder
-          </label>
-
-          <p className="form-status">{status}</p>
-
-          <div className="lesson-sequence vertical">
-            {lesson.events.map((event) => (
-              <button
-                type="button"
-                key={event.id}
-                className={activeEvent?.id === event.id ? 'active' : ''}
-                onClick={() => {
-                  beginSeek();
-                  previewSeek(event.time);
-                  commitSeek(event.time);
-                }}
-              >
-                <strong>{event.chord || `String ${Number(event.stringIndex) + 1} · fret ${event.fret}`}</strong>
-                <small>{event.time.toFixed(1)}s · {event.direction || 'pluck'}</small>
-              </button>
-            ))}
-          </div>
-
-          <details className="guitar-schema-details">
-            <summary>Ready-to-play guitar JSON format</summary>
-            <pre>{`{
-  "title": "My guitar lesson",
-  "artist": "Artist name",
-  "bpm": 80,
-  "events": [
-    { "time": 0, "chord": "C", "duration": 2 },
-    { "time": 2, "frets": [-1,0,2,2,1,0], "direction": "up" },
-    { "time": 4, "string": 1, "fret": 3, "duration": 0.5 }
-  ]
-}`}</pre>
-          </details>
         </aside>
       </div>
     </section>
