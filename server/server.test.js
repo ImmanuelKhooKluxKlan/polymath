@@ -8,6 +8,7 @@ const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polymath-admin-test-'
 process.env.POLYMATH_DATA_DIR = testDataDir;
 process.env.ADMIN_EMAILS = 'admin@example.test';
 process.env.PAYPAL_ENV = 'sandbox';
+process.env.MUSCRIPTOR_ENABLED = 'false';
 
 const { app } = require('./server');
 
@@ -52,6 +53,15 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
       },
     });
   }
+
+  const transcriptionCapability = await api('/api/media-transcriptions/capabilities');
+  assert.equal(transcriptionCapability.status, 200);
+  assert.equal(typeof transcriptionCapability.data.enabled, 'boolean');
+  assert.equal(transcriptionCapability.data.model, 'large');
+  assert.equal(transcriptionCapability.data.license, 'CC-BY-NC-4.0');
+
+  const unauthenticatedTranscription = await api('/api/media-transcriptions', { method: 'POST' });
+  assert.equal(unauthenticatedTranscription.status, 401);
 
   const adminRegistration = await api('/api/auth/register', {
     method: 'POST',
@@ -290,4 +300,5 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(database.promotionRedemptions.length, 4);
   assert.equal(database.promotionRedemptions.filter((entry) => entry.friendId === sellerFriendId).length, 2);
   assert.equal(database.passwordResetEvents.length, 1);
+  assert.ok(Array.isArray(database.mediaTranscriptionJobs));
 });

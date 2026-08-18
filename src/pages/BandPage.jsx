@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import InstrumentIcon from '../components/InstrumentIcon.jsx';
 import InstrumentTeacherSurface from '../components/InstrumentTeacherSurface.jsx';
+import MediaTranscriptionPanel from '../components/MediaTranscriptionPanel.jsx';
 import { INSTRUMENTS } from '../data/instruments.js';
 import { pianoAudio } from '../engine/audioEngine.js';
 import { ensembleAudio } from '../engine/ensembleEngine.js';
@@ -440,7 +441,7 @@ export default function BandPage({ user, setUser, onNavigate }) {
     }
   }
 
-  async function uploadGeneralScore(file) {
+  async function uploadGeneralScore(file, rethrow = false) {
     if (!file) return;
     setStatus(`Reading general music sheet: ${file.name}…`);
     try {
@@ -456,8 +457,11 @@ export default function BandPage({ user, setUser, onNavigate }) {
         replaceBand(data.band);
       }
       setStatus(`${parsed.title} is now the general sheet. Every instrument without its own sheet will play it.`);
+      return parsed;
     } catch (error) {
       setStatus(error.message || 'The general music sheet could not be loaded.');
+      if (rethrow) throw error;
+      return null;
     }
   }
 
@@ -722,6 +726,15 @@ export default function BandPage({ user, setUser, onNavigate }) {
                         <input type="file" accept=".json,.mid,.midi" onChange={(event) => uploadGeneralScore(event.target.files?.[0])} />
                         {selectedBand.generalScore ? 'Replace general sheet' : 'Upload JSON / MIDI'}
                       </label>
+                      <details className="band-media-transcription">
+                        <summary>Transcribe MP3 / Music Video with MuScriptor</summary>
+                        <MediaTranscriptionPanel
+                          user={user}
+                          onNavigate={onNavigate}
+                          instrument="band"
+                          onReadyFile={(file) => uploadGeneralScore(file, true)}
+                        />
+                      </details>
                     </div>
                     <div className="band-stage-heading">
                       <div><p className="eyebrow">Band arrangement</p><h2>{selectedBand.instruments.length ? `${selectedBand.instruments.length} instrument parts` : 'The stage is empty'}</h2></div>

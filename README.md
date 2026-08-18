@@ -13,8 +13,9 @@ Polymath Musician is a responsive browser music platform for learning, playing, 
 
 ## User-facing product model
 
-- **Upload Ready-to-Play Sheet:** accepts JSON, MIDI, MusicXML, XML, and CSV formats the platform can read immediately.
+- **Upload Ready-to-Play Sheet:** presents a minimal JSON/MIDI picker the platform can read immediately.
 - **Translate to a Ready-to-Play Sheet:** accepts a readable instrumental PDF, shows an initial estimated time of about 20 minutes, and extends the estimate in five-minute blocks when necessary.
+- **Transcribe Music Audio/Video:** signed-in users can upload MP3/audio or a music-video file for MuScriptor to turn into a ready-to-play JSON sheet. Piano and guitar use instrument constraints; Band automatically detects a multi-instrument mix.
 - **Free accounts:** 1 included PDF translation per month.
 - **Pro accounts:** 20 included PDF translations per month.
 - **Mcoin alternative:** every account can pay 30 Mcoins for a translation instead of using its allowance.
@@ -51,6 +52,10 @@ The frontend only needs `VITE_API_BASE_URL` in the root `.env`.
 
 The backend uses `server/.env` for PayPal, YouTube, and direct OpenAI PDF translation. Create an active **USD 19.99/month** PayPal plan for `PAYPAL_PRO_PLAN_ID`. PDF translation remains safely unavailable, with no user charge, until `OPENAI_API_KEY` is configured.
 
+Audio/video transcription uses the Python `muscriptor` package and the selected local checkpoint. The server streams uploads to disk, uses its bundled FFmpeg binary to prepare the first ten minutes as mono audio, runs one MuScriptor job at a time, and exposes model progress to the browser. Set `MUSCRIPTOR_PYTHON`, select `MUSCRIPTOR_MODEL=large`, and set `MUSCRIPTOR_ENABLED=true` only after confirming your use is permitted. MuScriptor's published model weights are **CC BY-NC 4.0 (non-commercial)**; this switch must remain off for commercial use unless you obtain separate permission from the rights holders.
+
+MuScriptor Large strongly benefits from a GPU. On the tested CPU-only Windows machine, a five-second sample required about 143 seconds of model generation. `MUSCRIPTOR_TIMEOUT_MINUTES` defaults to 360, and the sequential queue prevents concurrent Large-model loads; use a CUDA worker for practical full-song throughput.
+
 PayPal is the only checkout provider. Add both `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET_KEY` for one-time Mcoin checkout. Pro subscriptions also require `PAYPAL_PRO_PLAN_ID`; live webhook updates require `PAYPAL_WEBHOOK_ID`.
 
 For local admin access, the provided `server/.env` authorizes `admin@polymath.local`. Register that account, then use **Admin sign in**. Replace `ADMIN_EMAILS` with your real administrator email before deployment.
@@ -76,6 +81,14 @@ Backend-authorized administrators sign in through **Account > Admin sign in** an
 - A Friend ID percentage voucher lets a signed-in buyer enter another registered user's Friend ID at marketplace checkout. The same Friend ID may be shared with any number of buyers; self-referrals are blocked, and entering an ID never signs in as or exposes the friend's account.
 - Rules control registration availability, minimum signup age, minimum password length, minimum marketplace price, minimum withdrawal, new-user Mcoins, and public policy links/notices.
 - Administrator password resets revoke every existing user session, issue a temporary password, and force the user to choose a private password at next sign-in.
+
+## MuScriptor transcription flow
+
+- Piano, guitar, and every visual instrument studio expose **Transcribe Music Audio/Video (MuScriptor)** beside the JSON/MIDI and PDF choices.
+- Band exposes a blue expandable MuScriptor control under its general sheet; a completed full-mix transcription becomes the band's shared arrangement.
+- Accepted input includes MP3, WAV, FLAC, OGG, M4A, AAC, MP4, MOV, WebM, MKV, AVI, MPEG, and MPG up to 100 MB.
+- Users must sign in and confirm they have permission to transcribe the recording.
+- Raw media and prepared WAV files are deleted after success or failure. The protected ready-to-play JSON result remains available to its owner.
 
 ## Local data persistence
 

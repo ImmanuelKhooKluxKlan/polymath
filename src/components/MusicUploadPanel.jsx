@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import PdfTranslationPanel from './PdfTranslationPanel.jsx';
+import MediaTranscriptionPanel from './MediaTranscriptionPanel.jsx';
 
 export default function MusicUploadPanel({
   user,
@@ -47,10 +48,24 @@ export default function MusicUploadPanel({
         >
           <strong>Translate to Ready to Play Sheet (PDF)</strong>
         </button>
+        <button
+          type="button"
+          className={mode === 'media' ? 'active' : ''}
+          onClick={() => setMode('media')}
+        >
+          <strong>Transcribe Music Audio/Video (MuScriptor)</strong>
+        </button>
       </div>
 
       {mode === 'pdf' ? (
         <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} />
+      ) : mode === 'media' ? (
+        <MediaTranscriptionPanel
+          user={user}
+          onNavigate={onNavigate}
+          instrument={instrument}
+          onReadyFile={onReadyFile}
+        />
       ) : (
         status && <p className="form-status">{status}</p>
       )}

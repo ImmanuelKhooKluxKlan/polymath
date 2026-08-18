@@ -2,7 +2,11 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
+const multer = require('multer');
+const bundledFfmpegPath = require('ffmpeg-static');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -31,8 +35,35 @@ const PRO_TRANSLATION_LIMIT = 20;
 const TRANSLATION_INITIAL_ESTIMATE_MS = 20 * 60 * 1000;
 const TRANSLATION_EXTENSION_MS = 5 * 60 * 1000;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
+const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
+const MAX_MEDIA_SECONDS = 10 * 60;
 const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS || 0)));
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
+const MUSCRIPTOR_ENABLED = String(process.env.MUSCRIPTOR_ENABLED || 'false').trim().toLowerCase() === 'true';
+const MUSCRIPTOR_MODEL = ['small', 'medium', 'large'].includes(
+  String(process.env.MUSCRIPTOR_MODEL || 'large').trim().toLowerCase(),
+)
+  ? String(process.env.MUSCRIPTOR_MODEL || 'large').trim().toLowerCase()
+  : 'large';
+const MUSCRIPTOR_PYTHON = String(process.env.MUSCRIPTOR_PYTHON || '').trim() || (
+  process.platform === 'win32'
+    ? path.join(os.homedir(), 'muscriptor-eval-env', 'Scripts', 'python.exe')
+    : 'python3'
+);
+const MUSCRIPTOR_WORKER = String(process.env.MUSCRIPTOR_WORKER || '').trim()
+  || path.join(__dirname, 'muscriptor_worker.py');
+const MUSCRIPTOR_TIMEOUT_MS = Math.min(
+  12 * 60 * 60 * 1000,
+  Math.max(
+    10 * 60 * 1000,
+    Math.floor(Number(process.env.MUSCRIPTOR_TIMEOUT_MINUTES || 360)) * 60 * 1000,
+  ),
+);
+const FFMPEG_PATH = String(process.env.FFMPEG_PATH || '').trim() || bundledFfmpegPath;
+const MEDIA_EXTENSIONS = new Set([
+  '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac',
+  '.mp4', '.mov', '.webm', '.mkv', '.avi', '.mpeg', '.mpg',
+]);
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-5.6').trim();
@@ -113,6 +144,26 @@ const PRODUCTS = {
   },
 };
 
+const MUSCRIPTOR_INSTRUMENTS = {
+  piano: ['acoustic_piano', 'electric_piano'],
+  guitar: ['acoustic_guitar'],
+  'electric-guitar': ['clean_electric_guitar', 'distorted_electric_guitar'],
+  fiddle: ['violin'],
+  violin: ['violin'],
+  cello: ['cello'],
+  'upright-bass': ['contrabass', 'acoustic_bass'],
+  banjo: ['acoustic_guitar'],
+  mandolin: ['acoustic_guitar'],
+  dobro: ['acoustic_guitar'],
+  ukulele: ['acoustic_guitar'],
+  drums: ['drums'],
+  synth: ['synth_lead', 'synth_pad', 'electric_piano'],
+  flute: ['flutes'],
+  saxophone: ['soprano_and_alto_sax', 'tenor_sax', 'baritone_sax'],
+  trumpet: ['trumpet'],
+  clarinet: ['clarinet'],
+};
+
 const DEFAULT_SITE_POLICIES = Object.freeze({
   registrationEnabled: true,
   minimumSignupAge: 0,
@@ -187,6 +238,7 @@ function ensureStorage() {
       subscriptions: [],
       webhookEvents: [],
       scoreTranslationJobs: [],
+      mediaTranscriptionJobs: [],
       bands: [],
       bandMemberships: [],
       ledger: [],
@@ -247,6 +299,7 @@ function normalizeDb(db) {
     'subscriptions',
     'webhookEvents',
     'scoreTranslationJobs',
+    'mediaTranscriptionJobs',
     'bands',
     'bandMemberships',
     'ledger',
@@ -784,6 +837,238 @@ function validBandInstrument(value) {
   return Object.prototype.hasOwnProperty.call(INSTRUMENTS, value);
 }
 
+const mediaUpload = multer({
+  storage: multer.diskStorage({
+    destination(req, file, callback) {
+      ensureStorage();
+      callback(null, UPLOAD_DIR);
+    },
+    filename(req, file, callback) {
+      const extension = path.extname(file.originalname || '').toLowerCase();
+      callback(null, `media-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extension}`);
+    },
+  }),
+  limits: { fileSize: MAX_MEDIA_BYTES, files: 1, fields: 4 },
+  fileFilter(req, file, callback) {
+    const extension = path.extname(file.originalname || '').toLowerCase();
+    callback(null, MEDIA_EXTENSIONS.has(extension));
+  },
+});
+
+function muscriptorAvailability() {
+  const pythonExists = path.isAbsolute(MUSCRIPTOR_PYTHON)
+    ? fs.existsSync(MUSCRIPTOR_PYTHON)
+    : true;
+  const ffmpegExists = Boolean(FFMPEG_PATH && fs.existsSync(FFMPEG_PATH));
+  const workerExists = fs.existsSync(MUSCRIPTOR_WORKER);
+  let reason = '';
+  if (!MUSCRIPTOR_ENABLED) {
+    reason = 'MuScriptor is disabled. Enable it only for use permitted by the model license.';
+  } else if (!pythonExists) {
+    reason = 'The MuScriptor Python environment was not found.';
+  } else if (!workerExists) {
+    reason = 'The Polymath MuScriptor worker was not found.';
+  } else if (!ffmpegExists) {
+    reason = 'FFmpeg is unavailable for audio and video preparation.';
+  }
+  return {
+    enabled: MUSCRIPTOR_ENABLED && pythonExists && workerExists && ffmpegExists,
+    configured: MUSCRIPTOR_ENABLED,
+    model: MUSCRIPTOR_MODEL,
+    maxBytes: MAX_MEDIA_BYTES,
+    maxDurationSeconds: MAX_MEDIA_SECONDS,
+    timeoutMinutes: Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000),
+    acceptedExtensions: [...MEDIA_EXTENSIONS],
+    license: 'CC-BY-NC-4.0',
+    commercialUseAllowed: false,
+    reason,
+  };
+}
+
+function publicMediaTranscriptionJob(job) {
+  return {
+    id: job.id,
+    filename: job.filename,
+    title: job.title,
+    instrument: job.instrument,
+    model: job.model,
+    status: job.status,
+    stage: job.stage,
+    progress: Number(job.progress || 0),
+    noteCount: Number(job.noteCount || 0),
+    instrumentGroups: Array.isArray(job.instrumentGroups) ? job.instrumentGroups : [],
+    startedAt: job.startedAt,
+    completedAt: job.completedAt || null,
+    failedAt: job.failedAt || null,
+    error: job.error || '',
+    outputFilename: job.status === 'completed' ? job.outputFilename : undefined,
+  };
+}
+
+function updateMediaTranscriptionJob(jobId, changes) {
+  const db = readDb();
+  const job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
+  if (!job) return null;
+  Object.assign(job, changes);
+  writeDb(db);
+  return job;
+}
+
+function safeRemoveUpload(filePath) {
+  if (!filePath) return;
+  const resolved = path.resolve(filePath);
+  const uploadRoot = `${path.resolve(UPLOAD_DIR)}${path.sep}`;
+  if (!resolved.startsWith(uploadRoot)) return;
+  try {
+    fs.rmSync(resolved, { force: true });
+  } catch {
+    // Cleanup failure should not replace the useful transcription result/error.
+  }
+}
+
+function runChild(command, args, { timeoutMs, timeoutMessage, onLine } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
+    let stderr = '';
+    let stdoutBuffer = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      child.kill();
+      settled = true;
+      reject(new Error(timeoutMessage || 'The media-processing time limit was reached.'));
+    }, timeoutMs || 60 * 60 * 1000);
+
+    child.stdout.on('data', (chunk) => {
+      stdoutBuffer += chunk.toString();
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() || '';
+      lines.filter(Boolean).forEach((line) => onLine?.(line));
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr = `${stderr}${chunk.toString()}`.slice(-12000);
+    });
+    child.on('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (stdoutBuffer.trim()) onLine?.(stdoutBuffer.trim());
+      if (code === 0) resolve({ stderr });
+      else reject(new Error(stderr.trim() || `Transcription process exited with code ${code}.`));
+    });
+  });
+}
+
+function muscriptorConstraints(instrument) {
+  if (instrument === 'band') return [];
+  return MUSCRIPTOR_INSTRUMENTS[instrument] || [];
+}
+
+async function processMediaTranscriptionJob(jobId) {
+  let db = readDb();
+  let job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
+  if (!job || job.status !== 'processing') return;
+
+  const sourcePath = path.join(UPLOAD_DIR, job.sourcePath);
+  const preparedPath = path.join(UPLOAD_DIR, `${job.id}-prepared.wav`);
+  const outputPath = path.join(UPLOAD_DIR, `${job.id}-ready-to-play.json`);
+
+  try {
+    updateMediaTranscriptionJob(jobId, {
+      stage: 'Preparing audio from your upload',
+      progress: 12,
+    });
+    await runChild(FFMPEG_PATH, [
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', sourcePath,
+      '-vn', '-ac', '1', '-ar', '16000',
+      '-t', String(MAX_MEDIA_SECONDS),
+      preparedPath,
+    ], { timeoutMs: 10 * 60 * 1000 });
+
+    updateMediaTranscriptionJob(jobId, {
+      stage: `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
+      progress: 20,
+    });
+    const constraints = muscriptorConstraints(job.instrument);
+    const args = [
+      MUSCRIPTOR_WORKER,
+      '--input', preparedPath,
+      '--output', outputPath,
+      '--title', job.title,
+      '--instrument', job.instrument,
+      '--model', MUSCRIPTOR_MODEL,
+    ];
+    if (constraints.length) args.push('--instruments', constraints.join(','));
+
+    await runChild(MUSCRIPTOR_PYTHON, args, {
+      timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
+      timeoutMessage: `Music transcription took longer than the ${Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000)}-minute processing limit.`,
+      onLine(line) {
+        try {
+          const message = JSON.parse(line);
+          if (message.type === 'stage') {
+            updateMediaTranscriptionJob(jobId, { stage: message.stage });
+          } else if (message.type === 'progress' && Number(message.total) > 0) {
+            const ratio = Math.max(0, Math.min(1, Number(message.completed) / Number(message.total)));
+            updateMediaTranscriptionJob(jobId, {
+              stage: `Transcribing ${message.completed} of ${message.total} audio sections`,
+              progress: 22 + Math.round(ratio * 70),
+            });
+          }
+        } catch {
+          // MuScriptor diagnostic output is intentionally ignored here.
+        }
+      },
+    });
+
+    const result = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    db = readDb();
+    job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
+    if (!job || job.status !== 'processing') return;
+    job.outputPath = path.basename(outputPath);
+    job.outputFilename = `${sanitizeFilename(job.title || 'muscriptor-transcription')}.json`;
+    job.noteCount = Array.isArray(result.notes) ? result.notes.length : 0;
+    job.instrumentGroups = Array.isArray(result.instrumentGroups) ? result.instrumentGroups : [];
+    job.status = 'completed';
+    job.stage = 'Ready to play';
+    job.progress = 100;
+    job.completedAt = new Date().toISOString();
+    writeDb(db);
+    safeRemoveUpload(sourcePath);
+    safeRemoveUpload(preparedPath);
+  } catch (error) {
+    updateMediaTranscriptionJob(jobId, {
+      status: 'failed',
+      stage: 'Transcription stopped',
+      error: error.message || 'MuScriptor could not transcribe this recording.',
+      failedAt: new Date().toISOString(),
+    });
+    safeRemoveUpload(sourcePath);
+    safeRemoveUpload(preparedPath);
+    safeRemoveUpload(outputPath);
+  }
+}
+
+let mediaTranscriptionQueue = Promise.resolve();
+
+function enqueueMediaTranscription(jobId) {
+  mediaTranscriptionQueue = mediaTranscriptionQueue
+    .then(() => processMediaTranscriptionJob(jobId))
+    .catch((error) => console.error('MuScriptor queue error:', error));
+  return mediaTranscriptionQueue;
+}
+
 app.use(cors({
   origin(origin, callback) {
     if (!origin || origin === CLIENT_ORIGIN || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
@@ -803,6 +1088,10 @@ app.get('/api/test', (req, res) => res.json({
   openaiConfigured: Boolean(String(process.env.OPENAI_API_KEY || '').trim()),
   openaiModel: OPENAI_MODEL,
 }));
+
+app.get('/api/media-transcriptions/capabilities', (req, res) => {
+  res.json(muscriptorAvailability());
+});
 
 app.get('/api/catalog', (req, res) => {
   const db = readDb();
@@ -2736,6 +3025,96 @@ async function processTranslationJob(jobId) {
   }
 }
 
+app.get('/api/media-transcriptions', requireAuth, (req, res) => {
+  const jobs = req.db.mediaTranscriptionJobs
+    .filter((job) => job.userId === req.user.id)
+    .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
+    .slice(0, 20)
+    .map(publicMediaTranscriptionJob);
+  res.json({ jobs, capability: muscriptorAvailability() });
+});
+
+app.post('/api/media-transcriptions', requireAuth, (req, res) => {
+  const capability = muscriptorAvailability();
+  if (!capability.enabled) {
+    return res.status(503).json({ error: capability.reason, capability });
+  }
+
+  return mediaUpload.single('media')(req, res, (uploadError) => {
+    if (uploadError) {
+      const message = uploadError.code === 'LIMIT_FILE_SIZE'
+        ? 'Audio or video must be smaller than 100 MB.'
+        : uploadError.message || 'The audio or video upload failed.';
+      return res.status(400).json({ error: message });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'Choose an MP3, audio file, or music video.' });
+    }
+
+    const cleanupAndReject = (status, message) => {
+      safeRemoveUpload(req.file.path);
+      return res.status(status).json({ error: message });
+    };
+    const extension = path.extname(req.file.originalname || '').toLowerCase();
+    if (!MEDIA_EXTENSIONS.has(extension)) {
+      return cleanupAndReject(400, 'Use MP3, WAV, FLAC, M4A, MP4, MOV, WebM, MKV, or AVI.');
+    }
+    const instrument = String(req.body.instrument || '').trim().toLowerCase();
+    if (instrument !== 'band' && !validBandInstrument(instrument)) {
+      return cleanupAndReject(400, 'Choose a supported instrument or band transcription.');
+    }
+    if (String(req.body.rightsConfirmed || '').toLowerCase() !== 'true') {
+      return cleanupAndReject(400, 'Confirm that you have permission to transcribe this recording.');
+    }
+
+    const filename = sanitizeFilename(req.file.originalname || `recording${extension}`);
+    const title = String(req.body.title || path.basename(filename, extension) || 'Uploaded recording')
+      .trim()
+      .slice(0, 120);
+    const now = new Date().toISOString();
+    const job = {
+      id: id('media_tx'),
+      userId: req.user.id,
+      filename,
+      title,
+      instrument,
+      model: `muscriptor-${MUSCRIPTOR_MODEL}`,
+      modelLicense: 'CC-BY-NC-4.0',
+      sourcePath: path.basename(req.file.path),
+      status: 'processing',
+      stage: 'Queued for MuScriptor',
+      progress: 5,
+      startedAt: now,
+    };
+    req.db.mediaTranscriptionJobs.push(job);
+    writeDb(req.db);
+    setImmediate(() => enqueueMediaTranscription(job.id));
+    return res.status(202).json({ job: publicMediaTranscriptionJob(job), capability });
+  });
+});
+
+app.get('/api/media-transcriptions/:jobId', requireAuth, (req, res) => {
+  const job = req.db.mediaTranscriptionJobs.find((candidate) => (
+    candidate.id === req.params.jobId && candidate.userId === req.user.id
+  ));
+  if (!job) return res.status(404).json({ error: 'Music transcription job not found.' });
+  return res.json({ job: publicMediaTranscriptionJob(job), capability: muscriptorAvailability() });
+});
+
+app.get('/api/media-transcriptions/:jobId/download', requireAuth, (req, res) => {
+  const job = req.db.mediaTranscriptionJobs.find((candidate) => (
+    candidate.id === req.params.jobId && candidate.userId === req.user.id
+  ));
+  if (!job) return res.status(404).json({ error: 'Music transcription job not found.' });
+  if (job.status !== 'completed' || !job.outputPath) {
+    return res.status(409).json({ error: 'The ready-to-play transcription is not available yet.' });
+  }
+  return res.download(
+    path.join(UPLOAD_DIR, job.outputPath),
+    job.outputFilename || 'muscriptor-ready-to-play.json',
+  );
+});
+
 app.get('/api/score-translations/usage', requireAuth, (req, res) => {
   writeDb(req.db);
   res.json({
@@ -2892,10 +3271,19 @@ function resumePendingTranslationJobs() {
     }));
 }
 
+function resumePendingMediaTranscriptionJobs() {
+  if (!muscriptorAvailability().enabled) return;
+  const db = readDb();
+  db.mediaTranscriptionJobs
+    .filter((job) => job.status === 'processing' && job.sourcePath)
+    .forEach((job) => setImmediate(() => enqueueMediaTranscription(job.id)));
+}
+
 if (require.main === module) {
   ensureStorage();
   writeDb(readDb());
   resumePendingTranslationJobs();
+  resumePendingMediaTranscriptionJobs();
   app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
 }
 
