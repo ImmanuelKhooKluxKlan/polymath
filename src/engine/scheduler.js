@@ -1078,6 +1078,14 @@ export function normalizeSong(
       song.instrument ||
       'piano',
 
+    playbackMode:
+      song.playbackMode ||
+      'instrumental',
+
+    vocalMelodyIncluded:
+      song.vocalMelodyIncluded ===
+      true,
+
     artist:
       song.artist,
 

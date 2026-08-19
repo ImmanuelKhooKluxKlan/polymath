@@ -42,7 +42,8 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
   const pollTimer = useRef(null);
 
   const allowance = user?.translationAllowance || null;
-  const remaining = Number(allowance?.remaining || 0);
+  const unlimited = Boolean(user?.admin || allowance?.unlimited);
+  const remaining = unlimited ? null : Number(allowance?.remaining || 0);
   const planLabel = user?.pro ? 'Pro monthly translation' : 'Free monthly translation';
   const balanceAfter = Math.max(0, Number(user?.mcoins || 0) - 30);
 
@@ -93,7 +94,9 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
     try {
       await verifyPdfFile(selected);
       setFile(selected);
-      setStatus(`${selected.name} is ready. Choose how to pay for this translation.`);
+      setStatus(unlimited
+        ? `${selected.name} is ready. Administrator access includes this translation.`
+        : `${selected.name} is ready. Choose how to pay for this translation.`);
     } catch (error) {
       setFile(null);
       setStatus(error.message);
@@ -169,7 +172,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
           <p className="eyebrow">PDF translation</p>
           <h3>Translate to a Ready-to-Play Sheet</h3>
         </div>
-        <span className="price-chip">30 Mcoins · $3</span>
+        <span className="price-chip">{unlimited ? 'Administrator - Unlimited' : '30 Mcoins · $3'}</span>
       </div>
 
       <p className="muted">
@@ -184,17 +187,29 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
 
       <div className="allowance-summary">
         <div>
-          <span>{user.pro ? 'Pro allowance' : 'Free allowance'}</span>
-          <strong>{remaining} of {allowance?.limit ?? (user.pro ? 20 : 1)} remaining</strong>
+          <span>{unlimited ? 'Administrator access' : user.pro ? 'Pro allowance' : 'Free allowance'}</span>
+          <strong>{unlimited ? 'Unlimited PDF translations' : `${remaining} of ${allowance?.limit ?? (user.pro ? 20 : 1)} remaining`}</strong>
         </div>
         <div>
-          <span>Mcoin balance</span>
-          <strong>{Number(user.mcoins || 0).toLocaleString()} Mcoins</strong>
+          <span>{unlimited ? 'Translation cost' : 'Mcoin balance'}</span>
+          <strong>{unlimited ? 'No charge' : `${Number(user.mcoins || 0).toLocaleString()} Mcoins`}</strong>
         </div>
       </div>
 
       {!job && (
         <div className="translation-payment-grid">
+          {unlimited ? (
+            <button
+              className="primary"
+              type="button"
+              onClick={() => startTranslation('admin')}
+              disabled={!file || busy}
+            >
+              <span>Translate with admin access</span>
+              <small>Unlimited - no Mcoins charged</small>
+            </button>
+          ) : (
+            <>
           <button
             className="primary"
             type="button"
@@ -213,10 +228,12 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
             <span>Pay 30 Mcoins</span>
             <small>{Number(user.mcoins || 0) >= 30 ? `${balanceAfter} Mcoins after payment` : 'Insufficient Mcoins'}</small>
           </button>
+            </>
+          )}
         </div>
       )}
 
-      {remaining <= 0 && !job && (
+      {!unlimited && remaining <= 0 && !job && (
         <div className="quota-warning">
           <strong>0 translations remaining.</strong>
           <span>Pay 30 Mcoins{user.pro ? ' to continue.' : ' or buy Pro for 20 monthly translations.'}</span>
@@ -243,7 +260,9 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
           {Number(job.estimateExtensionCount || 0) > 0 && job.status === 'processing' && (
             <p className="estimate-note">Processing is taking longer than expected. The estimate has been extended by {Number(job.estimateExtensionCount) * 5} minutes.</p>
           )}
-          <p className="muted job-payment-line">Payment method: {job.paymentMethod === 'mcoins' ? '30 Mcoins' : 'monthly translation allowance'}.</p>
+          <p className="muted job-payment-line">
+            Payment method: {job.paymentMethod === 'admin' ? 'unlimited administrator access' : job.paymentMethod === 'mcoins' ? '30 Mcoins' : 'monthly translation allowance'}.
+          </p>
           {job.status === 'completed' && <button className="primary full" type="button" onClick={downloadResult}>Download Ready-to-Play Sheet</button>}
           {job.status === 'failed' && <p className="form-status">{job.error || 'The translation could not be completed. Your payment or allowance was restored.'}</p>}
         </div>

@@ -183,6 +183,7 @@ export default function AccountPage({ user, setUser, onNavigate }) {
     remaining: user.pro ? 20 : 1,
     resetAt: '',
   };
+  const unlimitedTranslations = Boolean(user.admin || allowance.unlimited);
   return (
     <section className="page-shell">
       <div className="page-heading">
@@ -212,11 +213,11 @@ export default function AccountPage({ user, setUser, onNavigate }) {
 
         <article className="wallet-card translation-allowance-card">
           <p className="eyebrow">PDF translation allowance</p>
-          <strong className="allowance-number">{allowance.remaining}</strong>
-          <h2>of {allowance.limit} remaining this month</h2>
-          <p className="muted">{user.pro ? 'Pro includes 20 PDF-to-ready-to-play translations each month.' : 'Free accounts include one PDF-to-ready-to-play translation each month.'}</p>
-          {allowance.resetAt && <small>Resets {new Date(allowance.resetAt).toLocaleDateString()}</small>}
-          <button className="ghost full" type="button" onClick={() => onNavigate(user.pro ? 'ensemble' : 'payment', user.pro ? {} : { productId: 'polymath-pro' })}>{user.pro ? 'Open Instrument Studio' : 'Get 20 with Pro'}</button>
+          <strong className="allowance-number">{unlimitedTranslations ? 'Unlimited' : allowance.remaining}</strong>
+          <h2>{unlimitedTranslations ? 'administrator translations' : `of ${allowance.limit} remaining this month`}</h2>
+          <p className="muted">{unlimitedTranslations ? 'Administrator access includes unlimited PDF and audio/video translations with no Mcoin charge.' : user.pro ? 'Pro includes 20 PDF-to-ready-to-play translations each month.' : 'Free accounts include one PDF-to-ready-to-play translation each month.'}</p>
+          {!unlimitedTranslations && allowance.resetAt && <small>Resets {new Date(allowance.resetAt).toLocaleDateString()}</small>}
+          <button className="ghost full" type="button" onClick={() => onNavigate(unlimitedTranslations || user.pro ? 'ensemble' : 'payment', unlimitedTranslations || user.pro ? {} : { productId: 'polymath-pro' })}>{unlimitedTranslations || user.pro ? 'Open Instrument Studio' : 'Get 20 with Pro'}</button>
         </article>
 
         <article className="wallet-card">
@@ -232,13 +233,15 @@ export default function AccountPage({ user, setUser, onNavigate }) {
 
         <article className="wallet-card">
           <p className="eyebrow">Membership</p>
-          <h2>{user.pro ? 'Polymath Musician Pro' : 'Free account'}</h2>
+          <h2>{user.admin ? 'Administrator - Unlimited' : user.pro ? 'Polymath Musician Pro' : 'Free account'}</h2>
           <p className="muted">
-            {user.pro
+            {user.admin
+              ? 'Administrator translation limits and translation charges are disabled for this account.'
+              : user.pro
               ? `Pro tools are active. PayPal subscription status: ${user.proStatus || 'ACTIVE'}.`
               : 'Pro is a recurring $19.99/month PayPal subscription with 20 PDF translations per month.'}
           </p>
-          {!user.pro && <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'polymath-pro' })}>Subscribe to Pro</button>}
+          {!user.admin && !user.pro && <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'polymath-pro' })}>Subscribe to Pro</button>}
           <button className="ghost" type="button" onClick={logout}>Sign out</button>
         </article>
         <article className='wallet-card'>

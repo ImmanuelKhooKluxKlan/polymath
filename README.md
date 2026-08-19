@@ -19,6 +19,7 @@ Polymath Musician is a responsive browser music platform for learning, playing, 
 - **Free accounts:** 1 included PDF translation per month.
 - **Pro accounts:** 20 included PDF translations per month.
 - **Mcoin alternative:** every account can pay 30 Mcoins for a translation instead of using its allowance.
+- **Administrator access:** backend-authorized administrator accounts receive unlimited PDF and audio/video translations without using a monthly allowance or Mcoins.
 - **USD peg:** $1 USD = 10 Mcoins, so one 30-Mcoin translation is the $3 equivalent.
 - **Marketplace:** listings visibly identify PDF versus ready-to-play formats. Polymath Musician retains a 10% marketplace fee and credits 90% to the seller.
 
@@ -52,7 +53,7 @@ The frontend only needs `VITE_API_BASE_URL` in the root `.env`.
 
 The backend uses `server/.env` for PayPal, YouTube, and direct OpenAI PDF translation. Create an active **USD 19.99/month** PayPal plan for `PAYPAL_PRO_PLAN_ID`. PDF translation remains safely unavailable, with no user charge, until `OPENAI_API_KEY` is configured.
 
-Audio/video transcription uses the Python `muscriptor` package and the selected local checkpoint. The server streams uploads to disk, uses its bundled FFmpeg binary to prepare the first ten minutes as mono audio, runs one MuScriptor job at a time, and exposes model progress to the browser. Set `MUSCRIPTOR_PYTHON`, select `MUSCRIPTOR_MODEL=large`, and set `MUSCRIPTOR_ENABLED=true` only after confirming your use is permitted. MuScriptor's published model weights are **CC BY-NC 4.0 (non-commercial)**; this switch must remain off for commercial use unless you obtain separate permission from the rights holders.
+Audio/video transcription uses the Python `muscriptor` package with either a local checkpoint or a remote GPU service configured through `MUSCRIPTOR_REMOTE_URL`. The server streams uploads to disk, uses its bundled FFmpeg binary to prepare the first ten minutes as mono audio, runs one MuScriptor job at a time, and exposes native model progress to the browser. Select `MUSCRIPTOR_MODEL=large` and set `MUSCRIPTOR_ENABLED=true` only after confirming your use is permitted. MuScriptor's published model weights are **CC BY-NC 4.0 (non-commercial)**; this switch must remain off for commercial use unless you obtain separate permission from the rights holders.
 
 MuScriptor Large strongly benefits from a GPU. On the tested CPU-only Windows machine, a five-second sample required about 143 seconds of model generation. `MUSCRIPTOR_TIMEOUT_MINUTES` defaults to 360, and the sequential queue prevents concurrent Large-model loads; use a CUDA worker for practical full-song throughput.
 
@@ -86,7 +87,7 @@ Backend-authorized administrators sign in through **Account > Admin sign in** an
 
 - Piano, guitar, and every visual instrument studio expose **Transcribe Music Audio/Video (MuScriptor)** beside the JSON/MIDI and PDF choices.
 - Band exposes a blue expandable MuScriptor control under its general sheet; a completed full-mix transcription becomes the band's shared arrangement.
-- Accepted input includes MP3, WAV, FLAC, OGG, M4A, AAC, MP4, MOV, WebM, MKV, AVI, MPEG, and MPG up to 100 MB.
+- Accepted input includes MP3, WAV, FLAC, OGG, M4A, AAC, MP4, MOV, WebM, MKV, AVI, MPEG, and MPG with no application-level file-size limit. Only the first ten minutes are processed.
 - Users must sign in and confirm they have permission to transcribe the recording.
 - Raw media and prepared WAV files are deleted after success or failure. The protected ready-to-play JSON result remains available to its owner.
 

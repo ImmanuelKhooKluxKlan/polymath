@@ -7,6 +7,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const multer = require('multer');
 const bundledFfmpegPath = require('ffmpeg-static');
+const { postProcessMuscriptorResult } = require('./muscriptorPostprocess');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -35,7 +36,6 @@ const PRO_TRANSLATION_LIMIT = 20;
 const TRANSLATION_INITIAL_ESTIMATE_MS = 20 * 60 * 1000;
 const TRANSLATION_EXTENSION_MS = 5 * 60 * 1000;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
-const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 const MAX_MEDIA_SECONDS = 10 * 60;
 const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS || 0)));
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
@@ -52,6 +52,8 @@ const MUSCRIPTOR_PYTHON = String(process.env.MUSCRIPTOR_PYTHON || '').trim() || 
 );
 const MUSCRIPTOR_WORKER = String(process.env.MUSCRIPTOR_WORKER || '').trim()
   || path.join(__dirname, 'muscriptor_worker.py');
+const MUSCRIPTOR_REMOTE_URL = String(process.env.MUSCRIPTOR_REMOTE_URL || '').trim().replace(/\/+$/, '');
+const MUSCRIPTOR_REMOTE_TOKEN = String(process.env.MUSCRIPTOR_REMOTE_TOKEN || '').trim();
 const MUSCRIPTOR_TIMEOUT_MS = Math.min(
   12 * 60 * 60 * 1000,
   Math.max(
@@ -472,13 +474,28 @@ function ensureTranslationUsage(user, now = new Date()) {
   return user.translationUsage;
 }
 
+function isAdministrator(user) {
+  return ADMIN_EMAILS.has(String(user?.email || '').toLowerCase());
+}
+
 function translationAllowance(user, now = new Date()) {
+  if (isAdministrator(user)) {
+    return {
+      plan: 'admin',
+      unlimited: true,
+      limit: null,
+      used: 0,
+      remaining: null,
+      resetAt: null,
+    };
+  }
   const usage = ensureTranslationUsage(user, now);
   const isPro = Boolean(user.pro);
   const limit = isPro ? PRO_TRANSLATION_LIMIT : FREE_TRANSLATION_LIMIT;
   const used = isPro ? usage.proUsed : usage.freeUsed;
   return {
     plan: isPro ? 'pro' : 'free',
+    unlimited: false,
     limit,
     used: Math.min(limit, used),
     remaining: Math.max(0, limit - used),
@@ -488,6 +505,7 @@ function translationAllowance(user, now = new Date()) {
 
 function deductTranslationAllowance(user) {
   const allowance = translationAllowance(user);
+  if (allowance.unlimited) return 'admin';
   if (allowance.remaining <= 0) return null;
   if (allowance.plan === 'pro') user.translationUsage.proUsed += 1;
   else user.translationUsage.freeUsed += 1;
@@ -513,7 +531,7 @@ function safeUser(user) {
     proStatus: user.proStatus || (user.pro ? 'ACTIVE' : 'INACTIVE'),
     paypalSubscriptionId: user.paypalSubscriptionId || null,
     translationAllowance: translationAllowance(user),
-    admin: ADMIN_EMAILS.has(String(user.email || '').toLowerCase()),
+    admin: isAdministrator(user),
     mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,
   };
@@ -546,7 +564,7 @@ function requireAdmin(req, res, next) {
   if (ADMIN_EMAILS.size === 0) {
     return res.status(503).json({ error: 'Admin access is not configured. Set ADMIN_EMAILS on the backend.' });
   }
-  if (!ADMIN_EMAILS.has(String(req.user.email || '').toLowerCase())) {
+  if (!isAdministrator(req.user)) {
     return res.status(403).json({ error: 'Administrator access is required.' });
   }
   next();
@@ -848,7 +866,7 @@ const mediaUpload = multer({
       callback(null, `media-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extension}`);
     },
   }),
-  limits: { fileSize: MAX_MEDIA_BYTES, files: 1, fields: 4 },
+  limits: { files: 1, fields: 4 },
   fileFilter(req, file, callback) {
     const extension = path.extname(file.originalname || '').toLowerCase();
     callback(null, MEDIA_EXTENSIONS.has(extension));
@@ -856,6 +874,7 @@ const mediaUpload = multer({
 });
 
 function muscriptorAvailability() {
+  const remoteConfigured = Boolean(MUSCRIPTOR_REMOTE_URL);
   const pythonExists = path.isAbsolute(MUSCRIPTOR_PYTHON)
     ? fs.existsSync(MUSCRIPTOR_PYTHON)
     : true;
@@ -864,18 +883,19 @@ function muscriptorAvailability() {
   let reason = '';
   if (!MUSCRIPTOR_ENABLED) {
     reason = 'MuScriptor is disabled. Enable it only for use permitted by the model license.';
-  } else if (!pythonExists) {
+  } else if (!remoteConfigured && !pythonExists) {
     reason = 'The MuScriptor Python environment was not found.';
-  } else if (!workerExists) {
+  } else if (!remoteConfigured && !workerExists) {
     reason = 'The Polymath MuScriptor worker was not found.';
   } else if (!ffmpegExists) {
     reason = 'FFmpeg is unavailable for audio and video preparation.';
   }
   return {
-    enabled: MUSCRIPTOR_ENABLED && pythonExists && workerExists && ffmpegExists,
+    enabled: MUSCRIPTOR_ENABLED && ffmpegExists && (remoteConfigured || (pythonExists && workerExists)),
     configured: MUSCRIPTOR_ENABLED,
     model: MUSCRIPTOR_MODEL,
-    maxBytes: MAX_MEDIA_BYTES,
+    execution: remoteConfigured ? 'remote-gpu' : 'local',
+    maxBytes: null,
     maxDurationSeconds: MAX_MEDIA_SECONDS,
     timeoutMinutes: Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000),
     acceptedExtensions: [...MEDIA_EXTENSIONS],
@@ -897,6 +917,8 @@ function publicMediaTranscriptionJob(job) {
     progress: Number(job.progress || 0),
     noteCount: Number(job.noteCount || 0),
     instrumentGroups: Array.isArray(job.instrumentGroups) ? job.instrumentGroups : [],
+    playbackMode: job.playbackMode || 'instrumental',
+    vocalMelodyNoteCount: Number(job.vocalMelodyNoteCount || 0),
     startedAt: job.startedAt,
     completedAt: job.completedAt || null,
     failedAt: job.failedAt || null,
@@ -969,9 +991,168 @@ function runChild(command, args, { timeoutMs, timeoutMessage, onLine } = {}) {
   });
 }
 
-function muscriptorConstraints(instrument) {
+function muscriptorConstraints(instrument, playbackMode = 'instrumental') {
   if (instrument === 'band') return [];
+  if (instrument === 'piano' && ['full', 'instrumental'].includes(playbackMode)) return [];
   return MUSCRIPTOR_INSTRUMENTS[instrument] || [];
+}
+
+function midiToNote(midi) {
+  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const value = Math.round(Number(midi));
+  return `${names[((value % 12) + 12) % 12]}${Math.floor(value / 12) - 1}`;
+}
+
+async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
+  const form = new FormData();
+  form.append('file', new Blob([fs.readFileSync(preparedPath)], { type: 'audio/wav' }), `${job.id}.wav`);
+  constraints.forEach((instrument) => form.append('instruments', instrument));
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MUSCRIPTOR_TIMEOUT_MS);
+  const headers = { 'X-Client-Id': job.id };
+  if (MUSCRIPTOR_REMOTE_TOKEN) headers.Authorization = `Bearer ${MUSCRIPTOR_REMOTE_TOKEN}`;
+
+  let response;
+  try {
+    while (true) {
+      response = await fetch(`${MUSCRIPTOR_REMOTE_URL}/transcribe`, {
+        method: 'POST',
+        headers,
+        body: form,
+        signal: controller.signal,
+      });
+      if (response.status !== 503) break;
+      await response.text();
+      updateMediaTranscriptionJob(job.id, {
+        stage: 'Waiting for the RunPod GPU to finish the previous transcription',
+        progress: 20,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  } catch (error) {
+    clearTimeout(timer);
+    if (error.name === 'AbortError') {
+      throw new Error(`Music transcription took longer than the ${Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000)}-minute processing limit.`);
+    }
+    throw new Error(`Could not reach the RunPod MuScriptor worker: ${error.message}`);
+  }
+
+  if (!response.ok || !response.body) {
+    clearTimeout(timer);
+    const details = (await response.text().catch(() => '')).trim().slice(0, 1000);
+    throw new Error(`RunPod MuScriptor returned HTTP ${response.status}${details ? `: ${details}` : ''}`);
+  }
+
+  const starts = new Map();
+  const notes = [];
+  let progress = { completed: 0, total: 0 };
+  let buffer = '';
+  const decoder = new TextDecoder();
+
+  function acceptMessage(message) {
+    if (message.type === 'start') {
+      starts.set(Number(message.index), message);
+      return;
+    }
+    if (message.type === 'end') {
+      const start = starts.get(Number(message.start_event_index));
+      if (!start) return;
+      const midi = Number(start.pitch);
+      const startTime = Math.max(0, Number(start.start_time) || 0);
+      const endTime = Math.max(startTime + 0.04, Number(message.end_time) || startTime + 0.4);
+      notes.push({
+        midi,
+        note: midiToNote(midi),
+        time: Number(startTime.toFixed(4)),
+        duration: Number((endTime - startTime).toFixed(4)),
+        velocity: 0.78,
+        hand: midi < 60 ? 'left' : 'right',
+        instrument: String(start.instrument),
+        source: `muscriptor-${MUSCRIPTOR_MODEL}-runpod`,
+      });
+      starts.delete(Number(message.start_event_index));
+      return;
+    }
+    if (message.type === 'progress' && Number(message.total) > 0) {
+      progress = { completed: Number(message.completed), total: Number(message.total) };
+      const ratio = Math.max(0, Math.min(1, progress.completed / progress.total));
+      updateMediaTranscriptionJob(job.id, {
+        stage: `Transcribing ${progress.completed} of ${progress.total} audio sections on RunPod GPU`,
+        progress: 22 + Math.round(ratio * 70),
+      });
+    }
+  }
+
+  function consumeEvents(final = false) {
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = final ? '' : blocks.pop() || '';
+    blocks.forEach((block) => {
+      const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+        .join('\n');
+      if (!data) return;
+      try {
+        acceptMessage(JSON.parse(data));
+      } catch {
+        // Ignore malformed diagnostics while preserving valid streamed events.
+      }
+    });
+  }
+
+  try {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      consumeEvents();
+    }
+    buffer += decoder.decode();
+    buffer += '\n\n';
+    consumeEvents(true);
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Music transcription took longer than the ${Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000)}-minute processing limit.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  starts.forEach((start) => {
+    const midi = Number(start.pitch);
+    notes.push({
+      midi,
+      note: midiToNote(midi),
+      time: Number(Math.max(0, Number(start.start_time) || 0).toFixed(4)),
+      duration: 0.4,
+      velocity: 0.7,
+      hand: midi < 60 ? 'left' : 'right',
+      instrument: String(start.instrument),
+      source: `muscriptor-${MUSCRIPTOR_MODEL}-runpod`,
+    });
+  });
+  notes.sort((a, b) => a.time - b.time || a.midi - b.midi || a.instrument.localeCompare(b.instrument));
+  if (!notes.length) throw new Error('MuScriptor could not detect playable notes in this recording.');
+
+  const payload = {
+    title: job.title || 'Uploaded recording',
+    composer: 'MuScriptor transcription',
+    instrument: job.instrument,
+    bpm: 120,
+    notes,
+    instrumentGroups: [...new Set(notes.map((note) => note.instrument))].sort(),
+    sourceType: 'muscriptor-audio-transcription',
+    readyToPlayFormat: 'polymath-musician-json-v1',
+    transcriptionProvider: `MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`,
+    modelLicense: 'CC-BY-NC-4.0',
+    progress,
+  };
+  fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
+  return payload;
 }
 
 async function processMediaTranscriptionJob(jobId) {
@@ -997,47 +1178,66 @@ async function processMediaTranscriptionJob(jobId) {
     ], { timeoutMs: 10 * 60 * 1000 });
 
     updateMediaTranscriptionJob(jobId, {
-      stage: `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
+      stage: MUSCRIPTOR_REMOTE_URL
+        ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
+        : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
       progress: 20,
     });
-    const constraints = muscriptorConstraints(job.instrument);
-    const args = [
-      MUSCRIPTOR_WORKER,
-      '--input', preparedPath,
-      '--output', outputPath,
-      '--title', job.title,
-      '--instrument', job.instrument,
-      '--model', MUSCRIPTOR_MODEL,
-    ];
-    if (constraints.length) args.push('--instruments', constraints.join(','));
+    const constraints = muscriptorConstraints(job.instrument, job.playbackMode);
+    if (MUSCRIPTOR_REMOTE_URL) {
+      await runRemoteMuscriptor(job, preparedPath, outputPath, constraints);
+    } else {
+      const args = [
+        MUSCRIPTOR_WORKER,
+        '--input', preparedPath,
+        '--output', outputPath,
+        '--title', job.title,
+        '--instrument', job.instrument,
+        '--model', MUSCRIPTOR_MODEL,
+      ];
+      if (constraints.length) args.push('--instruments', constraints.join(','));
 
-    await runChild(MUSCRIPTOR_PYTHON, args, {
-      timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
-      timeoutMessage: `Music transcription took longer than the ${Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000)}-minute processing limit.`,
-      onLine(line) {
-        try {
-          const message = JSON.parse(line);
-          if (message.type === 'stage') {
-            updateMediaTranscriptionJob(jobId, { stage: message.stage });
-          } else if (message.type === 'progress' && Number(message.total) > 0) {
-            const ratio = Math.max(0, Math.min(1, Number(message.completed) / Number(message.total)));
-            updateMediaTranscriptionJob(jobId, {
-              stage: `Transcribing ${message.completed} of ${message.total} audio sections`,
-              progress: 22 + Math.round(ratio * 70),
-            });
+      await runChild(MUSCRIPTOR_PYTHON, args, {
+        timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
+        timeoutMessage: `Music transcription took longer than the ${Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000)}-minute processing limit.`,
+        onLine(line) {
+          try {
+            const message = JSON.parse(line);
+            if (message.type === 'stage') {
+              updateMediaTranscriptionJob(jobId, { stage: message.stage });
+            } else if (message.type === 'progress' && Number(message.total) > 0) {
+              const ratio = Math.max(0, Math.min(1, Number(message.completed) / Number(message.total)));
+              updateMediaTranscriptionJob(jobId, {
+                stage: `Transcribing ${message.completed} of ${message.total} audio sections`,
+                progress: 22 + Math.round(ratio * 70),
+              });
+            }
+          } catch {
+            // MuScriptor diagnostic output is intentionally ignored here.
           }
-        } catch {
-          // MuScriptor diagnostic output is intentionally ignored here.
-        }
-      },
-    });
+        },
+      });
+    }
 
-    const result = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    updateMediaTranscriptionJob(jobId, {
+      stage: 'Cleaning rapid repeats and shaping the piano arrangement',
+      progress: 94,
+    });
+    const rawResult = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    const result = postProcessMuscriptorResult(rawResult, {
+      instrument: job.instrument,
+      playbackMode: job.playbackMode,
+      preparedPath,
+    });
+    result.playbackMode = job.playbackMode || 'instrumental';
+    result.vocalMelodyIncluded = job.playbackMode === 'full';
+    fs.writeFileSync(outputPath, JSON.stringify(result, null, 2), 'utf8');
     db = readDb();
     job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
     job.outputPath = path.basename(outputPath);
     job.outputFilename = `${sanitizeFilename(job.title || 'muscriptor-transcription')}.json`;
+    job.vocalMelodyNoteCount = Number(result.transcriptionCleanup?.vocalMelodyNotes || 0);
     job.noteCount = Array.isArray(result.notes) ? result.notes.length : 0;
     job.instrumentGroups = Array.isArray(result.instrumentGroups) ? result.instrumentGroups : [];
     job.status = 'completed';
@@ -3042,9 +3242,7 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
 
   return mediaUpload.single('media')(req, res, (uploadError) => {
     if (uploadError) {
-      const message = uploadError.code === 'LIMIT_FILE_SIZE'
-        ? 'Audio or video must be smaller than 100 MB.'
-        : uploadError.message || 'The audio or video upload failed.';
+      const message = uploadError.message || 'The audio or video upload failed.';
       return res.status(400).json({ error: message });
     }
     if (!req.file) {
@@ -3066,6 +3264,10 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
     if (String(req.body.rightsConfirmed || '').toLowerCase() !== 'true') {
       return cleanupAndReject(400, 'Confirm that you have permission to transcribe this recording.');
     }
+    const playbackMode = String(req.body.playbackMode || 'instrumental').trim().toLowerCase();
+    if (!['full', 'instrumental'].includes(playbackMode)) {
+      return cleanupAndReject(400, 'Choose full song or pure instrumental playback.');
+    }
 
     const filename = sanitizeFilename(req.file.originalname || `recording${extension}`);
     const title = String(req.body.title || path.basename(filename, extension) || 'Uploaded recording')
@@ -3078,6 +3280,7 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
       filename,
       title,
       instrument,
+      playbackMode,
       model: `muscriptor-${MUSCRIPTOR_MODEL}`,
       modelLicense: 'CC-BY-NC-4.0',
       sourcePath: path.basename(req.file.path),
@@ -3149,7 +3352,9 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
 
   const filename = sanitizeFilename(String(req.body.filename || 'music-sheet.pdf'));
   const instrument = String(req.body.instrument || '').trim().toLowerCase();
-  const paymentMethod = String(req.body.paymentMethod || '').trim().toLowerCase();
+  const administratorAccess = isAdministrator(req.user);
+  const requestedPaymentMethod = String(req.body.paymentMethod || '').trim().toLowerCase();
+  const paymentMethod = administratorAccess ? 'admin' : requestedPaymentMethod;
 
   if (!filename.toLowerCase().endsWith('.pdf')) {
     return res.status(400).json({ error: 'Invalid PDF music sheet. Please upload a PDF music sheet.' });
@@ -3157,7 +3362,7 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   if (!INSTRUMENTS[instrument]) {
     return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
   }
-  if (!['allowance', 'mcoins'].includes(paymentMethod)) {
+  if (!administratorAccess && !['allowance', 'mcoins'].includes(paymentMethod)) {
     return res.status(400).json({ error: 'Choose a monthly translation or 30-Mcoin payment.' });
   }
 
@@ -3183,7 +3388,9 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   }
 
   let allowanceBucket = null;
-  if (paymentMethod === 'allowance') {
+  if (paymentMethod === 'admin') {
+    // Backend-authorized administrators have unlimited translation access.
+  } else if (paymentMethod === 'allowance') {
     allowanceBucket = deductTranslationAllowance(req.user);
     if (!allowanceBucket) {
       return res.status(402).json({
@@ -3224,6 +3431,8 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   req.db.scoreTranslationJobs.push(job);
   if (paymentMethod === 'allowance') {
     addLedger(req.db, req.user.id, 0, 'translation_allowance_used', `${filename} (${allowanceBucket})`);
+  } else if (paymentMethod === 'admin') {
+    addLedger(req.db, req.user.id, 0, 'admin_pdf_translation', `${filename} (unlimited administrator access)`);
   }
   writeDb(req.db);
 

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiRequest, downloadProtectedFile, fetchProtectedFile } from '../services/api.js';
 
-const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 const MEDIA_ACCEPT = 'audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.webm,.mkv,.avi';
 
 export default function MediaTranscriptionPanel({
@@ -12,6 +11,7 @@ export default function MediaTranscriptionPanel({
 }) {
   const [capability, setCapability] = useState(null);
   const [file, setFile] = useState(null);
+  const [playbackMode, setPlaybackMode] = useState(instrument === 'piano' ? 'full' : 'instrumental');
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [job, setJob] = useState(null);
   const [status, setStatus] = useState('');
@@ -63,12 +63,7 @@ export default function MediaTranscriptionPanel({
     const selected = event.target.files?.[0] || null;
     setJob(null);
     setStatus('');
-    if (selected && selected.size > MAX_MEDIA_BYTES) {
-      setFile(null);
-      setStatus('Audio or video must be smaller than 100 MB.');
-    } else {
-      setFile(selected);
-    }
+    setFile(selected);
     event.target.value = '';
   }
 
@@ -85,6 +80,7 @@ export default function MediaTranscriptionPanel({
       form.append('media', file, file.name);
       form.append('instrument', instrument || 'band');
       form.append('title', file.name.replace(/\.[^.]+$/, ''));
+      form.append('playbackMode', playbackMode);
       form.append('rightsConfirmed', 'true');
       const data = await apiRequest('/api/media-transcriptions', {
         method: 'POST',
@@ -140,10 +136,14 @@ export default function MediaTranscriptionPanel({
         </div>
       )}
 
+      {user.admin && (
+        <p className="muted"><strong>Administrator access:</strong> unlimited audio and video transcriptions.</p>
+      )}
+
       <label className="upload-box compact">
         <input type="file" accept={MEDIA_ACCEPT} onChange={chooseFile} disabled={busy || capability?.enabled === false} />
         <span>{file ? file.name : 'Choose MP3, audio, or music video'}</span>
-        <small>Up to 100 MB · first 10 minutes</small>
+        <small>No file-size limit · first 10 minutes processed</small>
       </label>
 
       <label className="media-rights-check">
@@ -154,6 +154,40 @@ export default function MediaTranscriptionPanel({
         />
         <span>I have permission to transcribe this recording.</span>
       </label>
+
+      {instrument === 'piano' && (
+        <fieldset className={'media-playback-options'}>
+          <legend>Playback version</legend>
+          <label className={'media-playback-option ' + (playbackMode === 'full' ? 'active' : '')}>
+            <input
+              type={'radio'}
+              name={'media-playback-mode'}
+              value={'full'}
+              checked={playbackMode === 'full'}
+              onChange={() => setPlaybackMode('full')}
+              disabled={busy}
+            />
+            <span>
+              <strong>Full song</strong>
+              <small>All detected parts plus the singer's melody, emphasized on piano.</small>
+            </span>
+          </label>
+          <label className={'media-playback-option ' + (playbackMode === 'instrumental' ? 'active' : '')}>
+            <input
+              type={'radio'}
+              name={'media-playback-mode'}
+              value={'instrumental'}
+              checked={playbackMode === 'instrumental'}
+              onChange={() => setPlaybackMode('instrumental')}
+              disabled={busy}
+            />
+            <span>
+              <strong>Pure instrumental</strong>
+              <small>All detected instrument parts, with the vocal melody excluded.</small>
+            </span>
+          </label>
+        </fieldset>
+      )}
 
       {!job && (
         <button
