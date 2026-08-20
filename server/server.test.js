@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { postProcessMuscriptorResult } = require('./muscriptorPostprocess');
+const { createMuscriptorEventCollector } = require('./muscriptorEvents');
 
 const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polymath-admin-test-'));
 process.env.POLYMATH_DATA_DIR = testDataDir;
@@ -89,6 +90,58 @@ test('Full song renders the vocal melody on piano while instrumental mode exclud
   assert.equal(instrumental.notes.some((note) => note.instrument === 'voice'), false);
   assert.equal(instrumental.transcriptionCleanup.excludedVocalNotes, 1);
   assert.equal(instrumental.transcriptionCleanup.vocalMelodyNotes, 0);
+});
+
+test('MuScriptor remote events apply detected tempo and onset alignment', () => {
+  const progressEvents = [];
+  const collector = createMuscriptorEventCollector({
+    model: 'large',
+    source: 'runpod',
+    onProgress: (progress) => progressEvents.push(progress),
+  });
+  collector.accept({ type: 'progress', completed: 1, total: 4 });
+  collector.accept({ type: 'start', index: 7, pitch: 60, start_time: 0.18, instrument: 'acoustic_piano' });
+  collector.accept({ type: 'end', start_event_index: 7, end_time: 0.68 });
+  collector.accept({
+    type: 'transcription_complete',
+    beat_grid: { bpm: 92.4, beats_per_bar: 3, first_downbeat: 0.1, onset_delay: 0.08 },
+  });
+
+  const result = collector.finish();
+  assert.deepEqual(progressEvents, [{ completed: 1, total: 4 }]);
+  assert.equal(result.notes[0].time, 0.1);
+  assert.equal(result.notes[0].duration, 0.5);
+  assert.equal(result.beatGrid.bpm, 92.4);
+  assert.equal(result.beatGrid.beatsPerBar, 3);
+  assert.equal(result.diagnostics.onsetDelayAppliedSeconds, 0.08);
+});
+
+test('MuScriptor remote event collection rejects malformed notes without losing valid notes', () => {
+  const collector = createMuscriptorEventCollector({ model: 'large', source: 'runpod' });
+  collector.accept({ type: 'end', start_event_index: 99, end_time: 1 });
+  collector.accept({ type: 'start', index: 1, pitch: 'bad', start_time: 0, instrument: 'acoustic_piano' });
+  collector.accept({ type: 'start', index: 2, pitch: 64, start_time: 1, instrument: 'acoustic_piano' });
+  const result = collector.finish();
+
+  assert.equal(result.notes.length, 1);
+  assert.equal(result.notes[0].note, 'E4');
+  assert.equal(result.notes[0].duration, 0.4);
+  assert.equal(result.diagnostics.unmatchedEndEvents, 1);
+  assert.equal(result.diagnostics.malformedEvents, 1);
+  assert.equal(result.diagnostics.danglingStartEvents, 1);
+});
+
+test('MuScriptor piano cleanup preserves non-overlapping rapid repeated notes', () => {
+  const result = postProcessMuscriptorResult({
+    title: 'Rapid repeat fixture',
+    notes: [
+      { midi: 60, note: 'C4', time: 1, duration: 0.035, velocity: 0.78, instrument: 'acoustic_piano' },
+      { midi: 60, note: 'C4', time: 1.06, duration: 0.035, velocity: 0.78, instrument: 'acoustic_piano' },
+    ],
+  }, { instrument: 'piano' });
+
+  assert.equal(result.notes.length, 2);
+  assert.equal(result.transcriptionCleanup.removedRapidRetriggers, 0);
 });
 
 test('admin policies, vouchers, password reset, and hashed sessions persist', async (context) => {

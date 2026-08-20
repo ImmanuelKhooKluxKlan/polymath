@@ -8,6 +8,8 @@ const { spawn } = require('child_process');
 const multer = require('multer');
 const bundledFfmpegPath = require('ffmpeg-static');
 const { postProcessMuscriptorResult } = require('./muscriptorPostprocess');
+const { createMuscriptorEventCollector } = require('./muscriptorEvents');
+const { createRunpodServerlessClient } = require('./runpodServerless');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -52,8 +54,19 @@ const MUSCRIPTOR_PYTHON = String(process.env.MUSCRIPTOR_PYTHON || '').trim() || 
 );
 const MUSCRIPTOR_WORKER = String(process.env.MUSCRIPTOR_WORKER || '').trim()
   || path.join(__dirname, 'muscriptor_worker.py');
+const PIANO_ARRANGER_PYTHON = String(process.env.PIANO_ARRANGER_PYTHON || '').trim()
+  || MUSCRIPTOR_PYTHON;
+const PIANO_ARRANGER_WORKER = String(process.env.PIANO_ARRANGER_WORKER || '').trim()
+  || path.join(__dirname, 'piano_arranger.py');
 const MUSCRIPTOR_REMOTE_URL = String(process.env.MUSCRIPTOR_REMOTE_URL || '').trim().replace(/\/+$/, '');
 const MUSCRIPTOR_REMOTE_TOKEN = String(process.env.MUSCRIPTOR_REMOTE_TOKEN || '').trim();
+const RUNPOD_SERVERLESS_ENDPOINT_ID = String(process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || '').trim();
+const RUNPOD_API_KEY = String(process.env.RUNPOD_API_KEY || '').trim();
+const RUNPOD_NETWORK_VOLUME_ID = String(process.env.RUNPOD_NETWORK_VOLUME_ID || '').trim();
+const RUNPOD_S3_REGION = String(process.env.RUNPOD_S3_REGION || '').trim();
+const RUNPOD_S3_ENDPOINT = String(process.env.RUNPOD_S3_ENDPOINT || '').trim();
+const RUNPOD_S3_ACCESS_KEY_ID = String(process.env.RUNPOD_S3_ACCESS_KEY_ID || '').trim();
+const RUNPOD_S3_SECRET_ACCESS_KEY = String(process.env.RUNPOD_S3_SECRET_ACCESS_KEY || '').trim();
 const MUSCRIPTOR_TIMEOUT_MS = Math.min(
   12 * 60 * 60 * 1000,
   Math.max(
@@ -61,6 +74,16 @@ const MUSCRIPTOR_TIMEOUT_MS = Math.min(
     Math.floor(Number(process.env.MUSCRIPTOR_TIMEOUT_MINUTES || 360)) * 60 * 1000,
   ),
 );
+const RUNPOD_SERVERLESS = createRunpodServerlessClient({
+  endpointId: RUNPOD_SERVERLESS_ENDPOINT_ID,
+  apiKey: RUNPOD_API_KEY,
+  volumeId: RUNPOD_NETWORK_VOLUME_ID,
+  region: RUNPOD_S3_REGION,
+  s3Endpoint: RUNPOD_S3_ENDPOINT,
+  s3AccessKeyId: RUNPOD_S3_ACCESS_KEY_ID,
+  s3SecretAccessKey: RUNPOD_S3_SECRET_ACCESS_KEY,
+  timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
+});
 const FFMPEG_PATH = String(process.env.FFMPEG_PATH || '').trim() || bundledFfmpegPath;
 const MEDIA_EXTENSIONS = new Set([
   '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac',
@@ -874,6 +897,8 @@ const mediaUpload = multer({
 });
 
 function muscriptorAvailability() {
+  const serverlessRequested = Boolean(RUNPOD_SERVERLESS_ENDPOINT_ID);
+  const serverlessConfigured = RUNPOD_SERVERLESS.configured;
   const remoteConfigured = Boolean(MUSCRIPTOR_REMOTE_URL);
   const pythonExists = path.isAbsolute(MUSCRIPTOR_PYTHON)
     ? fs.existsSync(MUSCRIPTOR_PYTHON)
@@ -883,18 +908,23 @@ function muscriptorAvailability() {
   let reason = '';
   if (!MUSCRIPTOR_ENABLED) {
     reason = 'MuScriptor is disabled. Enable it only for use permitted by the model license.';
-  } else if (!remoteConfigured && !pythonExists) {
+  } else if (serverlessRequested && !serverlessConfigured) {
+    reason = `RunPod Serverless is missing: ${RUNPOD_SERVERLESS.missing.join(', ')}`;
+  } else if (!serverlessConfigured && !remoteConfigured && !pythonExists) {
     reason = 'The MuScriptor Python environment was not found.';
-  } else if (!remoteConfigured && !workerExists) {
+  } else if (!serverlessConfigured && !remoteConfigured && !workerExists) {
     reason = 'The Polymath MuScriptor worker was not found.';
   } else if (!ffmpegExists) {
     reason = 'FFmpeg is unavailable for audio and video preparation.';
   }
   return {
-    enabled: MUSCRIPTOR_ENABLED && ffmpegExists && (remoteConfigured || (pythonExists && workerExists)),
+    enabled: MUSCRIPTOR_ENABLED && ffmpegExists
+      && (serverlessConfigured || remoteConfigured || (pythonExists && workerExists)),
     configured: MUSCRIPTOR_ENABLED,
     model: MUSCRIPTOR_MODEL,
-    execution: remoteConfigured ? 'remote-gpu' : 'local',
+    execution: serverlessConfigured
+      ? 'runpod-serverless-flex'
+      : (remoteConfigured ? 'remote-gpu' : 'local'),
     maxBytes: null,
     maxDurationSeconds: MAX_MEDIA_SECONDS,
     timeoutMinutes: Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000),
@@ -997,16 +1027,44 @@ function muscriptorConstraints(instrument, playbackMode = 'instrumental') {
   return MUSCRIPTOR_INSTRUMENTS[instrument] || [];
 }
 
-function midiToNote(midi) {
-  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  const value = Math.round(Number(midi));
-  return `${names[((value % 12) + 12) % 12]}${Math.floor(value / 12) - 1}`;
+async function runServerlessMuscriptor(job, preparedPath, outputPath, constraints) {
+  const payload = await RUNPOD_SERVERLESS.transcribe({
+    job,
+    preparedPath,
+    constraints,
+    onProgress(status) {
+      if (status.state === 'IN_QUEUE') {
+        updateMediaTranscriptionJob(job.id, {
+          stage: 'Starting MuScriptor Large on RunPod Serverless',
+          progress: 21,
+        });
+        return;
+      }
+      const progressText = String(status.progress || '').trim();
+      const match = progressText.match(/Transcribing (\d+) of (\d+) audio sections/i);
+      if (match && Number(match[2]) > 0) {
+        const ratio = Math.max(0, Math.min(1, Number(match[1]) / Number(match[2])));
+        updateMediaTranscriptionJob(job.id, {
+          stage: `${progressText} on RunPod Serverless`,
+          progress: 22 + Math.round(ratio * 70),
+        });
+      } else if (status.state === 'IN_PROGRESS') {
+        updateMediaTranscriptionJob(job.id, {
+          stage: progressText || 'MuScriptor Large is listening on RunPod Serverless',
+          progress: 22,
+        });
+      }
+    },
+  });
+  fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
+  return payload;
 }
 
 async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
   const form = new FormData();
   form.append('file', new Blob([fs.readFileSync(preparedPath)], { type: 'audio/wav' }), `${job.id}.wav`);
   constraints.forEach((instrument) => form.append('instruments', instrument));
+  form.append('detect_tempo', 'best-effort');
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MUSCRIPTOR_TIMEOUT_MS);
@@ -1044,45 +1102,19 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     throw new Error(`RunPod MuScriptor returned HTTP ${response.status}${details ? `: ${details}` : ''}`);
   }
 
-  const starts = new Map();
-  const notes = [];
-  let progress = { completed: 0, total: 0 };
-  let buffer = '';
-  const decoder = new TextDecoder();
-
-  function acceptMessage(message) {
-    if (message.type === 'start') {
-      starts.set(Number(message.index), message);
-      return;
-    }
-    if (message.type === 'end') {
-      const start = starts.get(Number(message.start_event_index));
-      if (!start) return;
-      const midi = Number(start.pitch);
-      const startTime = Math.max(0, Number(start.start_time) || 0);
-      const endTime = Math.max(startTime + 0.04, Number(message.end_time) || startTime + 0.4);
-      notes.push({
-        midi,
-        note: midiToNote(midi),
-        time: Number(startTime.toFixed(4)),
-        duration: Number((endTime - startTime).toFixed(4)),
-        velocity: 0.78,
-        hand: midi < 60 ? 'left' : 'right',
-        instrument: String(start.instrument),
-        source: `muscriptor-${MUSCRIPTOR_MODEL}-runpod`,
-      });
-      starts.delete(Number(message.start_event_index));
-      return;
-    }
-    if (message.type === 'progress' && Number(message.total) > 0) {
-      progress = { completed: Number(message.completed), total: Number(message.total) };
+  const collector = createMuscriptorEventCollector({
+    model: MUSCRIPTOR_MODEL,
+    source: 'runpod',
+    onProgress(progress) {
       const ratio = Math.max(0, Math.min(1, progress.completed / progress.total));
       updateMediaTranscriptionJob(job.id, {
         stage: `Transcribing ${progress.completed} of ${progress.total} audio sections on RunPod GPU`,
         progress: 22 + Math.round(ratio * 70),
       });
-    }
-  }
+    },
+  });
+  let buffer = '';
+  const decoder = new TextDecoder();
 
   function consumeEvents(final = false) {
     const blocks = buffer.split(/\r?\n\r?\n/);
@@ -1095,7 +1127,7 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
         .join('\n');
       if (!data) return;
       try {
-        acceptMessage(JSON.parse(data));
+        collector.accept(JSON.parse(data));
       } catch {
         // Ignore malformed diagnostics while preserving valid streamed events.
       }
@@ -1122,27 +1154,16 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     clearTimeout(timer);
   }
 
-  starts.forEach((start) => {
-    const midi = Number(start.pitch);
-    notes.push({
-      midi,
-      note: midiToNote(midi),
-      time: Number(Math.max(0, Number(start.start_time) || 0).toFixed(4)),
-      duration: 0.4,
-      velocity: 0.7,
-      hand: midi < 60 ? 'left' : 'right',
-      instrument: String(start.instrument),
-      source: `muscriptor-${MUSCRIPTOR_MODEL}-runpod`,
-    });
-  });
-  notes.sort((a, b) => a.time - b.time || a.midi - b.midi || a.instrument.localeCompare(b.instrument));
+  const { notes, progress, beatGrid, diagnostics } = collector.finish();
   if (!notes.length) throw new Error('MuScriptor could not detect playable notes in this recording.');
 
   const payload = {
     title: job.title || 'Uploaded recording',
     composer: 'MuScriptor transcription',
     instrument: job.instrument,
-    bpm: 120,
+    bpm: beatGrid?.bpm || 120,
+    beatsPerBar: beatGrid?.beatsPerBar || 4,
+    beatGrid,
     notes,
     instrumentGroups: [...new Set(notes.map((note) => note.instrument))].sort(),
     sourceType: 'muscriptor-audio-transcription',
@@ -1150,6 +1171,7 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     transcriptionProvider: `MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`,
     modelLicense: 'CC-BY-NC-4.0',
     progress,
+    transcriptionDiagnostics: diagnostics,
   };
   fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
   return payload;
@@ -1163,6 +1185,7 @@ async function processMediaTranscriptionJob(jobId) {
   const sourcePath = path.join(UPLOAD_DIR, job.sourcePath);
   const preparedPath = path.join(UPLOAD_DIR, `${job.id}-prepared.wav`);
   const outputPath = path.join(UPLOAD_DIR, `${job.id}-ready-to-play.json`);
+  const arrangedPath = path.join(UPLOAD_DIR, `${job.id}-piano-arranged.json`);
 
   try {
     updateMediaTranscriptionJob(jobId, {
@@ -1178,13 +1201,17 @@ async function processMediaTranscriptionJob(jobId) {
     ], { timeoutMs: 10 * 60 * 1000 });
 
     updateMediaTranscriptionJob(jobId, {
-      stage: MUSCRIPTOR_REMOTE_URL
-        ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
-        : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
+      stage: RUNPOD_SERVERLESS.configured
+        ? `Sending audio to permanent MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} Serverless endpoint`
+        : (MUSCRIPTOR_REMOTE_URL
+          ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
+          : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`),
       progress: 20,
     });
     const constraints = muscriptorConstraints(job.instrument, job.playbackMode);
-    if (MUSCRIPTOR_REMOTE_URL) {
+    if (RUNPOD_SERVERLESS.configured) {
+      await runServerlessMuscriptor(job, preparedPath, outputPath, constraints);
+    } else if (MUSCRIPTOR_REMOTE_URL) {
       await runRemoteMuscriptor(job, preparedPath, outputPath, constraints);
     } else {
       const args = [
@@ -1224,7 +1251,7 @@ async function processMediaTranscriptionJob(jobId) {
       progress: 94,
     });
     const rawResult = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
-    const result = postProcessMuscriptorResult(rawResult, {
+    let result = postProcessMuscriptorResult(rawResult, {
       instrument: job.instrument,
       playbackMode: job.playbackMode,
       preparedPath,
@@ -1232,6 +1259,24 @@ async function processMediaTranscriptionJob(jobId) {
     result.playbackMode = job.playbackMode || 'instrumental';
     result.vocalMelodyIncluded = job.playbackMode === 'full';
     fs.writeFileSync(outputPath, JSON.stringify(result, null, 2), 'utf8');
+    if (job.instrument === 'piano') {
+      updateMediaTranscriptionJob(jobId, {
+        stage: 'Building a playable 88-key acoustic-piano arrangement',
+        progress: 97,
+      });
+      await runChild(PIANO_ARRANGER_PYTHON, [
+        PIANO_ARRANGER_WORKER,
+        '--input', outputPath,
+        '--output', arrangedPath,
+        '--mode', job.playbackMode || 'instrumental',
+      ], {
+        timeoutMs: 2 * 60 * 1000,
+        timeoutMessage: 'The final piano arrangement took longer than two minutes.',
+      });
+      result = JSON.parse(fs.readFileSync(arrangedPath, 'utf8'));
+      fs.writeFileSync(outputPath, JSON.stringify(result, null, 2), 'utf8');
+      safeRemoveUpload(arrangedPath);
+    }
     db = readDb();
     job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
@@ -1257,6 +1302,7 @@ async function processMediaTranscriptionJob(jobId) {
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
     safeRemoveUpload(outputPath);
+    safeRemoveUpload(arrangedPath);
   }
 }
 

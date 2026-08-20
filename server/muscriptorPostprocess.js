@@ -79,7 +79,11 @@ function collapseDuplicateOnsets(notes) {
     };
 
     pitchNotes.forEach((note) => {
-      if (!group.length || note.time - group[0].time <= DUPLICATE_ONSET_SECONDS) {
+      const onsetIsClose = group.length && note.time - group[0].time <= DUPLICATE_ONSET_SECONDS;
+      const overlapsExistingStrike = onsetIsClose && group.some((candidate) => (
+        candidate.time + candidate.duration - note.time > SAME_KEY_RELEASE_GAP_SECONDS
+      ));
+      if (!group.length || overlapsExistingStrike) {
         group.push(note);
       } else {
         finishGroup();
