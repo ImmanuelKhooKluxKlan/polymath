@@ -14,20 +14,38 @@ from muscriptor import TranscriptionModel
 
 
 MODEL_NAME = os.environ.get('MUSCRIPTOR_MODEL', 'large').strip().lower()
+MODEL_WEIGHTS_PATH = os.environ.get('MUSCRIPTOR_WEIGHTS_PATH', '').strip()
 VOLUME_JOB_ROOT = Path(
     os.environ.get('MUSCRIPTOR_JOB_ROOT', '/runpod-volume/jobs')
 ).resolve()
 NOTE_NAMES = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
 VALID_MODELS = {'small', 'medium', 'large'}
 
-if MODEL_NAME not in VALID_MODELS:
+if not MODEL_WEIGHTS_PATH and MODEL_NAME not in VALID_MODELS:
     raise RuntimeError(f'Unsupported MuScriptor model: {MODEL_NAME}')
+
+if MODEL_WEIGHTS_PATH:
+    MODEL_SOURCE = Path(MODEL_WEIGHTS_PATH).expanduser().resolve()
+    if MODEL_SOURCE.suffix.lower() != '.safetensors':
+        raise RuntimeError('MUSCRIPTOR_WEIGHTS_PATH must point to a .safetensors file')
+    if not MODEL_SOURCE.is_file():
+        raise RuntimeError(f'Custom MuScriptor weights were not found: {MODEL_SOURCE}')
+    if not MODEL_SOURCE.with_name('config.json').is_file():
+        raise RuntimeError('Custom MuScriptor weights require config.json in the same folder')
+    MODEL_LABEL = f'custom model ({MODEL_SOURCE.name})'
+    MODEL_SOURCE_ID = 'muscriptor-custom-runpod-serverless'
+    MODEL_PROVIDER = 'Custom MuScriptor on RunPod Serverless GPU'
+else:
+    MODEL_SOURCE = MODEL_NAME
+    MODEL_LABEL = MODEL_NAME.title()
+    MODEL_SOURCE_ID = f'muscriptor-{MODEL_NAME}-runpod-serverless'
+    MODEL_PROVIDER = f'MuScriptor {MODEL_NAME.title()} on RunPod Serverless GPU'
 
 
 def load_model() -> TranscriptionModel:
-    print(f'Loading MuScriptor {MODEL_NAME.title()} into GPU memory', flush=True)
-    loaded = TranscriptionModel.load_model(MODEL_NAME)
-    print(f'MuScriptor {MODEL_NAME.title()} is ready', flush=True)
+    print(f'Loading MuScriptor {MODEL_LABEL} into GPU memory', flush=True)
+    loaded = TranscriptionModel.load_model(MODEL_SOURCE)
+    print(f'MuScriptor {MODEL_LABEL} is ready', flush=True)
     return loaded
 
 
@@ -87,7 +105,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
                 'velocity': 0.78,
                 'hand': 'left' if midi < 60 else 'right',
                 'instrument': str(start.instrument),
-                'source': f'muscriptor-{MODEL_NAME}-runpod-serverless',
+                'source': MODEL_SOURCE_ID,
             })
             starts.pop(int(start.index), None)
         elif hasattr(event, 'completed') and hasattr(event, 'total'):
@@ -107,7 +125,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
             'velocity': 0.7,
             'hand': 'left' if midi < 60 else 'right',
             'instrument': str(start.instrument),
-            'source': f'muscriptor-{MODEL_NAME}-runpod-serverless',
+            'source': MODEL_SOURCE_ID,
         })
 
     notes.sort(key=lambda note: (note['time'], note['midi'], note['instrument']))
@@ -123,7 +141,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
         'instrumentGroups': sorted({note['instrument'] for note in notes}),
         'sourceType': 'muscriptor-audio-transcription',
         'readyToPlayFormat': 'polymath-musician-json-v1',
-        'transcriptionProvider': f'MuScriptor {MODEL_NAME.title()} on RunPod Serverless GPU',
+        'transcriptionProvider': MODEL_PROVIDER,
         'modelLicense': 'CC-BY-NC-4.0',
         'progress': progress,
     }

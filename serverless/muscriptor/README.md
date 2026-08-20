@@ -33,6 +33,28 @@ placed under `/runpod-volume/jobs`, processed, and deleted in a `finally`
 block. The backend also attempts deletion through S3 after completion or
 failure, preventing abandoned uploads from filling the volume.
 
+## Custom or amended weights
+
+Do not edit Hugging Face's local cache in place. Copy `model.safetensors` and
+its neighboring `config.json` into a separate working folder, amend or
+fine-tune that copy, and upload both files to a folder on the network volume,
+for example:
+
+```text
+/runpod-volume/models/muscriptor-large-custom/model.safetensors
+/runpod-volume/models/muscriptor-large-custom/config.json
+```
+
+Then add this environment variable to the Serverless endpoint:
+
+```text
+MUSCRIPTOR_WEIGHTS_PATH=/runpod-volume/models/muscriptor-large-custom/model.safetensors
+```
+
+When this variable is set, the worker loads the custom weights instead of the
+published model. The RunPod cached-model field is optional and only accelerates
+the unmodified Hugging Face model; it does not replace custom volume weights.
+
 ## Backend variables
 
 Copy the `RUNPOD_*` entries from `server/.env.example` into `server/.env`.
