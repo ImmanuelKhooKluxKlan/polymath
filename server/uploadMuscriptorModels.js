@@ -97,48 +97,42 @@ async function multipartUploadFile(client, bucket, localPath, key, expectedSize)
   console.log(`  multipart created; ${partCount} parts`);
 
   try {
-    const file = await fs.promises.open(localPath, 'r');
-    try {
-      for (let index = 0; index < partCount; index += 1) {
-        const partNumber = index + 1;
-        const start = index * PART_SIZE;
-        const length = Math.min(PART_SIZE, expectedSize - start);
-        let uploaded;
-        for (let attempt = 1; attempt <= 5; attempt += 1) {
-          const body = file.createReadStream({
-            start,
-            end: start + length - 1,
-            autoClose: false,
-          });
-          try {
-            uploaded = await client.send(new UploadPartCommand({
-              Bucket: bucket,
-              Key: key,
-              UploadId: uploadId,
-              PartNumber: partNumber,
-              Body: body,
-              ContentLength: length,
-            }));
-            break;
-          } catch (error) {
-            body.destroy();
-            if (attempt === 5) {
-              error.message = `part ${partNumber}/${partCount}: ${error.message}`;
-              throw error;
-            }
-            console.warn(`  retrying part ${partNumber} (attempt ${attempt + 1}/5)`);
-            await sleep(1_000 * (2 ** (attempt - 1)));
+    for (let index = 0; index < partCount; index += 1) {
+      const partNumber = index + 1;
+      const start = index * PART_SIZE;
+      const length = Math.min(PART_SIZE, expectedSize - start);
+      let uploaded;
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const body = fs.createReadStream(localPath, {
+          start,
+          end: start + length - 1,
+        });
+        try {
+          uploaded = await client.send(new UploadPartCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            PartNumber: partNumber,
+            Body: body,
+            ContentLength: length,
+          }));
+          break;
+        } catch (error) {
+          body.destroy();
+          if (attempt === 5) {
+            error.message = `part ${partNumber}/${partCount}: ${error.message}`;
+            throw error;
           }
-        }
-        parts.push({ PartNumber: partNumber, ETag: uploaded.ETag });
-        const percent = Math.floor((partNumber / partCount) * 100);
-        if (percent > lastPercent || partNumber === partCount) {
-          console.log(`  ${percent}% (part ${partNumber}/${partCount})`);
-          lastPercent = percent;
+          console.warn(`  retrying part ${partNumber} (attempt ${attempt + 1}/5)`);
+          await sleep(1_000 * (2 ** (attempt - 1)));
         }
       }
-    } finally {
-      await file.close();
+      parts.push({ PartNumber: partNumber, ETag: uploaded.ETag });
+      const percent = Math.floor((partNumber / partCount) * 100);
+      if (percent > lastPercent || partNumber === partCount) {
+        console.log(`  ${percent}% (part ${partNumber}/${partCount})`);
+        lastPercent = percent;
+      }
     }
 
     await client.send(new CompleteMultipartUploadCommand({
