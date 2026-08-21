@@ -2,11 +2,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CopyObjectCommand,
   CreateMultipartUploadCommand,
   HeadObjectCommand,
+  ListMultipartUploadsCommand,
+  ListPartsCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -84,23 +85,63 @@ async function verifySize(client, bucket, key, expectedSize) {
   }
 }
 
-async function multipartUploadFile(client, bucket, localPath, key, expectedSize) {
-  const created = await client.send(new CreateMultipartUploadCommand({
+async function findMultipartUpload(client, bucket, key) {
+  const response = await client.send(new ListMultipartUploadsCommand({
     Bucket: bucket,
-    Key: key,
-    ContentType: 'application/octet-stream',
+    Prefix: key,
   }));
-  const uploadId = created.UploadId;
+  return (response.Uploads || [])
+    .filter((upload) => upload.Key === key && upload.UploadId)
+    .sort((left, right) => new Date(right.Initiated || 0) - new Date(left.Initiated || 0))[0] || null;
+}
+
+async function listUploadedParts(client, bucket, key, uploadId) {
+  const uploaded = new Map();
+  let marker;
+  do {
+    const response = await client.send(new ListPartsCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      PartNumberMarker: marker,
+    }));
+    for (const part of response.Parts || []) {
+      uploaded.set(Number(part.PartNumber), part);
+    }
+    marker = response.IsTruncated ? response.NextPartNumberMarker : undefined;
+  } while (marker);
+  return uploaded;
+}
+
+async function multipartUploadFile(client, bucket, localPath, key, expectedSize) {
+  const existingUpload = await findMultipartUpload(client, bucket, key);
+  const uploadId = existingUpload?.UploadId || (await client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: 'application/octet-stream',
+    }),
+  )).UploadId;
+  const uploadedParts = existingUpload
+    ? await listUploadedParts(client, bucket, key, uploadId)
+    : new Map();
   const parts = [];
   const partCount = Math.ceil(expectedSize / PART_SIZE);
   let lastPercent = -1;
-  console.log(`  multipart created; ${partCount} parts`);
+  console.log(existingUpload
+    ? `  resuming multipart; ${uploadedParts.size}/${partCount} parts already stored`
+    : `  multipart created; ${partCount} parts`);
 
   try {
     for (let index = 0; index < partCount; index += 1) {
       const partNumber = index + 1;
       const start = index * PART_SIZE;
       const length = Math.min(PART_SIZE, expectedSize - start);
+      const existingPart = uploadedParts.get(partNumber);
+      if (existingPart && Number(existingPart.Size) === length && existingPart.ETag) {
+        parts.push({ PartNumber: partNumber, ETag: existingPart.ETag });
+        continue;
+      }
       let uploaded;
       for (let attempt = 1; attempt <= 5; attempt += 1) {
         const body = fs.createReadStream(localPath, {
@@ -142,15 +183,7 @@ async function multipartUploadFile(client, bucket, localPath, key, expectedSize)
       MultipartUpload: { Parts: parts },
     }));
   } catch (error) {
-    try {
-      await client.send(new AbortMultipartUploadCommand({
-        Bucket: bucket,
-        Key: key,
-        UploadId: uploadId,
-      }));
-    } catch {
-      // RunPod also cleans abandoned multipart state automatically.
-    }
+    console.warn(`  multipart session preserved for resume: ${uploadId}`);
     throw error;
   }
 }
