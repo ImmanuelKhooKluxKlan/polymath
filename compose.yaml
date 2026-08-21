@@ -1,0 +1,45 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./server/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      CLIENT_ORIGIN: https://polymathmusician67.com
+      POLYMATH_DATA_DIR: /app/server/data
+      MUSCRIPTOR_ENABLED: 'false'
+      PIANO_ARRANGER_PYTHON: python3
+      PIANO_ARRANGER_WORKER: /app/server/piano_arranger.py
+    volumes:
+      - polymath_data:/app/server/data
+    expose:
+      - 3000
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  polymath_data:
+  caddy_data:
+  caddy_config:

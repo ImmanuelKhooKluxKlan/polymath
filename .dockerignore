@@ -1,0 +1,15 @@
+.git
+.github
+.vscode
+node_modules
+server/node_modules
+dist
+.env
+server/.env
+server/data
+*.log
+.tmp*
+docs
+samples
+TEST_RESULTS.txt
+

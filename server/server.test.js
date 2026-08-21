@@ -12,6 +12,13 @@ process.env.ADMIN_EMAILS = 'admin@example.test';
 process.env.PAYPAL_ENV = 'sandbox';
 process.env.MUSCRIPTOR_ENABLED = 'false';
 process.env.MUSCRIPTOR_REMOTE_URL = '';
+process.env.RUNPOD_SERVERLESS_ENDPOINT_ID = '';
+process.env.RUNPOD_API_KEY = '';
+process.env.RUNPOD_NETWORK_VOLUME_ID = '';
+process.env.RUNPOD_S3_REGION = '';
+process.env.RUNPOD_S3_ENDPOINT = '';
+process.env.RUNPOD_S3_ACCESS_KEY_ID = '';
+process.env.RUNPOD_S3_SECRET_ACCESS_KEY = '';
 
 const { app } = require('./server');
 

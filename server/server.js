@@ -17,6 +17,12 @@ require('dotenv').config({
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+
+if (IS_PRODUCTION) {
+  // Caddy terminates HTTPS and forwards the original client/protocol headers.
+  app.set('trust proxy', 1);
+}
 
 const PAYPAL_ENV = String(process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
 const PAYPAL_API_BASE = PAYPAL_ENV === 'sandbox'
@@ -1327,7 +1333,11 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '18mb' }));
 
-app.get('/', (req, res) => res.send('Polymath Musician backend is running'));
+app.get('/', (req, res, next) => {
+  if (IS_PRODUCTION) return next();
+  return res.send('Polymath Musician backend is running');
+});
+app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.get('/api/test', (req, res) => res.json({
   message: 'Backend is working',
   environment: PAYPAL_ENV,
@@ -3515,6 +3525,26 @@ app.post('/api/score-import', (req, res) => {
     error: 'Direct PDF conversion has been replaced by the user-facing translation queue. Sign in and use /api/score-translations.',
   });
 });
+
+if (IS_PRODUCTION) {
+  const frontendDir = path.resolve(__dirname, '..', 'dist');
+
+  app.use(express.static(frontendDir, {
+    etag: true,
+    maxAge: '1h',
+  }));
+
+  // React owns browser routes. Unknown API routes must still return JSON 404s.
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ error: 'API route not found.' });
+    }
+    if (!['GET', 'HEAD'].includes(req.method) || !req.accepts('html')) {
+      return next();
+    }
+    return res.sendFile(path.join(frontendDir, 'index.html'));
+  });
+}
 
 function resumePendingTranslationJobs() {
   if (!String(process.env.OPENAI_API_KEY || '').trim()) return;
