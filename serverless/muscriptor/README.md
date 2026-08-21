@@ -55,6 +55,19 @@ When this variable is set, the worker loads the custom weights instead of the
 published model. The RunPod cached-model field is optional and only accelerates
 the unmodified Hugging Face model; it does not replace custom volume weights.
 
+For faster cold starts, publish each validated custom version to a private
+Hugging Face repository containing `model.safetensors` and `config.json`. Add
+that repository to RunPod's cached-model field, provide an access token, and
+set the endpoint variable to its exact weights URL:
+
+```text
+MUSCRIPTOR_MODEL_SOURCE=hf://your-account/polymath-muscriptor-v1/model.safetensors
+```
+
+MuScriptor uses RunPod's `/runpod-volume/huggingface-cache` automatically. Use
+a versioned repository name (`v1`, `v2`, and so on) for predictable upgrades;
+edit both the cached model and this variable when promoting a new version.
+
 ## Backend variables
 
 Copy the `RUNPOD_*` entries from `server/.env.example` into `server/.env`.

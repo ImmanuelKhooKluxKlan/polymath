@@ -15,24 +15,33 @@ from muscriptor import TranscriptionModel
 
 MODEL_NAME = os.environ.get('MUSCRIPTOR_MODEL', 'large').strip().lower()
 MODEL_WEIGHTS_PATH = os.environ.get('MUSCRIPTOR_WEIGHTS_PATH', '').strip()
+MODEL_SOURCE_VALUE = (
+    os.environ.get('MUSCRIPTOR_MODEL_SOURCE', '').strip() or MODEL_WEIGHTS_PATH
+)
 VOLUME_JOB_ROOT = Path(
     os.environ.get('MUSCRIPTOR_JOB_ROOT', '/runpod-volume/jobs')
 ).resolve()
 NOTE_NAMES = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
 VALID_MODELS = {'small', 'medium', 'large'}
 
-if not MODEL_WEIGHTS_PATH and MODEL_NAME not in VALID_MODELS:
+if not MODEL_SOURCE_VALUE and MODEL_NAME not in VALID_MODELS:
     raise RuntimeError(f'Unsupported MuScriptor model: {MODEL_NAME}')
 
-if MODEL_WEIGHTS_PATH:
-    MODEL_SOURCE = Path(MODEL_WEIGHTS_PATH).expanduser().resolve()
-    if MODEL_SOURCE.suffix.lower() != '.safetensors':
-        raise RuntimeError('MUSCRIPTOR_WEIGHTS_PATH must point to a .safetensors file')
-    if not MODEL_SOURCE.is_file():
-        raise RuntimeError(f'Custom MuScriptor weights were not found: {MODEL_SOURCE}')
-    if not MODEL_SOURCE.with_name('config.json').is_file():
-        raise RuntimeError('Custom MuScriptor weights require config.json in the same folder')
-    MODEL_LABEL = f'custom model ({MODEL_SOURCE.name})'
+if MODEL_SOURCE_VALUE:
+    if MODEL_SOURCE_VALUE.startswith('hf://'):
+        if not MODEL_SOURCE_VALUE.lower().endswith('.safetensors'):
+            raise RuntimeError('MUSCRIPTOR_MODEL_SOURCE must identify a .safetensors file')
+        MODEL_SOURCE = MODEL_SOURCE_VALUE
+        MODEL_LABEL = f'custom Hugging Face model ({MODEL_SOURCE_VALUE[5:]})'
+    else:
+        MODEL_SOURCE = Path(MODEL_SOURCE_VALUE).expanduser().resolve()
+        if MODEL_SOURCE.suffix.lower() != '.safetensors':
+            raise RuntimeError('Custom MuScriptor weights must be a .safetensors file')
+        if not MODEL_SOURCE.is_file():
+            raise RuntimeError(f'Custom MuScriptor weights were not found: {MODEL_SOURCE}')
+        if not MODEL_SOURCE.with_name('config.json').is_file():
+            raise RuntimeError('Custom MuScriptor weights require config.json in the same folder')
+        MODEL_LABEL = f'custom volume model ({MODEL_SOURCE.name})'
     MODEL_SOURCE_ID = 'muscriptor-custom-runpod-serverless'
     MODEL_PROVIDER = 'Custom MuScriptor on RunPod Serverless GPU'
 else:
