@@ -86,10 +86,19 @@ async function verifySize(client, bucket, key, expectedSize) {
 }
 
 async function findMultipartUpload(client, bucket, key) {
-  const response = await client.send(new ListMultipartUploadsCommand({
-    Bucket: bucket,
-    Prefix: key,
-  }));
+  let response;
+  try {
+    response = await client.send(new ListMultipartUploadsCommand({
+      Bucket: bucket,
+      Prefix: key,
+    }));
+  } catch (error) {
+    if (/invalid object path/i.test(String(error?.message || ''))) {
+      console.warn('  RunPod does not support multipart discovery; starting a fresh session');
+      return null;
+    }
+    throw error;
+  }
   return (response.Uploads || [])
     .filter((upload) => upload.Key === key && upload.UploadId)
     .sort((left, right) => new Date(right.Initiated || 0) - new Date(left.Initiated || 0))[0] || null;
