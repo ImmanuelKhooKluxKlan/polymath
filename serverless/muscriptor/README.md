@@ -41,14 +41,26 @@ fine-tune that copy, and upload both files to a folder on the network volume,
 for example:
 
 ```text
-/runpod-volume/models/muscriptor-large-custom/model.safetensors
-/runpod-volume/models/muscriptor-large-custom/config.json
+/runpod-volume/models/original/model.safetensors
+/runpod-volume/models/original/config.json
+/runpod-volume/models/muscriptor-tester/v001/model.safetensors
+/runpod-volume/models/muscriptor-tester/v001/config.json
 ```
+
+Bootstrap the immutable original plus a versioned tester checkpoint directly
+from the local Hugging Face cache:
+
+```text
+npm --prefix server run upload:muscriptor
+```
+
+The command performs a resumable multipart upload, copies the verified original
+inside the RunPod volume, and refuses to overwrite mismatched checkpoints.
 
 Then add this environment variable to the Serverless endpoint:
 
 ```text
-MUSCRIPTOR_WEIGHTS_PATH=/runpod-volume/models/muscriptor-large-custom/model.safetensors
+MUSCRIPTOR_WEIGHTS_PATH=/runpod-volume/models/muscriptor-tester/v001/model.safetensors
 ```
 
 When this variable is set, the worker loads the custom weights instead of the
