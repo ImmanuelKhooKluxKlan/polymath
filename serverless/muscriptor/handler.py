@@ -65,7 +65,14 @@ def load_model() -> TranscriptionModel:
     return loaded
 
 
-MODEL = load_model()
+MODEL: TranscriptionModel | None = None
+
+
+def get_model() -> TranscriptionModel:
+    global MODEL
+    if MODEL is None:
+        MODEL = load_model()
+    return MODEL
 
 
 def copy_checkpoint_file(source: Path, destination: Path) -> str:
@@ -162,7 +169,8 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
     notes: list[dict[str, Any]] = []
     progress = {'completed': 0, 'total': 0}
 
-    for event in MODEL.transcribe(str(audio_path), instruments=instruments):
+    model = get_model()
+    for event in model.transcribe(str(audio_path), instruments=instruments):
         if hasattr(event, 'start_time') and hasattr(event, 'pitch'):
             starts[int(event.index)] = event
         elif hasattr(event, 'end_time') and hasattr(event, 'start_event'):
