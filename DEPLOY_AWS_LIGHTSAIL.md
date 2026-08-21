@@ -41,11 +41,19 @@ may be enabled with SSL/TLS mode set to **Full (strict)**.
 
 ## Updates
 
+Production checks GitHub once per minute with the installed
+`polymath-deploy.timer`. When `origin/main` changes, Lightsail fast-forwards
+the checkout, rebuilds Docker Compose, waits for healthy containers, and records
+the revision only after the public health check succeeds. Inspect it with:
+
 ```bash
-cd ~/polymath
-git pull --ff-only
-docker compose up -d --build
+systemctl status polymath-deploy.timer
+journalctl -u polymath-deploy.service
 ```
+
+The ignored `server/.env` remains on Lightsail and is never transferred through
+GitHub. Environment-only changes require a direct secure copy and one manual
+container recreation.
 
 Enable Lightsail automatic snapshots before admitting users. The current data
 volume is appropriate for a controlled beta, not a horizontally scaled paid

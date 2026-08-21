@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy Polymath Musician from GitHub
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/polymath
+ExecStart=/home/ubuntu/polymath/deploy/poll-deploy.sh

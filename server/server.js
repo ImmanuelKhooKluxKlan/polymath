@@ -428,6 +428,69 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   return { salt, hash };
 }
 
+function bootstrapAdminAccounts() {
+  const password = String(process.env.ADMIN_PASSWORD || '');
+  if (!password) return { created: 0 };
+  if (ADMIN_EMAILS.size === 0) {
+    throw new Error('ADMIN_PASSWORD requires at least one address in ADMIN_EMAILS.');
+  }
+  if (password.length < 12) {
+    throw new Error('ADMIN_PASSWORD must contain at least 12 characters.');
+  }
+
+  const db = readDb();
+  const now = new Date().toISOString();
+  let created = 0;
+
+  ADMIN_EMAILS.forEach((email) => {
+    const accountExists = db.users.some(
+      (user) => String(user.email || '').trim().toLowerCase() === email,
+    );
+    if (accountExists) return;
+
+    const userId = id('user');
+    const { salt, hash } = hashPassword(password);
+    db.users.push({
+      id: userId,
+      friendId: createFriendId(db.users, userId),
+      name: 'Polymath Administrator',
+      email,
+      phone: '',
+      passwordHash: hash,
+      passwordSalt: salt,
+      mustChangePassword: true,
+      mcoins: 0,
+      withdrawableMcoins: 0,
+      pro: false,
+      proStatus: 'INACTIVE',
+      paypalSubscriptionId: null,
+      translationUsage: {
+        period: currentTranslationPeriod(),
+        freeUsed: 0,
+        proUsed: 0,
+      },
+      ageRequirementConfirmedAt: null,
+      policyAcceptedAt: null,
+      passwordBootstrappedAt: now,
+      createdAt: now,
+    });
+    db.authEvents.push({
+      id: id('auth'),
+      userId,
+      type: 'admin_bootstrap',
+      createdAt: now,
+    });
+    created += 1;
+  });
+
+  if (created > 0) {
+    db.authEvents = db.authEvents.slice(-5000);
+    writeDb(db);
+    console.log(`Created ${created} administrator account(s) with a temporary password.`);
+  }
+  return { created };
+}
+
 function hashSessionToken(token) {
   return crypto.createHash('sha256').update(String(token || '')).digest('hex');
 }
@@ -3567,9 +3630,10 @@ function resumePendingMediaTranscriptionJobs() {
 if (require.main === module) {
   ensureStorage();
   writeDb(readDb());
+  bootstrapAdminAccounts();
   resumePendingTranslationJobs();
   resumePendingMediaTranscriptionJobs();
   app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
 }
 
-module.exports = { app, ensureStorage, readDb, writeDb };
+module.exports = { app, bootstrapAdminAccounts, ensureStorage, readDb, writeDb };
