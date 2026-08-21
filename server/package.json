@@ -8,11 +8,11 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "test": "node --test server.test.js runpodServerless.test.js",
+    "bootstrap:muscriptor": "node bootstrapRunpodModel.js",
     "upload:muscriptor": "node uploadMuscriptorModels.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1114.0",
-    "@aws-sdk/lib-storage": "^3.1115.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

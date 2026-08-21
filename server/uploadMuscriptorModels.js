@@ -2,17 +2,22 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } = require('@aws-sdk/client-s3');
-const { Upload } = require('@aws-sdk/lib-storage');
 const dotenv = require('dotenv');
 
 dotenv.config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const WEIGHTS_FILE = 'model.safetensors';
 const CONFIG_FILE = 'config.json';
+const PART_SIZE = 8 * 1024 * 1024;
 const ORIGINAL_PREFIX = 'models/original';
 const testVersion = String(process.env.MUSCRIPTOR_TEST_VERSION || 'v001').trim();
 const TEST_PREFIX = `models/muscriptor-tester/${testVersion}`;
@@ -56,6 +61,10 @@ function formatBytes(bytes) {
   return `${(Number(bytes) / (1024 ** 3)).toFixed(2)} GiB`;
 }
 
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 async function remoteMetadata(client, bucket, key) {
   try {
     return await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
@@ -75,6 +84,83 @@ async function verifySize(client, bucket, key, expectedSize) {
   }
 }
 
+async function multipartUploadFile(client, bucket, localPath, key, expectedSize) {
+  const created = await client.send(new CreateMultipartUploadCommand({
+    Bucket: bucket,
+    Key: key,
+    ContentType: 'application/octet-stream',
+  }));
+  const uploadId = created.UploadId;
+  const parts = [];
+  const partCount = Math.ceil(expectedSize / PART_SIZE);
+  let lastPercent = -1;
+  console.log(`  multipart created; ${partCount} parts`);
+
+  try {
+    const file = await fs.promises.open(localPath, 'r');
+    try {
+      for (let index = 0; index < partCount; index += 1) {
+        const partNumber = index + 1;
+        const start = index * PART_SIZE;
+        const length = Math.min(PART_SIZE, expectedSize - start);
+        let uploaded;
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+          const body = file.createReadStream({
+            start,
+            end: start + length - 1,
+            autoClose: false,
+          });
+          try {
+            uploaded = await client.send(new UploadPartCommand({
+              Bucket: bucket,
+              Key: key,
+              UploadId: uploadId,
+              PartNumber: partNumber,
+              Body: body,
+              ContentLength: length,
+            }));
+            break;
+          } catch (error) {
+            body.destroy();
+            if (attempt === 5) {
+              error.message = `part ${partNumber}/${partCount}: ${error.message}`;
+              throw error;
+            }
+            console.warn(`  retrying part ${partNumber} (attempt ${attempt + 1}/5)`);
+            await sleep(1_000 * (2 ** (attempt - 1)));
+          }
+        }
+        parts.push({ PartNumber: partNumber, ETag: uploaded.ETag });
+        const percent = Math.floor((partNumber / partCount) * 100);
+        if (percent > lastPercent || partNumber === partCount) {
+          console.log(`  ${percent}% (part ${partNumber}/${partCount})`);
+          lastPercent = percent;
+        }
+      }
+    } finally {
+      await file.close();
+    }
+
+    await client.send(new CompleteMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: { Parts: parts },
+    }));
+  } catch (error) {
+    try {
+      await client.send(new AbortMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+      }));
+    } catch {
+      // RunPod also cleans abandoned multipart state automatically.
+    }
+    throw error;
+  }
+}
+
 async function uploadFile(client, bucket, localPath, key) {
   const expectedSize = fs.statSync(localPath).size;
   const existing = await remoteMetadata(client, bucket, key);
@@ -87,27 +173,17 @@ async function uploadFile(client, bucket, localPath, key) {
   }
 
   console.log(`Uploading ${key} (${formatBytes(expectedSize)})`);
-  const transfer = new Upload({
-    client,
-    params: {
+  if (expectedSize > 500 * 1024 * 1024) {
+    await multipartUploadFile(client, bucket, localPath, key, expectedSize);
+  } else {
+    await client.send(new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: fs.createReadStream(localPath),
+      ContentLength: expectedSize,
       ContentType: key.endsWith('.json') ? 'application/json' : 'application/octet-stream',
-    },
-    queueSize: 3,
-    partSize: 64 * 1024 * 1024,
-    leavePartsOnError: false,
-  });
-  let lastPercent = -1;
-  transfer.on('httpUploadProgress', ({ loaded = 0, total = expectedSize }) => {
-    const percent = Math.floor((loaded / total) * 100);
-    if (percent === 100 || percent >= lastPercent + 5) {
-      console.log(`  ${percent}%`);
-      lastPercent = percent;
-    }
-  });
-  await transfer.done();
+    }));
+  }
   await verifySize(client, bucket, key, expectedSize);
 }
 
@@ -160,7 +236,26 @@ async function main() {
     forcePathStyle: true,
     credentials: { accessKeyId, secretAccessKey },
     maxAttempts: 10,
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
   });
+  client.middlewareStack.addRelativeTo(
+    (next) => async (args) => {
+      const output = await next(args);
+      const headers = output.response?.headers || {};
+      for (const name of ['date', 'last-modified']) {
+        if (typeof headers[name] === 'string') {
+          headers[name] = headers[name].replace(/ UTC$/, ' GMT');
+        }
+      }
+      return output;
+    },
+    {
+      relation: 'after',
+      toMiddleware: 'deserializerMiddleware',
+      name: 'normalizeRunpodDates',
+    },
+  );
 
   console.log(`Local model: ${modelDirectory}`);
   await uploadFile(client, bucket, weightsPath, `${ORIGINAL_PREFIX}/${WEIGHTS_FILE}`);

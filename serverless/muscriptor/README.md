@@ -54,8 +54,20 @@ from the local Hugging Face cache:
 npm --prefix server run upload:muscriptor
 ```
 
-The command performs a resumable multipart upload, copies the verified original
+The command performs a retrying multipart upload, copies the verified original
 inside the RunPod volume, and refuses to overwrite mismatched checkpoints.
+
+For distant or unreliable client connections, prefer the RunPod-side bootstrap.
+After attaching the volume and selecting the cached
+`MuScriptor/muscriptor-large` model, run:
+
+```text
+npm --prefix server run bootstrap:muscriptor
+```
+
+The worker pins the published revision matching the local checkpoint, copies it
+atomically to `models/original`, and creates `muscriptor-tester/v001` inside
+the RunPod datacenter.
 
 Then add this environment variable to the Serverless endpoint:
 

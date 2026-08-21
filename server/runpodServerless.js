@@ -11,6 +11,32 @@ function clean(value) {
   return String(value || '').trim();
 }
 
+function createRunpodS3Client(configuration) {
+  const client = new S3Client({
+    ...configuration,
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
+  });
+  client.middlewareStack.addRelativeTo(
+    (next) => async (args) => {
+      const output = await next(args);
+      const headers = output.response?.headers || {};
+      for (const name of ['date', 'last-modified']) {
+        if (typeof headers[name] === 'string') {
+          headers[name] = headers[name].replace(/ UTC$/, ' GMT');
+        }
+      }
+      return output;
+    },
+    {
+      relation: 'after',
+      toMiddleware: 'deserializerMiddleware',
+      name: 'normalizeRunpodDates',
+    },
+  );
+  return client;
+}
+
 function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
   const endpointId = clean(configuration.endpointId);
   const apiKey = clean(configuration.apiKey);
@@ -32,7 +58,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
   if (!s3AccessKeyId) missing.push('RUNPOD_S3_ACCESS_KEY_ID');
   if (!s3SecretAccessKey) missing.push('RUNPOD_S3_SECRET_ACCESS_KEY');
 
-  const s3 = dependencies.s3 || (missing.length ? null : new S3Client({
+  const s3 = dependencies.s3 || (missing.length ? null : createRunpodS3Client({
     region,
     endpoint: s3Endpoint,
     forcePathStyle: true,

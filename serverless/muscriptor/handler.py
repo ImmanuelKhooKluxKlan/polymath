@@ -6,10 +6,12 @@ import base64
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
 import runpod
+from huggingface_hub import hf_hub_download
 from muscriptor import TranscriptionModel
 
 
@@ -23,6 +25,11 @@ VOLUME_JOB_ROOT = Path(
 ).resolve()
 NOTE_NAMES = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
 VALID_MODELS = {'small', 'medium', 'large'}
+BOOTSTRAP_REPO = 'MuScriptor/muscriptor-large'
+BOOTSTRAP_REVISION = os.environ.get(
+    'MUSCRIPTOR_BOOTSTRAP_REVISION',
+    '8809fdfbed2affa7ade94a7059e746e3880720e7',
+).strip()
 
 if not MODEL_SOURCE_VALUE and MODEL_NAME not in VALID_MODELS:
     raise RuntimeError(f'Unsupported MuScriptor model: {MODEL_NAME}')
@@ -59,6 +66,63 @@ def load_model() -> TranscriptionModel:
 
 
 MODEL = load_model()
+
+
+def copy_checkpoint_file(source: Path, destination: Path) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if destination.stat().st_size == source.stat().st_size:
+            return 'verified-existing'
+        raise RuntimeError(f'Refusing to overwrite mismatched checkpoint: {destination}')
+    temporary = destination.with_name(f'.{destination.name}.{os.getpid()}.uploading')
+    try:
+        shutil.copy2(source, temporary)
+        if temporary.stat().st_size != source.stat().st_size:
+            raise RuntimeError(f'Checkpoint copy verification failed: {destination}')
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return 'created'
+
+
+def bootstrap_model_copies(job: dict[str, Any], job_input: dict[str, Any]) -> dict[str, Any]:
+    version = str(job_input.get('version') or 'v001').strip().lower()
+    if not re.fullmatch(r'v\d{3,}', version):
+        raise ValueError('Bootstrap version must look like v001, v002, and so on')
+
+    runpod.serverless.progress_update(job, 'Locating cached MuScriptor Large weights')
+    weights = Path(hf_hub_download(
+        repo_id=BOOTSTRAP_REPO,
+        filename='model.safetensors',
+        revision=BOOTSTRAP_REVISION,
+    ))
+    config = Path(hf_hub_download(
+        repo_id=BOOTSTRAP_REPO,
+        filename='config.json',
+        revision=BOOTSTRAP_REVISION,
+    ))
+
+    original = Path('/runpod-volume/models/original')
+    tester = Path('/runpod-volume/models/muscriptor-tester') / version
+    runpod.serverless.progress_update(job, 'Creating immutable original checkpoint')
+    results = {
+        str(original / weights.name): copy_checkpoint_file(weights, original / weights.name),
+        str(original / config.name): copy_checkpoint_file(config, original / config.name),
+    }
+    runpod.serverless.progress_update(job, f'Creating tester checkpoint {version}')
+    results.update({
+        str(tester / weights.name): copy_checkpoint_file(original / weights.name, tester / weights.name),
+        str(tester / config.name): copy_checkpoint_file(original / config.name, tester / config.name),
+    })
+    return {
+        'action': 'bootstrap-model-copies',
+        'model': BOOTSTRAP_REPO,
+        'revision': BOOTSTRAP_REVISION,
+        'version': version,
+        'weightsBytes': weights.stat().st_size,
+        'files': results,
+        'testerWeightsPath': str(tester / weights.name),
+    }
 
 
 def midi_to_note(midi: int) -> str:
@@ -158,6 +222,8 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
 
 def handler(job: dict[str, Any]) -> dict[str, Any]:
     job_input = job.get('input') or {}
+    if job_input.get('action') == 'bootstrap_model_copies':
+        return bootstrap_model_copies(job, job_input)
     encoded = str(job_input.get('audio_base64') or '').strip()
     delete_audio = bool(job_input.get('delete_audio', True))
     if encoded:
