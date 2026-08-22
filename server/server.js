@@ -48,6 +48,9 @@ const MAX_MEDIA_SECONDS = 10 * 60;
 const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS || 0)));
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
 const MUSCRIPTOR_ENABLED = String(process.env.MUSCRIPTOR_ENABLED || 'false').trim().toLowerCase() === 'true';
+const MUSCRIPTOR_ADMIN_ONLY = String(
+  process.env.MUSCRIPTOR_ADMIN_ONLY || (IS_PRODUCTION ? 'true' : 'false'),
+).trim().toLowerCase() === 'true';
 const MUSCRIPTOR_MODEL = ['small', 'medium', 'large'].includes(
   String(process.env.MUSCRIPTOR_MODEL || 'large').trim().toLowerCase(),
 )
@@ -990,6 +993,7 @@ function muscriptorAvailability() {
     enabled: MUSCRIPTOR_ENABLED && ffmpegExists
       && (serverlessConfigured || remoteConfigured || (pythonExists && workerExists)),
     configured: MUSCRIPTOR_ENABLED,
+    adminOnly: MUSCRIPTOR_ADMIN_ONLY,
     model: MUSCRIPTOR_MODEL,
     execution: serverlessConfigured
       ? 'runpod-serverless-flex'
@@ -3357,6 +3361,12 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
   const capability = muscriptorAvailability();
   if (!capability.enabled) {
     return res.status(503).json({ error: capability.reason, capability });
+  }
+  if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
+    return res.status(403).json({
+      error: 'MuScriptor is currently available only to administrators for model testing.',
+      capability,
+    });
   }
 
   return mediaUpload.single('media')(req, res, (uploadError) => {

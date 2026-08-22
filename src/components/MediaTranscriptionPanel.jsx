@@ -17,6 +17,8 @@ export default function MediaTranscriptionPanel({
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const pollTimer = useRef(null);
+  const transcriptionUnavailable = capability?.enabled === false
+    || Boolean(capability?.adminOnly && !user.admin);
 
   function clearPolling() {
     if (pollTimer.current) window.clearTimeout(pollTimer.current);
@@ -136,6 +138,13 @@ export default function MediaTranscriptionPanel({
         </div>
       )}
 
+      {capability?.enabled && capability.adminOnly && !user.admin && (
+        <div className={'quota-warning'}>
+          <strong>MuScriptor model testing is restricted.</strong>
+          <span>Administrator access is required during the trial-and-error testing phase.</span>
+        </div>
+      )}
+
       {user.admin && (
         <p className="muted"><strong>Administrator access:</strong> unlimited audio and video transcriptions.</p>
       )}
@@ -194,7 +203,7 @@ export default function MediaTranscriptionPanel({
           className="primary full"
           type="button"
           onClick={startTranscription}
-          disabled={!file || !rightsConfirmed || busy || capability?.enabled === false}
+          disabled={!file || !rightsConfirmed || busy || transcriptionUnavailable}
         >
           {busy ? 'Uploading…' : 'Transcribe with MuScriptor'}
         </button>

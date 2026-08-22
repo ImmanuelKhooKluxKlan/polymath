@@ -12,7 +12,7 @@ services:
       PORT: 3000
       CLIENT_ORIGIN: https://polymathmusician67.com
       POLYMATH_DATA_DIR: /app/server/data
-      MUSCRIPTOR_ENABLED: 'false'
+      MUSCRIPTOR_ADMIN_ONLY: 'true'
       PIANO_ARRANGER_PYTHON: python3
       PIANO_ARRANGER_WORKER: /app/server/piano_arranger.py
     volumes:
