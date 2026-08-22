@@ -18,7 +18,7 @@ export default function MediaTranscriptionPanel({
   const [busy, setBusy] = useState(false);
   const pollTimer = useRef(null);
   const transcriptionUnavailable = capability?.enabled === false
-    || Boolean(capability?.adminOnly && !user.admin);
+    || Boolean(capability?.adminOnly && !user?.admin);
 
   function clearPolling() {
     if (pollTimer.current) window.clearTimeout(pollTimer.current);
