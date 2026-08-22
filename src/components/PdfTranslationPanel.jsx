@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest, downloadProtectedFile, fileToBase64 } from '../services/api.js';
+import { apiRequest, downloadProtectedFile, fetchProtectedFile, fileToBase64 } from '../services/api.js';
 import { instrumentLabel } from '../data/instruments.js';
 
 const POLL_INTERVAL_MS = 10000;
@@ -34,7 +34,7 @@ async function verifyPdfFile(file) {
   }
 }
 
-export default function PdfTranslationPanel({ user, setUser, instrument, onNavigate }) {
+export default function PdfTranslationPanel({ user, setUser, instrument, onNavigate, onReadyFile }) {
   const [file, setFile] = useState(null);
   const [job, setJob] = useState(null);
   const [status, setStatus] = useState('Upload a readable instrumental PDF music sheet.');
@@ -65,8 +65,9 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       setJob(data.job);
       if (data.user) setUser(data.user);
       if (data.job.status === 'completed') {
-        setStatus('Your ready-to-play sheet is complete. Download it, then use Upload Ready-to-Play Sheet.');
+        setStatus('Your ready-to-play sheet is complete. Opening it in the piano studio...');
         clearPolling();
+        await openReadySheet(data.job);
         return;
       }
       if (data.job.status === 'failed') {
@@ -146,6 +147,23 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       );
     } catch (error) {
       setStatus(error.message);
+    }
+  }
+
+  async function openReadySheet(completedJob = job) {
+    if (!completedJob?.id || !onReadyFile) return;
+    setBusy(true);
+    try {
+      const readyFile = await fetchProtectedFile(
+        `/api/score-translations/${completedJob.id}/download`,
+        `${file?.name?.replace(/\.pdf$/i, '') || 'ready-to-play-sheet'}.json`,
+      );
+      await onReadyFile(readyFile);
+      setStatus('Loaded into the piano studio and ready to play.');
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setBusy(false);
     }
   }
 

@@ -103,6 +103,7 @@ export default function App() {
   const pedalTimers = useRef([]);
   const playbackRunId = useRef(0);
   const seekWasPlaying = useRef(false);
+  const studioPlayerRef = useRef(null);
 
   const song = useMemo(
     () => songs.find((candidate) => candidate.title === songTitle) || songs[0],
@@ -246,6 +247,16 @@ export default function App() {
         Number(value) || 0,
       ),
     );
+  }
+
+  function focusMobilePlayer() {
+    if (!window.matchMedia('(max-width: 1100px)').matches) return;
+    window.setTimeout(() => {
+      const player = studioPlayerRef.current;
+      if (!player) return;
+      player.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      player.focus({ preventScroll: true });
+    }, 120);
   }
 
   function setSustainPedal(nextState) {
@@ -398,6 +409,7 @@ export default function App() {
     setPracticeRange(null);
     setSelectedSectionIndex(0);
     setSongTitle(title);
+    focusMobilePlayer();
   }
 
   function handleUpload(uploadedSong) {
@@ -407,6 +419,7 @@ export default function App() {
     setSelectedSectionIndex(0);
     setSongs((previous) => [normalized, ...previous.filter((candidate) => candidate.title !== normalized.title)]);
     setSongTitle(normalized.title);
+    focusMobilePlayer();
   }
 
   function getSongTimeFromPerformanceClock(now = performance.now()) {
@@ -643,6 +656,14 @@ export default function App() {
         )}
 
         <section className="studio-grid">
+          <div className='mobile-flow-guide mobile-source-guide'>
+            <span>1</span>
+            <div>
+              <strong>Choose your music</strong>
+              <small>Pick a song or upload a ready sheet, PDF, MP3, or video.</small>
+            </div>
+          </div>
+
           <ControlPanel
             song={song}
             songs={songs}
@@ -654,6 +675,15 @@ export default function App() {
             autoplayVolume={autoplayVolume}
             setAutoplayVolume={setAutoplayVolume}
           />
+
+          <div className='mobile-flow-guide mobile-player-guide'>
+            <span>2</span>
+            <div>
+              <strong>Play and learn</strong>
+              <small>Follow the falling notes, then use the keyboard and controls below.</small>
+            </div>
+          </div>
+          <div ref={studioPlayerRef} className='mobile-player-anchor' tabIndex='-1' />
 
           <div className="visual-stack">
             <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} />

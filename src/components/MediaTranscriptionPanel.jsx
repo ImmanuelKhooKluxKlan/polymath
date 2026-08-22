@@ -45,8 +45,9 @@ export default function MediaTranscriptionPanel({
       const data = await apiRequest(`/api/media-transcriptions/${jobId}`);
       setJob(data.job);
       if (data.job.status === 'completed') {
-        setStatus('Your ready-to-play sheet is ready.');
+        setStatus('Your ready-to-play sheet is ready. Opening the piano studio...');
         clearPolling();
+        await openReadySheet(data.job);
         return;
       }
       if (data.job.status === 'failed') {
@@ -101,13 +102,14 @@ export default function MediaTranscriptionPanel({
     }
   }
 
-  async function openReadySheet() {
-    if (!job?.id || !onReadyFile) return;
+  async function openReadySheet(completedJob = null) {
+    const readyJob = completedJob?.id ? completedJob : job;
+    if (!readyJob?.id || !onReadyFile) return;
     setBusy(true);
     try {
       const readyFile = await fetchProtectedFile(
-        `/api/media-transcriptions/${job.id}/download`,
-        job.outputFilename || 'muscriptor-ready-to-play.json',
+        `/api/media-transcriptions/${readyJob.id}/download`,
+        readyJob.outputFilename || 'muscriptor-ready-to-play.json',
       );
       await onReadyFile(readyFile);
       setStatus('Loaded into the studio and ready to play.');

@@ -1,14 +1,32 @@
 export default function HeaderActions({ user, onNavigate, route }) {
   const isLesson = ['studio', 'guitar', 'ensemble', 'band'].includes(route);
+  const walletValue = user ? user.mcoins.toLocaleString() : 'Mcoins';
+  const planLabel = user?.admin ? 'Admin' : user?.pro ? 'Pro' : 'Upgrade';
+  const planDetail = user?.admin
+    ? 'Unlimited'
+    : user?.pro
+      ? (user.translationAllowance?.remaining ?? 20) + ' left'
+      : 'Get Pro';
+
   return (
-    <div className={`global-actions ${isLesson ? 'lesson-actions' : ''}`}>
-      <button className="mcoin-button" type="button" onClick={() => onNavigate('payment', { productId: 'mcoins-100' })}>
-        <span>{user ? 'Wallet' : 'Mcoins'}</span>
-        <small>{user ? `${user.mcoins.toLocaleString()} balance` : '$1 = 10 Mcoins'}</small>
+    <div className={'global-actions ' + (isLesson ? 'lesson-actions' : '')}>
+      <button
+        className='mcoin-button header-status-button'
+        type='button'
+        onClick={() => user ? onNavigate('account') : onNavigate('payment', { productId: 'mcoins-100' })}
+        aria-label={user ? 'Open wallet with ' + walletValue + ' Mcoins' : 'Learn about Mcoins'}
+      >
+        <span>Wallet</span>
+        <strong>{walletValue}</strong>
       </button>
-      <button className="buy-pro-button compact-pro" type="button" onClick={() => user?.admin || user?.pro ? onNavigate('account') : onNavigate('payment', { productId: 'polymath-pro' })}>
-        <span>{user?.admin ? 'Admin' : user?.pro ? 'Pro' : 'Upgrade'}</span>
-        <small>{user?.admin ? 'Unlimited translations' : user?.pro ? `${user.translationAllowance?.remaining ?? 20} translations left` : '$19.99 / month'}</small>
+      <button
+        className='buy-pro-button compact-pro header-status-button'
+        type='button'
+        onClick={() => user?.admin || user?.pro ? onNavigate('account') : onNavigate('payment', { productId: 'polymath-pro' })}
+        aria-label={user?.admin || user?.pro ? 'Open ' + planLabel + ' account' : 'Upgrade to Pro'}
+      >
+        <span>{planLabel}</span>
+        <strong>{planDetail}</strong>
       </button>
     </div>
   );

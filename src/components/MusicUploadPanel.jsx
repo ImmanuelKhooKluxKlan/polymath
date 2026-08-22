@@ -58,7 +58,7 @@ export default function MusicUploadPanel({
       </div>
 
       {mode === 'pdf' ? (
-        <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} />
+        <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} onReadyFile={onReadyFile} />
       ) : mode === 'media' ? (
         <MediaTranscriptionPanel
           user={user}
