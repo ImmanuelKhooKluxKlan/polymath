@@ -224,6 +224,10 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(transcriptionCapability.data.maxBytes, null);
   assert.equal(transcriptionCapability.data.license, 'CC-BY-NC-4.0');
 
+  const health = await api('/api/health');
+  assert.equal(health.status, 200);
+  assert.deepEqual(health.data, { ok: true });
+
   const catalog = await api('/api/catalog');
   assert.equal(catalog.status, 200);
   assert.equal(catalog.data.mcoinsPerUsd, 1);
