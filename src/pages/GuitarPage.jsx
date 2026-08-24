@@ -120,6 +120,11 @@ function normalizeLesson(raw, metadata = {}) {
   };
 }
 
+function lessonLabel(lesson) {
+  const artist = String(lesson?.artist || '').trim();
+  return artist ? `${lesson.title} (${artist})` : lesson.title;
+}
+
 function lessonDuration(lesson) {
   return Math.max(0, ...(lesson.events || []).map((event) => event.time + event.duration)) + 0.35;
 }
@@ -257,6 +262,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   const [selectedSectionIndex, setSelectedSectionIndex] = useState(0);
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
+  const [manualStringVibration, setManualStringVibration] = useState(null);
 
   const nextEventIndex = useRef(0);
   const startStamp = useRef(0);
@@ -265,6 +271,8 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   const animationFrame = useRef(null);
   const runId = useRef(0);
   const seekWasPlaying = useRef(false);
+  const vibrationTimer = useRef(null);
+  const guitarPlayerRef = useRef(null);
 
   const duration = useMemo(() => lessonDuration(lesson), [lesson]);
   const learningSections = useMemo(
@@ -296,6 +304,10 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   useEffect(() => {
     guitarAudio.setMasterVolume(volume);
   }, [volume]);
+
+  useEffect(() => () => {
+    if (vibrationTimer.current) window.clearTimeout(vibrationTimer.current);
+  }, []);
 
   useEffect(() => {
     setSelectedSectionIndex(0);
@@ -346,6 +358,23 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     stopClocks();
     pauseOffset.current = clampTime(position);
     guitarAudio.stopAll(0.025);
+    if (vibrationTimer.current) window.clearTimeout(vibrationTimer.current);
+    vibrationTimer.current = null;
+    setManualStringVibration(null);
+  }
+
+  function pulseStrings(primaryStrings, mutedStrings = [], milliseconds = 1250) {
+    const primary = new Set(primaryStrings);
+    const muted = new Set(mutedStrings);
+    const sympathetic = STRINGS
+      .map((_, index) => index)
+      .filter((index) => !primary.has(index) && !muted.has(index));
+    setManualStringVibration({ primary: [...primary], sympathetic });
+    if (vibrationTimer.current) window.clearTimeout(vibrationTimer.current);
+    vibrationTimer.current = window.setTimeout(() => {
+      setManualStringVibration(null);
+      vibrationTimer.current = null;
+    }, milliseconds);
   }
 
   async function pressFret(stringIndex, fret) {
@@ -354,6 +383,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
       duration: 3.2,
       releaseSeconds: 0.48,
     });
+    pulseStrings([stringIndex]);
   }
 
   async function startAt(position, speedOverride = speed) {
@@ -556,9 +586,10 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     return () => { cancelled = true; };
   }, [readLessonFile, user?.user_id]);
 
-  async function loadReadyLesson(file) {
-    const parsed = await readLessonFile(file);
+  async function loadReadyLesson(file, { commit = true, prepared = null } = {}) {
+    const parsed = prepared || await readLessonFile(file);
     if (!parsed.events.length) throw new Error('No playable guitar events were found.');
+    if (!commit) return parsed;
     stopLesson();
     setLesson(parsed);
     return parsed;
@@ -571,6 +602,15 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     setLesson(selected);
   }
 
+  function focusGuitarPlayer() {
+    window.setTimeout(() => {
+      const player = guitarPlayerRef.current;
+      if (!player) return;
+      player.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      player.focus({ preventScroll: true });
+    }, 80);
+  }
+
   async function playChord(chord) {
     setSelectedChord(chord);
     guitarAudio.setToneMode(toneMode);
@@ -579,22 +619,37 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
       duration: 3.1,
       releaseSeconds: 0.5,
     });
+    pulseStrings(
+      CHORDS[chord].map((fret, index) => (fret >= 0 ? index : null)).filter((index) => index !== null),
+      CHORDS[chord].map((fret, index) => (fret < 0 ? index : null)).filter((index) => index !== null),
+    );
   }
 
   const displayedFrets = activeEvent?.frets || CHORDS[selectedChord];
+  const scheduledStringVibration = useMemo(() => {
+    if (!isPlaying || !activeEvent) return null;
+    if (Array.isArray(activeEvent.frets)) {
+      const primary = activeEvent.frets
+        .map((fret, index) => (Number(fret) >= 0 ? index : null))
+        .filter((index) => index !== null);
+      return { primary, sympathetic: [] };
+    }
+    if (Number.isInteger(activeEvent.stringIndex)) {
+      return {
+        primary: [activeEvent.stringIndex],
+        sympathetic: STRINGS.map((_, index) => index).filter((index) => index !== activeEvent.stringIndex),
+      };
+    }
+    return null;
+  }, [activeEvent, isPlaying]);
+  const visibleStringVibration = manualStringVibration || scheduledStringVibration;
 
   return (
     <section className="page-shell guitar-page">
-      <div className="page-heading split-heading">
-        <div>
-          <p className="eyebrow">Polymath Musician Guitar Studio</p>
-          <h1>Learn this song on guitar.</h1>
-          <p>Follow all six strings into the play line, then copy the illuminated chord shape on the fretboard.</p>
-        </div>
-      </div>
-
       <LearnModePanel
         mode={teachingMode}
+        locked={!user?.admin && !user?.access?.learn}
+        onUpgrade={() => onNavigate('payment', { productId: 'polymath-musician-monthly' })}
         onModeChange={(mode) => {
           stopLesson();
           setTeachingMode(mode);
@@ -613,60 +668,30 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
       <div className="guitar-studio-grid">
         <aside className="guitar-control-panel">
           <div>
-            <p className="eyebrow">Current lesson</p>
-            <h2>{lesson.title}</h2>
-            <p className="muted">{lesson.artist || 'Guitar lesson'} • {lesson.bpm} BPM • {lesson.events.length} events</p>
+            <p className="eyebrow">Available songs</p>
+            <h2>{lessonLabel(lesson)}</h2>
           </div>
 
-          <label className="field">Available songs
+          <label className="field">Select song
             <select value={lesson.title} onChange={(event) => chooseFreeLesson(event.target.value)}>
               {!freeLessons.some((candidate) => candidate.title === lesson.title) && (
-                <option value={lesson.title}>{lesson.title} — uploaded</option>
+                <option value={lesson.title}>{lessonLabel(lesson)} — uploaded</option>
               )}
               {freeLessons.map((candidate) => (
                 <option key={candidate.title} value={candidate.title}>
-                  {candidate.title}{candidate.artist ? ` — ${candidate.artist}` : ''}
+                  {lessonLabel(candidate)}
                 </option>
               ))}
             </select>
           </label>
 
-          <details className="lesson-options">
-            <summary>Lesson and sound options</summary>
-            <div className="lesson-options-content">
-              <label className="field">Guitar sound
-                <select value={toneMode} onChange={(event) => setToneMode(event.target.value)}>
-                  {Object.entries(GUITAR_TONE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </label>
-              <label className="field">Capo
-                <select value={capoFret} onChange={(event) => setCapoFret(Number(event.target.value))}>
-                  <option value="0">No capo</option>
-                  {Array.from({ length: 7 }, (_, index) => index + 1).map((fret) => (
-                    <option key={fret} value={fret}>Fret {fret}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">Guitar volume: {Math.round(volume * 100)}%
-                <input type="range" min="0.25" max="1.1" step="0.05" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
-              </label>
-              <label className="field">Notes appear {leadTime.toFixed(1)}s early
-                <input type="range" min="1.5" max="6" step="0.1" value={leadTime} onChange={(event) => setLeadTime(Number(event.target.value))} />
-              </label>
-            </div>
-          </details>
+          <button className="primary song-play-now" type="button" onClick={focusGuitarPlayer}>
+            Play now
+          </button>
 
-          <details className="song-tools">
-            <summary>Chord practice</summary>
-            <div className="guitar-chord-grid">
-              {Object.keys(CHORDS).map((chord) => (
-                <button key={chord} type="button" className={selectedChord === chord ? 'active' : ''} onClick={() => playChord(chord)}>{chord}</button>
-              ))}
-            </div>
-          </details>
         </aside>
 
-        <div className="guitar-visual-stack">
+        <div ref={guitarPlayerRef} className="guitar-visual-stack" tabIndex="-1">
           <GuitarFallingNotes
             lesson={lesson}
             currentTime={currentTime}
@@ -691,6 +716,40 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
             minSpeed={0.2}
           />
 
+          <details className="lesson-options player-settings">
+            <summary>Settings</summary>
+            <div className="lesson-options-content">
+              <label className="field">Guitar sound
+                <select value={toneMode} onChange={(event) => setToneMode(event.target.value)}>
+                  {Object.entries(GUITAR_TONE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              <label className="field">Capo
+                <select value={capoFret} onChange={(event) => setCapoFret(Number(event.target.value))}>
+                  <option value="0">No capo</option>
+                  {Array.from({ length: 7 }, (_, index) => index + 1).map((fret) => (
+                    <option key={fret} value={fret}>Fret {fret}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">Guitar volume: {Math.round(volume * 100)}%
+                <input type="range" min="0.25" max="1.1" step="0.05" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
+              </label>
+              <label className="field">Notes appear {leadTime.toFixed(1)}s early
+                <input type="range" min="1.5" max="6" step="0.1" value={leadTime} onChange={(event) => setLeadTime(Number(event.target.value))} />
+              </label>
+            </div>
+          </details>
+
+          <details className="song-tools player-settings">
+            <summary>Chord practice</summary>
+            <div className="guitar-chord-grid">
+              {Object.keys(CHORDS).map((chord) => (
+                <button key={chord} type="button" className={selectedChord === chord ? 'active' : ''} onClick={() => playChord(chord)}>{chord}</button>
+              ))}
+            </div>
+          </details>
+
           <section className="interactive-fretboard-card">
             <header>
               <div>
@@ -707,6 +766,10 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
                     duration: 3.1,
                     releaseSeconds: 0.5,
                   });
+                  pulseStrings(
+                    displayedFrets.map((fret, index) => (fret >= 0 ? index : null)).filter((index) => index !== null),
+                    displayedFrets.map((fret, index) => (fret < 0 ? index : null)).filter((index) => index !== null),
+                  );
                 }}
               >
                 Strum chord
@@ -714,7 +777,14 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
             </header>
             <div className="fretboard wide" role="grid" aria-label="Interactive guitar fretboard">
               {STRINGS.map((stringName, stringIndex) => (
-                <div className="guitar-string" key={stringName}>
+                <div
+                  className={`guitar-string ${visibleStringVibration?.primary.includes(stringIndex)
+                    ? 'vibrating-primary'
+                    : visibleStringVibration?.sympathetic.includes(stringIndex)
+                      ? 'vibrating-sympathetic'
+                      : ''}`}
+                  key={stringName}
+                >
                   <span className="string-name">{stringName}</span>
                   {Array.from({ length: 13 }, (_, fret) => {
                     const active = displayedFrets?.[stringIndex] === fret;

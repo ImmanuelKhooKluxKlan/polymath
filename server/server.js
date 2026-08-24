@@ -9,7 +9,7 @@ const multer = require('multer');
 const bundledFfmpegPath = require('ffmpeg-static');
 const { postProcessMuscriptorResult } = require('./muscriptorPostprocess');
 const { createMuscriptorEventCollector } = require('./muscriptorEvents');
-const { createRunpodServerlessClient } = require('./runpodServerless');
+const { RegistrationOtpError, createRegistrationOtpService } = require('./registrationOtp');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -18,11 +18,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
-
-if (IS_PRODUCTION) {
-  // Caddy terminates HTTPS and forwards the original client/protocol headers.
-  app.set('trust proxy', 1);
-}
+const REGISTRATION_OTP = createRegistrationOtpService(process.env);
 
 const PAYPAL_ENV = String(process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
 const PAYPAL_API_BASE = PAYPAL_ENV === 'sandbox'
@@ -37,10 +33,14 @@ const DB_PATH = path.join(DATA_DIR, "database.json");
 
 const WITHDRAWAL_FEE_RATE = 0;
 const MARKETPLACE_FEE_RATE = 0.10;
-const MCOINS_PER_USD = 10;
-const TRANSLATION_MCOIN_COST = 30;
-const FREE_TRANSLATION_LIMIT = 1;
-const PRO_TRANSLATION_LIMIT = 20;
+const MCOINS_PER_USD = 1;
+const READY_SHEET_UPLOAD_MCOIN_COST = 0.5;
+const FREE_READY_SHEET_MONTHLY_LIMIT = 2;
+const FREE_TRANSLATION_LIMIT = 0;
+const CHILL_TRANSLATION_LIMIT = 10;
+const MUSICIAN_TRANSLATION_LIMIT = 20;
+const FREE_TRANSLATION_MCOIN_COST = 2;
+const SUBSCRIBER_TRANSLATION_MCOIN_COST = 0.5;
 const TRANSLATION_INITIAL_ESTIMATE_MS = 20 * 60 * 1000;
 const TRANSLATION_EXTENSION_MS = 5 * 60 * 1000;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
@@ -69,13 +69,6 @@ const PIANO_ARRANGER_WORKER = String(process.env.PIANO_ARRANGER_WORKER || '').tr
   || path.join(__dirname, 'piano_arranger.py');
 const MUSCRIPTOR_REMOTE_URL = String(process.env.MUSCRIPTOR_REMOTE_URL || '').trim().replace(/\/+$/, '');
 const MUSCRIPTOR_REMOTE_TOKEN = String(process.env.MUSCRIPTOR_REMOTE_TOKEN || '').trim();
-const RUNPOD_SERVERLESS_ENDPOINT_ID = String(process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || '').trim();
-const RUNPOD_API_KEY = String(process.env.RUNPOD_API_KEY || '').trim();
-const RUNPOD_NETWORK_VOLUME_ID = String(process.env.RUNPOD_NETWORK_VOLUME_ID || '').trim();
-const RUNPOD_S3_REGION = String(process.env.RUNPOD_S3_REGION || '').trim();
-const RUNPOD_S3_ENDPOINT = String(process.env.RUNPOD_S3_ENDPOINT || '').trim();
-const RUNPOD_S3_ACCESS_KEY_ID = String(process.env.RUNPOD_S3_ACCESS_KEY_ID || '').trim();
-const RUNPOD_S3_SECRET_ACCESS_KEY = String(process.env.RUNPOD_S3_SECRET_ACCESS_KEY || '').trim();
 const MUSCRIPTOR_TIMEOUT_MS = Math.min(
   12 * 60 * 60 * 1000,
   Math.max(
@@ -83,16 +76,6 @@ const MUSCRIPTOR_TIMEOUT_MS = Math.min(
     Math.floor(Number(process.env.MUSCRIPTOR_TIMEOUT_MINUTES || 360)) * 60 * 1000,
   ),
 );
-const RUNPOD_SERVERLESS = createRunpodServerlessClient({
-  endpointId: RUNPOD_SERVERLESS_ENDPOINT_ID,
-  apiKey: RUNPOD_API_KEY,
-  volumeId: RUNPOD_NETWORK_VOLUME_ID,
-  region: RUNPOD_S3_REGION,
-  s3Endpoint: RUNPOD_S3_ENDPOINT,
-  s3AccessKeyId: RUNPOD_S3_ACCESS_KEY_ID,
-  s3SecretAccessKey: RUNPOD_S3_SECRET_ACCESS_KEY,
-  timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
-});
 const FFMPEG_PATH = String(process.env.FFMPEG_PATH || '').trim() || bundledFfmpegPath;
 const MEDIA_EXTENSIONS = new Set([
   '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac',
@@ -142,20 +125,96 @@ const INSTRUMENTS = {
 };
 
 const PRODUCTS = {
+  'polymath-chill-monthly': {
+    id: 'polymath-chill-monthly',
+    name: 'Chill',
+    price: '7.99',
+    currency: 'USD',
+    kind: 'subscription',
+    recurring: true,
+    interval: 'MONTH',
+    tier: 'chill',
+    translations: CHILL_TRANSLATION_LIMIT,
+    mcoins: 0,
+  },
+  'polymath-chill-yearly': {
+    id: 'polymath-chill-yearly',
+    name: 'Chill',
+    price: '49.99',
+    currency: 'USD',
+    kind: 'subscription',
+    recurring: true,
+    interval: 'YEAR',
+    tier: 'chill',
+    translations: CHILL_TRANSLATION_LIMIT,
+    mcoins: 0,
+  },
+  'polymath-musician-monthly': {
+    id: 'polymath-musician-monthly',
+    name: 'Musician',
+    price: '14.99',
+    currency: 'USD',
+    kind: 'subscription',
+    recurring: true,
+    interval: 'MONTH',
+    tier: 'musician',
+    translations: MUSICIAN_TRANSLATION_LIMIT,
+    mcoins: 0,
+  },
+  'polymath-musician-yearly': {
+    id: 'polymath-musician-yearly',
+    name: 'Musician',
+    price: '93.99',
+    currency: 'USD',
+    kind: 'subscription',
+    recurring: true,
+    interval: 'YEAR',
+    tier: 'musician',
+    translations: MUSICIAN_TRANSLATION_LIMIT,
+    mcoins: 0,
+  },
+  'polymath-institution-class-monthly': {
+    id: 'polymath-institution-class-monthly', name: 'Class', price: '300.00', currency: 'USD', kind: 'subscription', recurring: true,
+    interval: 'MONTH', tier: 'musician', audience: 'institution', institutionTier: 'class', seats: 30, translations: MUSICIAN_TRANSLATION_LIMIT, mcoins: 0,
+  },
+  'polymath-institution-class-yearly': {
+    id: 'polymath-institution-class-yearly', name: 'Class', price: '2880.00', monthlyPrice: '300.00', annualListPrice: '3600.00', annualDiscountPercent: 20,
+    currency: 'USD', kind: 'subscription', recurring: true, interval: 'YEAR', tier: 'musician', audience: 'institution', institutionTier: 'class', seats: 30, translations: MUSICIAN_TRANSLATION_LIMIT, mcoins: 0,
+  },
+  'polymath-institution-cohort-monthly': {
+    id: 'polymath-institution-cohort-monthly', name: 'Cohort', price: '2250.00', currency: 'USD', kind: 'subscription', recurring: true,
+    interval: 'MONTH', tier: 'musician', audience: 'institution', institutionTier: 'cohort', seats: 300, translations: MUSICIAN_TRANSLATION_LIMIT, mcoins: 0,
+  },
+  'polymath-institution-cohort-yearly': {
+    id: 'polymath-institution-cohort-yearly', name: 'Cohort', price: '21600.00', monthlyPrice: '2250.00', annualListPrice: '27000.00', annualDiscountPercent: 20,
+    currency: 'USD', kind: 'subscription', recurring: true, interval: 'YEAR', tier: 'musician', audience: 'institution', institutionTier: 'cohort', seats: 300, translations: MUSICIAN_TRANSLATION_LIMIT, mcoins: 0,
+  },
+  'polymath-institution-school-monthly': {
+    id: 'polymath-institution-school-monthly', name: 'School', price: '7500.00', currency: 'USD', kind: 'subscription', recurring: true,
+    interval: 'MONTH', tier: 'musician', audience: 'institution', institutionTier: 'school', seats: 1000, translations: MUSICIAN_TRANSLATION_LIMIT, mcoins: 0,
+  },
+  'polymath-institution-school-yearly': {
+    id: 'polymath-institution-school-yearly', name: 'School', price: '72000.00', monthlyPrice: '7500.00', annualListPrice: '90000.00', annualDiscountPercent: 20,
+    currency: 'USD', kind: 'subscription', recurring: true, interval: 'YEAR', tier: 'musician', audience: 'institution', institutionTier: 'school', seats: 1000, translations: MUSICIAN_TRANSLATION_LIMIT, mcoins: 0,
+  },
+  // Kept only so existing Pro subscription records remain understandable.
   'polymath-pro': {
     id: 'polymath-pro',
-    name: 'Polymath Musician Pro',
+    name: 'Musician (legacy Pro)',
     price: '19.99',
     currency: 'USD',
     kind: 'subscription',
     recurring: true,
     interval: 'MONTH',
+    tier: 'musician',
+    translations: MUSICIAN_TRANSLATION_LIMIT,
+    legacy: true,
     mcoins: 0,
   },
   'mcoins-50': {
     id: 'mcoins-50',
     name: '50 Mcoins',
-    price: '5.00',
+    price: '50.00',
     currency: 'USD',
     kind: 'mcoins',
     mcoins: 50,
@@ -163,7 +222,7 @@ const PRODUCTS = {
   'mcoins-100': {
     id: 'mcoins-100',
     name: '100 Mcoins',
-    price: '10.00',
+    price: '100.00',
     currency: 'USD',
     kind: 'mcoins',
     mcoins: 100,
@@ -171,7 +230,7 @@ const PRODUCTS = {
   'mcoins-300': {
     id: 'mcoins-300',
     name: '300 Mcoins',
-    price: '30.00',
+    price: '300.00',
     currency: 'USD',
     kind: 'mcoins',
     mcoins: 300,
@@ -203,7 +262,7 @@ const DEFAULT_SITE_POLICIES = Object.freeze({
   minimumSignupAge: 0,
   minimumPasswordLength: 8,
   minimumMarketplacePriceMcoins: 10,
-  minimumWithdrawalMcoins: 100,
+  minimumWithdrawalMcoins: 20,
   welcomeMcoins: WELCOME_MCOINS,
   policyNotice: '',
   termsUrl: '',
@@ -275,11 +334,15 @@ function ensureStorage() {
       mediaTranscriptionJobs: [],
       bands: [],
       bandMemberships: [],
+      bandMessages: [],
       ledger: [],
       promotions: [],
       promotionRedemptions: [],
+      institutions: [],
+      institutionMemberships: [],
       passwordResetEvents: [],
       authEvents: [],
+      registrationVerifications: [],
       settings: { ...DEFAULT_SITE_POLICIES },
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(seed, null, 2));
@@ -336,11 +399,15 @@ function normalizeDb(db) {
     'mediaTranscriptionJobs',
     'bands',
     'bandMemberships',
+    'bandMessages',
     'ledger',
     'promotions',
     'promotionRedemptions',
+    'institutions',
+    'institutionMemberships',
     'passwordResetEvents',
     'authEvents',
+    'registrationVerifications',
   ];
   arrays.forEach((key) => {
     if (!Array.isArray(normalized[key])) normalized[key] = [];
@@ -365,6 +432,10 @@ function normalizeDb(db) {
     ...DEFAULT_SITE_POLICIES,
     ...(normalized.settings && typeof normalized.settings === 'object' ? normalized.settings : {}),
   };
+  if (!normalized.settings.minimumWithdrawal20MigrationApplied) {
+    normalized.settings.minimumWithdrawalMcoins = 20;
+    normalized.settings.minimumWithdrawal20MigrationApplied = true;
+  }
   return normalized;
 }
 
@@ -426,6 +497,98 @@ function normalizeFriendId(value) {
   return /^user_[a-f0-9]{5}$/.test(normalized) ? normalized : '';
 }
 
+function normalizeInstitutionCode(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32);
+}
+
+function createInstitutionAccessCode(db, planName) {
+  const prefix = String(planName || 'MUSIC').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8) || 'MUSIC';
+  const used = new Set(db.institutions.map((item) => item.accessCode));
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
+    const suffix = crypto.randomBytes(4).toString('hex').toUpperCase().slice(0, 6);
+    const candidate = `${prefix}-${suffix}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error('Could not allocate a unique institution access code.');
+}
+
+function activeInstitutionByCode(db, value) {
+  const code = normalizeInstitutionCode(value);
+  if (!code) return null;
+  return db.institutions.find((item) => item.accessCode === code && item.status === 'ACTIVE') || null;
+}
+
+function institutionSeatCount(db, institutionId) {
+  return db.institutionMemberships.filter((item) => (
+    item.institutionId === institutionId && item.role === 'member' && item.status === 'ACTIVE'
+  )).length;
+}
+
+function applyInstitutionToUser(user, institution, role) {
+  user.institutionId = institution.id;
+  user.institutionName = institution.name;
+  user.institutionPlan = institution.plan;
+  user.institutionRole = role;
+  user.institutionStatus = institution.status;
+  user.institutionSeatLimit = institution.seatLimit;
+  user.institutionAccessCode = role === 'owner' ? institution.accessCode : '';
+}
+
+function addInstitutionMembership(db, user, institution, role = 'member') {
+  let membership = db.institutionMemberships.find((item) => (
+    item.institutionId === institution.id && item.userId === user.id
+  ));
+  if (!membership) {
+    membership = {
+      id: id('institution_member'),
+      institutionId: institution.id,
+      userId: user.id,
+      role,
+      status: 'ACTIVE',
+      joinedAt: new Date().toISOString(),
+    };
+    db.institutionMemberships.push(membership);
+  } else {
+    membership.role = role;
+    membership.status = 'ACTIVE';
+  }
+  applyInstitutionToUser(user, institution, role);
+  return membership;
+}
+
+function syncInstitutionSubscription(db, record, user, product, active) {
+  if (!product?.institutionTier) return null;
+  let institution = db.institutions.find((item) => item.subscriptionId === record.subscriptionId);
+  if (!institution && active) {
+    institution = {
+      id: id('institution'),
+      ownerUserId: user.id,
+      subscriptionId: record.subscriptionId,
+      name: `${user.name}'s ${product.name}`,
+      plan: product.institutionTier,
+      seatLimit: product.seats,
+      accessCode: createInstitutionAccessCode(db, product.name),
+      status: 'ACTIVE',
+      createdAt: new Date().toISOString(),
+    };
+    db.institutions.push(institution);
+  }
+  if (!institution) return null;
+  institution.status = active ? 'ACTIVE' : 'INACTIVE';
+  institution.plan = product.institutionTier;
+  institution.seatLimit = product.seats;
+  institution.updatedAt = new Date().toISOString();
+  db.institutionMemberships
+    .filter((item) => item.institutionId === institution.id)
+    .forEach((membership) => {
+      membership.status = institution.status;
+      const member = db.users.find((candidate) => candidate.id === membership.userId);
+      if (member) applyInstitutionToUser(member, institution, membership.role);
+    });
+  if (active) addInstitutionMembership(db, user, institution, 'owner');
+  return institution;
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
   return { salt, hash };
@@ -434,23 +597,14 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
 function bootstrapAdminAccounts() {
   const password = String(process.env.ADMIN_PASSWORD || '');
   if (!password) return { created: 0 };
-  if (ADMIN_EMAILS.size === 0) {
-    throw new Error('ADMIN_PASSWORD requires at least one address in ADMIN_EMAILS.');
-  }
-  if (password.length < 12) {
-    throw new Error('ADMIN_PASSWORD must contain at least 12 characters.');
-  }
+  if (ADMIN_EMAILS.size === 0) throw new Error('ADMIN_PASSWORD requires at least one address in ADMIN_EMAILS.');
+  if (password.length < 12) throw new Error('ADMIN_PASSWORD must contain at least 12 characters.');
 
   const db = readDb();
   const now = new Date().toISOString();
   let created = 0;
-
   ADMIN_EMAILS.forEach((email) => {
-    const accountExists = db.users.some(
-      (user) => String(user.email || '').trim().toLowerCase() === email,
-    );
-    if (accountExists) return;
-
+    if (db.users.some((user) => String(user.email || '').trim().toLowerCase() === email)) return;
     const userId = id('user');
     const { salt, hash } = hashPassword(password);
     db.users.push({
@@ -466,30 +620,21 @@ function bootstrapAdminAccounts() {
       withdrawableMcoins: 0,
       pro: false,
       proStatus: 'INACTIVE',
+      subscriptionTier: '',
+      subscriptionInterval: null,
+      subscriptionStartedAt: null,
       paypalSubscriptionId: null,
-      translationUsage: {
-        period: currentTranslationPeriod(),
-        freeUsed: 0,
-        proUsed: 0,
-      },
-      ageRequirementConfirmedAt: null,
-      policyAcceptedAt: null,
+      translationUsage: { period: currentTranslationPeriod(), includedUsed: 0 },
+      readySheetUploadUsage: { period: currentTranslationPeriod(), freeUsed: 0 },
       passwordBootstrappedAt: now,
       createdAt: now,
     });
-    db.authEvents.push({
-      id: id('auth'),
-      userId,
-      type: 'admin_bootstrap',
-      createdAt: now,
-    });
+    db.authEvents.push({ id: id('auth'), userId, type: 'admin_bootstrap', createdAt: now });
     created += 1;
   });
-
   if (created > 0) {
     db.authEvents = db.authEvents.slice(-5000);
     writeDb(db);
-    console.log(`Created ${created} administrator account(s) with a temporary password.`);
   }
   return { created };
 }
@@ -555,17 +700,132 @@ function nextTranslationResetAt(now = new Date()) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
 }
 
-function ensureTranslationUsage(user, now = new Date()) {
+function activeSubscriptionTier(user) {
+  if (String(user?.institutionStatus || '').toUpperCase() === 'ACTIVE') return 'musician';
+  const explicitTier = String(user?.subscriptionTier || '').toLowerCase();
+  if (['chill', 'musician'].includes(explicitTier)
+    && String(user?.proStatus || '').toUpperCase() === 'ACTIVE') {
+    return explicitTier;
+  }
+  // Existing Pro members migrate to Musician without losing access.
+  if (user?.pro) return 'musician';
+  return 'free';
+}
+
+function hasMusicianAccess(user) {
+  return isAdministrator(user) || activeSubscriptionTier(user) === 'musician';
+}
+
+function ensureReadySheetUsage(user, now = new Date()) {
   const period = currentTranslationPeriod(now);
+  if (!user.readySheetUploadUsage || user.readySheetUploadUsage.period !== period) {
+    user.readySheetUploadUsage = { period, freeUsed: 0 };
+  }
+  user.readySheetUploadUsage.freeUsed = Math.max(0, Number(user.readySheetUploadUsage.freeUsed || 0));
+  return user.readySheetUploadUsage;
+}
+
+function readySheetAllowance(user, now = new Date()) {
+  if (isAdministrator(user) || activeSubscriptionTier(user) !== 'free') {
+    return {
+      unlimited: true,
+      limit: null,
+      used: 0,
+      remaining: null,
+      resetAt: null,
+      overageCostMcoins: 0,
+    };
+  }
+  const usage = ensureReadySheetUsage(user, now);
+  return {
+    unlimited: false,
+    limit: FREE_READY_SHEET_MONTHLY_LIMIT,
+    used: Math.min(FREE_READY_SHEET_MONTHLY_LIMIT, usage.freeUsed),
+    remaining: Math.max(0, FREE_READY_SHEET_MONTHLY_LIMIT - usage.freeUsed),
+    resetAt: nextTranslationResetAt(now),
+    overageCostMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+  };
+}
+
+function readySheetUploadCost(user, now = new Date()) {
+  const allowance = readySheetAllowance(user, now);
+  return allowance.unlimited || allowance.remaining > 0 ? 0 : READY_SHEET_UPLOAD_MCOIN_COST;
+}
+
+function chargeReadySheetUpload(db, user, filename, now = new Date()) {
+  const allowance = readySheetAllowance(user, now);
+  if (allowance.unlimited) {
+    addLedger(db, user.id, 0, isAdministrator(user) ? 'admin_ready_sheet_upload' : 'subscriber_ready_sheet_upload', filename);
+    return { costMcoins: 0, paymentMethod: 'unlimited' };
+  }
+  if (allowance.remaining > 0) {
+    ensureReadySheetUsage(user, now).freeUsed += 1;
+    addLedger(db, user.id, 0, 'free_ready_sheet_upload', filename);
+    return { costMcoins: 0, paymentMethod: 'free_attempt' };
+  }
+  const costMcoins = READY_SHEET_UPLOAD_MCOIN_COST;
+  if (costMcoins > 0 && Number(user.mcoins || 0) < costMcoins) return null;
+  user.mcoins = Number((Number(user.mcoins || 0) - costMcoins).toFixed(2));
+  addLedger(db, user.id, -costMcoins, 'ready_sheet_upload', filename);
+  return { costMcoins, paymentMethod: 'mcoins' };
+}
+
+function translationMcoinCost(user) {
+  return activeSubscriptionTier(user) === 'free'
+    ? FREE_TRANSLATION_MCOIN_COST
+    : SUBSCRIBER_TRANSLATION_MCOIN_COST;
+}
+
+function utcMonthAnniversary(anchor, monthsToAdd) {
+  const targetYear = anchor.getUTCFullYear() + Math.floor((anchor.getUTCMonth() + monthsToAdd) / 12);
+  const targetMonth = ((anchor.getUTCMonth() + monthsToAdd) % 12 + 12) % 12;
+  const daysInMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(
+    targetYear,
+    targetMonth,
+    Math.min(anchor.getUTCDate(), daysInMonth),
+    anchor.getUTCHours(),
+    anchor.getUTCMinutes(),
+    anchor.getUTCSeconds(),
+    anchor.getUTCMilliseconds(),
+  ));
+}
+
+function translationUsageWindow(user, now = new Date()) {
+  const tier = activeSubscriptionTier(user);
+  const anchor = new Date(user?.subscriptionStartedAt || '');
+  if (tier === 'free' || Number.isNaN(anchor.getTime()) || anchor > now) {
+    return {
+      key: currentTranslationPeriod(now),
+      resetAt: nextTranslationResetAt(now),
+    };
+  }
+  let monthIndex = Math.max(0,
+    (now.getUTCFullYear() - anchor.getUTCFullYear()) * 12
+    + now.getUTCMonth() - anchor.getUTCMonth());
+  if (utcMonthAnniversary(anchor, monthIndex) > now) monthIndex = Math.max(0, monthIndex - 1);
+  const periodStart = utcMonthAnniversary(anchor, monthIndex);
+  return {
+    key: `subscription:${tier}:${periodStart.toISOString()}`,
+    resetAt: utcMonthAnniversary(anchor, monthIndex + 1).toISOString(),
+  };
+}
+
+function ensureTranslationUsage(user, now = new Date()) {
+  const period = translationUsageWindow(user, now).key;
   if (!user.translationUsage || user.translationUsage.period !== period) {
     user.translationUsage = {
       period,
-      freeUsed: 0,
-      proUsed: 0,
+      includedUsed: 0,
     };
   }
-  user.translationUsage.freeUsed = Math.max(0, Number(user.translationUsage.freeUsed || 0));
-  user.translationUsage.proUsed = Math.max(0, Number(user.translationUsage.proUsed || 0));
+  if (!Number.isFinite(Number(user.translationUsage.includedUsed))) {
+    const legacyUsed = activeSubscriptionTier(user) === 'musician'
+      ? user.translationUsage.proUsed
+      : user.translationUsage.freeUsed;
+    user.translationUsage.includedUsed = legacyUsed;
+  }
+  user.translationUsage.includedUsed = Math.max(0, Number(user.translationUsage.includedUsed || 0));
   return user.translationUsage;
 }
 
@@ -585,16 +845,22 @@ function translationAllowance(user, now = new Date()) {
     };
   }
   const usage = ensureTranslationUsage(user, now);
-  const isPro = Boolean(user.pro);
-  const limit = isPro ? PRO_TRANSLATION_LIMIT : FREE_TRANSLATION_LIMIT;
-  const used = isPro ? usage.proUsed : usage.freeUsed;
+  const plan = activeSubscriptionTier(user);
+  const limits = {
+    free: FREE_TRANSLATION_LIMIT,
+    chill: CHILL_TRANSLATION_LIMIT,
+    musician: MUSICIAN_TRANSLATION_LIMIT,
+  };
+  const limit = limits[plan];
+  const used = usage.includedUsed;
   return {
-    plan: isPro ? 'pro' : 'free',
+    plan,
     unlimited: false,
     limit,
     used: Math.min(limit, used),
     remaining: Math.max(0, limit - used),
-    resetAt: nextTranslationResetAt(now),
+    resetAt: translationUsageWindow(user, now).resetAt,
+    overageCostMcoins: translationMcoinCost(user),
   };
 }
 
@@ -602,31 +868,54 @@ function deductTranslationAllowance(user) {
   const allowance = translationAllowance(user);
   if (allowance.unlimited) return 'admin';
   if (allowance.remaining <= 0) return null;
-  if (allowance.plan === 'pro') user.translationUsage.proUsed += 1;
-  else user.translationUsage.freeUsed += 1;
-  return allowance.plan;
+  user.translationUsage.includedUsed += 1;
+  return 'included';
 }
 
 function restoreTranslationAllowance(user, bucket) {
   ensureTranslationUsage(user);
-  if (bucket === 'pro') user.translationUsage.proUsed = Math.max(0, user.translationUsage.proUsed - 1);
-  if (bucket === 'free') user.translationUsage.freeUsed = Math.max(0, user.translationUsage.freeUsed - 1);
+  if (['included', 'pro', 'free'].includes(bucket)) {
+    user.translationUsage.includedUsed = Math.max(0, user.translationUsage.includedUsed - 1);
+  }
 }
 
 function safeUser(user) {
+  const subscriptionTier = activeSubscriptionTier(user);
+  const administrator = isAdministrator(user);
   return {
     user_id: user.id,
     friend_id: user.friendId || '',
     name: user.name,
+    avatarUrl: user.avatarUrl || '',
     email: user.email,
     phone: user.phone || '',
     mcoins: user.mcoins,
     withdrawableMcoins: Number(user.withdrawableMcoins || 0),
-    pro: Boolean(user.pro),
+    pro: subscriptionTier !== 'free',
+    subscriptionTier,
+    subscriptionInterval: user.subscriptionInterval || null,
+    subscriptionStartedAt: user.subscriptionStartedAt || null,
     proStatus: user.proStatus || (user.pro ? 'ACTIVE' : 'INACTIVE'),
     paypalSubscriptionId: user.paypalSubscriptionId || null,
+    luckyCodeApplied: Boolean(user.luckyCodeClaim),
+    institution: user.institutionId ? {
+      id: user.institutionId,
+      name: user.institutionName || '',
+      plan: user.institutionPlan || '',
+      role: user.institutionRole || 'member',
+      status: user.institutionStatus || 'INACTIVE',
+      seats: Number(user.institutionSeatLimit || 0),
+      accessCode: user.institutionRole === 'owner' ? (user.institutionAccessCode || '') : '',
+    } : null,
     translationAllowance: translationAllowance(user),
-    admin: isAdministrator(user),
+    readySheetAllowance: readySheetAllowance(user),
+    readySheetUploadCostMcoins: readySheetUploadCost(user),
+    admin: administrator,
+    access: {
+      regular: true,
+      learn: administrator || subscriptionTier === 'musician',
+      band: administrator || subscriptionTier === 'musician',
+    },
     mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,
   };
@@ -653,6 +942,16 @@ function requireAuth(req, res, next) {
   req.db = db;
   req.user = user;
   next();
+}
+
+function requireMusician(req, res, next) {
+  return requireAuth(req, res, () => {
+    if (!hasMusicianAccess(req.user)) {
+      res.status(403).json({ error: 'Band access requires the Musician plan.' });
+      return;
+    }
+    next();
+  });
 }
 
 function requireAdmin(req, res, next) {
@@ -831,6 +1130,105 @@ function recordPromotionRedemption(db, promotion, user, details = {}) {
   });
 }
 
+function promotionSignupAvailability(db, promotion) {
+  if (!promotion || promotion.active === false) return 'That Lucky code is not active.';
+  const now = Date.now();
+  if (promotion.startsAt && new Date(promotion.startsAt).getTime() > now) return 'That Lucky code is not active yet.';
+  if (promotion.expiresAt && new Date(promotion.expiresAt).getTime() < now) return 'That Lucky code has expired.';
+  const counts = promotionRedemptionCounts(db, promotion.id);
+  if (promotion.maxRedemptions > 0 && counts.total >= promotion.maxRedemptions) {
+    return 'That Lucky code has reached its usage limit.';
+  }
+  if (promotion.minimumAccountAgeDays > 0) {
+    return 'That Lucky code is not available during registration.';
+  }
+  return '';
+}
+
+function resolveSignupLuckyCode(db, value) {
+  const raw = String(value || '').trim();
+  if (!raw) return { claim: null, error: '' };
+
+  const institution = activeInstitutionByCode(db, raw);
+  if (institution) {
+    if (institutionSeatCount(db, institution.id) >= institution.seatLimit) {
+      return { claim: null, error: 'That institution has no seats remaining.' };
+    }
+    return { claim: { type: 'institution', institution }, error: '' };
+  }
+
+  const friendId = normalizeFriendId(raw);
+  if (friendId) {
+    const friendUser = db.users.find((candidate) => candidate.id !== 'platform' && candidate.friendId === friendId);
+    if (!friendUser) return { claim: null, error: 'That Lucky code is not valid.' };
+    const promotion = db.promotions
+      .filter((item) => item.kind === 'friend_id_percent' && item.active !== false)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+    const error = promotionSignupAvailability(db, promotion);
+    if (error) return { claim: null, error };
+    return { claim: { type: 'subscription_percent', promotion, friendId }, error: '' };
+  }
+
+  const promotionCode = normalizePromotionCode(raw);
+  const promotion = db.promotions.find((item) => item.code === promotionCode);
+  if (!promotion || !['mcoin_credit', 'subscription_percent'].includes(promotion.kind)) {
+    return { claim: null, error: 'That Lucky code is not valid.' };
+  }
+  const error = promotionSignupAvailability(db, promotion);
+  if (error) return { claim: null, error };
+  return {
+    claim: {
+      type: promotion.kind === 'mcoin_credit' ? 'mcoin_credit' : 'subscription_percent',
+      promotion,
+    },
+    error: '',
+  };
+}
+
+function applySignupLuckyCode(db, user, claim) {
+  if (!claim) return;
+  if (claim.type === 'institution') {
+    addInstitutionMembership(db, user, claim.institution, 'member');
+    user.luckyCodeClaim = {
+      type: 'institution',
+      institutionId: claim.institution.id,
+      claimedAt: new Date().toISOString(),
+    };
+    return;
+  }
+
+  const promotion = claim.promotion;
+  user.luckyCodeClaim = {
+    type: claim.type,
+    promotionId: promotion.id,
+    code: promotion.code,
+    value: promotion.value,
+    friendId: claim.friendId || null,
+    claimedAt: new Date().toISOString(),
+  };
+  if (claim.type === 'mcoin_credit') {
+    user.mcoins += promotion.value;
+    addLedger(db, user.id, promotion.value, 'signup_lucky_code', promotion.code);
+  }
+  recordPromotionRedemption(db, promotion, user, {
+    source: 'registration_lucky_code',
+    friendId: claim.friendId || null,
+    creditedMcoins: claim.type === 'mcoin_credit' ? promotion.value : 0,
+    subscriptionDiscountPercent: claim.type === 'subscription_percent' ? promotion.value : 0,
+  });
+}
+
+function subscriptionPriceForUser(product, user) {
+  const claim = user?.luckyCodeClaim;
+  if (!claim || claim.type !== 'subscription_percent' || !Number.isFinite(Number(claim.value))) {
+    return { price: Number(product.price).toFixed(2), discountPercent: 0, luckyCode: '' };
+  }
+  const discountPercent = Math.min(100, Math.max(0, Number(claim.value)));
+  const baseCents = Math.round(Number(product.price) * 100);
+  const discountedCents = Math.max(1, Math.round(baseCents * (100 - discountPercent) / 100));
+  return { price: (discountedCents / 100).toFixed(2), discountPercent, luckyCode: claim.code || claim.friendId || '' };
+}
+
 function sanitizeFilename(filename = 'asset') {
   return filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'asset';
 }
@@ -904,6 +1302,25 @@ function bandMembership(db, bandId, userId) {
   ) || null;
 }
 
+function bandBan(band, userId) {
+  return (Array.isArray(band.bans) ? band.bans : []).find((ban) => ban.userId === userId) || null;
+}
+
+function safeBandMessage(message, db) {
+  const author = db.users.find((user) => user.id === message.userId);
+  return {
+    id: message.id,
+    bandId: message.bandId,
+    text: message.text,
+    createdAt: message.createdAt,
+    author: {
+      userId: message.userId,
+      name: author?.name || 'Former band member',
+      avatarUrl: author?.avatarUrl || '',
+    },
+  };
+}
+
 function safeBand(band, db, viewerId = null) {
   const host = db.users.find((user) => user.id === band.hostId);
   const membership = viewerId ? bandMembership(db, band.id, viewerId) : null;
@@ -916,6 +1333,7 @@ function safeBand(band, db, viewerId = null) {
       return {
         userId: item.userId,
         name: user?.name || 'Band member',
+        avatarUrl: user?.avatarUrl || '',
         role: item.role,
         joinedAt: item.joinedAt,
       };
@@ -924,7 +1342,7 @@ function safeBand(band, db, viewerId = null) {
     id: band.id,
     name: band.name,
     description: band.description || '',
-    host: { userId: band.hostId, name: host?.name || 'Band host' },
+    host: { userId: band.hostId, name: host?.name || 'Band host', avatarUrl: host?.avatarUrl || '' },
     accessMode: band.accessMode,
     entryFeeMcoins: Number(band.entryFeeMcoins || 0),
     memberCount: members.length,
@@ -942,6 +1360,15 @@ function safeBand(band, db, viewerId = null) {
     joined: Boolean(membership || isHost),
     role: isHost ? 'host' : membership?.role || null,
     inviteCode: isHost ? band.inviteCode : undefined,
+    bannedMembers: isHost ? (Array.isArray(band.bans) ? band.bans : []).map((ban) => {
+      const user = db.users.find((candidate) => candidate.id === ban.userId);
+      return {
+        userId: ban.userId,
+        name: user?.name || 'Unknown account',
+        avatarUrl: user?.avatarUrl || '',
+        bannedAt: ban.bannedAt,
+      };
+    }) : undefined,
     createdAt: band.createdAt,
   };
 }
@@ -969,8 +1396,6 @@ const mediaUpload = multer({
 });
 
 function muscriptorAvailability() {
-  const serverlessRequested = Boolean(RUNPOD_SERVERLESS_ENDPOINT_ID);
-  const serverlessConfigured = RUNPOD_SERVERLESS.configured;
   const remoteConfigured = Boolean(MUSCRIPTOR_REMOTE_URL);
   const pythonExists = path.isAbsolute(MUSCRIPTOR_PYTHON)
     ? fs.existsSync(MUSCRIPTOR_PYTHON)
@@ -980,24 +1405,19 @@ function muscriptorAvailability() {
   let reason = '';
   if (!MUSCRIPTOR_ENABLED) {
     reason = 'MuScriptor is disabled. Enable it only for use permitted by the model license.';
-  } else if (serverlessRequested && !serverlessConfigured) {
-    reason = `RunPod Serverless is missing: ${RUNPOD_SERVERLESS.missing.join(', ')}`;
-  } else if (!serverlessConfigured && !remoteConfigured && !pythonExists) {
+  } else if (!remoteConfigured && !pythonExists) {
     reason = 'The MuScriptor Python environment was not found.';
-  } else if (!serverlessConfigured && !remoteConfigured && !workerExists) {
+  } else if (!remoteConfigured && !workerExists) {
     reason = 'The Polymath MuScriptor worker was not found.';
   } else if (!ffmpegExists) {
     reason = 'FFmpeg is unavailable for audio and video preparation.';
   }
   return {
-    enabled: MUSCRIPTOR_ENABLED && ffmpegExists
-      && (serverlessConfigured || remoteConfigured || (pythonExists && workerExists)),
+    enabled: MUSCRIPTOR_ENABLED && ffmpegExists && (remoteConfigured || (pythonExists && workerExists)),
     configured: MUSCRIPTOR_ENABLED,
     adminOnly: MUSCRIPTOR_ADMIN_ONLY,
     model: MUSCRIPTOR_MODEL,
-    execution: serverlessConfigured
-      ? 'runpod-serverless-flex'
-      : (remoteConfigured ? 'remote-gpu' : 'local'),
+    execution: remoteConfigured ? 'remote-gpu' : 'local',
     maxBytes: null,
     maxDurationSeconds: MAX_MEDIA_SECONDS,
     timeoutMinutes: Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000),
@@ -1021,6 +1441,8 @@ function publicMediaTranscriptionJob(job) {
     noteCount: Number(job.noteCount || 0),
     instrumentGroups: Array.isArray(job.instrumentGroups) ? job.instrumentGroups : [],
     playbackMode: job.playbackMode || 'instrumental',
+    paymentMethod: job.paymentMethod || 'legacy',
+    costMcoins: Number(job.costMcoins || 0),
     vocalMelodyNoteCount: Number(job.vocalMelodyNoteCount || 0),
     startedAt: job.startedAt,
     completedAt: job.completedAt || null,
@@ -1098,39 +1520,6 @@ function muscriptorConstraints(instrument, playbackMode = 'instrumental') {
   if (instrument === 'band') return [];
   if (instrument === 'piano' && ['full', 'instrumental'].includes(playbackMode)) return [];
   return MUSCRIPTOR_INSTRUMENTS[instrument] || [];
-}
-
-async function runServerlessMuscriptor(job, preparedPath, outputPath, constraints) {
-  const payload = await RUNPOD_SERVERLESS.transcribe({
-    job,
-    preparedPath,
-    constraints,
-    onProgress(status) {
-      if (status.state === 'IN_QUEUE') {
-        updateMediaTranscriptionJob(job.id, {
-          stage: 'Starting MuScriptor Large on RunPod Serverless',
-          progress: 21,
-        });
-        return;
-      }
-      const progressText = String(status.progress || '').trim();
-      const match = progressText.match(/Transcribing (\d+) of (\d+) audio sections/i);
-      if (match && Number(match[2]) > 0) {
-        const ratio = Math.max(0, Math.min(1, Number(match[1]) / Number(match[2])));
-        updateMediaTranscriptionJob(job.id, {
-          stage: `${progressText} on RunPod Serverless`,
-          progress: 22 + Math.round(ratio * 70),
-        });
-      } else if (status.state === 'IN_PROGRESS') {
-        updateMediaTranscriptionJob(job.id, {
-          stage: progressText || 'MuScriptor Large is listening on RunPod Serverless',
-          progress: 22,
-        });
-      }
-    },
-  });
-  fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
-  return payload;
 }
 
 async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
@@ -1274,17 +1663,13 @@ async function processMediaTranscriptionJob(jobId) {
     ], { timeoutMs: 10 * 60 * 1000 });
 
     updateMediaTranscriptionJob(jobId, {
-      stage: RUNPOD_SERVERLESS.configured
-        ? `Sending audio to permanent MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} Serverless endpoint`
-        : (MUSCRIPTOR_REMOTE_URL
-          ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
-          : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`),
+      stage: MUSCRIPTOR_REMOTE_URL
+        ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
+        : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
       progress: 20,
     });
     const constraints = muscriptorConstraints(job.instrument, job.playbackMode);
-    if (RUNPOD_SERVERLESS.configured) {
-      await runServerlessMuscriptor(job, preparedPath, outputPath, constraints);
-    } else if (MUSCRIPTOR_REMOTE_URL) {
+    if (MUSCRIPTOR_REMOTE_URL) {
       await runRemoteMuscriptor(job, preparedPath, outputPath, constraints);
     } else {
       const args = [
@@ -1366,12 +1751,12 @@ async function processMediaTranscriptionJob(jobId) {
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
   } catch (error) {
-    updateMediaTranscriptionJob(jobId, {
-      status: 'failed',
-      stage: 'Transcription stopped',
-      error: error.message || 'MuScriptor could not transcribe this recording.',
-      failedAt: new Date().toISOString(),
-    });
+    db = readDb();
+    job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
+    if (job && job.status === 'processing') {
+      refundTranslationJob(db, job, error.message || 'MuScriptor could not transcribe this recording.');
+      writeDb(db);
+    }
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
     safeRemoveUpload(outputPath);
@@ -1400,11 +1785,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '18mb' }));
 
-app.get('/', (req, res, next) => {
-  if (IS_PRODUCTION) return next();
-  return res.send('Polymath Musician backend is running');
-});
-app.get('/api/health', (req, res) => res.json({ ok: true }));
+app.get('/', (req, res) => res.send('Polymath Musician backend is running'));
 app.get('/api/test', (req, res) => res.json({
   message: 'Backend is working',
   environment: PAYPAL_ENV,
@@ -1420,28 +1801,95 @@ app.get('/api/catalog', (req, res) => {
   const db = readDb();
   const { updatedBy: _updatedBy, ...publicPolicies } = sitePolicies(db);
   res.json({
-    products: Object.values(PRODUCTS),
+    products: Object.values(PRODUCTS).filter((product) => !product.legacy),
     withdrawalFeeRate: WITHDRAWAL_FEE_RATE,
     withdrawalFeeLabel: 'No additional Polymath Musician withdrawal fee',
     marketplaceFeeRate: MARKETPLACE_FEE_RATE,
     mcoinsPerUsd: MCOINS_PER_USD,
-    translationMcoinCost: TRANSLATION_MCOIN_COST,
+    translationMcoinCosts: {
+      subscriber: SUBSCRIBER_TRANSLATION_MCOIN_COST,
+      free: FREE_TRANSLATION_MCOIN_COST,
+    },
     policies: publicPolicies,
   });
 });
 
+function registrationContactExists(db, channel, destination) {
+  if (channel === 'email') {
+    return db.users.some((user) => String(user.email || '').trim().toLowerCase() === destination);
+  }
+  const phone = normalizePhone(destination);
+  return db.users.some((user) => phone && normalizePhone(user.phone) === phone);
+}
+
+function registrationOtpFailure(res, error) {
+  if (error instanceof RegistrationOtpError) {
+    return res.status(error.status).json({ error: error.message });
+  }
+  console.error('Registration OTP failed:', error);
+  return res.status(500).json({ error: 'Account verification failed. Try again later.' });
+}
+
+app.post('/api/auth/register/otp', async (req, res) => {
+  const channel = String(req.body.channel || '').trim().toLowerCase();
+  const destination = channel === 'email' ? req.body.email : req.body.phone;
+  const db = readDb();
+  const policies = sitePolicies(db);
+  if (!policies.registrationEnabled) {
+    return res.status(403).json({ error: 'New account registration is temporarily closed.' });
+  }
+
+  try {
+    const normalizedDestination = REGISTRATION_OTP.normalizeContact(channel, destination);
+    if (registrationContactExists(db, channel, normalizedDestination)) {
+      return res.status(409).json({
+        error: `An account already exists for this ${channel === 'email' ? 'email address' : 'phone number'}.`,
+      });
+    }
+    const challenge = await REGISTRATION_OTP.requestCode(db, {
+      channel,
+      destination: normalizedDestination,
+    });
+    writeDb(db);
+    return res.status(202).json({
+      challengeId: challenge.challengeId,
+      channel: challenge.channel,
+      destinationHint: challenge.destinationHint,
+      expiresInSeconds: challenge.expiresInSeconds,
+      message: `We sent a six-digit code to ${challenge.destinationHint}.`,
+    });
+  } catch (error) {
+    return registrationOtpFailure(res, error);
+  }
+});
+
 app.post('/api/auth/register', (req, res) => {
   const name = String(req.body.name || '').trim();
-  const email = String(req.body.email || '').trim().toLowerCase();
-  const phone = String(req.body.phone || '').trim();
   const password = String(req.body.password || '');
   const birthDate = String(req.body.birthDate || '').trim();
+  const challengeId = String(req.body.challengeId || '').trim();
+  const verificationCode = String(req.body.verificationCode || '').trim();
+  const luckyCode = String(req.body.luckyCode || '').trim();
   const db = readDb();
   const policies = sitePolicies(db);
   if (!policies.registrationEnabled) return res.status(403).json({ error: 'New account registration is temporarily closed.' });
   if (name.length < 2) return res.status(400).json({ error: 'Name must contain at least 2 characters.' });
-  if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email.' });
-  if (!/^\+?[0-9 ()-]{7,24}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid phone number, including country code where possible.' });
+
+  let email = '';
+  let phone = '';
+  try {
+    if (String(req.body.email || '').trim()) {
+      email = REGISTRATION_OTP.normalizeContact('email', req.body.email);
+    }
+    if (String(req.body.phone || '').trim()) {
+      phone = REGISTRATION_OTP.normalizeContact('phone', req.body.phone);
+    }
+  } catch (error) {
+    return registrationOtpFailure(res, error);
+  }
+  if (!email && !phone) {
+    return res.status(400).json({ error: 'Enter either an email address or a phone number.' });
+  }
   if (password.length < policies.minimumPasswordLength) {
     return res.status(400).json({ error: `Password must contain at least ${policies.minimumPasswordLength} characters.` });
   }
@@ -1454,14 +1902,45 @@ app.post('/api/auth/register', (req, res) => {
     && req.body.termsAccepted !== true) {
     return res.status(400).json({ error: 'Accept the registration rules and policies to continue.' });
   }
-
-  if (db.users.some((user) => user.email === email)) return res.status(409).json({ error: 'An account already exists for this email.' });
-  const normalizedPhone = normalizePhone(phone);
-  if (db.users.some((user) => normalizePhone(user.phone) === normalizedPhone)) {
+  if (email && registrationContactExists(db, 'email', email)) {
+    return res.status(409).json({ error: 'An account already exists for this email address.' });
+  }
+  if (phone && registrationContactExists(db, 'phone', phone)) {
     return res.status(409).json({ error: 'An account already exists for this phone number.' });
   }
+
+  const luckyResult = resolveSignupLuckyCode(db, luckyCode);
+  if (luckyResult.error) return res.status(400).json({ error: luckyResult.error });
+
+  const challenge = db.registrationVerifications.find((candidate) => candidate.id === challengeId);
+  if (!challenge) {
+    return res.status(400).json({ error: 'Request and verify a new code before creating the account.' });
+  }
+  const verifiedDestination = challenge.channel === 'email' ? email : phone;
+  if (!verifiedDestination) {
+    return res.status(400).json({ error: `Enter the ${challenge.channel} address that received the code.` });
+  }
+  // Only persist the contact method proven by this challenge. This prevents a
+  // caller from attaching an unverified second login identifier to the account.
+  if (challenge.channel === 'email') phone = '';
+  if (challenge.channel === 'phone') email = '';
+
+  let verification;
+  try {
+    verification = REGISTRATION_OTP.verifyCode(db, {
+      challengeId,
+      channel: challenge.channel,
+      destination: verifiedDestination,
+      code: verificationCode,
+    });
+  } catch (error) {
+    writeDb(db);
+    return registrationOtpFailure(res, error);
+  }
+
   const { salt, hash } = hashPassword(password);
   const userId = id('user');
+  const createdAt = new Date().toISOString();
   const user = {
     id: userId,
     friendId: createFriendId(db.users, userId),
@@ -1470,24 +1949,33 @@ app.post('/api/auth/register', (req, res) => {
     phone,
     passwordHash: hash,
     passwordSalt: salt,
+    verifiedEmailAt: verification.channel === 'email' ? verification.verifiedAt : null,
+    verifiedPhoneAt: verification.channel === 'phone' ? verification.verifiedAt : null,
     mcoins: policies.welcomeMcoins,
     withdrawableMcoins: 0,
     pro: false,
     proStatus: 'INACTIVE',
+    subscriptionTier: '',
+    subscriptionInterval: null,
+    subscriptionStartedAt: null,
     paypalSubscriptionId: null,
     translationUsage: {
       period: currentTranslationPeriod(),
-      freeUsed: 0,
-      proUsed: 0,
+      includedUsed: 0,
     },
-    ageRequirementConfirmedAt: policies.minimumSignupAge > 0 ? new Date().toISOString() : null,
-    policyAcceptedAt: req.body.termsAccepted === true ? new Date().toISOString() : null,
-    createdAt: new Date().toISOString(),
+    readySheetUploadUsage: {
+      period: currentTranslationPeriod(),
+      freeUsed: 0,
+    },
+    ageRequirementConfirmedAt: policies.minimumSignupAge > 0 ? createdAt : null,
+    policyAcceptedAt: req.body.termsAccepted === true ? createdAt : null,
+    createdAt,
   };
   const token = createSession(db, user.id);
   db.users.push(user);
   if (policies.welcomeMcoins > 0) addLedger(db, user.id, policies.welcomeMcoins, 'welcome_bonus', 'Configured welcome balance');
-  db.authEvents.push({ id: id('auth'), userId: user.id, type: 'register', createdAt: new Date().toISOString() });
+  applySignupLuckyCode(db, user, luckyResult.claim);
+  db.authEvents.push({ id: id('auth'), userId: user.id, type: 'register_verified', channel: verification.channel, createdAt });
   writeDb(db);
   res.status(201).json({ token, user: safeUser(user) });
 });
@@ -1506,14 +1994,11 @@ app.post('/api/auth/login', (req, res) => {
   const { hash } = hashPassword(password, user.passwordSalt);
   const matches = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.passwordHash, 'hex'));
   if (!matches) return res.status(401).json({ error: 'Email/phone or password is incorrect.' });
-  if (req.body.admin && !ADMIN_EMAILS.has(String(user.email || '').toLowerCase())) {
-    return res.status(403).json({ error: ADMIN_EMAILS.size ? 'This account is not an administrator.' : 'Set ADMIN_EMAILS in server/.env first.' });
-  }
   const token = createSession(db, user.id);
   db.sessions = db.sessions.filter((session) => new Date(session.expiresAt).getTime() >= Date.now());
   user.lastLoginAt = new Date().toISOString();
   user.loginCount = Number(user.loginCount || 0) + 1;
-  db.authEvents.push({ id: id('auth'), userId: user.id, type: req.body.admin ? 'admin_login' : 'login', createdAt: user.lastLoginAt });
+  db.authEvents.push({ id: id('auth'), userId: user.id, type: 'login', createdAt: user.lastLoginAt });
   db.authEvents = db.authEvents.slice(-5000);
   writeDb(db);
   res.json({ token, user: safeUser(user) });
@@ -1521,6 +2006,45 @@ app.post('/api/auth/login', (req, res) => {
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json({ user: safeUser(req.user) });
+});
+
+app.put('/api/profile/avatar', requireAuth, (req, res) => {
+  const avatarDataUrl = String(req.body.avatarDataUrl || '').trim();
+  if (!avatarDataUrl) {
+    req.user.avatarUrl = '';
+    writeDb(req.db);
+    return res.json({ user: safeUser(req.user) });
+  }
+  const match = avatarDataUrl.match(/^data:image\/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) return res.status(400).json({ error: 'Use a JPEG, PNG, WebP, or GIF profile picture.' });
+  const imageBytes = Buffer.from(match[2], 'base64');
+  if (!imageBytes.length || imageBytes.length > 384 * 1024) {
+    return res.status(400).json({ error: 'Profile pictures must be 384 KB or smaller after resizing.' });
+  }
+  req.user.avatarUrl = avatarDataUrl;
+  writeDb(req.db);
+  res.json({ user: safeUser(req.user) });
+});
+
+app.post('/api/ready-sheet-uploads', requireAuth, (req, res) => {
+  const filename = sanitizeFilename(String(req.body.filename || 'ready-to-play-sheet'));
+  const format = path.extname(filename).slice(1).toLowerCase();
+  if (!['json', 'mid', 'midi'].includes(format)) {
+    return res.status(400).json({ error: 'Only ready-to-play JSON or MIDI sheets count as direct uploads.' });
+  }
+  const charged = chargeReadySheetUpload(req.db, req.user, filename);
+  if (!charged) {
+    return res.status(402).json({
+      error: `You need ${READY_SHEET_UPLOAD_MCOIN_COST} Mcoin to upload this ready-to-play sheet.`,
+      costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+    });
+  }
+  writeDb(req.db);
+  return res.status(201).json({
+    user: safeUser(req.user),
+    costMcoins: charged.costMcoins,
+    paymentMethod: charged.paymentMethod,
+  });
 });
 
 app.post('/api/auth/change-password', requireAuth, (req, res) => {
@@ -1777,16 +2301,15 @@ app.get('/api/listings/:listingId/download', requireAuth, (req, res) => {
   res.download(path.join(UPLOAD_DIR, listing.assetPath), listing.filename || listing.assetPath);
 });
 
-app.get('/api/bands', (req, res) => {
-  const db = readDb();
-  const visible = db.bands
+app.get('/api/bands', requireMusician, (req, res) => {
+  const visible = req.db.bands
     .filter((band) => band.accessMode !== 'invite')
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-    .map((band) => safeBand(band, db));
+    .map((band) => safeBand(band, req.db));
   res.json({ bands: visible });
 });
 
-app.get('/api/bands/me', requireAuth, (req, res) => {
+app.get('/api/bands/me', requireMusician, (req, res) => {
   const bands = req.db.bands
     .filter((band) => band.hostId === req.user.id || bandMembership(req.db, band.id, req.user.id))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
@@ -1794,7 +2317,7 @@ app.get('/api/bands/me', requireAuth, (req, res) => {
   res.json({ bands });
 });
 
-app.post('/api/bands', requireAuth, (req, res) => {
+app.post('/api/bands', requireMusician, (req, res) => {
   const name = String(req.body.name || '').trim().slice(0, 80);
   const description = String(req.body.description || '').trim().slice(0, 500);
   const accessMode = String(req.body.accessMode || 'open').toLowerCase();
@@ -1821,6 +2344,7 @@ app.post('/api/bands', requireAuth, (req, res) => {
     passwordHash: secret?.hash || '',
     passwordSalt: secret?.salt || '',
     inviteCode: crypto.randomBytes(5).toString('hex').toUpperCase(),
+    bans: [],
     instruments: [],
     generalScore: null,
     createdAt: new Date().toISOString(),
@@ -1837,10 +2361,11 @@ app.post('/api/bands', requireAuth, (req, res) => {
   res.status(201).json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
 });
 
-app.post('/api/bands/join-by-code', requireAuth, (req, res) => {
+app.post('/api/bands/join-by-code', requireMusician, (req, res) => {
   const code = String(req.body.code || '').trim().toUpperCase();
   const band = req.db.bands.find((candidate) => candidate.inviteCode === code);
   if (!band) return res.status(404).json({ error: 'That friend invite code is not valid.' });
+  if (bandBan(band, req.user.id)) return res.status(403).json({ error: 'The band creator has banned this account.' });
   if (!bandMembership(req.db, band.id, req.user.id)) {
     req.db.bandMemberships.push({
       id: id('band_member'),
@@ -1854,9 +2379,10 @@ app.post('/api/bands/join-by-code', requireAuth, (req, res) => {
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.post('/api/bands/:bandId/join', requireAuth, (req, res) => {
+app.post('/api/bands/:bandId/join', requireMusician, (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
+  if (bandBan(band, req.user.id)) return res.status(403).json({ error: 'The band creator has banned this account.' });
   if (bandMembership(req.db, band.id, req.user.id)) {
     return res.json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
   }
@@ -1893,7 +2419,85 @@ app.post('/api/bands/:bandId/join', requireAuth, (req, res) => {
   res.json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
 });
 
-app.put('/api/bands/:bandId/general-score', requireAuth, (req, res) => {
+app.get('/api/bands/:bandId/chat', requireMusician, (req, res) => {
+  const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
+  if (!band) return res.status(404).json({ error: 'Band not found.' });
+  if (!bandMembership(req.db, band.id, req.user.id) && band.hostId !== req.user.id) {
+    return res.status(403).json({ error: 'Join the band before opening its chat.' });
+  }
+  const messages = req.db.bandMessages
+    .filter((message) => message.bandId === band.id)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .slice(-150)
+    .map((message) => safeBandMessage(message, req.db));
+  res.json({ messages });
+});
+
+app.post('/api/bands/:bandId/chat', requireMusician, (req, res) => {
+  const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
+  if (!band) return res.status(404).json({ error: 'Band not found.' });
+  if (!bandMembership(req.db, band.id, req.user.id) && band.hostId !== req.user.id) {
+    return res.status(403).json({ error: 'Join the band before sending a message.' });
+  }
+  const text = String(req.body.text || '').trim().slice(0, 1000);
+  if (!text) return res.status(400).json({ error: 'Write a message first.' });
+  const recentCount = req.db.bandMessages.filter((message) => (
+    message.bandId === band.id
+    && message.userId === req.user.id
+    && Date.now() - new Date(message.createdAt).getTime() < 60 * 1000
+  )).length;
+  if (recentCount >= 20) return res.status(429).json({ error: 'Slow down for a moment before sending more messages.' });
+  const message = {
+    id: id('band_message'),
+    bandId: band.id,
+    userId: req.user.id,
+    text,
+    createdAt: new Date().toISOString(),
+  };
+  req.db.bandMessages.push(message);
+  req.db.bandMessages = req.db.bandMessages.slice(-5000);
+  writeDb(req.db);
+  res.status(201).json({ message: safeBandMessage(message, req.db) });
+});
+
+app.delete('/api/bands/:bandId/members/:userId', requireMusician, (req, res) => {
+  const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
+  if (!band) return res.status(404).json({ error: 'Band not found.' });
+  if (band.hostId !== req.user.id) return res.status(403).json({ error: 'Only the band creator can remove members.' });
+  if (req.params.userId === band.hostId) return res.status(400).json({ error: 'The band creator cannot be removed.' });
+  const membership = bandMembership(req.db, band.id, req.params.userId);
+  if (!membership) return res.status(404).json({ error: 'That account is not in this band.' });
+  req.db.bandMemberships = req.db.bandMemberships.filter((item) => item.id !== membership.id);
+  writeDb(req.db);
+  res.json({ band: safeBand(band, req.db, req.user.id) });
+});
+
+app.post('/api/bands/:bandId/bans', requireMusician, (req, res) => {
+  const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
+  if (!band) return res.status(404).json({ error: 'Band not found.' });
+  if (band.hostId !== req.user.id) return res.status(403).json({ error: 'Only the band creator can ban accounts.' });
+  const userId = String(req.body.userId || '');
+  if (userId === band.hostId) return res.status(400).json({ error: 'The band creator cannot be banned.' });
+  if (!req.db.users.some((user) => user.id === userId)) return res.status(404).json({ error: 'Account not found.' });
+  if (!Array.isArray(band.bans)) band.bans = [];
+  if (!bandBan(band, userId)) {
+    band.bans.push({ userId, bannedBy: req.user.id, bannedAt: new Date().toISOString() });
+  }
+  req.db.bandMemberships = req.db.bandMemberships.filter((item) => !(item.bandId === band.id && item.userId === userId));
+  writeDb(req.db);
+  res.json({ band: safeBand(band, req.db, req.user.id) });
+});
+
+app.delete('/api/bands/:bandId/bans/:userId', requireMusician, (req, res) => {
+  const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
+  if (!band) return res.status(404).json({ error: 'Band not found.' });
+  if (band.hostId !== req.user.id) return res.status(403).json({ error: 'Only the band creator can unban accounts.' });
+  band.bans = (Array.isArray(band.bans) ? band.bans : []).filter((ban) => ban.userId !== req.params.userId);
+  writeDb(req.db);
+  res.json({ band: safeBand(band, req.db, req.user.id) });
+});
+
+app.put('/api/bands/:bandId/general-score', requireMusician, (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const membership = bandMembership(req.db, band.id, req.user.id);
@@ -1925,7 +2529,7 @@ app.put('/api/bands/:bandId/general-score', requireAuth, (req, res) => {
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.post('/api/bands/:bandId/instruments', requireAuth, (req, res) => {
+app.post('/api/bands/:bandId/instruments', requireMusician, (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const membership = bandMembership(req.db, band.id, req.user.id);
@@ -1950,7 +2554,7 @@ app.post('/api/bands/:bandId/instruments', requireAuth, (req, res) => {
   res.status(201).json({ band: safeBand(band, req.db, req.user.id), part });
 });
 
-app.put('/api/bands/:bandId/instruments/:partId', requireAuth, (req, res) => {
+app.put('/api/bands/:bandId/instruments/:partId', requireMusician, (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const membership = bandMembership(req.db, band.id, req.user.id);
@@ -1986,7 +2590,7 @@ app.put('/api/bands/:bandId/instruments/:partId', requireAuth, (req, res) => {
   res.json({ band: safeBand(band, req.db, req.user.id), part });
 });
 
-app.delete('/api/bands/:bandId/instruments/:partId', requireAuth, (req, res) => {
+app.delete('/api/bands/:bandId/instruments/:partId', requireMusician, (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const part = (band.instruments || []).find((candidate) => candidate.id === req.params.partId);
@@ -2108,6 +2712,14 @@ app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
       paypalEnvironment: PAYPAL_ENV,
       paypalCheckoutConfigured: Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_SECRET_KEY),
       paypalProPlanConfigured: Boolean(process.env.PAYPAL_PRO_PLAN_ID),
+      paypalSubscriptionPlansConfigured: {
+        chillMonthly: Boolean(process.env.PAYPAL_CHILL_MONTHLY_PLAN_ID),
+        chillYearly: Boolean(process.env.PAYPAL_CHILL_YEARLY_PLAN_ID),
+        musicianMonthly: Boolean(process.env.PAYPAL_MUSICIAN_MONTHLY_PLAN_ID || process.env.PAYPAL_PRO_PLAN_ID),
+        musicianYearly: Boolean(process.env.PAYPAL_MUSICIAN_YEARLY_PLAN_ID),
+        monthlyUpgrade: Boolean(process.env.PAYPAL_CHILL_TO_MUSICIAN_MONTHLY_PLAN_ID),
+        yearlyUpgrade: Boolean(process.env.PAYPAL_CHILL_TO_MUSICIAN_YEARLY_PLAN_ID),
+      },
       paypalWebhookConfigured: Boolean(process.env.PAYPAL_WEBHOOK_ID),
       persistence: 'Atomic JSON file',
       databasePath: path.relative(__dirname, DB_PATH).replace(/\\/g, '/'),
@@ -2134,7 +2746,8 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, (req, res) => {
     minimumSignupAge: clampInteger(req.body.minimumSignupAge, 0, 120, 0),
     minimumPasswordLength: clampInteger(req.body.minimumPasswordLength, 8, 64, 8),
     minimumMarketplacePriceMcoins: clampInteger(req.body.minimumMarketplacePriceMcoins, 1, 100000, 10),
-    minimumWithdrawalMcoins: clampInteger(req.body.minimumWithdrawalMcoins, 1, 1000000, 100),
+    minimumWithdrawalMcoins: clampInteger(req.body.minimumWithdrawalMcoins, 1, 1000000, 20),
+    minimumWithdrawal20MigrationApplied: true,
     welcomeMcoins: clampInteger(req.body.welcomeMcoins, 0, 100000, 0),
     policyNotice: String(req.body.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(req.body.termsUrl || '').trim().slice(0, 500),
@@ -2168,14 +2781,14 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
   const code = normalizePromotionCode(req.body.code);
   const name = String(req.body.name || '').trim().slice(0, 100);
   const kind = String(req.body.kind || '');
-  const isPercentage = ['marketplace_percent', 'friend_id_percent'].includes(kind);
+  const isPercentage = ['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(kind);
   const value = clampInteger(req.body.value, 1, isPercentage ? 100 : 100000, 1);
   const startsAtDate = req.body.startsAt ? new Date(req.body.startsAt) : null;
   const expiresAtDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
   if (code.length < 3) return res.status(400).json({ error: 'Promotion code must contain at least 3 letters or numbers.' });
   if (!name) return res.status(400).json({ error: 'Give the promotion a short name.' });
-  if (!['mcoin_credit', 'marketplace_percent', 'marketplace_fixed', 'friend_id_percent'].includes(kind)) {
-    return res.status(400).json({ error: 'Choose an Mcoin voucher, marketplace coupon, or Friend ID percentage voucher.' });
+  if (!['mcoin_credit', 'marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
+    return res.status(400).json({ error: 'Choose an Mcoin, marketplace, subscription, or Friend ID promotion.' });
   }
   if (req.db.promotions.some((promotion) => promotion.code === code)) {
     return res.status(409).json({ error: 'That promotion code already exists.' });
@@ -2284,7 +2897,7 @@ app.post('/api/admin/users/:userId/reset-password', requireAuth, requireAdmin, (
 
 app.post('/api/wallet/buy-pro', requireAuth, (req, res) => {
   res.status(410).json({
-    error: 'Pro is a recurring PayPal subscription. Mcoins are reserved for one-time marketplace purchases.',
+    error: 'Subscriptions use recurring PayPal billing. Mcoins are reserved for one-time purchases and translation overages.',
   });
 });
 
@@ -2365,6 +2978,34 @@ function subscriptionStatusGrantsPro(status) {
   return String(status || '').toUpperCase() === 'ACTIVE';
 }
 
+function configuredSubscriptionPlanId(product, upgrade = false) {
+  if (!product || product.kind !== 'subscription') return '';
+  if (upgrade && product.tier === 'musician') {
+    const key = product.interval === 'YEAR'
+      ? 'PAYPAL_CHILL_TO_MUSICIAN_YEARLY_PLAN_ID'
+      : 'PAYPAL_CHILL_TO_MUSICIAN_MONTHLY_PLAN_ID';
+    return String(process.env[key] || '').trim();
+  }
+  const keys = {
+    'polymath-chill-monthly': 'PAYPAL_CHILL_MONTHLY_PLAN_ID',
+    'polymath-chill-yearly': 'PAYPAL_CHILL_YEARLY_PLAN_ID',
+    'polymath-musician-monthly': 'PAYPAL_MUSICIAN_MONTHLY_PLAN_ID',
+    'polymath-musician-yearly': 'PAYPAL_MUSICIAN_YEARLY_PLAN_ID',
+    'polymath-institution-class-monthly': 'PAYPAL_INSTITUTION_CLASS_MONTHLY_PLAN_ID',
+    'polymath-institution-class-yearly': 'PAYPAL_INSTITUTION_CLASS_YEARLY_PLAN_ID',
+    'polymath-institution-cohort-monthly': 'PAYPAL_INSTITUTION_COHORT_MONTHLY_PLAN_ID',
+    'polymath-institution-cohort-yearly': 'PAYPAL_INSTITUTION_COHORT_YEARLY_PLAN_ID',
+    'polymath-institution-school-monthly': 'PAYPAL_INSTITUTION_SCHOOL_MONTHLY_PLAN_ID',
+    'polymath-institution-school-yearly': 'PAYPAL_INSTITUTION_SCHOOL_YEARLY_PLAN_ID',
+    'polymath-pro': 'PAYPAL_PRO_PLAN_ID',
+  };
+  const configured = String(process.env[keys[product.id]] || '').trim();
+  if (product.id === 'polymath-musician-monthly') {
+    return configured || String(process.env.PAYPAL_PRO_PLAN_ID || '').trim();
+  }
+  return configured;
+}
+
 function applySubscriptionStatus(db, subscriptionId, status, fallbackUserId = '') {
   const normalizedStatus = String(status || 'UNKNOWN').toUpperCase();
   let record = db.subscriptions.find((item) => item.subscriptionId === subscriptionId);
@@ -2389,15 +3030,66 @@ function applySubscriptionStatus(db, subscriptionId, status, fallbackUserId = ''
   }
 
   if (user) {
-    user.paypalSubscriptionId = subscriptionId;
-    user.proStatus = normalizedStatus;
-    user.pro = subscriptionStatusGrantsPro(normalizedStatus);
+    const active = subscriptionStatusGrantsPro(normalizedStatus);
+    const product = PRODUCTS[record?.productId] || PRODUCTS['polymath-pro'];
+    if (active) {
+      const firstActivation = user.paypalSubscriptionId !== subscriptionId || !record?.activatedAt;
+      user.paypalSubscriptionId = subscriptionId;
+      user.proStatus = normalizedStatus;
+      user.pro = true;
+      user.subscriptionTier = product.tier || 'musician';
+      user.subscriptionInterval = product.interval || 'MONTH';
+      if (firstActivation) {
+        const activatedAt = new Date().toISOString();
+        user.subscriptionStartedAt = activatedAt;
+        if (record && !record.activatedAt) record.activatedAt = activatedAt;
+        user.translationUsage = {
+          period: translationUsageWindow(user).key,
+          includedUsed: 0,
+        };
+      }
+    } else if (user.paypalSubscriptionId === subscriptionId) {
+      user.proStatus = normalizedStatus;
+      user.pro = false;
+      user.subscriptionTier = '';
+      user.subscriptionInterval = null;
+    }
+    syncInstitutionSubscription(db, record, user, product, active);
   }
 
   return user || null;
 }
 
-async function validatePayPalSubscriptionPlan(product, planId) {
+async function cancelPreviousSubscriptionForUpgrade(db, record) {
+  if (!record?.isUpgrade || !record.upgradeFromSubscriptionId || record.upgradeCancelledAt) return;
+  const cancellation = await paypalRequest(
+    `/v1/billing/subscriptions/${encodeURIComponent(record.upgradeFromSubscriptionId)}/cancel`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'Upgraded to Polymath Musician with a new billing period.' }),
+    },
+  );
+  if (!cancellation.response.ok && cancellation.response.status !== 204) {
+    record.upgradeCancellationError = cancellation.data;
+    const error = new Error(
+      'Musician was approved, but the previous Chill renewal could not be cancelled automatically.',
+    );
+    error.status = 502;
+    error.details = cancellation.data;
+    throw error;
+  }
+  record.upgradeCancelledAt = new Date().toISOString();
+  record.upgradeCancellationError = null;
+  const previous = db.subscriptions.find(
+    (item) => item.subscriptionId === record.upgradeFromSubscriptionId,
+  );
+  if (previous) {
+    previous.status = 'CANCELLED';
+    previous.cancelledAt = record.upgradeCancelledAt;
+  }
+}
+
+async function validatePayPalSubscriptionPlan(product, planId, upgradeFrom = null) {
   const { response, data } = await paypalRequest(`/v1/billing/plans/${encodeURIComponent(planId)}`, {
     method: 'GET',
   });
@@ -2422,10 +3114,30 @@ async function validatePayPalSubscriptionPlan(product, planId) {
     || Number(frequency?.interval_count || 0) !== 1
   ) {
     const error = new Error(
-      `PAYPAL_PRO_PLAN_ID must be an active ${product.currency} ${expectedPrice} monthly plan.`,
+      `The configured PayPal plan must be an active ${product.currency} ${expectedPrice} ${product.interval.toLowerCase()} plan.`,
     );
     error.status = 409;
     throw error;
+  }
+
+  if (upgradeFrom) {
+    const trialCycle = (data.billing_cycles || []).find((cycle) => cycle.tenure_type === 'TRIAL');
+    const setupFee = data.payment_preferences?.setup_fee;
+    const expectedDifference = (Number(product.price) - Number(upgradeFrom.price)).toFixed(2);
+    const actualSetupFee = Number(setupFee?.value).toFixed(2);
+    if (
+      !trialCycle
+      || Number(trialCycle.total_cycles || 0) !== 1
+      || trialCycle.frequency?.interval_unit !== product.interval
+      || setupFee?.currency_code !== product.currency
+      || actualSetupFee !== expectedDifference
+    ) {
+      const error = new Error(
+        `The PayPal upgrade plan must charge a ${product.currency} ${expectedDifference} setup fee, then start regular ${product.name} billing after one ${product.interval.toLowerCase()}.`,
+      );
+      error.status = 409;
+      throw error;
+    }
   }
 
   return data;
@@ -2436,7 +3148,7 @@ app.post('/api/paypal/create-order', requireAuth, async (req, res) => {
     const product = PRODUCTS[String(req.body.productId || '')];
     if (!product) return res.status(404).json({ error: 'Product not found.' });
     if (product.kind !== 'mcoins') {
-      return res.status(400).json({ error: 'Recurring Pro access must use the subscription checkout.' });
+      return res.status(400).json({ error: 'Recurring plan access must use the subscription checkout.' });
     }
 
     const requestId = id('paypal_order');
@@ -2549,23 +3261,45 @@ app.post('/api/paypal/capture-order', requireAuth, async (req, res) => {
 
 app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
   try {
-    const product = PRODUCTS[String(req.body.productId || 'polymath-pro')];
-    if (!product || product.kind !== 'subscription') {
+    const product = PRODUCTS[String(req.body.productId || 'polymath-musician-monthly')];
+    if (!product || product.kind !== 'subscription' || product.legacy) {
       return res.status(404).json({ error: 'Subscription product not found.' });
     }
 
-    const planId = String(process.env.PAYPAL_PRO_PLAN_ID || '').trim();
+    const currentTier = activeSubscriptionTier(req.user);
+    const currentInterval = String(req.user.subscriptionInterval || 'MONTH').toUpperCase();
+    const institutionPurchase = Boolean(product.institutionTier);
+    const isUpgrade = !institutionPurchase && currentTier === 'chill' && product.tier === 'musician';
+    if (institutionPurchase && req.user.institutionRole === 'owner' && req.user.institutionStatus === 'ACTIVE') {
+      return res.status(409).json({ error: 'An institution plan is already active for this account.' });
+    }
+    if (!institutionPurchase && currentTier === 'musician') {
+      return res.status(409).json({ error: 'Musician is already active for this account.' });
+    }
+    if (!institutionPurchase && currentTier === 'chill' && !isUpgrade) {
+      return res.status(409).json({ error: 'Chill is already active. Choose Musician to upgrade.' });
+    }
+    if (isUpgrade && product.interval !== currentInterval) {
+      return res.status(409).json({
+        error: `Choose the ${currentInterval === 'YEAR' ? 'yearly' : 'monthly'} Musician plan to upgrade and reset the same billing period.`,
+      });
+    }
+    const upgradeFrom = isUpgrade
+      ? PRODUCTS[currentInterval === 'YEAR' ? 'polymath-chill-yearly' : 'polymath-chill-monthly']
+      : null;
+    const planId = configuredSubscriptionPlanId(product, isUpgrade);
     if (!planId) {
-      return res.status(503).json({ error: 'PAYPAL_PRO_PLAN_ID is not configured on the server.' });
+      return res.status(503).json({
+        error: `The PayPal ${isUpgrade ? 'upgrade' : product.name} ${product.interval.toLowerCase()} plan is not configured on the server.`,
+      });
     }
-
-    if (req.user.pro && req.user.proStatus === 'ACTIVE') {
-      return res.status(409).json({ error: 'Pro is already active for this account.' });
-    }
+    const pricing = subscriptionPriceForUser(product, req.user);
 
     const reusablePending = req.db.subscriptions.find((item) => (
       item.userId === req.user.id
       && item.productId === product.id
+      && String(item.checkoutPrice || product.price) === pricing.price
+      && String(item.luckyCode || '') === pricing.luckyCode
       && ['APPROVAL_PENDING', 'APPROVED', 'CREATED'].includes(String(item.status || '').toUpperCase())
       && item.approveUrl
       && Date.now() - new Date(item.createdAt).getTime() < 24 * 60 * 60 * 1000
@@ -2580,7 +3314,17 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       });
     }
 
-    await validatePayPalSubscriptionPlan(product, planId);
+    const planDetails = await validatePayPalSubscriptionPlan(product, planId, upgradeFrom);
+    const regularCycle = (planDetails.billing_cycles || []).find((cycle) => cycle.tenure_type === 'REGULAR');
+    const planOverride = pricing.discountPercent > 0 ? {
+      billing_cycles: [{
+        sequence: Number(regularCycle.sequence),
+        total_cycles: Number(regularCycle.total_cycles || 0),
+        pricing_scheme: {
+          fixed_price: { currency_code: product.currency, value: pricing.price },
+        },
+      }],
+    } : null;
 
     const requestId = id('paypal_subscription');
     const { response, data } = await paypalRequest('/v1/billing/subscriptions', {
@@ -2589,6 +3333,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       body: JSON.stringify({
         plan_id: planId,
         custom_id: req.user.id,
+        ...(planOverride ? { plan: planOverride } : {}),
         application_context: {
           brand_name: 'Polymath Musician',
           locale: 'en-US',
@@ -2613,13 +3358,30 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       requestId,
       approveUrl,
       status: data.status || 'APPROVAL_PENDING',
+      checkoutPrice: pricing.price,
+      discountPercent: pricing.discountPercent,
+      luckyCode: pricing.luckyCode,
+      isUpgrade,
+      upgradeFromSubscriptionId: isUpgrade ? req.user.paypalSubscriptionId : null,
+      upgradeFromProductId: upgradeFrom?.id || null,
       createdAt: new Date().toISOString(),
     });
-    req.user.paypalSubscriptionId = data.id;
-    req.user.proStatus = data.status || 'APPROVAL_PENDING';
-    req.user.pro = false;
+    if (!isUpgrade) {
+      req.user.paypalSubscriptionId = data.id;
+      req.user.proStatus = data.status || 'APPROVAL_PENDING';
+      req.user.pro = false;
+    }
     writeDb(req.db);
-    res.status(201).json({ subscriptionId: data.id, approveUrl, product, status: data.status });
+    res.status(201).json({
+      subscriptionId: data.id,
+      approveUrl,
+      product,
+      status: data.status,
+      checkoutPrice: pricing.price,
+      discountPercent: pricing.discountPercent,
+      upgrade: isUpgrade,
+      upgradePrice: isUpgrade ? (Number(product.price) - Number(upgradeFrom.price)).toFixed(2) : null,
+    });
   } catch (error) {
     console.error('PayPal create subscription failed:', error.message);
     res.status(error.status || 500).json({ error: error.message, ...(error.details ? { details: error.details } : {}) });
@@ -2646,21 +3408,31 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Subscription owner does not match this account.' });
     }
     if (data.plan_id && data.plan_id !== record.planId) {
-      return res.status(409).json({ error: 'PayPal subscription plan does not match the configured Pro plan.' });
+      return res.status(409).json({ error: 'PayPal subscription plan does not match the selected plan.' });
     }
 
+    const product = PRODUCTS[record.productId] || PRODUCTS['polymath-pro'];
+    const activating = subscriptionStatusGrantsPro(data.status);
+    const firstActivation = activating && !record.activatedAt;
+    if (activating) await cancelPreviousSubscriptionForUpgrade(req.db, record);
     const user = applySubscriptionStatus(req.db, subscriptionId, data.status, req.user.id);
-    if (user?.pro && !record.activatedAt) {
-      record.activatedAt = new Date().toISOString();
-      addLedger(req.db, user.id, 0, 'pro_subscription_active', PRODUCTS['polymath-pro'].name);
+    if (user?.pro && firstActivation) {
+      addLedger(
+        req.db,
+        user.id,
+        0,
+        record.isUpgrade ? 'subscription_upgraded' : 'subscription_active',
+        `${product.name} ${product.interval.toLowerCase()}`,
+      );
     }
     writeDb(req.db);
 
     res.json({
       user: safeUser(req.user),
-      product: PRODUCTS['polymath-pro'],
+      product,
       subscriptionStatus: data.status,
       active: subscriptionStatusGrantsPro(data.status),
+      upgraded: Boolean(record.isUpgrade && activating),
     });
   } catch (error) {
     console.error('PayPal confirm subscription failed:', error.message);
@@ -2711,6 +3483,15 @@ app.post('/api/paypal/webhook', async (req, res) => {
       : statusByType[eventType];
 
     if (subscriptionId && webhookStatus) {
+      const record = db.subscriptions.find((item) => item.subscriptionId === subscriptionId);
+      if (subscriptionStatusGrantsPro(webhookStatus) && record?.isUpgrade) {
+        try {
+          await cancelPreviousSubscriptionForUpgrade(db, record);
+        } catch (error) {
+          writeDb(db);
+          throw error;
+        }
+      }
       applySubscriptionStatus(db, subscriptionId, webhookStatus, resource.custom_id || '');
     }
 
@@ -2850,8 +3631,9 @@ function refundTranslationJob(db, job, reason) {
   const user = db.users.find((candidate) => candidate.id === job.userId);
   if (user) {
     if (job.paymentMethod === 'mcoins') {
-      user.mcoins += TRANSLATION_MCOIN_COST;
-      addLedger(db, user.id, TRANSLATION_MCOIN_COST, 'translation_refund', job.filename);
+      const refundMcoins = Math.max(0, Number(job.costMcoins || 0));
+      user.mcoins += refundMcoins;
+      addLedger(db, user.id, refundMcoins, 'translation_refund', job.filename);
     } else if (job.allowanceBucket) {
       restoreTranslationAllowance(user, job.allowanceBucket);
       addLedger(db, user.id, 0, 'translation_allowance_restored', job.filename);
@@ -3354,7 +4136,7 @@ app.get('/api/media-transcriptions', requireAuth, (req, res) => {
     .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
     .slice(0, 20)
     .map(publicMediaTranscriptionJob);
-  res.json({ jobs, capability: muscriptorAvailability() });
+  res.json({ jobs, capability: muscriptorAvailability(), user: safeUser(req.user) });
 });
 
 app.post('/api/media-transcriptions', requireAuth, (req, res) => {
@@ -3398,6 +4180,26 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
       return cleanupAndReject(400, 'Choose full song or pure instrumental playback.');
     }
 
+    const administratorAccess = isAdministrator(req.user);
+    const requestedPaymentMethod = String(req.body.paymentMethod || '').trim().toLowerCase();
+    const paymentMethod = administratorAccess ? 'admin' : requestedPaymentMethod;
+    const mcoinCost = translationMcoinCost(req.user);
+    if (!administratorAccess && !['allowance', 'mcoins'].includes(paymentMethod)) {
+      return cleanupAndReject(400, `Choose an included translation or ${mcoinCost}-Mcoin payment.`);
+    }
+    let allowanceBucket = null;
+    if (paymentMethod === 'allowance') {
+      allowanceBucket = deductTranslationAllowance(req.user);
+      if (!allowanceBucket) {
+        return cleanupAndReject(402, `No included translations remain. Pay ${mcoinCost} Mcoins to continue.`);
+      }
+    } else if (paymentMethod === 'mcoins') {
+      if (req.user.mcoins < mcoinCost) {
+        return cleanupAndReject(402, `You need ${mcoinCost} Mcoins for this translation.`);
+      }
+      req.user.mcoins -= mcoinCost;
+    }
+
     const filename = sanitizeFilename(req.file.originalname || `recording${extension}`);
     const title = String(req.body.title || path.basename(filename, extension) || 'Uploaded recording')
       .trim()
@@ -3410,6 +4212,9 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
       title,
       instrument,
       playbackMode,
+      paymentMethod,
+      allowanceBucket,
+      costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
       model: `muscriptor-${MUSCRIPTOR_MODEL}`,
       modelLicense: 'CC-BY-NC-4.0',
       sourcePath: path.basename(req.file.path),
@@ -3419,9 +4224,21 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
       startedAt: now,
     };
     req.db.mediaTranscriptionJobs.push(job);
+    if (paymentMethod === 'mcoins') {
+      addLedger(req.db, req.user.id, -mcoinCost, 'audio_translation', filename);
+    } else if (paymentMethod === 'allowance') {
+      addLedger(req.db, req.user.id, 0, 'translation_allowance_used', `${filename} (${allowanceBucket})`);
+    } else {
+      addLedger(req.db, req.user.id, 0, 'admin_audio_translation', `${filename} (unlimited administrator access)`);
+    }
     writeDb(req.db);
     setImmediate(() => enqueueMediaTranscription(job.id));
-    return res.status(202).json({ job: publicMediaTranscriptionJob(job), capability });
+    return res.status(202).json({
+      job: publicMediaTranscriptionJob(job),
+      capability,
+      user: safeUser(req.user),
+      translationMcoinCost: mcoinCost,
+    });
   });
 });
 
@@ -3430,7 +4247,11 @@ app.get('/api/media-transcriptions/:jobId', requireAuth, (req, res) => {
     candidate.id === req.params.jobId && candidate.userId === req.user.id
   ));
   if (!job) return res.status(404).json({ error: 'Music transcription job not found.' });
-  return res.json({ job: publicMediaTranscriptionJob(job), capability: muscriptorAvailability() });
+  return res.json({
+    job: publicMediaTranscriptionJob(job),
+    capability: muscriptorAvailability(),
+    user: safeUser(req.user),
+  });
 });
 
 app.get('/api/media-transcriptions/:jobId/download', requireAuth, (req, res) => {
@@ -3451,7 +4272,7 @@ app.get('/api/score-translations/usage', requireAuth, (req, res) => {
   writeDb(req.db);
   res.json({
     user: safeUser(req.user),
-    translationMcoinCost: TRANSLATION_MCOIN_COST,
+    translationMcoinCost: translationMcoinCost(req.user),
     mcoinsPerUsd: MCOINS_PER_USD,
   });
 });
@@ -3484,6 +4305,7 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   const administratorAccess = isAdministrator(req.user);
   const requestedPaymentMethod = String(req.body.paymentMethod || '').trim().toLowerCase();
   const paymentMethod = administratorAccess ? 'admin' : requestedPaymentMethod;
+  const mcoinCost = translationMcoinCost(req.user);
 
   if (!filename.toLowerCase().endsWith('.pdf')) {
     return res.status(400).json({ error: 'Invalid PDF music sheet. Please upload a PDF music sheet.' });
@@ -3492,7 +4314,7 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
   }
   if (!administratorAccess && !['allowance', 'mcoins'].includes(paymentMethod)) {
-    return res.status(400).json({ error: 'Choose a monthly translation or 30-Mcoin payment.' });
+    return res.status(400).json({ error: `Choose an included translation or ${mcoinCost}-Mcoin payment.` });
   }
 
   let bytes;
@@ -3523,17 +4345,15 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
     allowanceBucket = deductTranslationAllowance(req.user);
     if (!allowanceBucket) {
       return res.status(402).json({
-        error: req.user.pro
-          ? '0 of 20 Pro translations remain this month. Pay 30 Mcoins to continue.'
-          : '0 free translations remain this month. Pay 30 Mcoins or buy Pro.',
+        error: `No included translations remain. Pay ${mcoinCost} Mcoins to continue.`,
       });
     }
   } else {
-    if (req.user.mcoins < TRANSLATION_MCOIN_COST) {
-      return res.status(402).json({ error: 'You need 30 Mcoins for this translation.' });
+    if (req.user.mcoins < mcoinCost) {
+      return res.status(402).json({ error: `You need ${mcoinCost} Mcoins for this translation.` });
     }
-    req.user.mcoins -= TRANSLATION_MCOIN_COST;
-    addLedger(req.db, req.user.id, -TRANSLATION_MCOIN_COST, 'pdf_translation', filename);
+    req.user.mcoins -= mcoinCost;
+    addLedger(req.db, req.user.id, -mcoinCost, 'pdf_translation', filename);
   }
 
   const jobId = id('translation');
@@ -3547,7 +4367,7 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
     instrument,
     paymentMethod,
     allowanceBucket,
-    costMcoins: paymentMethod === 'mcoins' ? TRANSLATION_MCOIN_COST : 0,
+    costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
     fileHash,
     sourcePath: sourceName,
     status: 'processing',
@@ -3572,7 +4392,7 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   res.status(202).json({
     job: publicTranslationJob(job),
     user: safeUser(req.user),
-    translationMcoinCost: TRANSLATION_MCOIN_COST,
+    translationMcoinCost: mcoinCost,
   });
 });
 
@@ -3599,26 +4419,6 @@ app.post('/api/score-import', (req, res) => {
   });
 });
 
-if (IS_PRODUCTION) {
-  const frontendDir = path.resolve(__dirname, '..', 'dist');
-
-  app.use(express.static(frontendDir, {
-    etag: true,
-    maxAge: '1h',
-  }));
-
-  // React owns browser routes. Unknown API routes must still return JSON 404s.
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api/')) {
-      return res.status(404).json({ error: 'API route not found.' });
-    }
-    if (!['GET', 'HEAD'].includes(req.method) || !req.accepts('html')) {
-      return next();
-    }
-    return res.sendFile(path.join(frontendDir, 'index.html'));
-  });
-}
-
 function resumePendingTranslationJobs() {
   if (!String(process.env.OPENAI_API_KEY || '').trim()) return;
   const db = readDb();
@@ -3639,11 +4439,33 @@ function resumePendingMediaTranscriptionJobs() {
 
 if (require.main === module) {
   ensureStorage();
-  writeDb(readDb());
   bootstrapAdminAccounts();
+  writeDb(readDb());
   resumePendingTranslationJobs();
   resumePendingMediaTranscriptionJobs();
   app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
 }
 
-module.exports = { app, bootstrapAdminAccounts, ensureStorage, readDb, writeDb };
+module.exports = {
+  app,
+  ensureStorage,
+  bootstrapAdminAccounts,
+  readDb,
+  writeDb,
+  subscriptionRules: {
+    products: PRODUCTS,
+    activeSubscriptionTier,
+    applySubscriptionStatus,
+    resolveSignupLuckyCode,
+    applySignupLuckyCode,
+    institutionSeatCount,
+    subscriptionPriceForUser,
+    hasMusicianAccess,
+    chargeReadySheetUpload,
+    readySheetAllowance,
+    readySheetUploadCost,
+    translationAllowance,
+    translationMcoinCost,
+    translationUsageWindow,
+  },
+};

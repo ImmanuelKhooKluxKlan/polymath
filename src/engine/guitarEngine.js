@@ -472,6 +472,65 @@ class GuitarEngine {
     voice.nodes.push(source, filter, gain);
   }
 
+  createSympatheticResonance(primaryString, midi, velocity, startAt, duration) {
+    if (this.toneMode === 'clean') return;
+    const context = this.context;
+    const candidates = OPEN_STRING_MIDI
+      .map((openMidi, stringIndex) => {
+        if (stringIndex === primaryString) return null;
+        const soundingMidi = openMidi + this.capoFret;
+        const interval = ((midi - soundingMidi) % 12 + 12) % 12;
+        const strength = interval === 0 ? 1 : [5, 7].includes(interval) ? 0.42 : 0;
+        return strength ? { stringIndex, soundingMidi, strength } : null;
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.strength - left.strength)[0];
+    if (!candidates) return;
+
+    const source = context.createOscillator();
+    source.type = 'sine';
+    source.frequency.value = midiToFrequency(candidates.soundingMidi);
+    source.detune.value = ((midi + primaryString * 11) % 5 - 2) * 0.7;
+
+    const filter = context.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1450;
+    filter.Q.value = 0.65;
+
+    const gain = context.createGain();
+    const beginAt = startAt + 0.012;
+    const resonanceLength = clamp(Number(duration) * 0.62 || 0.85, 0.38, 1.45);
+    const peak = clamp(velocity * candidates.strength * 0.0032, 0.00035, 0.0032);
+    gain.gain.setValueAtTime(MIN_GAIN, startAt);
+    gain.gain.linearRampToValueAtTime(peak, beginAt + 0.025);
+    gain.gain.exponentialRampToValueAtTime(MIN_GAIN, beginAt + resonanceLength);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.input);
+
+    const voice = {
+      source,
+      gain,
+      stringIndex: candidates.stringIndex,
+      fret: 0,
+      startedAt: beginAt,
+      stopAt: beginAt + resonanceLength,
+      released: false,
+      sympathetic: true,
+      nodes: [source, filter, gain],
+    };
+    this.activeVoices.add(voice);
+    source.onended = () => {
+      this.activeVoices.delete(voice);
+      voice.nodes.forEach((node) => {
+        try { node.disconnect(); } catch { /* already disconnected */ }
+      });
+    };
+    source.start(beginAt);
+    source.stop(beginAt + resonanceLength + 0.025);
+  }
+
   chokeString(stringIndex, at, releaseSeconds = 0.026) {
     const previousVoice = this.activeByString.get(stringIndex);
     if (!previousVoice) return;
@@ -505,7 +564,7 @@ class GuitarEngine {
     voices.forEach((voice) => this.releaseVoice(voice, this.context.currentTime, 0.018));
   }
 
-  findSampleZone(midi, velocity) {
+  findSampleZone(midi, velocity, variant = 0) {
     if (this.sampleLoadState !== 'ready' || !this.sampleManifest) return null;
     const midiVelocity = Math.round(clamp(velocity, 0, 1) * 127);
     const matching = this.sampleManifest.zones.filter((zone) => (
@@ -513,45 +572,70 @@ class GuitarEngine {
       && midiVelocity >= zone.lowVelocity && midiVelocity <= zone.highVelocity
     ));
     if (!matching.length) return null;
-    matching.sort((left, right) => (
-      (left.highVelocity - left.lowVelocity) - (right.highVelocity - right.lowVelocity)
-    ));
-    const narrowestVelocitySpan = matching[0].highVelocity - matching[0].lowVelocity;
-    const preferred = matching.filter((zone) => (
-      zone.highVelocity - zone.lowVelocity === narrowestVelocitySpan
-    ));
-    return preferred[this.variantCounter % preferred.length];
+    const score = (zone) => {
+      const pitchDistance = Math.abs(midi - Number(zone.rootPitch));
+      const filename = String(zone.file || '');
+      const layerTarget = /(?:^|\/)HV_|_v100_/i.test(filename) ? 0.86 : 0.48;
+      const velocityDistance = Math.abs((midiVelocity / 127) - layerTarget);
+      const stableVariation = ((filename.length * 17 + variant * 13) % 11) / 100;
+      // Exact-pitch recordings matter most. Velocity layer and tiny variation
+      // break ties without stretching one guitar recording across many frets.
+      return pitchDistance * 10 + velocityDistance * 2.4 + stableVariation;
+    };
+    return matching.sort((left, right) => score(left) - score(right))[0];
   }
 
-  pluckSample(stringIndex, fret, midi, velocity, startAt) {
+  pluckSample(stringIndex, fret, midi, velocity, startAt, options = {}) {
     const context = this.context;
-    const zone = this.findSampleZone(midi, velocity);
+    const variant = Number(options.variant || 0);
+    const zone = this.findSampleZone(midi, velocity, variant);
     const buffer = zone ? this.sampleBuffers.get(zone.file) : null;
     if (!zone || !buffer) return null;
 
+    const random = seededRandom(8101 + midi * 43 + stringIndex * 97 + variant * 1301);
     const source = context.createBufferSource();
     source.buffer = buffer;
-    source.playbackRate.value = 2 ** ((midi - zone.rootPitch) / 12);
+    const basePlaybackRate = 2 ** ((midi - zone.rootPitch) / 12);
+    source.playbackRate.value = basePlaybackRate;
+    source.detune.value = (random() * 2 - 1) * 1.15;
+    const sampleOffset = Math.min(
+      Math.max(0, buffer.duration - 0.08),
+      0.001 + random() * 0.0035,
+    );
 
     const warmth = context.createBiquadFilter();
     warmth.type = 'lowpass';
-    warmth.frequency.value = this.toneMode === 'bright'
+    const baseCutoff = this.toneMode === 'bright'
       ? 12800
       : this.toneMode === 'lounge'
         ? 8700
       : this.toneMode === 'fingerstyle'
         ? 8200
         : 11200;
+    const velocityTone = 0.78 + velocity * 0.24;
+    const fretTone = clamp(1 - fret * 0.0045, 0.87, 1);
+    warmth.frequency.value = baseCutoff * velocityTone * fretTone * (0.97 + random() * 0.06);
     warmth.Q.value = 0.55;
 
     const gain = context.createGain();
-    const peak = clamp(velocity * 0.94, 0.045, 0.9);
-    const naturalLength = buffer.duration / source.playbackRate.value;
-    const stopAt = startAt + naturalLength;
-    const fadeAt = Math.max(startAt + 0.08, stopAt - 0.055);
+    const peak = clamp((velocity ** 0.82) * (0.9 + random() * 0.07), 0.035, 0.88);
+    const naturalLength = Math.max(0.08, (buffer.duration - sampleOffset) / basePlaybackRate);
+    const requestedDuration = clamp(Number(options.duration) || 2.35, 0.12, 8);
+    const releaseTail = clamp(Number(options.releaseSeconds) * 0.42 || 0.16, 0.055, 0.28);
+    const naturalStopAt = startAt + naturalLength;
+    const releaseAt = Math.min(
+      startAt + requestedDuration,
+      Math.max(startAt + 0.06, naturalStopAt - 0.045),
+    );
+    const stopAt = Math.min(naturalStopAt, releaseAt + releaseTail);
+    const attackAt = startAt + 0.0015 + random() * 0.0012;
+    const bodyAt = Math.min(releaseAt, startAt + 0.095);
     gain.gain.setValueAtTime(MIN_GAIN, startAt);
-    gain.gain.linearRampToValueAtTime(peak, startAt + 0.002);
-    gain.gain.setValueAtTime(peak, fadeAt);
+    gain.gain.linearRampToValueAtTime(peak, attackAt);
+    gain.gain.exponentialRampToValueAtTime(Math.max(MIN_GAIN, peak * 0.82), bodyAt);
+    if (releaseAt > bodyAt) {
+      gain.gain.setValueAtTime(Math.max(MIN_GAIN, peak * 0.82), releaseAt);
+    }
     gain.gain.exponentialRampToValueAtTime(MIN_GAIN, stopAt);
 
     source.connect(warmth);
@@ -560,7 +644,7 @@ class GuitarEngine {
     let pan = null;
     if (typeof context.createStereoPanner === 'function') {
       pan = context.createStereoPanner();
-      pan.pan.value = ((stringIndex / 5) - 0.5) * 0.16;
+      pan.pan.value = clamp(((stringIndex / 5) - 0.5) * 0.16 + (random() * 2 - 1) * 0.012, -0.11, 0.11);
       gain.connect(pan);
       finalNode = pan;
     }
@@ -579,7 +663,7 @@ class GuitarEngine {
         try { node.disconnect(); } catch { /* already disconnected */ }
       });
     };
-    source.start(startAt);
+    source.start(startAt, sampleOffset);
     source.stop(stopAt + 0.025);
     return voice;
   }
@@ -615,14 +699,28 @@ class GuitarEngine {
     this.enforceVoiceLimit();
     this.chokeString(stringIndex, startAt, Number(options.chokeSeconds) || 0.026);
 
-    const variant = this.variantCounter % 3;
+    const variant = this.variantCounter % 17;
     this.variantCounter += 1;
 
     if (this.toneMode !== 'clean') {
       const sampledVoice = this.pluckSample(
-        stringIndex, numericFret, midi, safeVelocity, startAt,
+        stringIndex,
+        numericFret,
+        midi,
+        safeVelocity,
+        startAt,
+        { duration, releaseSeconds, variant },
       );
-      if (sampledVoice) return sampledVoice;
+      if (sampledVoice) {
+        this.createSympatheticResonance(
+          stringIndex,
+          midi,
+          safeVelocity,
+          startAt,
+          duration,
+        );
+        return sampledVoice;
+      }
       if (this.sampleLoadState === 'idle') this.preloadSamples();
       return null;
     }

@@ -43,11 +43,12 @@ function promotionKindLabel(kind) {
   if (kind === 'mcoin_credit') return 'Mcoin voucher';
   if (kind === 'marketplace_percent') return 'Marketplace percentage';
   if (kind === 'friend_id_percent') return 'Friend ID percentage voucher';
+  if (kind === 'subscription_percent') return 'Lucky code subscription discount';
   return 'Marketplace Mcoin discount';
 }
 
 function promotionValueLabel(item) {
-  return ['marketplace_percent', 'friend_id_percent'].includes(item.kind)
+  return ['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(item.kind)
     ? `${item.value}% off`
     : `${item.value.toLocaleString()} Mcoins`;
 }
@@ -273,8 +274,8 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             <div className='admin-form-grid'>
               <label className='field'>Code<input value={promotion.code} maxLength='32' placeholder='WELCOME50' onChange={(event) => setPromotion({ ...promotion, code: event.target.value.toUpperCase() })} required /></label>
               <label className='field'>Internal name<input value={promotion.name} placeholder='Launch voucher' onChange={(event) => setPromotion({ ...promotion, name: event.target.value })} required /></label>
-              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value })}><option value='mcoin_credit'>Mcoin wallet voucher</option><option value='marketplace_percent'>Marketplace percentage coupon</option><option value='marketplace_fixed'>Marketplace fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
-              <label className='field'>{['marketplace_percent', 'friend_id_percent'].includes(promotion.kind) ? 'Percentage off' : 'Mcoin value'}<input type='number' min='1' max={['marketplace_percent', 'friend_id_percent'].includes(promotion.kind) ? 100 : 100000} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /></label>
+              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value })}><option value='mcoin_credit'>Mcoin wallet voucher</option><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Marketplace percentage coupon</option><option value='marketplace_fixed'>Marketplace fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
+              <label className='field'>{['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind) ? 'Percentage off' : 'Mcoin value'}<input type='number' min='1' max={['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind) ? 100 : 100000} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /></label>
               <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} disabled={promotion.kind === 'mcoin_credit'} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>
               <label className='field'>Minimum account age (days)<input type='number' min='0' value={promotion.minimumAccountAgeDays} onChange={(event) => setPromotion({ ...promotion, minimumAccountAgeDays: event.target.value })} /></label>
               <label className='field'>Total redemption limit<input type='number' min='0' value={promotion.maxRedemptions} onChange={(event) => setPromotion({ ...promotion, maxRedemptions: event.target.value })} /><small>0 means unlimited</small></label>

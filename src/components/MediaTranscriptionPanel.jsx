@@ -5,6 +5,7 @@ const MEDIA_ACCEPT = 'audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.
 
 export default function MediaTranscriptionPanel({
   user,
+  setUser,
   onNavigate,
   instrument,
   onReadyFile,
@@ -19,6 +20,12 @@ export default function MediaTranscriptionPanel({
   const pollTimer = useRef(null);
   const transcriptionUnavailable = capability?.enabled === false
     || Boolean(capability?.adminOnly && !user?.admin);
+  const allowance = user?.translationAllowance;
+  const remaining = allowance?.unlimited ? null : Math.max(0, Number(allowance?.remaining || 0));
+  const paymentMethod = user?.admin ? 'admin' : remaining > 0 ? 'allowance' : 'mcoins';
+  const overageCost = Number(allowance?.overageCostMcoins ?? (user?.pro ? 0.5 : 2));
+  const insufficientMcoins = paymentMethod === 'mcoins'
+    && Number(user?.mcoins || 0) < overageCost;
 
   function clearPolling() {
     if (pollTimer.current) window.clearTimeout(pollTimer.current);
@@ -44,6 +51,7 @@ export default function MediaTranscriptionPanel({
     try {
       const data = await apiRequest(`/api/media-transcriptions/${jobId}`);
       setJob(data.job);
+      if (data.user && setUser) setUser(data.user);
       if (data.job.status === 'completed') {
         setStatus('Your ready-to-play sheet is ready. Opening the piano studio...');
         clearPolling();
@@ -85,11 +93,13 @@ export default function MediaTranscriptionPanel({
       form.append('title', file.name.replace(/\.[^.]+$/, ''));
       form.append('playbackMode', playbackMode);
       form.append('rightsConfirmed', 'true');
+      form.append('paymentMethod', paymentMethod);
       const data = await apiRequest('/api/media-transcriptions', {
         method: 'POST',
         body: form,
       });
       setCapability(data.capability);
+      if (data.user && setUser) setUser(data.user);
       setJob(data.job);
       setStatus('MuScriptor is preparing your recording.');
       clearPolling();
@@ -150,6 +160,20 @@ export default function MediaTranscriptionPanel({
       {user.admin && (
         <p className="muted"><strong>Administrator access:</strong> unlimited audio and video transcriptions.</p>
       )}
+      {!user.admin && (
+        <p className="muted">
+          {remaining > 0
+            ? `${remaining} included translation${remaining === 1 ? '' : 's'} remaining this month.`
+            : `This translation costs ${overageCost} Mcoin${overageCost === 1 ? '' : 's'}.`}
+        </p>
+      )}
+      {insufficientMcoins && (
+        <div className="quota-warning">
+          <strong>Not enough Mcoins.</strong>
+          <span>You need {overageCost} Mcoins for this translation.</span>
+          <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: 'mcoins-50' })}>Open wallet options</button>
+        </div>
+      )}
 
       <label className="upload-box compact">
         <input type="file" accept={MEDIA_ACCEPT} onChange={chooseFile} disabled={busy || capability?.enabled === false} />
@@ -205,9 +229,15 @@ export default function MediaTranscriptionPanel({
           className="primary full"
           type="button"
           onClick={startTranscription}
-          disabled={!file || !rightsConfirmed || busy || transcriptionUnavailable}
+          disabled={!file || !rightsConfirmed || busy || transcriptionUnavailable || insufficientMcoins}
         >
-          {busy ? 'Uploading…' : 'Transcribe with MuScriptor'}
+          {busy
+            ? 'Uploading…'
+            : paymentMethod === 'allowance'
+              ? 'Use 1 included translation'
+              : paymentMethod === 'admin'
+                ? 'Transcribe with administrator access'
+                : `Transcribe for ${overageCost} Mcoins`}
         </button>
       )}
 

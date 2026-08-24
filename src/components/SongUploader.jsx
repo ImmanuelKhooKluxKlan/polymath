@@ -2,8 +2,9 @@ import { parseUploadedSongFile } from '../utils/songParser.js';
 import MusicUploadPanel from './MusicUploadPanel.jsx';
 
 export default function SongUploader({ onUpload, user, setUser, onNavigate }) {
-  async function loadReadySheet(file) {
-    const song = await parseUploadedSongFile(file);
+  async function loadReadySheet(file, { commit = true, prepared = null } = {}) {
+    const song = prepared || await parseUploadedSongFile(file);
+    if (!commit) return song;
     onUpload(song);
     return song;
   }

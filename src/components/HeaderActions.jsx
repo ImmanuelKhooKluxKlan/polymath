@@ -1,12 +1,18 @@
 export default function HeaderActions({ user, onNavigate, route }) {
   const isLesson = ['studio', 'guitar', 'ensemble', 'band'].includes(route);
   const walletValue = user ? user.mcoins.toLocaleString() : 'Mcoins';
-  const planLabel = user?.admin ? 'Admin' : user?.pro ? 'Pro' : 'Upgrade';
+  const planLabel = user?.admin
+    ? 'Admin'
+    : user?.subscriptionTier === 'musician'
+      ? 'Musician'
+      : user?.subscriptionTier === 'chill'
+        ? 'Chill'
+        : 'Upgrade';
   const planDetail = user?.admin
     ? 'Unlimited'
     : user?.pro
       ? (user.translationAllowance?.remaining ?? 20) + ' left'
-      : 'Get Pro';
+      : 'See plans';
 
   return (
     <div className={'global-actions ' + (isLesson ? 'lesson-actions' : '')}>
@@ -22,8 +28,8 @@ export default function HeaderActions({ user, onNavigate, route }) {
       <button
         className='buy-pro-button compact-pro header-status-button'
         type='button'
-        onClick={() => user?.admin || user?.pro ? onNavigate('account') : onNavigate('payment', { productId: 'polymath-pro' })}
-        aria-label={user?.admin || user?.pro ? 'Open ' + planLabel + ' account' : 'Upgrade to Pro'}
+        onClick={() => user?.admin || user?.pro ? onNavigate('account') : onNavigate('payment', { productId: 'polymath-chill-monthly' })}
+        aria-label={user?.admin || user?.pro ? 'Open ' + planLabel + ' account' : 'See subscription plans'}
       >
         <span>{planLabel}</span>
         <strong>{planDetail}</strong>

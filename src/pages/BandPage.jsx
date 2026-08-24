@@ -42,6 +42,49 @@ function saveLocalBand(band) {
   else window.localStorage.removeItem(LOCAL_BAND_KEY);
 }
 
+function memberInitials(name) {
+  return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+}
+
+function resizeAvatar(file) {
+  return new Promise((resolve, reject) => {
+    if (!file?.type.startsWith('image/')) {
+      reject(new Error('Choose an image for your profile picture.'));
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      reject(new Error('Choose an image smaller than 12 MB.'));
+      return;
+    }
+    const image = new window.Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d');
+      const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+      const sourceX = (image.naturalWidth - sourceSize) / 2;
+      const sourceY = (image.naturalHeight - sourceSize) / 2;
+      context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+      URL.revokeObjectURL(objectUrl);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('That profile picture could not be read.'));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function MemberAvatar({ member, className = '' }) {
+  return member?.avatarUrl
+    ? <img className={`band-avatar ${className}`} src={member.avatarUrl} alt={`${member.name} profile`} />
+    : <span className={`band-avatar band-avatar-fallback ${className}`} aria-hidden="true">{memberInitials(member?.name)}</span>;
+}
+
 function guitarPosition(note) {
   try {
     const midi = parseNote(note).midi;
@@ -120,10 +163,16 @@ export default function BandPage({ user, setUser, onNavigate }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [activePartNotes, setActivePartNotes] = useState(new Map());
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatText, setChatText] = useState('');
+  const [chatStatus, setChatStatus] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const playbackStart = useRef(0);
   const nextIndexes = useRef(new Map());
   const clock = useRef(null);
   const visualTimers = useRef([]);
+  const chatBottom = useRef(null);
 
   const selectedBand = bands.find((band) => band.id === selectedId) || bands[0] || null;
   const duration = useMemo(() => bandDuration(selectedBand), [selectedBand]);
@@ -156,6 +205,37 @@ export default function BandPage({ user, setUser, onNavigate }) {
     loadBands();
   }, [user?.user_id]);
 
+  useEffect(() => {
+    setChatMessages([]);
+    setChatStatus('');
+    if (!selectedBand?.joined || selectedBand.localOnly) return undefined;
+    let cancelled = false;
+    async function refreshChat() {
+      try {
+        const data = await apiRequest(`/api/bands/${selectedBand.id}/chat`);
+        if (cancelled) return;
+        setChatMessages((previous) => {
+          const previousLast = previous[previous.length - 1]?.id;
+          const nextLast = data.messages[data.messages.length - 1]?.id;
+          return previous.length === data.messages.length && previousLast === nextLast ? previous : data.messages;
+        });
+        setChatStatus('');
+      } catch (error) {
+        if (!cancelled) setChatStatus(error.message);
+      }
+    }
+    refreshChat();
+    const interval = window.setInterval(refreshChat, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [selectedBand?.id, selectedBand?.joined, selectedBand?.localOnly]);
+
+  useEffect(() => {
+    chatBottom.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [chatMessages.length]);
+
   useEffect(() => () => {
     if (clock.current) window.clearInterval(clock.current);
     pianoAudio.stopAll({ releaseSeconds: 0.03 });
@@ -178,6 +258,75 @@ export default function BandPage({ user, setUser, onNavigate }) {
       ...previous.filter((band) => band.id !== nextBand.id),
     ]);
     setSelectedId(nextBand.id);
+  }
+
+  async function sendChatMessage(event) {
+    event.preventDefault();
+    const text = chatText.trim();
+    if (!text || !selectedBand || chatBusy) return;
+    setChatBusy(true);
+    try {
+      const data = await apiRequest(`/api/bands/${selectedBand.id}/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      });
+      setChatMessages((previous) => previous.some((message) => message.id === data.message.id)
+        ? previous
+        : [...previous, data.message]);
+      setChatText('');
+      setChatStatus('');
+    } catch (error) {
+      setChatStatus(error.message);
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
+  async function updateProfilePicture(file) {
+    if (!file || avatarBusy) return;
+    setAvatarBusy(true);
+    try {
+      const avatarDataUrl = await resizeAvatar(file);
+      const data = await apiRequest('/api/profile/avatar', {
+        method: 'PUT',
+        body: JSON.stringify({ avatarDataUrl }),
+      });
+      setUser(data.user);
+      await loadBands(selectedBand?.id);
+      setStatus('Profile picture updated for your bandmates.');
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function moderateMember(member, action) {
+    if (!selectedBand?.isHost || member.role === 'host') return;
+    const verb = action === 'ban' ? 'ban' : 'remove';
+    if (!window.confirm(`${verb === 'ban' ? 'Ban' : 'Remove'} ${member.name} from ${selectedBand.name}?`)) return;
+    try {
+      const data = await apiRequest(action === 'ban'
+        ? `/api/bands/${selectedBand.id}/bans`
+        : `/api/bands/${selectedBand.id}/members/${member.userId}`, {
+        method: action === 'ban' ? 'POST' : 'DELETE',
+        ...(action === 'ban' ? { body: JSON.stringify({ userId: member.userId }) } : {}),
+      });
+      replaceBand(data.band);
+      setStatus(`${member.name} was ${action === 'ban' ? 'banned' : 'removed'} from the band.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function unbanMember(member) {
+    try {
+      const data = await apiRequest(`/api/bands/${selectedBand.id}/bans/${member.userId}`, { method: 'DELETE' });
+      replaceBand(data.band);
+      setStatus(`${member.name} can join the band again.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
   }
 
   async function createBand(event) {
@@ -687,16 +836,98 @@ export default function BandPage({ user, setUser, onNavigate }) {
                     </button>
                   </div>
                 )}
-                {selectedBand.joined && selectedBand.members?.length > 0 && (
-                  <div className="band-member-strip">
-                    <span>Team</span>
-                    <div>{selectedBand.members.map((member) => <strong key={member.userId}>{member.name}{member.role === 'host' ? ' · host' : ''}</strong>)}</div>
-                  </div>
-                )}
               </section>
 
               {selectedBand.joined && (
                 <>
+                  {!selectedBand.localOnly && (
+                    <section className="band-room">
+                      <header className="band-room-heading">
+                        <div>
+                          <p className="eyebrow">Band room</p>
+                          <h2>Meet, chat, rehearse.</h2>
+                        </div>
+                        <label className={`ghost band-avatar-upload ${avatarBusy ? 'disabled' : ''}`}>
+                          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={avatarBusy} onChange={(event) => updateProfilePicture(event.target.files?.[0])} />
+                          {avatarBusy ? 'Updating…' : user?.avatarUrl ? 'Change my photo' : 'Add my photo'}
+                        </label>
+                      </header>
+
+                      <div className="band-room-grid">
+                        <aside className="band-member-panel">
+                          <div className="band-section-label"><strong>Members</strong><span>{selectedBand.members?.length || 0}</span></div>
+                          <div className="band-member-list">
+                            {(selectedBand.members || []).map((member) => (
+                              <article className="band-member-card" key={member.userId}>
+                                <MemberAvatar member={member} />
+                                <div>
+                                  <strong>{member.name}</strong>
+                                  <small>{member.role === 'host' ? 'Creator' : 'Member'}</small>
+                                </div>
+                                {selectedBand.isHost && member.role !== 'host' && (
+                                  <div className="band-member-actions">
+                                    <button className="text-button" type="button" onClick={() => moderateMember(member, 'kick')}>Kick</button>
+                                    <button className="text-button danger-text" type="button" onClick={() => moderateMember(member, 'ban')}>Ban</button>
+                                  </div>
+                                )}
+                              </article>
+                            ))}
+                          </div>
+                          {selectedBand.isHost && selectedBand.bannedMembers?.length > 0 && (
+                            <details className="band-ban-list">
+                              <summary>Banned accounts ({selectedBand.bannedMembers.length})</summary>
+                              {selectedBand.bannedMembers.map((member) => (
+                                <div key={member.userId}>
+                                  <MemberAvatar member={member} className="small" />
+                                  <span>{member.name}</span>
+                                  <button className="text-button" type="button" onClick={() => unbanMember(member)}>Unban</button>
+                                </div>
+                              ))}
+                            </details>
+                          )}
+                        </aside>
+
+                        <section className="band-chat" aria-label={`${selectedBand.name} chat`}>
+                          <div className="band-section-label"><strong>Chat</strong><span>Members only</span></div>
+                          <div className="band-chat-messages" aria-live="polite">
+                            {!chatMessages.length && <p className="band-chat-empty">Say hello to your band.</p>}
+                            {chatMessages.map((message) => {
+                              const own = message.author.userId === user?.user_id;
+                              return (
+                                <article className={`band-chat-message ${own ? 'own' : ''}`} key={message.id}>
+                                  {!own && <MemberAvatar member={message.author} className="small" />}
+                                  <div>
+                                    <span><strong>{own ? 'You' : message.author.name}</strong><time>{new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></span>
+                                    <p>{message.text}</p>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                            <div ref={chatBottom} />
+                          </div>
+                          <form className="band-chat-form" onSubmit={sendChatMessage}>
+                            <textarea
+                              value={chatText}
+                              onChange={(event) => setChatText(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' && !event.shiftKey) {
+                                  event.preventDefault();
+                                  event.currentTarget.form?.requestSubmit();
+                                }
+                              }}
+                              maxLength="1000"
+                              rows="2"
+                              placeholder="Message the band…"
+                              aria-label="Message the band"
+                            />
+                            <button className="primary" type="submit" disabled={chatBusy || !chatText.trim()}>{chatBusy ? 'Sending…' : 'Send'}</button>
+                          </form>
+                          {chatStatus && <p className="form-status band-chat-status">{chatStatus}</p>}
+                        </section>
+                      </div>
+                    </section>
+                  )}
+
                   <section className="band-transport">
                     <button className="primary" type="button" disabled={!duration} onClick={playBand}>{isPlaying ? 'Pause band' : currentTime > 0 ? 'Resume band' : 'Play band'}</button>
                     <button className="ghost" type="button" onClick={() => stopBand(true)}>Restart</button>
@@ -730,6 +961,7 @@ export default function BandPage({ user, setUser, onNavigate }) {
                         <summary>Transcribe MP3 / Music Video with MuScriptor</summary>
                         <MediaTranscriptionPanel
                           user={user}
+                          setUser={setUser}
                           onNavigate={onNavigate}
                           instrument="band"
                           onReadyFile={(file) => uploadGeneralScore(file, true)}

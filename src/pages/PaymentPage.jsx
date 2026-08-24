@@ -2,35 +2,114 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
 
 const FALLBACK_PRODUCTS = [
-  {
-    id: 'polymath-pro',
-    name: 'Polymath Musician Pro',
-    price: '19.99',
-    currency: 'USD',
-    kind: 'subscription',
-    recurring: true,
-    interval: 'MONTH',
-    mcoins: 0,
-  },
-  { id: 'mcoins-50', name: '50 Mcoins', price: '5.00', currency: 'USD', kind: 'mcoins', mcoins: 50 },
-  { id: 'mcoins-100', name: '100 Mcoins', price: '10.00', currency: 'USD', kind: 'mcoins', mcoins: 100 },
-  { id: 'mcoins-300', name: '300 Mcoins', price: '30.00', currency: 'USD', kind: 'mcoins', mcoins: 300 },
+  { id: 'polymath-chill-monthly', name: 'Chill', price: '7.99', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'chill', translations: 10 },
+  { id: 'polymath-chill-yearly', name: 'Chill', price: '49.99', currency: 'USD', kind: 'subscription', interval: 'YEAR', tier: 'chill', translations: 10 },
+  { id: 'polymath-musician-monthly', name: 'Musician', price: '14.99', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'musician', translations: 20 },
+  { id: 'polymath-musician-yearly', name: 'Musician', price: '93.99', currency: 'USD', kind: 'subscription', interval: 'YEAR', tier: 'musician', translations: 20 },
+  { id: 'polymath-institution-class-monthly', name: 'Class', price: '300.00', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'musician', audience: 'institution', institutionTier: 'class', seats: 30 },
+  { id: 'polymath-institution-class-yearly', name: 'Class', price: '2880.00', annualListPrice: '3600.00', annualDiscountPercent: 20, currency: 'USD', kind: 'subscription', interval: 'YEAR', tier: 'musician', audience: 'institution', institutionTier: 'class', seats: 30 },
+  { id: 'polymath-institution-cohort-monthly', name: 'Cohort', price: '2250.00', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'musician', audience: 'institution', institutionTier: 'cohort', seats: 300 },
+  { id: 'polymath-institution-cohort-yearly', name: 'Cohort', price: '21600.00', annualListPrice: '27000.00', annualDiscountPercent: 20, currency: 'USD', kind: 'subscription', interval: 'YEAR', tier: 'musician', audience: 'institution', institutionTier: 'cohort', seats: 300 },
+  { id: 'polymath-institution-school-monthly', name: 'School', price: '7500.00', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'musician', audience: 'institution', institutionTier: 'school', seats: 1000 },
+  { id: 'polymath-institution-school-yearly', name: 'School', price: '72000.00', annualListPrice: '90000.00', annualDiscountPercent: 20, currency: 'USD', kind: 'subscription', interval: 'YEAR', tier: 'musician', audience: 'institution', institutionTier: 'school', seats: 1000 },
+  { id: 'mcoins-50', name: '50 Mcoins', price: '50.00', currency: 'USD', kind: 'mcoins', mcoins: 50 },
+  { id: 'mcoins-100', name: '100 Mcoins', price: '100.00', currency: 'USD', kind: 'mcoins', mcoins: 100 },
+  { id: 'mcoins-300', name: '300 Mcoins', price: '300.00', currency: 'USD', kind: 'mcoins', mcoins: 300 },
 ];
 
-function priceLabel(product) {
-  if (product.kind === 'subscription') return `$${product.price} USD / month`;
-  return `$${product.price} USD one time`;
+const FEATURES = {
+  chill: [
+    'Everything in the Regular studio',
+    'Unlimited JSON and MIDI ready-to-play uploads',
+    '10 shared PDF or audio translations every month',
+    'Extra translations for 0.5 Mcoin each',
+  ],
+  musician: [
+    'Everything included in Chill',
+    '20 shared PDF or audio translations every month',
+    'Full Learn mode across supported instruments',
+    'Band creation, joining, rehearsal, and collaboration',
+    'Extra translations for 0.5 Mcoin each',
+  ],
+};
+
+function periodLabel(product) {
+  return product?.interval === 'YEAR' ? 'year' : 'month';
+}
+
+function usdPrice(value) {
+  return Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function InstitutionPlans({ products, billing, setBilling, user, busy, onChoose }) {
+  return (
+    <>
+      <div className='billing-switch segmented-control' role='group' aria-label='Institution billing period'>
+        <button type='button' className={billing === 'MONTH' ? 'active' : ''} onClick={() => setBilling('MONTH')}>Monthly</button>
+        <button type='button' className={billing === 'YEAR' ? 'active' : ''} onClick={() => setBilling('YEAR')}>Yearly - 20% off</button>
+      </div>
+      <div className='institution-plan-grid'>
+        {['class', 'cohort', 'school'].map((tier) => {
+          const product = products.find((item) => item.institutionTier === tier && item.interval === billing);
+          const current = user?.institution?.role === 'owner'
+            && user.institution.status === 'ACTIVE'
+            && user.institution.plan === tier
+            && user.subscriptionInterval === billing;
+          return (
+            <article key={tier} className={`subscription-plan-card institution-plan-card ${tier}`}>
+              <header>
+                <div><p className='eyebrow'>Up to {product?.seats || 0} students</p><h2>{product?.name || tier}</h2></div>
+                <span className='plan-badge'>Musician for all</span>
+              </header>
+              {billing === 'YEAR' && product?.annualListPrice && (
+                <div className='annual-saving'><s>${usdPrice(product.annualListPrice)}</s><strong>20% off</strong></div>
+              )}
+              <div className='subscription-price institution-price'>
+                <strong>${usdPrice(product?.price)}</strong><span>USD / {periodLabel(product)}</span>
+              </div>
+              <ul>
+                <li>{product?.seats || 0} individual student accounts</li>
+                <li>Every member receives full Musician abilities</li>
+                <li>Learn, Band, and monthly Musician translations</li>
+                <li>One private access code with seat controls</li>
+              </ul>
+              <button className='primary full' type='button' disabled={busy || current} onClick={() => onChoose(product)}>
+                {current ? 'Current plan' : `Choose ${product?.name || tier}`}
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    </>
+  );
 }
 
 export default function PaymentPage({ user, setUser, productId, paymentStatus, paymentToken, onNavigate }) {
+  const initialProductId = productId || 'polymath-chill-monthly';
   const [products, setProducts] = useState(FALLBACK_PRODUCTS);
-  const [selectedId, setSelectedId] = useState(productId || 'polymath-pro');
+  const [audience, setAudience] = useState('individual');
+  const [billing, setBilling] = useState(initialProductId.includes('yearly') ? 'YEAR' : 'MONTH');
+  const [selectedId, setSelectedId] = useState(initialProductId);
+  const [walletOpen, setWalletOpen] = useState(initialProductId.startsWith('mcoins-'));
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const confirmationStarted = useRef(false);
+
+  const subscriptions = useMemo(
+    () => products.filter((product) => product.kind === 'subscription' && product.audience !== 'institution'),
+    [products],
+  );
+  const institutionSubscriptions = useMemo(
+    () => products.filter((product) => product.kind === 'subscription' && product.audience === 'institution'),
+    [products],
+  );
+  const mcoinProducts = useMemo(
+    () => products.filter((product) => product.kind === 'mcoins'),
+    [products],
+  );
   const selected = useMemo(
-    () => products.find((item) => item.id === selectedId) || products[0],
-    [products, selectedId],
+    () => products.find((product) => product.id === selectedId) || subscriptions[0],
+    [products, selectedId, subscriptions],
   );
 
   useEffect(() => {
@@ -40,56 +119,60 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
   }, []);
 
   useEffect(() => {
-    if (!user || !paymentToken || confirmationStarted.current) return;
-    const isOrderReturn = paymentStatus === 'approved';
-    const isSubscriptionReturn = paymentStatus === 'subscription-approved';
-    if (!isOrderReturn && !isSubscriptionReturn) return;
+    if (user?.subscriptionTier !== 'chill') return;
+    const interval = user.subscriptionInterval === 'YEAR' ? 'YEAR' : 'MONTH';
+    setBilling(interval);
+    setSelectedId(interval === 'YEAR'
+      ? 'polymath-musician-yearly'
+      : 'polymath-musician-monthly');
+  }, [user?.subscriptionInterval, user?.subscriptionTier]);
 
+  useEffect(() => {
+    if (!user || !paymentToken || confirmationStarted.current) return;
+    const subscriptionReturn = paymentStatus === 'subscription-approved';
+    const orderReturn = paymentStatus === 'approved';
+    if (!subscriptionReturn && !orderReturn) return;
     confirmationStarted.current = true;
     setBusy(true);
-    setStatus(isSubscriptionReturn ? 'Verifying your recurring Pro subscription…' : 'Capturing your Mcoin payment…');
-
-    const path = isSubscriptionReturn
-      ? '/api/paypal/confirm-subscription'
-      : '/api/paypal/capture-order';
-    const body = isSubscriptionReturn
-      ? { subscriptionId: paymentToken }
-      : { orderId: paymentToken };
-
-    apiRequest(path, { method: 'POST', body: JSON.stringify(body) })
+    setStatus(subscriptionReturn ? 'Confirming your subscription…' : 'Confirming your Mcoin purchase…');
+    apiRequest(subscriptionReturn ? '/api/paypal/confirm-subscription' : '/api/paypal/capture-order', {
+      method: 'POST',
+      body: JSON.stringify(subscriptionReturn
+        ? { subscriptionId: paymentToken }
+        : { orderId: paymentToken }),
+    })
       .then((data) => {
         setUser(data.user);
-        if (isSubscriptionReturn) {
-          setStatus(data.active
-            ? 'Polymath Musician Pro is active with 20 PDF translations per month.'
-            : `PayPal returned subscription status ${data.subscriptionStatus}. Pro will unlock after activation.`);
-        } else {
-          setStatus(`${data.product.name} has been added to your wallet.`);
-        }
+        setStatus(subscriptionReturn
+          ? data.upgraded
+            ? 'Musician is active. Your new billing period and translation allowance start today.'
+            : `${data.product.name} is active.`
+          : `${data.product.name} was added to your wallet.`);
       })
       .catch((error) => setStatus(error.message))
       .finally(() => setBusy(false));
-  }, [paymentStatus, paymentToken, user?.user_id, setUser]);
+  }, [paymentStatus, paymentToken, setUser, user]);
 
-  async function checkout() {
+  function productFor(tier) {
+    return subscriptions.find((product) => product.tier === tier && product.interval === billing);
+  }
+
+  async function checkout(product = selected) {
     if (!user) {
-      setStatus('Sign in before starting checkout.');
+      onNavigate('account', { next: 'payment', productId: product?.id || selected?.id });
       return;
     }
-
+    if (!product) return;
+    setSelectedId(product.id);
     setBusy(true);
-    setStatus(selected.kind === 'subscription'
-      ? 'Creating your recurring PayPal subscription…'
-      : 'Creating your secure one-time PayPal checkout…');
-
+    setStatus(product.kind === 'subscription'
+      ? 'Opening secure PayPal subscription checkout…'
+      : 'Opening secure PayPal checkout…');
     try {
-      const endpoint = selected.kind === 'subscription'
-        ? '/api/paypal/create-subscription'
-        : '/api/paypal/create-order';
-      const data = await apiRequest(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({ productId: selected.id }),
-      });
+      const data = await apiRequest(
+        product.kind === 'subscription' ? '/api/paypal/create-subscription' : '/api/paypal/create-order',
+        { method: 'POST', body: JSON.stringify({ productId: product.id }) },
+      );
       if (!data.approveUrl) throw new Error('PayPal did not return an approval link.');
       window.location.assign(data.approveUrl);
     } catch (error) {
@@ -98,53 +181,126 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
     }
   }
 
+  function choosePlan(product) {
+    if (!product) return;
+    setSelectedId(product.id);
+  }
+
+  const currentTier = user?.subscriptionTier || (user?.pro ? 'musician' : 'free');
+  const currentInterval = user?.subscriptionInterval || 'MONTH';
+
   return (
-    <section className="page-shell payment-page">
-      <div className="page-heading">
-        <p className="eyebrow">Secure USD payment</p>
-        <h1>Choose Pro or a transparent Mcoin pack.</h1>
-        <p>$1 USD always equals 10 Mcoins. Pro renews monthly; Mcoin packs are one-time purchases.</p>
+    <section className="page-shell subscription-page">
+      <div className="page-heading subscription-heading">
+        <p className="eyebrow">Subscriptions</p>
+        <h1>Choose access that fits you.</h1>
+        <p>Start with who the subscription is for. You will only see the relevant options.</p>
       </div>
 
-      <div className="currency-trust-card">
-        <strong>$1 USD = 10 Mcoins</strong>
-        <span>PDF translation costs 30 Mcoins, equal to $3 USD.</span>
-      </div>
-
-      <div className="product-selector-grid">
-        {products.map((product) => (
-          <button
-            key={product.id}
-            type="button"
-            className={`payment-product ${selectedId === product.id ? 'selected' : ''}`}
-            onClick={() => setSelectedId(product.id)}
-          >
-            <span>{product.kind === 'subscription' ? 'MONTHLY PRO' : 'MCOINS'}</span>
-            <strong>{product.name}</strong>
-            <small>{priceLabel(product)}</small>
-            {product.kind === 'subscription' && <small>20 PDF translations monthly</small>}
-          </button>
-        ))}
-      </div>
-
-      <article className="checkout-card">
-        <div>
-          <p className="eyebrow">Order summary</p>
-          <h2>{selected.name}</h2>
-          <p className="muted">
-            {selected.kind === 'subscription'
-              ? 'Recurring monthly Pro access with 20 PDF-to-ready-to-play translations each month. Manage or cancel through PayPal.'
-              : `${selected.mcoins.toLocaleString()} Mcoins credited after payment. This exactly matches the $1-to-10-Mcoin rate.`}
-          </p>
-        </div>
-        <strong className="checkout-price">{priceLabel(selected)}</strong>
-        <button className="primary checkout-button" type="button" onClick={checkout} disabled={busy}>
-          {busy ? 'Processing…' : selected.kind === 'subscription' ? 'Subscribe with PayPal' : 'Buy with PayPal'}
+      <div className="subscription-audience" role="tablist" aria-label="Subscription category">
+        <button type="button" role="tab" aria-selected={audience === 'individual'} className={audience === 'individual' ? 'active' : ''} onClick={() => setAudience('individual')}>
+          <strong>Individual</strong>
+          <span>For one musician</span>
         </button>
-        {!user && <button className="ghost" type="button" onClick={() => onNavigate('account')}>Sign in first</button>}
-        {paymentStatus === 'cancelled' && <p className="form-status">Checkout was cancelled. Nothing was charged.</p>}
-        {status && <p className="form-status">{status}</p>}
-      </article>
+        <button type="button" role="tab" aria-selected={audience === 'institution'} className={audience === 'institution' ? 'active' : ''} onClick={() => setAudience('institution')}>
+          <strong>Institution</strong>
+          <span>For schools and organisations</span>
+        </button>
+      </div>
+
+      {audience === 'individual' ? (
+        <div className="individual-subscriptions" role="tabpanel">
+          <div className="billing-switch segmented-control" role="group" aria-label="Billing period">
+            <button type="button" className={billing === 'MONTH' ? 'active' : ''} onClick={() => setBilling('MONTH')}>Monthly</button>
+            <button type="button" className={billing === 'YEAR' ? 'active' : ''} onClick={() => setBilling('YEAR')}>Yearly · save more</button>
+          </div>
+
+          <div className="subscription-plan-grid">
+            {['chill', 'musician'].map((tier) => {
+              const product = productFor(tier);
+              const current = currentTier === tier && currentInterval === billing;
+              const upgrade = currentTier === 'chill' && tier === 'musician' && currentInterval === billing;
+              const priceDifference = upgrade && product
+                ? Number(product.price) - Number(productFor('chill')?.price || 0)
+                : 0;
+              return (
+                <article key={tier} className={`subscription-plan-card ${tier} ${selectedId === product?.id ? 'selected' : ''}`}>
+                  <header>
+                    <div>
+                      <p className="eyebrow">{tier === 'musician' ? 'Complete access' : 'Simple access'}</p>
+                      <h2>{tier === 'musician' ? 'Musician' : 'Chill'}</h2>
+                    </div>
+                    {tier === 'musician' && <span className="plan-badge">Learn + Band</span>}
+                  </header>
+                  <div className="subscription-price">
+                    <strong>${product?.price || '—'}</strong>
+                    <span>USD / {periodLabel(product)}</span>
+                  </div>
+                  <ul>
+                    {FEATURES[tier].map((feature) => <li key={feature}>{feature}</li>)}
+                  </ul>
+                  {upgrade && (
+                    <p className="upgrade-note">
+                      Upgrade for ${priceDifference.toFixed(2)}. Today becomes day one of your new {periodLabel(product)}.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="primary full"
+                    disabled={busy || current || (currentTier === 'musician' && tier === 'chill')}
+                    onClick={() => { choosePlan(product); checkout(product); }}
+                  >
+                    {current
+                      ? 'Current plan'
+                      : currentTier === 'musician' && tier === 'chill'
+                        ? 'Musician already includes Chill'
+                        : upgrade
+                          ? `Upgrade for ${priceDifference.toFixed(2)}`
+                          : `Choose ${tier === 'musician' ? 'Musician' : 'Chill'}`}
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className='institution-subscriptions' role='tabpanel'>
+          <InstitutionPlans
+            products={institutionSubscriptions}
+            billing={billing}
+            setBilling={setBilling}
+            user={user}
+            busy={busy}
+            onChoose={(product) => { choosePlan(product); checkout(product); }}
+          />
+        </div>
+      )}
+
+      <div className="subscription-economy-note">
+        <strong>1 USD = 1 Mcoin</strong>
+        <span>No conversion tricks. Subscribers pay 0.5 Mcoin per extra translation; users without a subscription pay 2 Mcoins.</span>
+      </div>
+
+      <section className="wallet-section">
+        <button className="wallet-reveal" type="button" aria-expanded={walletOpen} onClick={() => setWalletOpen((open) => !open)}>
+          <span><strong>Need Mcoins?</strong><small>Show one-time wallet packs</small></span>
+          <span>{walletOpen ? '−' : '+'}</span>
+        </button>
+        {walletOpen && (
+          <div className="wallet-pack-grid">
+            {mcoinProducts.map((product) => (
+              <button key={product.id} type="button" className="payment-product" disabled={busy} onClick={() => checkout(product)}>
+                <strong>{product.mcoins} Mcoins</strong>
+                <span>${product.price} USD once</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {!user && <button className="ghost subscription-signin" type="button" onClick={() => onNavigate('account', { next: 'payment', productId: selected?.id })}>Sign in before checkout</button>}
+      {paymentStatus === 'cancelled' && <p className="form-status">Checkout was cancelled. Nothing was charged.</p>}
+      {status && <p className="form-status subscription-status" aria-live="polite">{status}</p>}
     </section>
   );
 }

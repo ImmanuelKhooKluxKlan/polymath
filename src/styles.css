@@ -545,10 +545,15 @@ button { -webkit-tap-highlight-color: transparent; }
   box-shadow: 0 20px 70px rgba(0,0,0,0.24);
 }
 .account-card { display: grid; gap: 16px; }
+.institution-code-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.institution-code-row code { min-width: 0; padding: 10px 12px; overflow-wrap: anywhere; color: var(--purple); border-radius: 10px; background: rgba(123, 97, 255, 0.1); font-weight: 900; }
 .segmented-control { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; border-radius: 14px; background: rgba(255,255,255,0.05); }
-.account-mode-control { grid-template-columns: repeat(3, 1fr); }
+.account-mode-control { grid-template-columns: repeat(2, 1fr); }
 .segmented-control button { border: 0; border-radius: 11px; padding: 10px; color: var(--muted); background: transparent; font-weight: 850; }
 .segmented-control button.active { color: white; background: rgba(255,255,255,0.1); }
+.segmented-control button:disabled { cursor: not-allowed; opacity: 0.72; }
+.registration-contact-control { margin-top: 7px; width: 100%; }
+.field-help { color: var(--muted); line-height: 1.45; }
 .form-status { margin: 0; color: var(--gold); line-height: 1.45; }
 .centered-status { text-align: center; }
 .account-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
@@ -576,6 +581,192 @@ button { -webkit-tap-highlight-color: transparent; }
 .checkout-card { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 22px; }
 .checkout-price { font-size: 2.4rem; }
 .checkout-card .form-status, .checkout-card .ghost { grid-column: 1 / -1; }
+
+/* Subscription selection */
+.subscription-page {
+  width: min(1120px, calc(100% - 32px));
+  margin-inline: auto;
+}
+.subscription-heading { max-width: 720px; }
+.subscription-audience {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 24px 0 34px;
+}
+.subscription-audience > button {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 22px;
+  text-align: left;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+}
+.subscription-audience > button span { color: var(--muted); }
+.subscription-audience > button.active {
+  border-color: var(--purple);
+  background: linear-gradient(145deg, rgba(123, 97, 255, 0.14), rgba(88, 240, 255, 0.07));
+  box-shadow: 0 14px 40px rgba(80, 68, 170, 0.14);
+}
+.individual-subscriptions { display: grid; gap: 28px; }
+.billing-switch { width: min(420px, 100%); margin-inline: auto; }
+.subscription-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 20px;
+}
+.subscription-plan-card {
+  display: flex;
+  min-width: 0;
+  min-height: 530px;
+  flex-direction: column;
+  gap: 24px;
+  padding: 30px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: 0 18px 55px rgba(20, 24, 60, 0.1);
+}
+.subscription-plan-card.musician {
+  border-color: rgba(123, 97, 255, 0.46);
+  background: linear-gradient(155deg, rgba(123, 97, 255, 0.12), var(--panel) 46%);
+}
+.subscription-plan-card.selected {
+  border-color: rgba(123, 97, 255, 0.7);
+  background: linear-gradient(155deg, rgba(123, 97, 255, 0.16), var(--panel) 48%);
+  box-shadow: 0 18px 55px rgba(80, 68, 170, 0.18);
+}
+.subscription-plan-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.subscription-plan-card h2 { margin: 4px 0 0; font-size: clamp(1.8rem, 3vw, 2.5rem); }
+.plan-badge {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  color: var(--purple);
+  border: 1px solid rgba(123, 97, 255, 0.3);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+.subscription-price { display: flex; align-items: baseline; gap: 10px; }
+.subscription-price strong { font-size: clamp(2.35rem, 5vw, 3.7rem); letter-spacing: -0.06em; }
+.subscription-price span { color: var(--muted); }
+.subscription-plan-card ul {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+.subscription-plan-card li {
+  position: relative;
+  padding-left: 26px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.subscription-plan-card li::before {
+  position: absolute;
+  left: 0;
+  color: var(--purple);
+  content: '✓';
+  font-weight: 950;
+}
+.upgrade-note {
+  margin: 0;
+  padding: 13px;
+  color: var(--text);
+  border-radius: 12px;
+  background: rgba(123, 97, 255, 0.1);
+  line-height: 1.45;
+}
+.institution-placeholder {
+  display: grid;
+  max-width: 760px;
+  min-height: 280px;
+  align-content: center;
+  gap: 10px;
+  margin-inline: auto;
+  padding: clamp(28px, 6vw, 64px);
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+}
+.institution-placeholder h2 { margin: 0; }
+.institution-placeholder p:last-child { margin: 0; color: var(--muted); line-height: 1.6; }
+.institution-subscriptions { display: grid; gap: 28px; }
+.institution-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 16px;
+}
+.institution-plan-card { min-height: 510px; gap: 20px; padding: 24px; }
+.institution-plan-card.cohort {
+  border-color: rgba(123, 97, 255, 0.46);
+  background: linear-gradient(155deg, rgba(123, 97, 255, 0.12), var(--panel) 46%);
+}
+.institution-plan-card .plan-badge { max-width: 110px; white-space: normal; text-align: center; }
+.institution-price { flex-wrap: wrap; }
+.institution-price strong { font-size: clamp(1.85rem, 3.2vw, 2.75rem); overflow-wrap: anywhere; }
+.annual-saving { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.annual-saving strong { padding: 5px 8px; color: var(--purple); border-radius: 999px; background: rgba(123, 97, 255, 0.1); font-size: 0.76rem; }
+.subscription-economy-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  margin-top: 28px;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+.subscription-economy-note strong { white-space: nowrap; }
+.subscription-economy-note span { color: var(--muted); line-height: 1.45; }
+.wallet-section { margin-top: 16px; }
+.wallet-reveal {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  text-align: left;
+}
+.wallet-reveal > span:first-child { display: grid; gap: 3px; }
+.wallet-reveal small { color: var(--muted); }
+.wallet-pack-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 10px;
+}
+.wallet-pack-grid .payment-product { display: grid; gap: 4px; text-align: left; }
+.wallet-pack-grid .payment-product span { color: var(--muted); }
+.subscription-signin { width: 100%; margin-top: 16px; }
+.subscription-status { margin-top: 16px; text-align: center; }
+
+@media (max-width: 760px) {
+  .subscription-page { width: min(100% - 20px, 1120px); }
+  .subscription-audience,
+  .subscription-plan-grid,
+  .institution-plan-grid,
+  .wallet-pack-grid { grid-template-columns: 1fr; }
+  .subscription-plan-card { min-height: 0; padding: 22px; }
+  .subscription-economy-note { align-items: flex-start; flex-direction: column; }
+}
 
 /* Marketplace */
 .publish-button { min-width: 170px; }
@@ -889,6 +1080,28 @@ button { -webkit-tap-highlight-color: transparent; }
 .guitar-string { display: grid; grid-template-columns: 74px repeat(6, minmax(70px, 1fr)); align-items: center; min-height: 48px; position: relative; }
 .guitar-string::after { content: ''; position: absolute; left: 74px; right: 0; top: 50%; height: 2px; background: rgba(245,235,205,0.85); box-shadow: 0 1px 2px rgba(0,0,0,0.6); }
 .guitar-string:nth-child(-n+2)::after { height: 3px; }
+.guitar-string.vibrating-primary::after {
+  animation: guitar-string-primary 72ms linear infinite;
+  background: rgba(255, 247, 218, 0.98);
+  box-shadow: 0 0 5px rgba(255, 232, 174, 0.7), 0 1px 2px rgba(0,0,0,0.6);
+}
+.guitar-string.vibrating-sympathetic::after {
+  animation: guitar-string-sympathetic 128ms ease-in-out infinite;
+  opacity: 0.74;
+}
+@keyframes guitar-string-primary {
+  0%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-1.5px); }
+  75% { transform: translateY(1.5px); }
+}
+@keyframes guitar-string-sympathetic {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(0.55px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guitar-string.vibrating-primary::after,
+  .guitar-string.vibrating-sympathetic::after { animation: none; }
+}
 .string-name { color: #fff4d8; font-size: 0.72rem; font-weight: 900; }
 .guitar-string button { position: relative; z-index: 2; height: 48px; border: 0; border-left: 2px solid rgba(190,190,190,0.75); color: white; background: transparent; }
 .guitar-string button:last-child { border-right: 2px solid rgba(190,190,190,0.75); }
@@ -1983,6 +2196,20 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
 .studio-hero .hero-card strong { font-size: 2rem; }
 
 .control-panel, .guitar-control-panel { gap: 14px; }
+.song-play-now {
+  width: 100%;
+  min-height: 48px;
+  font-size: 0.96rem;
+}
+.player-settings {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.visual-stack { scroll-margin-top: 76px; outline: none; }
+.guitar-visual-stack { scroll-margin-top: 76px; outline: none; }
 .lesson-options, .song-tools, .advanced-controls {
   border-top: 1px solid var(--line);
   padding-top: 12px;
@@ -2425,6 +2652,99 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
 .band-member-strip > span { color: var(--muted); font-size: 0.72rem; font-weight: 900; text-transform: uppercase; letter-spacing: 0.14em; }
 .band-member-strip > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .band-member-strip strong { padding: 6px 9px; border-radius: 999px; color: var(--cyan); background: rgba(88,240,255,0.08); font-size: 0.72rem; }
+.band-room {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: inset 0 1px rgba(255,255,255,0.05), 0 18px 60px rgba(0,0,0,0.16);
+}
+.band-room-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.band-room-heading h2 { margin-top: 4px; }
+.band-avatar-upload { display: grid; min-height: 42px; place-items: center; padding: 9px 13px; cursor: pointer; }
+.band-avatar-upload input { display: none; }
+.band-avatar-upload.disabled { cursor: wait; opacity: 0.6; }
+.band-room-grid { display: grid; grid-template-columns: minmax(230px, 0.36fr) minmax(0, 1fr); gap: 12px; }
+.band-member-panel,
+.band-chat {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255,255,255,0.025);
+}
+.band-member-panel { display: grid; align-content: start; gap: 11px; }
+.band-chat { display: grid; gap: 10px; }
+.band-section-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.band-section-label span { color: var(--muted); font-size: 0.7rem; font-weight: 800; }
+.band-member-list { display: grid; gap: 7px; }
+.band-member-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border-radius: 13px;
+  background: rgba(255,255,255,0.035);
+}
+.band-member-card > div:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.band-member-card > div:nth-child(2) strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.band-member-card small { color: var(--muted); }
+.band-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  object-fit: cover;
+  border: 1px solid rgba(123,97,255,0.42);
+  border-radius: 50%;
+  color: var(--text);
+  background: linear-gradient(145deg, rgba(123,97,255,0.28), rgba(88,240,255,0.2));
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+.band-avatar.small { width: 30px; height: 30px; font-size: 0.58rem; }
+.band-member-actions { display: flex; align-items: center; gap: 5px; }
+.band-member-actions button { padding: 5px; font-size: 0.68rem; }
+.danger-text { color: #ff7a9a !important; }
+.band-ban-list { padding-top: 9px; border-top: 1px solid var(--line); }
+.band-ban-list summary { color: var(--muted); cursor: pointer; font-size: 0.72rem; font-weight: 850; }
+.band-ban-list > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-top: 8px; }
+.band-chat-messages {
+  display: flex;
+  min-height: 270px;
+  max-height: 380px;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  overflow-y: auto;
+  border-radius: 14px;
+  background: rgba(0,0,0,0.1);
+}
+.band-chat-empty { margin: auto; color: var(--muted); text-align: center; }
+.band-chat-message { display: flex; align-items: end; gap: 7px; max-width: min(78%, 620px); }
+.band-chat-message.own { align-self: flex-end; }
+.band-chat-message > div { min-width: 0; }
+.band-chat-message > div > span { display: flex; align-items: center; gap: 7px; margin: 0 6px 3px; color: var(--muted); font-size: 0.64rem; }
+.band-chat-message p { margin: 0; padding: 9px 11px; overflow-wrap: anywhere; border-radius: 13px 13px 13px 4px; background: rgba(255,255,255,0.07); line-height: 1.42; }
+.band-chat-message.own p { color: white; border-radius: 13px 13px 4px 13px; background: linear-gradient(135deg, rgba(83,128,255,0.86), rgba(123,97,255,0.9)); }
+.band-chat-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.band-chat-form textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  padding: 10px 12px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(5,7,20,0.42);
+  font: inherit;
+}
+.band-chat-status { margin: 0; font-size: 0.72rem; }
 .band-transport {
   display: grid;
   grid-template-columns: auto auto minmax(180px, 1fr);
@@ -2583,6 +2903,7 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
   .band-list > button { flex: 0 0 220px; }
   .band-overview { grid-template-columns: 1fr 1fr; }
   .band-overview > div:first-child { grid-column: 1 / -1; }
+  .band-room-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
@@ -2603,6 +2924,13 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
   .band-general-upload { width: 100%; }
   .band-add-instrument { grid-template-columns: 1fr; }
   .band-part-controls { grid-template-columns: 1fr; }
+  .band-room { padding: 12px; border-radius: 18px; }
+  .band-room-heading { align-items: stretch; flex-direction: column; }
+  .band-avatar-upload { width: 100%; }
+  .band-chat-messages { min-height: 300px; max-height: 58vh; }
+  .band-chat-message { max-width: 90%; }
+  .band-chat-form { grid-template-columns: 1fr; }
+  .band-chat-form button { width: 100%; }
 }
 .learn-mode-panel {
   margin: 0 0 1.25rem;
@@ -3942,12 +4270,17 @@ details[open] > summary {
     outline: none;
   }
   .visual-stack { order: 5; }
+  .guitar-control-panel { order: 1; }
+  .guitar-visual-stack { order: 2; }
+  .guitar-upload-card { order: 3; }
 }
 
 @media (max-width: 720px) {
   .mobile-flow-guide { padding: 12px; border-radius: 14px; }
   .mobile-flow-guide > span { width: 31px; height: 31px; flex-basis: 31px; }
   .mobile-player-anchor { scroll-margin-top: 62px; }
+  .visual-stack { scroll-margin-top: 62px; }
+  .guitar-visual-stack { scroll-margin-top: 62px; }
 }
 
 @media (max-width: 1100px) {

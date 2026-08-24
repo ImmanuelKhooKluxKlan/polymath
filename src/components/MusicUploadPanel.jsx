@@ -1,6 +1,26 @@
 import { useState } from 'react';
+import { apiRequest } from '../services/api.js';
 import PdfTranslationPanel from './PdfTranslationPanel.jsx';
 import MediaTranscriptionPanel from './MediaTranscriptionPanel.jsx';
+
+const GUEST_READY_UPLOAD_KEY = 'polymath_guest_ready_upload_month_v2';
+const GUEST_READY_UPLOAD_LIMIT = 2;
+
+function currentGuestPeriod(now = new Date()) {
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function readGuestAllowance() {
+  const period = currentGuestPeriod();
+  if (typeof window === 'undefined') return { period, used: 0, remaining: GUEST_READY_UPLOAD_LIMIT };
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(GUEST_READY_UPLOAD_KEY) || '{}');
+    const used = stored.period === period ? Math.max(0, Number(stored.used || 0)) : 0;
+    return { period, used, remaining: Math.max(0, GUEST_READY_UPLOAD_LIMIT - used) };
+  } catch {
+    return { period, used: 0, remaining: GUEST_READY_UPLOAD_LIMIT };
+  }
+}
 
 export default function MusicUploadPanel({
   user,
@@ -14,6 +34,8 @@ export default function MusicUploadPanel({
   const [mode, setMode] = useState(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [guestAllowance, setGuestAllowance] = useState(readGuestAllowance);
+  const [showUploadAllowance, setShowUploadAllowance] = useState(false);
 
   async function handleReadyFile(event) {
     const file = event.target.files?.[0];
@@ -22,10 +44,41 @@ export default function MusicUploadPanel({
     setBusy(true);
     setStatus(`Reading ${file.name}…`);
     try {
-      const result = await onReadyFile(file);
+      const prepared = await onReadyFile(file, { commit: false });
+      let payment;
+      if (user) {
+        payment = await apiRequest('/api/ready-sheet-uploads', {
+          method: 'POST',
+          body: JSON.stringify({ filename: file.name }),
+        });
+        if (payment.user) setUser?.(payment.user);
+      } else {
+        const current = readGuestAllowance();
+        if (current.remaining <= 0) {
+          onNavigate?.('signin');
+          throw new Error('Your 2 free guest uploads are used for this month. Sign in to continue for 0.5 Mcoin per upload.');
+        }
+        const next = {
+          period: current.period,
+          used: current.used + 1,
+          remaining: current.remaining - 1,
+        };
+        window.localStorage.setItem(GUEST_READY_UPLOAD_KEY, JSON.stringify({ period: next.period, used: next.used }));
+        setGuestAllowance(next);
+        payment = { costMcoins: 0, paymentMethod: 'free_attempt' };
+      }
+      const result = await onReadyFile(file, { commit: true, prepared });
       const title = result?.title || file.name;
-      const count = result?.notes?.length ?? result?.events?.length;
-      setStatus(`Loaded ${title}${Number.isFinite(count) ? ` · ${count} playable events` : ''}.`);
+      const updatedAllowance = payment.user?.readySheetAllowance;
+      const remaining = payment.user
+        ? updatedAllowance?.remaining
+        : readGuestAllowance().remaining;
+      const resultLabel = updatedAllowance?.unlimited || payment.paymentMethod === 'unlimited'
+        ? '∞'
+        : payment.costMcoins > 0
+          ? `${payment.costMcoins} Mcoin`
+          : `${remaining} free left`;
+      setStatus(`Loaded ${title} · ${resultLabel}`);
     } catch (error) {
       setStatus(error.message || 'The ready-to-play sheet could not be loaded.');
     } finally {
@@ -34,12 +87,29 @@ export default function MusicUploadPanel({
     }
   }
 
+  const readyAllowance = user?.readySheetAllowance;
+  const unlimitedUploads = Boolean(user && (user.admin || readyAllowance?.unlimited));
+  const remainingUploads = user
+    ? Math.max(0, Number(readyAllowance?.remaining ?? 2))
+    : guestAllowance.remaining;
+
   return (
     <div className={`music-upload-panel ${compact ? 'compact-panel' : ''}`}>
       <div className="upload-mode-grid" aria-label="Music sheet upload options">
-        <label className={`upload-mode-option ${mode === 'ready' ? 'active' : ''}`}>
+        <label className={`upload-mode-option ${mode === 'ready' ? 'active' : ''}`} onClick={() => setShowUploadAllowance(true)}>
           <input type="file" accept={readyAccept} onChange={handleReadyFile} disabled={busy} />
-          <strong>{busy ? 'Loading…' : 'Upload Ready to Play Sheet (JSON/MIDI)'}</strong>
+          <strong>{busy ? 'Loading…' : 'Upload Ready-to-Play Sheet'}</strong>
+          {showUploadAllowance && (
+            <small>
+              {unlimitedUploads
+                ? '∞'
+                : remainingUploads > 0
+                  ? `${remainingUploads} free`
+                  : user
+                    ? '0 free · 0.5 Mcoin'
+                    : '0 free · sign in'}
+            </small>
+          )}
         </label>
         <button
           type="button"
@@ -62,6 +132,7 @@ export default function MusicUploadPanel({
       ) : mode === 'media' ? (
         <MediaTranscriptionPanel
           user={user}
+          setUser={setUser}
           onNavigate={onNavigate}
           instrument={instrument}
           onReadyFile={onReadyFile}

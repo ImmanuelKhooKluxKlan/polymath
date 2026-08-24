@@ -17,7 +17,7 @@ import BandPage from './pages/BandPage.jsx';
 import YourSongsPage from './pages/YourSongsPage.jsx';
 import AdminDatabasePage from './pages/AdminDatabasePage.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
-import { pianoAudio } from './engine/audioEngine.js';
+import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import { buildAdaptivePianoLayout, buildLearningHandLayout } from './engine/grandPianoLayout.js';
 import {
   findStartIndex,
@@ -249,8 +249,8 @@ export default function App() {
     );
   }
 
-  function focusMobilePlayer() {
-    if (!window.matchMedia('(max-width: 1100px)').matches) return;
+  function focusMobilePlayer(force = false) {
+    if (!force && !window.matchMedia('(max-width: 1100px)').matches) return;
     window.setTimeout(() => {
       const player = studioPlayerRef.current;
       if (!player) return;
@@ -409,7 +409,6 @@ export default function App() {
     setPracticeRange(null);
     setSelectedSectionIndex(0);
     setSongTitle(title);
-    focusMobilePlayer();
   }
 
   function handleUpload(uploadedSong) {
@@ -569,7 +568,7 @@ export default function App() {
     await startPlaybackAt(section.start);
   }
 
-  const paymentProductId = route.params.get('productId') || 'polymath-pro';
+  const paymentProductId = route.params.get('productId') || 'polymath-chill-monthly';
   const messageUserId = route.params.get('userId');
   const messageName = route.params.get('name') || 'Seller';
   const content = (() => {
@@ -578,12 +577,32 @@ export default function App() {
     }
     if (route.page === 'guitar') return <GuitarPage user={user} setUser={setUser} onNavigate={navigate} />;
     if (route.page === 'ensemble') return <EnsemblePage user={user} setUser={setUser} onNavigate={navigate} />;
-    if (route.page === 'band') return <BandPage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'band') {
+      if (!user?.admin && !user?.access?.band) {
+        return (
+          <PaymentPage
+            user={user}
+            setUser={setUser}
+            productId="polymath-musician-monthly"
+            onNavigate={navigate}
+          />
+        );
+      }
+      return <BandPage user={user} setUser={setUser} onNavigate={navigate} />;
+    }
     if (route.page === 'published-songs') return <MarketplacePage user={user} setUser={setUser} onNavigate={navigate} />;
     if (route.page === 'your-songs') return <YourSongsPage user={user} onNavigate={navigate} />;
     if (route.page === 'admin-database') return <AdminDatabasePage user={user} onNavigate={navigate} />;
     if (route.page === 'messages') return <MessagesPage user={user} initialUser={messageUserId ? { user_id: messageUserId, name: messageName } : null} onNavigate={navigate} />;
-    if (route.page === 'account') return <AccountPage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'account') return (
+      <AccountPage
+        user={user}
+        setUser={setUser}
+        onNavigate={navigate}
+        returnPage={route.params.get('next')}
+        returnProductId={route.params.get('productId')}
+      />
+    );
     if (route.page === 'payment') {
       return (
         <PaymentPage
@@ -599,17 +618,10 @@ export default function App() {
 
     return (
       <section className="studio-page">
-        <header className="hero studio-hero">
-          <div>
-            <p className="eyebrow">Polymath Musician Piano Studio</p>
-            <h1>Learn this song on piano.</h1>
-            <p className="hero-copy">Follow the falling notes into the illuminated keys, slow difficult sections down, and practise at your pace.</p>
-          </div>
-          <div className="hero-card"><span className="pulse" /><strong>{song.notes.length}</strong><small>notes • {song.pedals?.length || 0} pedal events</small></div>
-        </header>
-
         <LearnModePanel
           mode={teachingMode}
+          locked={!user?.admin && !user?.access?.learn}
+          onUpgrade={() => navigate('payment', { productId: 'polymath-musician-monthly' })}
           onModeChange={(mode) => {
             stopPlayback();
             setTeachingMode(mode);
@@ -668,12 +680,7 @@ export default function App() {
             song={song}
             songs={songs}
             onSongChange={handleSongChange}
-            leadTime={leadTime}
-            setLeadTime={setLeadTime}
-            toneMode={toneMode}
-            setToneMode={setToneMode}
-            autoplayVolume={autoplayVolume}
-            setAutoplayVolume={setAutoplayVolume}
+            onPlayNow={() => focusMobilePlayer(true)}
           />
 
           <div className='mobile-flow-guide mobile-player-guide'>
@@ -683,9 +690,7 @@ export default function App() {
               <small>Follow the falling notes, then use the keyboard and controls below.</small>
             </div>
           </div>
-          <div ref={studioPlayerRef} className='mobile-player-anchor' tabIndex='-1' />
-
-          <div className="visual-stack">
+          <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
             <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} />
             <div className="piano-scroll-wrap">
               <PianoKeyboard
@@ -713,6 +718,26 @@ export default function App() {
               onForward={() => jumpBy(10)}
               minSpeed={0.2}
             />
+            <details className="lesson-options player-settings">
+              <summary>Settings</summary>
+              <div className="lesson-options-content">
+                <label className="field">
+                  Piano sound
+                  <select value={toneMode} onChange={(event) => setToneMode(event.target.value)}>
+                    <option value="pianella">{TONE_MODE_LABELS.pianella}</option>
+                    <option value="grand">{TONE_MODE_LABELS.grand}</option>
+                  </select>
+                </label>
+                <label className="field">
+                  Autoplay volume: {Math.round((autoplayVolume ?? 1) * 100)}%
+                  <input type="range" min="0.25" max="1.25" step="0.05" value={autoplayVolume ?? 1} onChange={(event) => setAutoplayVolume(Number(event.target.value))} />
+                </label>
+                <label className="field">
+                  Notes appear {leadTime.toFixed(1)}s early
+                  <input type="range" min="1.4" max="5.5" step="0.1" value={leadTime} onChange={(event) => setLeadTime(Number(event.target.value))} />
+                </label>
+              </div>
+            </details>
           </div>
 
           <SongUploader onUpload={handleUpload} user={user} setUser={setUser} onNavigate={navigate} />

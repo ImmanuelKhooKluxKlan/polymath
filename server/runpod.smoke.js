@@ -15,6 +15,8 @@ process.env.ADMIN_EMAILS = 'runpod-smoke@example.test';
 process.env.MUSCRIPTOR_ENABLED = 'true';
 process.env.MUSCRIPTOR_MODEL = 'large';
 process.env.MUSCRIPTOR_REMOTE_URL = remoteUrl;
+process.env.NODE_ENV = 'test';
+process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 
 const { app } = require('./server');
 
@@ -25,14 +27,25 @@ async function main() {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
 
   try {
+    const otpResponse = await fetch(`${baseUrl}/api/auth/register/otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'email',
+        email: 'runpod-smoke@example.test',
+      }),
+    });
+    assert.equal(otpResponse.status, 202);
+    const otp = await otpResponse.json();
     const registration = await fetch(`${baseUrl}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: 'RunPod Smoke Test',
         email: 'runpod-smoke@example.test',
-        phone: '+65 8000 0099',
         password: 'RunPodSmokePassword123',
+        challengeId: otp.challengeId,
+        verificationCode: '123456',
       }),
     });
     assert.equal(registration.status, 201);

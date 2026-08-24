@@ -147,7 +147,7 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
       </div>
 
       <div className="market-trust-strip">
-        <span><strong>$1 = 10 Mcoins</strong><small>Clear USD-backed wallet value</small></span>
+        <span><strong>$1 = 1 Mcoin</strong><small>Simple USD-backed wallet value</small></span>
         <span><strong>10% sale fee</strong><small>Sellers receive 90% of every sale</small></span>
         <span><strong>File type shown</strong><small>Know whether you are buying JSON, MIDI, or PDF</small></span>
       </div>
@@ -240,7 +240,7 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
                 <p className="muted">{listing.description}</p>
                 <div className="buyer-file-notice">
                   <strong>{format.playable ? 'Ready to play' : 'Readable PDF sheet'}</strong>
-                  <span>{format.playable ? 'Open this file in a supported Polymath Musician studio.' : 'This PDF may need a 30-Mcoin translation before automatic playback.'}</span>
+                  <span>{format.playable ? 'Open this file in a supported Polymath Musician studio.' : 'This PDF may need a separate translation before automatic playback.'}</span>
                 </div>
                 <p className="seller-line">Sold by <strong>{listing.seller?.name}</strong></p>
               </div>

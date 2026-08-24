@@ -3,17 +3,24 @@ import { formatLearningTime } from '../utils/learningSections.js';
 export default function LearnModePanel({
   mode, onModeChange, sections, selectedIndex, onSelectSection, onPracticeSection,
   repeatSection, onRepeatChange, preferredSeconds, onPreferredSecondsChange,
+  locked = false, onUpgrade,
 }) {
   const selected = sections[selectedIndex] || sections[0];
 
   return (
     <section className={`learn-mode-panel ${mode === 'learn' ? 'is-learning' : ''}`}>
       <div className="mode-switch" role="group" aria-label="Teaching mode">
-        <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => onModeChange('regular')}>Regular</button>
-        <button type="button" className={mode === 'learn' ? 'active' : ''} onClick={() => onModeChange('learn')}>Learn</button>
+        <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => onModeChange('regular')}>Chilling</button>
+        <button
+          type="button"
+          className={mode === 'learn' ? 'active' : ''}
+          onClick={() => locked ? onUpgrade?.() : onModeChange('learn')}
+        >
+          {locked ? 'Learn · Musician' : 'Learn'}
+        </button>
       </div>
 
-      {mode === 'learn' && selected && (
+      {mode === 'learn' && !locked && selected && (
         <div className="learn-mode-content">
           <div className="learn-focus">
             <div className="learn-current">

@@ -411,10 +411,11 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
     await startAt(section.start);
   }
 
-  async function loadReadySheet(file) {
-    const parsed = await parseUploadedSongFile(file);
+  async function loadReadySheet(file, { commit = true, prepared = null } = {}) {
+    const parsed = prepared || await parseUploadedSongFile(file);
     if (!parsed.notes?.length) throw new Error('No playable note events were found in this ready-to-play sheet.');
     const normalized = normalizeSong(parsed);
+    if (!commit) return normalized;
     stopPlayback();
     setSong(normalized);
     setIsCustomSong(true);
@@ -476,6 +477,8 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
 
       <LearnModePanel
         mode={teachingMode}
+        locked={!user?.admin && !user?.access?.learn}
+        onUpgrade={() => onNavigate('payment', { productId: 'polymath-musician-monthly' })}
         onModeChange={(mode) => {
           stopPlayback();
           setTeachingMode(mode);

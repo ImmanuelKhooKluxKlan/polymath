@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { apiRequest, setAuthToken } from '../services/api.js';
 
-export default function AccountPage({ user, setUser, onNavigate }) {
+export default function AccountPage({ user, setUser, onNavigate, returnPage, returnProductId }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', identifier: '', email: '', phone: '', password: '', birthDate: '', termsAccepted: false });
+  const [form, setForm] = useState({ name: '', identifier: '', contactMethod: 'email', email: '', phone: '', luckyCode: '', password: '', verificationCode: '', birthDate: '', termsAccepted: false });
+  const [verification, setVerification] = useState(null);
+  const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [withdraw, setWithdraw] = useState({ amountMcoins: '', payoutEmail: '' });
   const [newPassword, setNewPassword] = useState({ password: '', confirm: '' });
@@ -12,7 +14,7 @@ export default function AccountPage({ user, setUser, onNavigate }) {
     registrationEnabled: true,
     minimumSignupAge: 0,
     minimumPasswordLength: 8,
-    minimumWithdrawalMcoins: 100,
+    minimumWithdrawalMcoins: 20,
     policyNotice: '',
     termsUrl: '',
     privacyUrl: '',
@@ -26,22 +28,59 @@ export default function AccountPage({ user, setUser, onNavigate }) {
 
   async function submit(event) {
     event.preventDefault();
-    setStatus('Working…');
+    setBusy(true);
+    setStatus('Working...');
     try {
-      const authPath = mode === 'admin' ? 'login' : mode;
-      const data = await apiRequest(`/api/auth/${authPath}`, {
+      if (mode === 'register' && !verification) {
+        const channel = form.contactMethod;
+        const data = await apiRequest('/api/auth/register/otp', {
+          method: 'POST',
+          body: JSON.stringify({
+            channel,
+            email: channel === 'email' ? form.email : '',
+            phone: channel === 'phone' ? form.phone : '',
+          }),
+        });
+        setVerification(data);
+        setForm((current) => ({ ...current, verificationCode: '' }));
+        setStatus(data.message);
+        return;
+      }
+
+      const data = await apiRequest(`/api/auth/${mode}`, {
         method: 'POST',
         body: JSON.stringify(mode === 'register'
-          ? form
-          : { identifier: form.identifier, password: form.password, admin: mode === 'admin' }),
+          ? {
+            ...form,
+            email: form.contactMethod === 'email' ? form.email : '',
+            phone: form.contactMethod === 'phone' ? form.phone : '',
+            challengeId: verification?.challengeId,
+          }
+          : { identifier: form.identifier, password: form.password }),
       });
       setAuthToken(data.token);
       setUser(data.user);
       setStatus(`Welcome, ${data.user.name}.`);
-      if (mode === 'admin') onNavigate('admin-database');
+      if (data.user.admin) onNavigate('admin-database');
+      else if (returnPage === 'payment') onNavigate('payment', { productId: returnProductId || 'polymath-chill-monthly' });
     } catch (error) {
       setStatus(error.message);
+    } finally {
+      setBusy(false);
     }
+  }
+
+  function changeMode(nextMode) {
+    setMode(nextMode);
+    setVerification(null);
+    setForm((current) => ({ ...current, verificationCode: '' }));
+    setStatus('');
+  }
+
+  function changeContactMethod(contactMethod) {
+    setVerification(null);
+    setForm((current) => ({ ...current, contactMethod, verificationCode: '' }));
+    setStatus('');
   }
 
   async function logout() {
@@ -104,24 +143,21 @@ export default function AccountPage({ user, setUser, onNavigate }) {
   }
 
   if (!user) {
-    const heading = mode === 'admin'
-      ? 'Sign in to the administrator dashboard.'
-      : mode === 'login'
-        ? 'Sign in to your music library.'
-        : 'Create your Polymath Musician account.';
+    const heading = mode === 'login'
+      ? 'Sign in to your music library.'
+      : 'Create your Polymath Musician account.';
 
     return (
       <section className="page-shell narrow-page">
         <div className="page-heading">
           <p className="eyebrow">Account</p>
           <h1>{heading}</h1>
-          <p>{mode === 'admin' ? 'Only backend-authorized administrator accounts can continue.' : 'Accounts include a secure wallet, purchases, listings, messages, and monthly PDF translation usage.'}</p>
+          <p>Accounts include a secure wallet, purchases, listings, messages, and monthly PDF translation usage.</p>
         </div>
         <form className="account-card" onSubmit={submit}>
           <div className="segmented-control account-mode-control">
-            <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button>
-            <button type="button" className={mode === 'admin' ? 'active' : ''} onClick={() => setMode('admin')}>Admin sign in</button>
-            <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Register</button>
+            <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => changeMode('login')}>Sign in</button>
+            <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => changeMode('register')}>Register</button>
           </div>
           {mode === 'register' && (
             <>
@@ -143,17 +179,34 @@ export default function AccountPage({ user, setUser, onNavigate }) {
                 </label>
               )}
               <label className="field">Display name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></label>
-              <label className="field">Phone number<input type="tel" autoComplete="tel" placeholder="+65 8123 4567" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required /></label>
+              <div className="field">
+                <span>Where should we send your verification code?</span>
+                <div className="segmented-control registration-contact-control" role="group" aria-label="Verification contact method">
+                  <button type="button" disabled={Boolean(verification)} className={form.contactMethod === 'email' ? 'active' : ''} onClick={() => changeContactMethod('email')}>Email</button>
+                  <button type="button" disabled={Boolean(verification)} className={form.contactMethod === 'phone' ? 'active' : ''} onClick={() => changeContactMethod('phone')}>Phone</button>
+                </div>
+              </div>
+              {form.contactMethod === 'email' ? (
+                <label className="field">Email address<input type="email" autoComplete="email" disabled={Boolean(verification)} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label>
+              ) : (
+                <label className="field">Phone number<input type="tel" autoComplete="tel" disabled={Boolean(verification)} placeholder="+65 8123 4567" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required /></label>
+              )}
+              <label className='field'>Lucky code<input type='text' autoComplete='off' maxLength={64} disabled={Boolean(verification)} value={form.luckyCode} onChange={(event) => setForm({ ...form, luckyCode: event.target.value })} /></label>
             </>
           )}
-          {mode !== 'register' ? (
+          {mode !== 'register' && (
             <label className="field">Email or phone number<input type="text" autoComplete="username" placeholder="Email or phone number" value={form.identifier} onChange={(event) => setForm({ ...form, identifier: event.target.value })} required /></label>
-          ) : (
-            <label className="field">Email<input type="email" autoComplete="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label>
           )}
-          <label className='field'>Password<input type='password' minLength={mode === 'register' ? policies.minimumPasswordLength : 8} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
-          <button className='primary' type='submit' disabled={mode === 'register' && !policies.registrationEnabled}>{mode === 'register' ? 'Create account' : mode === 'admin' ? 'Open admin dashboard' : 'Sign in'}</button>
-          {status && <p className="form-status">{status}</p>}
+          <label className='field'>Password<input type='password' autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? policies.minimumPasswordLength : 8} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
+          {mode === 'register' && verification && (
+            <>
+              <label className="field">6-digit verification code<input type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={form.verificationCode} onChange={(event) => setForm({ ...form, verificationCode: event.target.value.replace(/\D/g, '').slice(0, 6) })} required /></label>
+              <small className="field-help">Sent to {verification.destinationHint}. The code expires shortly.</small>
+              <button type="button" className="ghost" onClick={() => { setVerification(null); setForm((current) => ({ ...current, verificationCode: '' })); setStatus(''); }}>Use a different email or phone</button>
+            </>
+          )}
+          <button className='primary' type='submit' disabled={busy || (mode === 'register' && !policies.registrationEnabled)}>{mode === 'register' ? (verification ? 'Verify & create account' : 'Send verification code') : 'Sign in'}</button>
+          {status && <p className="form-status" aria-live="polite">{status}</p>}
         </form>
       </section>
     );
@@ -178,12 +231,17 @@ export default function AccountPage({ user, setUser, onNavigate }) {
   }
 
   const allowance = user.translationAllowance || {
-    limit: user.pro ? 20 : 1,
+    limit: user.subscriptionTier === 'chill' ? 10 : user.pro ? 20 : 0,
     used: 0,
-    remaining: user.pro ? 20 : 1,
+    remaining: user.subscriptionTier === 'chill' ? 10 : user.pro ? 20 : 0,
     resetAt: '',
   };
   const unlimitedTranslations = Boolean(user.admin || allowance.unlimited);
+  const planName = user.subscriptionTier === 'musician'
+    ? 'Musician'
+    : user.subscriptionTier === 'chill'
+      ? 'Chill'
+      : 'Free';
   return (
     <section className="page-shell">
       <div className="page-heading">
@@ -204,28 +262,42 @@ export default function AccountPage({ user, setUser, onNavigate }) {
         <article className="wallet-card featured-card">
           <p className="eyebrow">Mcoin wallet</p>
           <strong className="wallet-balance">{user.mcoins.toLocaleString()}</strong>
-          <p className="muted">$1 USD equals 10 Mcoins. Use Mcoins for marketplace purchases and 30-Mcoin PDF translations. Seller-earned withdrawable balance: {(user.withdrawableMcoins || 0).toLocaleString()} Mcoins.</p>
+          <p className="muted">$1 USD equals 1 Mcoin. Withdrawable: {(user.withdrawableMcoins || 0).toLocaleString()} Mcoins.</p>
           <div className="button-row">
             <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'mcoins-100' })}>Buy Mcoins</button>
-            <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: 'polymath-pro' })}>{user.pro ? 'Pro active' : 'Subscribe to Pro'}</button>
+            <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: user.subscriptionTier === 'chill' ? 'polymath-musician-monthly' : 'polymath-chill-monthly' })}>{user.pro ? planName + ' active' : 'See subscriptions'}</button>
           </div>
         </article>
 
         <article className="wallet-card translation-allowance-card">
-          <p className="eyebrow">PDF translation allowance</p>
+          <p className="eyebrow">Translation allowance</p>
           <strong className="allowance-number">{unlimitedTranslations ? 'Unlimited' : allowance.remaining}</strong>
           <h2>{unlimitedTranslations ? 'administrator translations' : `of ${allowance.limit} remaining this month`}</h2>
-          <p className="muted">{unlimitedTranslations ? 'Administrator access includes unlimited PDF and audio/video translations with no Mcoin charge.' : user.pro ? 'Pro includes 20 PDF-to-ready-to-play translations each month.' : 'Free accounts include one PDF-to-ready-to-play translation each month.'}</p>
+          <p className="muted">{unlimitedTranslations ? 'Administrator access includes unlimited PDF and audio/video translations with no Mcoin charge.' : user.pro ? planName + ' includes ' + allowance.limit + ' shared PDF or audio translations each month.' : 'Choose Chill or Musician for a monthly translation allowance.'}</p>
           {!unlimitedTranslations && allowance.resetAt && <small>Resets {new Date(allowance.resetAt).toLocaleDateString()}</small>}
-          <button className="ghost full" type="button" onClick={() => onNavigate(unlimitedTranslations || user.pro ? 'ensemble' : 'payment', unlimitedTranslations || user.pro ? {} : { productId: 'polymath-pro' })}>{unlimitedTranslations || user.pro ? 'Open Instrument Studio' : 'Get 20 with Pro'}</button>
+          <button className="ghost full" type="button" onClick={() => onNavigate(unlimitedTranslations || user.pro ? 'ensemble' : 'payment', unlimitedTranslations || user.pro ? {} : { productId: 'polymath-chill-monthly' })}>{unlimitedTranslations || user.pro ? 'Open Instrument Studio' : 'See subscription options'}</button>
         </article>
 
-        <article className="wallet-card">
-          <p className="eyebrow">Seller cash-out</p>
+        {user.institution && (
+          <article className='wallet-card institution-access-card'>
+            <p className='eyebrow'>Institution access</p>
+            <h2>{user.institution.name || 'Institution Musician'}</h2>
+            <p className='muted'>{user.institution.seats.toLocaleString()} student seats - {user.institution.status.toLowerCase()}.</p>
+            {user.institution.role === 'owner' && user.institution.accessCode && (
+              <div className='institution-code-row'>
+                <code>{user.institution.accessCode}</code>
+                <button className='ghost compact-action' type='button' onClick={() => navigator.clipboard.writeText(user.institution.accessCode)}>Copy</button>
+              </div>
+            )}
+          </article>
+        )}
+
+        <article className='wallet-card'>
+          <p className='eyebrow'>Seller cash-out</p>
           <h2>No additional platform withdrawal fee</h2>
           <p className="muted">The 10% marketplace fee is deducted at the time of sale. Only the seller’s 90% earnings become withdrawable. Payout-provider, tax, or currency-conversion charges may still apply.</p>
           <form onSubmit={requestWithdrawal}>
-            <label className='field'>Mcoins to withdraw<input type='number' min={policies.minimumWithdrawalMcoins} value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /></label>
+            <label className='field'>Mcoins to withdraw<input type='number' min={policies.minimumWithdrawalMcoins} value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /><small>Minimum: {policies.minimumWithdrawalMcoins} Mcoins</small></label>
             <label className="field">PayPal payout email<input type="email" value={withdraw.payoutEmail} onChange={(event) => setWithdraw({ ...withdraw, payoutEmail: event.target.value })} required /></label>
             <button className="ghost full" type="submit">Request withdrawal</button>
           </form>
@@ -233,15 +305,15 @@ export default function AccountPage({ user, setUser, onNavigate }) {
 
         <article className="wallet-card">
           <p className="eyebrow">Membership</p>
-          <h2>{user.admin ? 'Administrator - Unlimited' : user.pro ? 'Polymath Musician Pro' : 'Free account'}</h2>
+          <h2>{user.admin ? 'Administrator - Unlimited' : user.pro ? planName : 'Free account'}</h2>
           <p className="muted">
             {user.admin
               ? 'Administrator translation limits and translation charges are disabled for this account.'
               : user.pro
-              ? `Pro tools are active. PayPal subscription status: ${user.proStatus || 'ACTIVE'}.`
-              : 'Pro is a recurring $19.99/month PayPal subscription with 20 PDF translations per month.'}
+              ? planName + ' is active. PayPal subscription status: ' + (user.proStatus || 'ACTIVE') + '.'
+              : 'Chill starts at $7.99/month. Musician unlocks Learn and Band.'}
           </p>
-          {!user.admin && !user.pro && <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'polymath-pro' })}>Subscribe to Pro</button>}
+          {!user.admin && <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: user.subscriptionTier === 'chill' ? 'polymath-musician-monthly' : 'polymath-chill-monthly' })}>{user.subscriptionTier === 'chill' ? 'Upgrade to Musician' : user.pro ? 'View plan' : 'See subscriptions'}</button>}
           <button className="ghost" type="button" onClick={logout}>Sign out</button>
         </article>
         <article className='wallet-card'>

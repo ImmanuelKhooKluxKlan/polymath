@@ -19,6 +19,8 @@ process.env.RUNPOD_S3_REGION = '';
 process.env.RUNPOD_S3_ENDPOINT = '';
 process.env.RUNPOD_S3_ACCESS_KEY_ID = '';
 process.env.RUNPOD_S3_SECRET_ACCESS_KEY = '';
+process.env.NODE_ENV = 'test';
+process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 
 const { app } = require('./server');
 
@@ -174,6 +176,27 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     return { status: response.status, data };
   }
 
+  async function register(_pathname, { body }) {
+    const channel = body.email ? 'email' : 'phone';
+    const challenge = await api('/api/auth/register/otp', {
+      method: 'POST',
+      body: {
+        channel,
+        email: channel === 'email' ? body.email : '',
+        phone: channel === 'phone' ? body.phone : '',
+      },
+    });
+    assert.equal(challenge.status, 202);
+    return api('/api/auth/register', {
+      method: 'POST',
+      body: {
+        ...body,
+        challengeId: challenge.data.challengeId,
+        verificationCode: '123456',
+      },
+    });
+  }
+
   async function createListing(token, title) {
     return api('/api/listings', {
       method: 'POST',
@@ -201,10 +224,31 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(transcriptionCapability.data.maxBytes, null);
   assert.equal(transcriptionCapability.data.license, 'CC-BY-NC-4.0');
 
+  const catalog = await api('/api/catalog');
+  assert.equal(catalog.status, 200);
+  assert.equal(catalog.data.mcoinsPerUsd, 1);
+  assert.deepEqual(catalog.data.translationMcoinCosts, { subscriber: 0.5, free: 2 });
+  assert.equal(catalog.data.products.find((item) => item.id === 'polymath-chill-monthly').price, '7.99');
+  assert.equal(catalog.data.products.find((item) => item.id === 'polymath-chill-yearly').price, '49.99');
+  assert.equal(catalog.data.products.find((item) => item.id === 'polymath-musician-monthly').price, '14.99');
+  assert.equal(catalog.data.products.find((item) => item.id === 'polymath-musician-yearly').price, '93.99');
+  assert.equal(catalog.data.products.find((item) => item.id === 'mcoins-50').price, '50.00');
+
   const unauthenticatedTranscription = await api('/api/media-transcriptions', { method: 'POST' });
   assert.equal(unauthenticatedTranscription.status, 401);
 
-  const adminRegistration = await api('/api/auth/register', {
+  const unverifiedRegistration = await api('/api/auth/register', {
+    method: 'POST',
+    body: {
+      name: 'Unverified User',
+      email: 'unverified@example.test',
+      password: 'UnverifiedPassword123',
+    },
+  });
+  assert.equal(unverifiedRegistration.status, 400);
+  assert.match(unverifiedRegistration.data.error, /verify a new code/i);
+
+  const adminRegistration = await register('/api/auth/register', {
     method: 'POST',
     body: {
       name: 'Test Admin',
@@ -223,27 +267,36 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   const adminToken = adminRegistration.data.token;
   const adminFriendId = adminRegistration.data.user.friend_id;
 
-  const userRegistration = await api('/api/auth/register', {
+  const userRegistration = await register('/api/auth/register', {
     method: 'POST',
     body: {
       name: 'Test Customer',
       email: 'customer@example.test',
-      phone: '+65 8000 0002',
       password: 'CustomerPassword123',
     },
   });
   assert.equal(userRegistration.status, 201);
   assert.equal(userRegistration.data.user.translationAllowance.unlimited, false);
-  assert.equal(userRegistration.data.user.translationAllowance.remaining, 1);
+  assert.equal(userRegistration.data.user.translationAllowance.plan, 'free');
+  assert.equal(userRegistration.data.user.translationAllowance.limit, 0);
+  assert.equal(userRegistration.data.user.translationAllowance.remaining, 0);
+  assert.equal(userRegistration.data.user.translationAllowance.overageCostMcoins, 2);
+  assert.equal(userRegistration.data.user.access.learn, false);
+  assert.equal(userRegistration.data.user.access.band, false);
   assert.match(userRegistration.data.user.friend_id, /^user_[a-f0-9]{5}$/);
   const userToken = userRegistration.data.token;
   const userId = userRegistration.data.user.user_id;
 
-  const sellerRegistration = await api('/api/auth/register', {
+  const freeBandAccess = await api('/api/bands', { token: userToken });
+  assert.equal(freeBandAccess.status, 403);
+  assert.match(freeBandAccess.data.error, /Musician plan/);
+  const adminBandAccess = await api('/api/bands', { token: adminToken });
+  assert.equal(adminBandAccess.status, 200);
+
+  const sellerRegistration = await register('/api/auth/register', {
     method: 'POST',
     body: {
       name: 'Test Seller',
-      email: 'seller@example.test',
       phone: '+65 8000 0004',
       password: 'SellerPassword123',
     },
@@ -269,7 +322,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(policyUpdate.status, 200);
   assert.equal(policyUpdate.data.policies.minimumSignupAge, 18);
 
-  const underageBlocked = await api('/api/auth/register', {
+  const underageBlocked = await register('/api/auth/register', {
     method: 'POST',
     body: {
       name: 'No Birth Date',
@@ -280,7 +333,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(underageBlocked.status, 400);
 
-  const policyCompliantRegistration = await api('/api/auth/register', {
+  const policyCompliantRegistration = await register('/api/auth/register', {
     method: 'POST',
     body: {
       name: 'Adult Customer',
@@ -309,6 +362,21 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(promotionCreate.status, 201);
   assert.equal(promotionCreate.data.promotion.code, 'TEST50');
+
+  const luckyRegistration = await register('/api/auth/register', {
+    method: 'POST',
+    body: {
+      name: 'Lucky Adult',
+      email: 'lucky-adult@example.test',
+      password: 'LongPassword123',
+      birthDate: '1990-01-01',
+      termsAccepted: true,
+      luckyCode: 'test50',
+    },
+  });
+  assert.equal(luckyRegistration.status, 201);
+  assert.equal(luckyRegistration.data.user.luckyCodeApplied, true);
+  assert.equal(luckyRegistration.data.user.mcoins, 75);
 
   const redemption = await api('/api/promotions/redeem', {
     method: 'POST',
@@ -444,7 +512,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.ok(database.sessions.every((session) => session.tokenHash && !session.token));
   assert.equal(database.settings.minimumWithdrawalMcoins, 250);
   assert.equal(database.promotions.length, 3);
-  assert.equal(database.promotionRedemptions.length, 4);
+  assert.equal(database.promotionRedemptions.length, 5);
   assert.equal(database.promotionRedemptions.filter((entry) => entry.friendId === sellerFriendId).length, 2);
   assert.equal(database.passwordResetEvents.length, 1);
   assert.ok(Array.isArray(database.mediaTranscriptionJobs));

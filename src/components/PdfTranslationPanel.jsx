@@ -44,8 +44,11 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
   const allowance = user?.translationAllowance || null;
   const unlimited = Boolean(user?.admin || allowance?.unlimited);
   const remaining = unlimited ? null : Number(allowance?.remaining || 0);
-  const planLabel = user?.pro ? 'Pro monthly translation' : 'Free monthly translation';
-  const balanceAfter = Math.max(0, Number(user?.mcoins || 0) - 30);
+  const overageCost = Number(allowance?.overageCostMcoins ?? (user?.pro ? 0.5 : 2));
+  const planLabel = user?.subscriptionTier
+    ? `${user.subscriptionTier === 'musician' ? 'Musician' : 'Chill'} included translation`
+    : 'Included translation';
+  const balanceAfter = Math.max(0, Number(user?.mcoins || 0) - overageCost);
 
   const progress = useMemo(() => {
     if (!job) return 0;
@@ -175,7 +178,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
             <p className="eyebrow">PDF translation</p>
             <h3>Translate to a Ready-to-Play Sheet</h3>
           </div>
-          <span className="price-chip">30 Mcoins · $3</span>
+          <span className="price-chip">2 Mcoins · $2</span>
         </div>
         <p className="muted">Sign in to use your monthly translation allowance or pay with Mcoins.</p>
         <button className="primary full" type="button" onClick={() => onNavigate('account')}>Sign in to translate</button>
@@ -190,7 +193,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
           <p className="eyebrow">PDF translation</p>
           <h3>Translate to a Ready-to-Play Sheet</h3>
         </div>
-        <span className="price-chip">{unlimited ? 'Administrator - Unlimited' : '30 Mcoins · $3'}</span>
+        <span className="price-chip">{unlimited ? 'Administrator - Unlimited' : `${overageCost} Mcoins · $${overageCost}`}</span>
       </div>
 
       <p className="muted">
@@ -205,8 +208,8 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
 
       <div className="allowance-summary">
         <div>
-          <span>{unlimited ? 'Administrator access' : user.pro ? 'Pro allowance' : 'Free allowance'}</span>
-          <strong>{unlimited ? 'Unlimited PDF translations' : `${remaining} of ${allowance?.limit ?? (user.pro ? 20 : 1)} remaining`}</strong>
+          <span>{unlimited ? 'Administrator access' : user.subscriptionTier ? `${user.subscriptionTier === 'musician' ? 'Musician' : 'Chill'} allowance` : 'No subscription'}</span>
+          <strong>{unlimited ? 'Unlimited translations' : `${remaining} of ${allowance?.limit ?? 0} remaining`}</strong>
         </div>
         <div>
           <span>{unlimited ? 'Translation cost' : 'Mcoin balance'}</span>
@@ -241,10 +244,10 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
             className="ghost mcoin-pay-button"
             type="button"
             onClick={() => startTranslation('mcoins')}
-            disabled={!file || busy || Number(user.mcoins || 0) < 30}
+            disabled={!file || busy || Number(user.mcoins || 0) < overageCost}
           >
-            <span>Pay 30 Mcoins</span>
-            <small>{Number(user.mcoins || 0) >= 30 ? `${balanceAfter} Mcoins after payment` : 'Insufficient Mcoins'}</small>
+            <span>Pay {overageCost} Mcoins</span>
+            <small>{Number(user.mcoins || 0) >= overageCost ? `${balanceAfter} Mcoins after payment` : 'Insufficient Mcoins'}</small>
           </button>
             </>
           )}
@@ -254,8 +257,8 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       {!unlimited && remaining <= 0 && !job && (
         <div className="quota-warning">
           <strong>0 translations remaining.</strong>
-          <span>Pay 30 Mcoins{user.pro ? ' to continue.' : ' or buy Pro for 20 monthly translations.'}</span>
-          {!user.pro && <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: 'polymath-pro' })}>Buy Pro</button>}
+          <span>Pay {overageCost} Mcoins{user.pro ? ' to continue.' : ' or choose a subscription for monthly translations.'}</span>
+          {!user.pro && <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: 'polymath-chill-monthly' })}>See subscriptions</button>}
         </div>
       )}
 
@@ -279,7 +282,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
             <p className="estimate-note">Processing is taking longer than expected. The estimate has been extended by {Number(job.estimateExtensionCount) * 5} minutes.</p>
           )}
           <p className="muted job-payment-line">
-            Payment method: {job.paymentMethod === 'admin' ? 'unlimited administrator access' : job.paymentMethod === 'mcoins' ? '30 Mcoins' : 'monthly translation allowance'}.
+            Payment method: {job.paymentMethod === 'admin' ? 'unlimited administrator access' : job.paymentMethod === 'mcoins' ? `${job.costMcoins} Mcoins` : 'monthly translation allowance'}.
           </p>
           {job.status === 'completed' && <button className="primary full" type="button" onClick={downloadResult}>Download Ready-to-Play Sheet</button>}
           {job.status === 'failed' && <p className="form-status">{job.error || 'The translation could not be completed. Your payment or allowance was restored.'}</p>}
