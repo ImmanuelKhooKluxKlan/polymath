@@ -9,7 +9,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
   const [status, setStatus] = useState('');
   const [withdraw, setWithdraw] = useState({ amountMcoins: '', payoutEmail: '' });
   const [newPassword, setNewPassword] = useState({ password: '', confirm: '' });
-  const [voucherCode, setVoucherCode] = useState('');
+  const [withdrawalFeeRate, setWithdrawalFeeRate] = useState(0.25);
   const [policies, setPolicies] = useState({
     registrationEnabled: true,
     minimumSignupAge: 0,
@@ -22,7 +22,10 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
 
   useEffect(() => {
     apiRequest('/api/catalog')
-      .then((data) => setPolicies((current) => ({ ...current, ...(data.policies || {}) })))
+      .then((data) => {
+        setPolicies((current) => ({ ...current, ...(data.policies || {}) }));
+        setWithdrawalFeeRate(Number(data.withdrawalFeeRate ?? 0.25));
+      })
       .catch(() => {});
   }, []);
 
@@ -100,24 +103,8 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
         }),
       });
       setUser(data.user);
-      setStatus(`Withdrawal queued. Net payout balance: ${data.withdrawal.netMcoins} Mcoins. No additional Polymath Musician withdrawal fee was charged.`);
+      setStatus(`Cash-out queued. Fee: ${data.withdrawal.feeMcoins} Mcoins. Net payout: ${data.withdrawal.netMcoins} Mcoins.`);
       setWithdraw({ amountMcoins: '', payoutEmail: '' });
-    } catch (error) {
-      setStatus(error.message);
-    }
-  }
-
-  async function redeemVoucher(event) {
-    event.preventDefault();
-    setStatus('Checking voucher...');
-    try {
-      const data = await apiRequest('/api/promotions/redeem', {
-        method: 'POST',
-        body: JSON.stringify({ code: voucherCode }),
-      });
-      setUser(data.user);
-      setVoucherCode('');
-      setStatus(data.message);
     } catch (error) {
       setStatus(error.message);
     }
@@ -242,6 +229,9 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
     : user.subscriptionTier === 'chill'
       ? 'Chill'
       : 'Free';
+  const withdrawalAmount = Math.max(0, Number(withdraw.amountMcoins) || 0);
+  const withdrawalFeePreview = Number((withdrawalAmount * withdrawalFeeRate).toFixed(2));
+  const withdrawalNetPreview = Number((withdrawalAmount - withdrawalFeePreview).toFixed(2));
   return (
     <section className="page-shell">
       <div className="page-heading">
@@ -254,7 +244,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
         </div>
         <div className="button-row profile-shortcuts">
           <button className="primary" type="button" onClick={() => onNavigate('your-songs')}>Open Your Songs</button>
-          <button className="ghost" type="button" onClick={() => onNavigate('published-songs')}>View marketplace listings</button>
+          <button className="ghost" type="button" onClick={() => onNavigate('published-songs')}>Browse composers</button>
           {user.admin && <button className='ghost' type='button' onClick={() => onNavigate('admin-database')}>Open admin console</button>}
         </div>
       </div>
@@ -262,7 +252,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
         <article className="wallet-card featured-card">
           <p className="eyebrow">Mcoin wallet</p>
           <strong className="wallet-balance">{user.mcoins.toLocaleString()}</strong>
-          <p className="muted">$1 USD equals 1 Mcoin. Withdrawable: {(user.withdrawableMcoins || 0).toLocaleString()} Mcoins.</p>
+          <p className="muted">$1 USD equals 1 Mcoin. Cash-out eligible: {(user.cashoutEligibleMcoins ?? user.mcoins).toLocaleString()} Mcoins.</p>
           <div className="button-row">
             <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'mcoins-100' })}>Buy Mcoins</button>
             <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: user.subscriptionTier === 'chill' ? 'polymath-musician-monthly' : 'polymath-chill-monthly' })}>{user.pro ? planName + ' active' : 'See subscriptions'}</button>
@@ -293,13 +283,14 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
         )}
 
         <article className='wallet-card'>
-          <p className='eyebrow'>Seller cash-out</p>
-          <h2>No additional platform withdrawal fee</h2>
-          <p className="muted">The 10% marketplace fee is deducted at the time of sale. Only the seller’s 90% earnings become withdrawable. Payout-provider, tax, or currency-conversion charges may still apply.</p>
+          <p className='eyebrow'>Cash out</p>
+          <h2>Available to every account</h2>
+          <p className="muted">A 25% cash-out fee applies. You receive 75% of the requested amount.</p>
           <form onSubmit={requestWithdrawal}>
-            <label className='field'>Mcoins to withdraw<input type='number' min={policies.minimumWithdrawalMcoins} value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /><small>Minimum: {policies.minimumWithdrawalMcoins} Mcoins</small></label>
+            <label className='field'>Mcoins to withdraw<input type='number' min={policies.minimumWithdrawalMcoins} max={user.mcoins} step='0.01' value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /><small>Minimum: {policies.minimumWithdrawalMcoins} Mcoins · Available: {user.mcoins.toLocaleString()}</small></label>
+            {withdrawalAmount > 0 && <div className='cashout-preview'><span>Fee: {withdrawalFeePreview.toLocaleString()} Mcoins</span><strong>You receive: {withdrawalNetPreview.toLocaleString()} Mcoins</strong></div>}
             <label className="field">PayPal payout email<input type="email" value={withdraw.payoutEmail} onChange={(event) => setWithdraw({ ...withdraw, payoutEmail: event.target.value })} required /></label>
-            <button className="ghost full" type="submit">Request withdrawal</button>
+            <button className="ghost full" type="submit">Request cash-out</button>
           </form>
         </article>
 
@@ -315,15 +306,6 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
           </p>
           {!user.admin && <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: user.subscriptionTier === 'chill' ? 'polymath-musician-monthly' : 'polymath-chill-monthly' })}>{user.subscriptionTier === 'chill' ? 'Upgrade to Musician' : user.pro ? 'View plan' : 'See subscriptions'}</button>}
           <button className="ghost" type="button" onClick={logout}>Sign out</button>
-        </article>
-        <article className='wallet-card'>
-          <p className='eyebrow'>Voucher</p>
-          <h2>Redeem Mcoins</h2>
-          <p className='muted'>Enter an administrator-issued Mcoin voucher. Marketplace discount coupons are entered on the Marketplace page.</p>
-          <form onSubmit={redeemVoucher}>
-            <label className='field'>Voucher code<input value={voucherCode} maxLength='32' placeholder='WELCOME50' onChange={(event) => setVoucherCode(event.target.value.toUpperCase())} required /></label>
-            <button className='ghost full' type='submit'>Redeem voucher</button>
-          </form>
         </article>
       </div>
 
@@ -354,7 +336,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
                 <option value="ensemble">Instrument Studio</option>
                 <option value="band">Band</option>
                 <option value="your-songs">Your Songs</option>
-                <option value="published-songs">Marketplace</option>
+                <option value="published-songs">Composers</option>
               </select>
             </label>
             <label>Preview scale: {Math.round(previewScale * 100)}%

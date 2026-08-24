@@ -23,6 +23,8 @@ export default function TransportDock({
   onSeekCommit,
   onRewind,
   onForward,
+  showKeyNotes = true,
+  onShowKeyNotesChange,
   minSpeed = 0.45,
 }) {
   const duration = getSongDuration(song);
@@ -80,6 +82,15 @@ export default function TransportDock({
         <button className="ghost" type="button" onClick={onStop}>Stop</button>
         <button className="ghost seek-jump" type="button" onClick={onRewind} aria-label="Rewind 10 seconds">↶ 10s</button>
         <button className="ghost seek-jump" type="button" onClick={onForward} aria-label="Forward 10 seconds">10s ↷</button>
+        <button
+          className={`ghost key-notes-toggle ${showKeyNotes ? 'active' : ''}`}
+          type="button"
+          aria-label={`${showKeyNotes ? 'Hide' : 'Show'} piano key notes`}
+          aria-pressed={showKeyNotes}
+          onClick={() => onShowKeyNotesChange?.(!showKeyNotes)}
+        >
+          Key notes
+        </button>
       </div>
 
       <label className="dock-speed">

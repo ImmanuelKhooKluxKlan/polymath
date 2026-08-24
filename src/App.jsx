@@ -79,6 +79,7 @@ export default function App() {
   const [toneMode, setToneMode] = useState('pianella');
   const [autoplayVolume, setAutoplayVolume] = useState(1);
   const [pedalDown, setPedalDown] = useState(false);
+  const [showKeyNotes, setShowKeyNotes] = useState(true);
   const [playbackEpoch, setPlaybackEpoch] = useState(0);
   const [teachingMode, setTeachingMode] = useState('regular');
   const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(15);
@@ -90,6 +91,8 @@ export default function App() {
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
   ));
   const [orientationPromptDismissed, setOrientationPromptDismissed] = useState(false);
+  const [keyboardPreparationStatus, setKeyboardPreparationStatus] = useState('locked');
+  const [keyboardPreparationProgress, setKeyboardPreparationProgress] = useState(0);
 
   const nextEventIndex = useRef(0);
   const nextPedalIndex = useRef(0);
@@ -104,6 +107,8 @@ export default function App() {
   const playbackRunId = useRef(0);
   const seekWasPlaying = useRef(false);
   const studioPlayerRef = useRef(null);
+  const keyboardReadyRef = useRef(false);
+  const keyboardPreparationPromise = useRef(null);
 
   const song = useMemo(
     () => songs.find((candidate) => candidate.title === songTitle) || songs[0],
@@ -265,7 +270,36 @@ export default function App() {
     setPedalDown(down);
   }
 
+  async function prepareKeyboard() {
+    if (keyboardReadyRef.current) return true;
+    if (keyboardPreparationPromise.current) return keyboardPreparationPromise.current;
+
+    setKeyboardPreparationStatus('loading');
+    setKeyboardPreparationProgress(0);
+    const task = pianoAudio.prepareKeyboard(({ percent }) => {
+      setKeyboardPreparationProgress(Math.max(0, Math.min(100, Number(percent) || 0)));
+    })
+      .then(() => {
+        keyboardReadyRef.current = true;
+        setKeyboardPreparationProgress(100);
+        setKeyboardPreparationStatus('ready');
+        return true;
+      })
+      .catch((error) => {
+        console.error('Piano preparation failed:', error);
+        setKeyboardPreparationStatus('error');
+        return false;
+      })
+      .finally(() => {
+        keyboardPreparationPromise.current = null;
+      });
+
+    keyboardPreparationPromise.current = task;
+    return task;
+  }
+
   function pressNote(note, velocity = 0.85, duration = null, source = 'manual', playbackOptions = {}) {
+    if (!keyboardReadyRef.current) return null;
     const voice = pianoAudio.play(note, velocity, duration, {
       source,
       retriggerSameNote: source === 'manual',
@@ -322,6 +356,7 @@ export default function App() {
   }
 
   async function startPlaybackAt(position, speedOverride = speed) {
+    if (!keyboardReadyRef.current && !(await prepareKeyboard())) return;
     const target = clampSongTime(position);
     const playbackSpeed = Math.max(0.2, Math.min(2, Number(speedOverride) || 1));
 
@@ -570,7 +605,7 @@ export default function App() {
 
   const paymentProductId = route.params.get('productId') || 'polymath-chill-monthly';
   const messageUserId = route.params.get('userId');
-  const messageName = route.params.get('name') || 'Seller';
+  const messageName = route.params.get('name') || 'Composer';
   const content = (() => {
     if (user?.mustChangePassword && route.page !== 'account') {
       return <AccountPage user={user} setUser={setUser} onNavigate={navigate} />;
@@ -697,8 +732,12 @@ export default function App() {
                 layout={pianoLayout}
                 activeNotes={activeNotes}
                 strikeVersions={strikeVersions}
+                showKeyNotes={showKeyNotes}
                 onPress={(note) => pressNote(note, 0.85, null, 'manual')}
                 onRelease={releaseNote}
+                preparationStatus={keyboardPreparationStatus}
+                preparationProgress={keyboardPreparationProgress}
+                onPrepare={prepareKeyboard}
               />
             </div>
             <TransportDock
@@ -716,6 +755,8 @@ export default function App() {
               onSeekCommit={commitSeek}
               onRewind={() => jumpBy(-10)}
               onForward={() => jumpBy(10)}
+              showKeyNotes={showKeyNotes}
+              onShowKeyNotesChange={setShowKeyNotes}
               minSpeed={0.2}
             />
             <details className="lesson-options player-settings">

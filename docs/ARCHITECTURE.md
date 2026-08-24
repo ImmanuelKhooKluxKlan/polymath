@@ -11,7 +11,7 @@ React/Vite single-page application with route state managed in `src/App.jsx`.
 - `components/MusicUploadPanel.jsx`: three minimal entry points for JSON/MIDI upload, OpenAI PDF translation, and MuScriptor audio/video transcription.
 - `components/PdfTranslationPanel.jsx`: allowance/Mcoin choice, progress polling, ETA display, refund/failure messaging, and output download.
 - `components/MediaTranscriptionPanel.jsx`: multipart media upload, rights confirmation, native MuScriptor progress polling, protected result download, and direct studio loading.
-- `pages/MarketplacePage.jsx`: format-aware listings, seller fee preview, purchases, and downloads.
+- `pages/MarketplacePage.jsx`: minimalist Composers catalogue, seller publishing, purchases, permanent verified reviews, follower controls, profiles, and downloads.
 - `pages/AccountPage.jsx` and `pages/PaymentPage.jsx`: wallet, Pro allowance, USD/Mcoin catalogue, and PayPal entry points.
 - `pages/AdminDatabasePage.jsx`: sectioned administrator console for responsive device previews, promotion management, policy controls, user records, and forced password recovery.
 
@@ -29,12 +29,12 @@ React/Vite single-page application with route state managed in `src/App.jsx`.
 
 - account/session endpoints;
 - USD PayPal products and webhook verification;
-- Mcoin wallet and seller-withdrawal records;
-- marketplace publishing, server-side file validation, exact 10% fee allocation, purchases, and protected downloads;
+- Mcoin wallets and account-wide cash-out records with a 25% fee and manual payout review;
+- Composers publishing, server-side file validation, exact 25% fee allocation, purchases, permanent reviews, follows, profiles, and protected downloads;
 - YouTube search proxy;
 - authenticated OpenAI PDF translation jobs, monthly allowance accounting, Mcoin charging, duplicate-job protection, five-minute ETA extensions, strict structured-output validation, and automatic restoration after failure.
 - authenticated disk-streamed audio/video jobs, bundled FFmpeg preparation, sequential MuScriptor execution, instrument constraints, native chunk progress, restart recovery, source cleanup, and protected ready-to-play results;
-- backend-enforced signup/spending policies, Mcoin vouchers, marketplace coupons, reusable short Friend IDs, Friend ID percentage vouchers, redemption limits, administrator password-reset audits, and hashed 30-day sessions.
+- backend-enforced signup/spending policies, percentage-only promotion codes, reusable short Friend IDs, redemption limits, administrator password-reset audits, and hashed 30-day sessions.
 
 ## Current persistence
 

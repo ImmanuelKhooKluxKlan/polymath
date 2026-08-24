@@ -21,11 +21,11 @@ Polymath Musician is a responsive browser music platform for learning, playing, 
 - **Mcoin alternative:** every account can pay 30 Mcoins for a translation instead of using its allowance.
 - **Administrator access:** backend-authorized administrator accounts receive unlimited PDF and audio/video translations without using a monthly allowance or Mcoins.
 - **USD peg:** $1 USD = 10 Mcoins, so one 30-Mcoin translation is the $3 equivalent.
-- **Marketplace:** listings visibly identify PDF versus ready-to-play formats. Polymath Musician retains a 10% marketplace fee and credits 90% to the seller.
+- **Composers:** buyers browse music sheets by song, artist, and type; verified buyers can leave permanent reviews; composer profiles show followers, average stars, and every published sheet. Polymath Musician retains a 25% sale fee and credits 75% to the composer.
 
 ## Responsive support
 
-The interface is designed for desktop, laptop, iPad/tablet, and phone layouts. Navigation, upload controls, marketplace cards, studio timelines, and payment choices collapse into touch-friendly layouts at smaller widths.
+The interface is designed for desktop, laptop, iPad/tablet, and phone layouts. Navigation, upload controls, composer cards, studio timelines, and payment choices collapse into touch-friendly layouts at smaller widths.
 
 ## Local setup
 
@@ -74,13 +74,14 @@ npm --prefix server test
 
 ## Administrator console
 
-Backend-authorized administrators sign in through **Account > Admin sign in** and use a focused console with separate Overview, Device Preview, Vouchers & Coupons, Rules & Policies, and Users & Passwords workspaces.
+Backend-authorized administrators use a focused console with separate Overview, Device Preview, Discounts, Rules & Policies, and Users & Passwords workspaces.
 
 - Device Preview covers small phones, modern and large phones, foldables, tablets, iPads, laptops, desktops, large desktops, landscape rotation, and custom CSS viewport sizes.
-- Mcoin vouchers credit a user's wallet from Account. Marketplace percentage and fixed-Mcoin coupons are applied by the backend during a purchase and support minimum spend, account-age, expiry, total-use, and per-user limits.
+- Promotion codes only provide percentage discounts for subscriptions, Composers purchases, or Friend ID offers. They never credit Mcoins to a wallet.
 - Every account receives a stable public Friend ID in the form `user_aa123`: the `user_` prefix plus exactly five easy-to-type hexadecimal characters. Internal relational IDs remain private and unchanged.
-- A Friend ID percentage voucher lets a signed-in buyer enter another registered user's Friend ID at marketplace checkout. The same Friend ID may be shared with any number of buyers; self-referrals are blocked, and entering an ID never signs in as or exposes the friend's account.
+- A Friend ID percentage voucher lets a signed-in buyer enter another registered user's Friend ID during a Composers purchase. The same Friend ID may be shared with any number of buyers; self-referrals are blocked, and entering an ID never signs in as or exposes the friend's account.
 - Rules control registration availability, minimum signup age, minimum password length, minimum marketplace price, minimum withdrawal, new-user Mcoins, and public policy links/notices.
+- Every signed-in account can submit its Mcoin balance for cash-out. The server deducts a 25% fee, shows the 75% net payout, and queues the request for manual review.
 - Administrator password resets revoke every existing user session, issue a temporary password, and force the user to choose a private password at next sign-in.
 
 ## MuScriptor transcription flow

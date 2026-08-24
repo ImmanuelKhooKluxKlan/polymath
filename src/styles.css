@@ -560,6 +560,16 @@ button { -webkit-tap-highlight-color: transparent; }
 .wallet-card { display: grid; align-content: start; gap: 15px; }
 .featured-card { background: linear-gradient(145deg, rgba(88,240,255,0.13), rgba(166,107,255,0.16)); }
 .wallet-balance { font-size: clamp(3rem, 7vw, 5.8rem); line-height: 1; letter-spacing: -0.05em; }
+.cashout-preview {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid rgba(166,107,255,0.28);
+  border-radius: 14px;
+  color: var(--muted);
+  background: rgba(166,107,255,0.08);
+}
+.cashout-preview strong { color: var(--cyan); }
 .button-row { display: flex; flex-wrap: wrap; gap: 9px; }
 .wallet-card form { display: grid; gap: 12px; }
 .product-selector-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -1198,6 +1208,16 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .transport-button-group button { min-height: 42px; }
 .seek-jump { min-width: 72px; padding-inline: 11px; }
+.key-notes-toggle {
+  min-width: 82px;
+  color: var(--muted);
+}
+.key-notes-toggle.active {
+  color: var(--gold);
+  border-color: rgba(255,231,138,0.42);
+  background: transparent;
+  box-shadow: none;
+}
 .dock-progress {
   grid-template-columns: auto minmax(150px, 1fr) auto;
   align-items: center;
@@ -3076,6 +3096,16 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
 .device-lab-heading h2,
 .device-lab-heading p { margin: 0.25rem 0; }
 .device-lab-heading > div > p:last-child { color: var(--muted); }
+.phone-review-count {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid rgba(88,240,255,0.28);
+  border-radius: 999px;
+  color: var(--cyan);
+  background: rgba(88,240,255,0.08);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
 .boss-badge {
   flex: 0 0 auto;
   padding: 8px 12px;
@@ -3109,6 +3139,14 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
 }
 .device-lab-readout strong { color: var(--text); }
 
+.phone-review-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  align-items: start;
+  gap: 16px;
+  min-width: 0;
+}
+
 .device-preview-scroll {
   max-width: 100%;
   padding: 18px;
@@ -3141,8 +3179,58 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
   background: #090c16;
 }
 
+.phone-review-card {
+  display: grid;
+  gap: 14px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+}
+
+.phone-review-card h3,
+.phone-review-card p { margin: 0.2rem 0; }
+.phone-review-card > div > small,
+.phone-review-storage-note { color: var(--muted); }
+.phone-review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.phone-review-actions button {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(255,255,255,0.035);
+  font-weight: 900;
+}
+.phone-review-actions .review-pass.active { border-color: rgba(87,229,151,0.55); color: #77efaa; background: rgba(87,229,151,0.12); }
+.phone-review-actions .review-fix.active { border-color: rgba(255,183,77,0.55); color: var(--gold); background: rgba(255,183,77,0.12); }
+.phone-review-notes { display: grid; gap: 6px; color: var(--muted); font-size: 0.78rem; font-weight: 850; }
+.phone-review-notes textarea { width: 100%; resize: vertical; }
+.phone-review-pages { display: grid; gap: 5px; }
+.phone-review-pages button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+}
+.phone-review-pages button:hover,
+.phone-review-pages button.selected { border-color: var(--line); background: rgba(88,240,255,0.06); }
+.phone-review-pages span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phone-review-pages b { font-size: 0.67rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.phone-review-pages b.pass { color: #77efaa; }
+.phone-review-pages b.fix { color: var(--gold); }
+.phone-review-pages b.pending { color: var(--muted); }
+
 @media (max-width: 1000px) {
   .device-lab-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .phone-review-workspace { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {
@@ -4367,4 +4455,303 @@ details[open] > summary {
   .nav-more > summary { padding-inline: 6px; font-size: 0.69rem; }
   .mobile-flow-guide strong { font-size: 0.82rem; }
   .mobile-flow-guide small { font-size: 0.68rem; line-height: 1.3; }
+}
+
+/* Piano preparation keeps mobile audio initialization explicit and measurable. */
+.piano-key:disabled { cursor: default; }
+.piano-preparation {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 12px;
+  text-align: center;
+  background: rgba(7, 9, 25, 0.9);
+  backdrop-filter: blur(3px);
+}
+.piano-preparation strong { font-size: 0.86rem; }
+.piano-preparation small { color: var(--muted); font-size: 0.72rem; }
+.piano-preparation button { min-width: 170px; min-height: 42px; }
+.piano-preparation progress {
+  width: min(320px, 72vw);
+  height: 12px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  accent-color: #8a6cff;
+}
+
+/* A portrait phone should show the falling notes and the keyboard together. */
+@media (max-width: 900px) and (orientation: portrait) {
+  .visual-stack > .falling-stage,
+  .visual-stack > .falling-stage.two-storey {
+    min-height: 260px;
+    height: clamp(260px, 42vh, 340px);
+  }
+  .piano-scroll-wrap .piano-shell {
+    min-height: 0;
+    padding: 0 4px 5px;
+  }
+  .piano-row-shell { padding-top: 0; }
+  .piano-rows { gap: 3px; }
+  .keyboard-deck { min-height: 0; }
+  .white-layer { height: 71px; }
+  .two-storey .white-layer { height: 62px; }
+  .black-layer { height: 46px; }
+  .two-storey .black-layer { height: 41px; }
+  .white { border-radius: 0 0 5px 5px; }
+  .black { border-radius: 0 0 4px 4px; }
+  .piano-shell .key-note {
+    display: block !important;
+    bottom: 4px;
+    font-size: clamp(0.36rem, 1.9vw, 0.5rem);
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  .piano-shell .black-label {
+    bottom: 3px;
+    font-size: clamp(0.31rem, 1.65vw, 0.43rem);
+  }
+  .piano-shell .computer-key { display: none !important; }
+  .piano-preparation { gap: 5px; padding: 6px; }
+  .piano-preparation button { min-width: 150px; min-height: 36px; }
+  .piano-preparation progress { height: 9px; }
+  .piano-preparation small { font-size: 0.62rem; }
+}
+
+/* Landscape phones need a shallow keyboard so falling notes stay visible above it. */
+@media (max-width: 950px) and (max-height: 600px) and (orientation: landscape) {
+  .visual-stack > .falling-stage,
+  .visual-stack > .falling-stage.two-storey {
+    min-height: 160px;
+    height: clamp(160px, 44vh, 220px);
+  }
+  .piano-scroll-wrap .piano-shell {
+    min-height: 0;
+    padding: 0 4px 5px;
+  }
+  .piano-row-shell { padding-top: 0; }
+  .piano-rows { gap: 3px; }
+  .keyboard-deck { min-height: 0; }
+  .white-layer { height: 71px; }
+  .two-storey .white-layer { height: 62px; }
+  .black-layer { height: 46px; }
+  .two-storey .black-layer { height: 41px; }
+  .white { border-radius: 0 0 5px 5px; }
+  .black { border-radius: 0 0 4px 4px; }
+  .piano-shell .key-note {
+    display: block !important;
+    bottom: 4px;
+    font-size: clamp(0.34rem, 0.9vw, 0.48rem);
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  .piano-shell .black-label {
+    bottom: 3px;
+    font-size: clamp(0.3rem, 0.78vw, 0.41rem);
+  }
+  .piano-shell .computer-key { display: none !important; }
+  .piano-preparation { gap: 5px; padding: 6px; }
+  .piano-preparation button { min-width: 150px; min-height: 34px; }
+  .piano-preparation progress { height: 8px; }
+  .piano-preparation small { font-size: 0.61rem; }
+}
+
+@media (max-width: 720px) {
+  .transport-dock .transport-button-group {
+    grid-template-columns: 1.25fr repeat(3, 0.78fr) 1fr;
+  }
+  .transport-dock .key-notes-toggle {
+    min-width: 0;
+    padding-inline: 3px;
+  }
+}
+
+/* Status toggle: yellow text means visible; neutral text means hidden. */
+.transport-dock .key-notes-toggle {
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+}
+.transport-dock .key-notes-toggle.active {
+  color: var(--gold);
+  border-color: rgba(255,231,138,0.42);
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Buyer-first Composers catalogue. Seller guidance stays inside the publish panel. */
+.composers-page { display: grid; gap: 18px; }
+.composers-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.composers-heading h1 { margin: 0; font-size: clamp(2rem, 5vw, 4.6rem); letter-spacing: -0.055em; }
+.composer-browser-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 220px) minmax(170px, 240px);
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--panel);
+}
+.composer-browser-bar input,
+.composer-browser-bar select { min-width: 0; }
+.composer-listing-grid { grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); gap: 13px; }
+.composers-page .composer-listing-card {
+  grid-template-rows: 118px auto auto;
+  min-height: 0;
+  scroll-margin-top: 90px;
+  border-radius: 18px;
+  box-shadow: 0 10px 32px rgba(0,0,0,0.14);
+}
+.composers-page .listing-cover { min-height: 118px; }
+.composers-page .listing-cover .instrument-icon { width: 56px; height: 56px; }
+.composers-page .listing-body { gap: 7px; padding: 14px; }
+.composers-page .listing-body h2 { margin: 0; font-size: 1.08rem; }
+.listing-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 0.68rem; }
+.composers-page .format-badge { position: static; width: fit-content; padding: 5px 8px; color: var(--cyan); border: 1px solid rgba(88,240,255,0.28); background: rgba(88,240,255,0.07); }
+.listing-description {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.listing-rating {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.72rem;
+}
+.star-rating { display: inline-flex; align-items: center; gap: 1px; color: rgba(164,171,201,0.42); }
+.star-rating span,
+.star-rating button { color: inherit; font-size: 0.82rem; line-height: 1; }
+.star-rating .filled { color: var(--gold); }
+.star-rating button {
+  min-width: 0;
+  min-height: 0;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+}
+.star-rating.interactive button { font-size: 1.35rem; }
+.composer-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 0;
+  padding: 2px 0;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+}
+.composer-link > span { display: grid; gap: 1px; }
+.composer-link small { color: var(--muted); font-size: 0.62rem; }
+.composer-link strong { font-size: 0.76rem; }
+.composer-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.composer-avatar-fallback { color: #10152b; background: linear-gradient(135deg, var(--cyan), var(--purple)); font-size: 0.64rem; font-weight: 950; }
+.composer-avatar.small { width: 30px; height: 30px; }
+.composer-avatar.large { width: 74px; height: 74px; font-size: 1.1rem; }
+.composers-page .listing-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px 14px; }
+.composers-page .listing-footer > strong { white-space: nowrap; font-size: 1rem; }
+.composers-page .listing-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.composers-page .listing-actions button { min-height: 36px; padding: 8px 10px; font-size: 0.72rem; }
+.listing-checkout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 13px;
+  border-top: 1px solid var(--line);
+  background: rgba(88,240,255,0.035);
+}
+.listing-checkout .primary { grid-column: 1 / -1; }
+.listing-reviews { display: grid; gap: 12px; padding: 13px; border-top: 1px solid var(--line); }
+.review-form { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.review-form > .primary { justify-self: start; }
+.review-form > small { color: var(--muted); line-height: 1.4; }
+.review-list { display: grid; gap: 8px; }
+.review-card { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,0.028); }
+.review-author { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.review-author > span { display: grid; gap: 2px; }
+.review-author small { color: var(--cyan); font-size: 0.62rem; }
+.review-card p { margin: 0; line-height: 1.5; }
+.review-card time,
+.no-reviews { margin: 0; color: var(--muted); font-size: 0.68rem; }
+.composer-profile-panel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(320px, 1.3fr) auto;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(88,240,255,0.3);
+  border-radius: 20px;
+  background: var(--panel);
+}
+.composer-profile-close { position: absolute; top: 9px; right: 9px; z-index: 2; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; color: var(--muted); background: rgba(255,255,255,0.05); font-size: 1.25rem; }
+.composer-profile-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.composer-profile-identity h2,
+.composer-profile-identity p { margin: 0.2rem 0; }
+.composer-profile-stats { display: grid; grid-template-columns: repeat(4, minmax(72px, 1fr)); gap: 7px; align-self: center; }
+.composer-profile-stats span { display: grid; gap: 3px; padding: 10px; border-radius: 12px; background: rgba(255,255,255,0.04); }
+.composer-profile-stats strong { font-size: 1.15rem; }
+.composer-profile-stats small { color: var(--muted); font-size: 0.65rem; }
+.composer-profile-actions { display: flex; align-items: center; gap: 7px; padding-right: 34px; }
+.composer-profile-actions .following { color: var(--gold); }
+.composer-profile-songs { display: grid; grid-column: 1 / -1; gap: 6px; }
+.composer-profile-songs button { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px; color: var(--text); text-align: left; background: rgba(255,255,255,0.025); }
+.composer-profile-songs span { display: grid; gap: 3px; min-width: 0; }
+.composer-profile-songs small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.composer-profile-songs b { flex: 0 0 auto; font-size: 0.76rem; }
+.composer-loading { margin: 0; color: var(--muted); }
+.nav-more-menu .mobile-nav-only { display: none; }
+
+@media (max-width: 900px) {
+  .composer-profile-panel { grid-template-columns: 1fr; }
+  .composer-profile-stats { grid-template-columns: repeat(4, 1fr); }
+  .composer-profile-actions { padding-right: 0; }
+}
+
+@media (max-width: 620px) {
+  .composers-heading { align-items: stretch; }
+  .composers-heading h1 { font-size: 2.35rem; }
+  .composers-heading .publish-button { min-width: 0; padding-inline: 11px; }
+  .composer-browser-bar { grid-template-columns: 1fr; }
+  .composer-listing-grid { grid-template-columns: 1fr; }
+  .composers-page .composer-listing-card { grid-template-rows: 92px auto auto; min-height: 0; }
+  .composers-page .listing-cover { min-height: 92px; }
+  .composers-page .listing-cover .instrument-icon { width: 46px; height: 46px; }
+  .composers-page .listing-footer { align-items: stretch; flex-direction: column; }
+  .composers-page .listing-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .listing-checkout { grid-template-columns: 1fr; }
+  .listing-checkout .primary { grid-column: auto; }
+  .composer-profile-identity { padding-right: 34px; }
+  .composer-profile-stats { grid-template-columns: 1fr 1fr; }
+  .composer-profile-songs button { align-items: flex-start; flex-direction: column; }
+  .review-author { grid-template-columns: auto minmax(0, 1fr); }
+  .review-author .star-rating { grid-column: 2; }
+}
+
+@media (max-width: 720px) {
+  .nav-more-menu .mobile-nav-only { display: block; }
 }

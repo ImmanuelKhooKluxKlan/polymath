@@ -231,6 +231,8 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   const catalog = await api('/api/catalog');
   assert.equal(catalog.status, 200);
   assert.equal(catalog.data.mcoinsPerUsd, 1);
+  assert.equal(catalog.data.withdrawalFeeRate, 0.25);
+  assert.equal(catalog.data.marketplaceFeeRate, 0.25);
   assert.deepEqual(catalog.data.translationMcoinCosts, { subscriber: 0.5, free: 2 });
   assert.equal(catalog.data.products.find((item) => item.id === 'polymath-chill-monthly').price, '7.99');
   assert.equal(catalog.data.products.find((item) => item.id === 'polymath-chill-yearly').price, '49.99');
@@ -357,8 +359,8 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     token: adminToken,
     body: {
       code: 'TEST50',
-      name: 'Test wallet voucher',
-      kind: 'mcoin_credit',
+      name: 'Test signup percentage',
+      kind: 'subscription_percent',
       value: 50,
       maxRedemptions: 10,
       perUserLimit: 1,
@@ -366,6 +368,30 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(promotionCreate.status, 201);
   assert.equal(promotionCreate.data.promotion.code, 'TEST50');
+
+  const freeMcoinVoucherBlocked = await api('/api/admin/promotions', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      code: 'FREE500',
+      name: 'Blocked wallet credit',
+      kind: 'mcoin_credit',
+      value: 500,
+    },
+  });
+  assert.equal(freeMcoinVoucherBlocked.status, 400);
+
+  const fixedValueCouponBlocked = await api('/api/admin/promotions', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      code: 'FIXED50',
+      name: 'Blocked fixed-value discount',
+      kind: 'marketplace_fixed',
+      value: 50,
+    },
+  });
+  assert.equal(fixedValueCouponBlocked.status, 400);
 
   const luckyRegistration = await register('/api/auth/register', {
     method: 'POST',
@@ -380,22 +406,48 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(luckyRegistration.status, 201);
   assert.equal(luckyRegistration.data.user.luckyCodeApplied, true);
-  assert.equal(luckyRegistration.data.user.mcoins, 75);
+  assert.equal(luckyRegistration.data.user.mcoins, 25);
+  const luckyToken = luckyRegistration.data.token;
 
-  const redemption = await api('/api/promotions/redeem', {
+  const cashoutFixturePath = path.join(testDataDir, 'database.json');
+  const cashoutFixture = JSON.parse(fs.readFileSync(cashoutFixturePath, 'utf8'));
+  const luckyCashoutUser = cashoutFixture.users.find((item) => item.email === 'lucky-adult@example.test');
+  luckyCashoutUser.mcoins += 300;
+  cashoutFixture.ledger.push({
+    id: 'ledger_paid_mcoins_fixture',
+    userId: luckyCashoutUser.id,
+    amount: 300,
+    type: 'paypal_mcoin_purchase_fixture',
+    note: 'Integration-test paid wallet balance',
+    createdAt: new Date().toISOString(),
+  });
+  fs.writeFileSync(cashoutFixturePath, JSON.stringify(cashoutFixture, null, 2));
+
+  const regularAccountCashout = await api('/api/wallet/withdraw', {
+    method: 'POST',
+    token: luckyToken,
+    body: { amountMcoins: 250, payoutEmail: 'lucky-payout@example.test' },
+  });
+  assert.equal(regularAccountCashout.status, 201);
+  assert.equal(regularAccountCashout.data.withdrawal.amountMcoins, 250);
+  assert.equal(regularAccountCashout.data.withdrawal.feeRate, 0.25);
+  assert.equal(regularAccountCashout.data.withdrawal.feeMcoins, 62.5);
+  assert.equal(regularAccountCashout.data.withdrawal.netMcoins, 187.5);
+  assert.equal(regularAccountCashout.data.user.mcoins, 75);
+
+  const cashoutWallet = await api('/api/wallet', { token: luckyToken });
+  assert.equal(cashoutWallet.status, 200);
+  assert.equal(cashoutWallet.data.withdrawalFeeRate, 0.25);
+  assert.equal(cashoutWallet.data.withdrawals.length, 1);
+  assert.equal(cashoutWallet.data.withdrawals[0].status, 'pending_manual_review');
+
+  const retiredWalletRedemption = await api('/api/promotions/redeem', {
     method: 'POST',
     token: userToken,
     body: { code: 'test50' },
   });
-  assert.equal(redemption.status, 200);
-  assert.equal(redemption.data.user.mcoins, 50);
-
-  const duplicateRedemption = await api('/api/promotions/redeem', {
-    method: 'POST',
-    token: userToken,
-    body: { code: 'TEST50' },
-  });
-  assert.equal(duplicateRedemption.status, 400);
+  assert.equal(retiredWalletRedemption.status, 410);
+  assert.match(retiredWalletRedemption.data.error, /percentage discounts only/i);
 
   const couponCreate = await api('/api/admin/promotions', {
     method: 'POST',
@@ -403,7 +455,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     body: {
       code: 'SHEET60',
       name: 'Test marketplace coupon',
-      kind: 'marketplace_fixed',
+      kind: 'marketplace_percent',
       value: 60,
       minimumSpendMcoins: 100,
       maxRedemptions: 10,
@@ -429,17 +481,65 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     },
   });
   assert.equal(listingCreate.status, 201);
+  assert.equal(listingCreate.data.listing.marketplaceFeeRate, 0.25);
 
   const discountedPurchase = await api(`/api/listings/${listingCreate.data.listing.id}/purchase`, {
     method: 'POST',
-    token: userToken,
+    token: luckyToken,
     body: { promotionCode: 'SHEET60' },
   });
   assert.equal(discountedPurchase.status, 201);
   assert.equal(discountedPurchase.data.purchase.grossMcoins, 100);
+  assert.equal(discountedPurchase.data.purchase.platformFeeRate, 0.25);
+  assert.equal(discountedPurchase.data.purchase.platformFeeMcoins, 25);
+  assert.equal(discountedPurchase.data.purchase.sellerEarningsMcoins, 75);
   assert.equal(discountedPurchase.data.purchase.promotionDiscountMcoins, 60);
   assert.equal(discountedPurchase.data.purchase.buyerPaidMcoins, 40);
-  assert.equal(discountedPurchase.data.user.mcoins, 10);
+  assert.equal(discountedPurchase.data.user.mcoins, 35);
+
+  const honestReview = await api(`/api/listings/${listingCreate.data.listing.id}/reviews`, {
+    method: 'POST',
+    token: luckyToken,
+    body: { rating: 2, comment: 'The timing needs more work.' },
+  });
+  assert.equal(honestReview.status, 201);
+  assert.equal(honestReview.data.review.verifiedPurchase, true);
+  assert.equal(honestReview.data.summary.averageRating, 2);
+  assert.equal(honestReview.data.summary.reviewCount, 1);
+
+  const sellerSelfReview = await api(`/api/listings/${listingCreate.data.listing.id}/reviews`, {
+    method: 'POST',
+    token: sellerToken,
+    body: { rating: 5, comment: 'My own sheet is perfect.' },
+  });
+  assert.equal(sellerSelfReview.status, 403);
+
+  const sellerDeleteReview = await api(`/api/listings/${listingCreate.data.listing.id}/reviews/${honestReview.data.review.id}`, {
+    method: 'DELETE',
+    token: sellerToken,
+  });
+  assert.equal(sellerDeleteReview.status, 403);
+  assert.match(sellerDeleteReview.data.error, /permanent/i);
+
+  const publicReviews = await api(`/api/listings/${listingCreate.data.listing.id}/reviews`);
+  assert.equal(publicReviews.status, 200);
+  assert.equal(publicReviews.data.reviews.length, 1);
+  assert.equal(publicReviews.data.reviews[0].comment, 'The timing needs more work.');
+
+  const followedComposer = await api(`/api/composers/${sellerRegistration.data.user.user_id}/follow`, {
+    method: 'POST',
+    token: adultToken,
+  });
+  assert.equal(followedComposer.status, 200);
+  assert.equal(followedComposer.data.composer.followerCount, 1);
+  assert.equal(followedComposer.data.composer.isFollowing, true);
+
+  const composerProfile = await api(`/api/composers/${sellerRegistration.data.user.user_id}`, { token: adultToken });
+  assert.equal(composerProfile.status, 200);
+  assert.equal(composerProfile.data.composer.averageRating, 2);
+  assert.equal(composerProfile.data.composer.ratingCount, 1);
+  assert.equal(composerProfile.data.composer.followerCount, 1);
+  assert.ok(composerProfile.data.listings.some((listing) => listing.id === listingCreate.data.listing.id));
 
   const friendVoucherCreate = await api('/api/admin/promotions', {
     method: 'POST',
@@ -464,7 +564,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
 
   const firstFriendPurchase = await api(`/api/listings/${friendListingOne.data.listing.id}/purchase`, {
     method: 'POST',
-    token: userToken,
+    token: luckyToken,
     body: { friendId: sellerFriendId },
   });
   assert.equal(firstFriendPurchase.status, 201);
@@ -516,7 +616,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.ok(database.sessions.every((session) => session.tokenHash && !session.token));
   assert.equal(database.settings.minimumWithdrawalMcoins, 250);
   assert.equal(database.promotions.length, 3);
-  assert.equal(database.promotionRedemptions.length, 5);
+  assert.equal(database.promotionRedemptions.length, 4);
   assert.equal(database.promotionRedemptions.filter((entry) => entry.friendId === sellerFriendId).length, 2);
   assert.equal(database.passwordResetEvents.length, 1);
   assert.ok(Array.isArray(database.mediaTranscriptionJobs));

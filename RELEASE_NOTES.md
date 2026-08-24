@@ -7,8 +7,10 @@
 - PDF validation, authenticated translation jobs, progress stages, 20-minute initial estimate, automatic five-minute estimate extensions, downloadable ready-to-play JSON, duplicate-charge protection, and restoration of payment/allowance on provider failure.
 - Monthly translation allowances: 1 for Free and 20 for Pro.
 - Choice between allowance usage and a 30-Mcoin translation payment.
-- Marketplace file-format badges and clear PDF-versus-ready-to-play notices.
-- Server-side 10% marketplace fee with 90% seller earnings.
+- Minimalist Composers catalogue with song, artist, and file-type browsing.
+- Permanent verified-buyer reviews, five-star ratings, follows, and public composer profiles.
+- Server-side 25% sale fee with 75% composer earnings.
+- Percentage-only promotion codes; legacy wallet-credit and fixed-Mcoin codes are retired and cannot be reactivated.
 - Responsive phone, tablet, iPad, laptop, and desktop layouts.
 
 ## Changed
@@ -17,7 +19,7 @@
 - Changed the commercial peg to **$1 USD = 10 Mcoins**.
 - Changed Pro to **$19.99 USD/month**.
 - Replaced direct PDF playback/import with the accountable translation queue.
-- Removed the additional withdrawal fee so the disclosed 10% marketplace fee is the platform’s sale deduction.
+- Opened cash-out to every account and applied a clearly previewed 25% cash-out fee; requests remain queued for manual review.
 
 ## Operational requirement
 

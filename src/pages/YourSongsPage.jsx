@@ -106,7 +106,7 @@ export default function YourSongsPage({ user, onNavigate }) {
       <section className="page-shell narrow-page">
         <div className="empty-state">
           <h1>Sign in to open Your Songs.</h1>
-          <p>Your purchased music and seller listings are saved to your account.</p>
+          <p>Your purchased music and published sheets are saved to your account.</p>
           <button className="primary" type="button" onClick={() => onNavigate('account')}>Sign in</button>
         </div>
       </section>
@@ -121,7 +121,7 @@ export default function YourSongsPage({ user, onNavigate }) {
           <h1>Your Songs</h1>
           <p>Music you buy stays attached to your account, ready to download again whenever you need it.</p>
         </div>
-        <button className="primary" type="button" onClick={() => onNavigate('published-songs')}>Browse marketplace</button>
+        <button className="primary" type="button" onClick={() => onNavigate('published-songs')}>Browse composers</button>
       </div>
 
       <section className="library-section">
@@ -150,7 +150,7 @@ export default function YourSongsPage({ user, onNavigate }) {
 
       <section className="library-section">
         <div className="section-title-row">
-          <div><p className="eyebrow">Seller profile</p><h2>Songs you are selling</h2></div>
+          <div><p className="eyebrow">Composer profile</p><h2>Your published music sheets</h2></div>
           <span className="library-count">{library.sellingSongs.length}</span>
         </div>
         <div className="seller-song-list">

@@ -620,6 +620,15 @@ class PianoAudioEngine {
 
     this.preloadPromise =
       null;
+
+    this.preloadLoaded =
+      0;
+
+    this.preloadTotal =
+      0;
+
+    this.preloadProgressListener =
+      null;
   }
 
   ensure() {
@@ -641,7 +650,14 @@ class PianoAudioEngine {
       this.context.resume();
     }
 
-    this.beginWarmup();
+  }
+
+  async prepareKeyboard(onProgress) {
+    this.ensure();
+    if (this.context.state === 'suspended') {
+      await this.context.resume();
+    }
+    return this.preloadCoreSamples(onProgress);
   }
 
   getCurrentTime() {
@@ -1092,9 +1108,28 @@ class PianoAudioEngine {
     }
   }
 
-  preloadCoreSamples() {
+  preloadCoreSamples(onProgress) {
     if (!this.context) {
       return Promise.resolve();
+    }
+
+    if (typeof onProgress === 'function') {
+      this.preloadProgressListener = onProgress;
+    }
+
+    const reportProgress = () => {
+      this.preloadProgressListener?.({
+        loaded: this.preloadLoaded,
+        total: this.preloadTotal,
+        percent: this.preloadTotal
+          ? Math.round((this.preloadLoaded / this.preloadTotal) * 100)
+          : 100,
+      });
+    };
+
+    if (this.preloadPromise) {
+      reportProgress();
+      return this.preloadPromise;
     }
 
     const coreStart =
@@ -1103,7 +1138,7 @@ class PianoAudioEngine {
     const coreEnd =
       parseNote('C7').midi;
 
-    const requests = [];
+    const samples = [];
 
     for (
       const midi of
@@ -1120,20 +1155,34 @@ class PianoAudioEngine {
         buildSamplePlan(midi);
 
       if (info?.exact) {
-        requests.push(
-          this
-            .loadSampleByInfo(
-              info
-            )
-            .catch(
-              () => undefined
-            )
-        );
+        samples.push(info);
       }
     }
 
-    this.preloadPromise =
-      Promise.all(requests);
+    this.preloadLoaded = 0;
+    this.preloadTotal = samples.length;
+    reportProgress();
+
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < samples.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        try {
+          await this.loadSampleByInfo(samples[index]);
+        } catch {
+          // A missing recording can still use the built-in synth fallback.
+        } finally {
+          this.preloadLoaded += 1;
+          reportProgress();
+        }
+      }
+    };
+
+    const concurrency = Math.min(4, samples.length);
+    this.preloadPromise = Promise
+      .all(Array.from({ length: concurrency }, () => worker()))
+      .then(() => undefined);
 
     return this.preloadPromise;
   }

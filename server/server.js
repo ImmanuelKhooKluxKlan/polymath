@@ -31,8 +31,8 @@ const DATA_DIR = process.env.POLYMATH_DATA_DIR
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const DB_PATH = path.join(DATA_DIR, "database.json");
 
-const WITHDRAWAL_FEE_RATE = 0;
-const MARKETPLACE_FEE_RATE = 0.10;
+const WITHDRAWAL_FEE_RATE = 0.25;
+const MARKETPLACE_FEE_RATE = 0.25;
 const MCOINS_PER_USD = 1;
 const READY_SHEET_UPLOAD_MCOIN_COST = 0.5;
 const FREE_READY_SHEET_MONTHLY_LIMIT = 2;
@@ -325,6 +325,8 @@ function ensureStorage() {
 
       ],
       purchases: [],
+      listingReviews: [],
+      composerFollows: [],
       messages: [],
       withdrawals: [],
       paymentOrders: [],
@@ -390,6 +392,8 @@ function normalizeDb(db) {
     'sessions',
     'listings',
     'purchases',
+    'listingReviews',
+    'composerFollows',
     'messages',
     'withdrawals',
     'paymentOrders',
@@ -426,6 +430,15 @@ function normalizeDb(db) {
       user.paypalSubscriptionId = null;
     }
     user.pro = user.proStatus === 'ACTIVE' || user.pro === true;
+  });
+  normalized.listings.forEach((listing) => {
+    listing.marketplaceFeeRate = MARKETPLACE_FEE_RATE;
+  });
+  normalized.promotions.forEach((promotion) => {
+    if (!['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind)) {
+      promotion.active = false;
+      promotion.retired = true;
+    }
   });
   ensureFriendIds(normalized.users);
   normalized.settings = {
@@ -891,6 +904,7 @@ function safeUser(user) {
     phone: user.phone || '',
     mcoins: user.mcoins,
     withdrawableMcoins: Number(user.withdrawableMcoins || 0),
+    cashoutEligibleMcoins: Number(user.mcoins || 0),
     pro: subscriptionTier !== 'free',
     subscriptionTier,
     subscriptionInterval: user.subscriptionInterval || null,
@@ -997,7 +1011,7 @@ function adminPurchaseRows(db) {
       userId: user.id,
       name: user.name,
       email: user.email,
-      purchase: listing?.title || purchase.listingId || 'Marketplace purchase',
+      purchase: listing?.title || purchase.listingId || 'Composers purchase',
       amount,
       currency: purchase.currency || 'MCOINS',
       status: 'COMPLETED',
@@ -1046,6 +1060,7 @@ function publicPromotion(promotion, db) {
     startsAt: promotion.startsAt || null,
     expiresAt: promotion.expiresAt || null,
     active: promotion.active !== false,
+    retired: promotion.retired === true,
     redemptionCount: counts.total,
     createdAt: promotion.createdAt,
     updatedAt: promotion.updatedAt || null,
@@ -1059,9 +1074,9 @@ function promotionForUse(db, code, user, expectedKinds, spendMcoins = 0) {
   if (!promotion) return { promotion: null, error: 'That voucher or coupon code is not valid.' };
   if (promotion.active === false) return { promotion: null, error: 'That promotion is inactive.' };
   if (!expectedKinds.includes(promotion.kind)) {
-    return { promotion: null, error: promotion.kind === 'mcoin_credit'
-      ? 'Redeem this Mcoin voucher from your Account page.'
-      : 'This coupon can only be used for a marketplace purchase.' };
+    return { promotion: null, error: promotion.retired
+      ? 'That legacy promotion has been retired. Polymath promotions now use percentage discounts only.'
+      : 'This promotion cannot be used for this purchase.' };
   }
   const now = Date.now();
   if (promotion.startsAt && new Date(promotion.startsAt).getTime() > now) {
@@ -1171,14 +1186,14 @@ function resolveSignupLuckyCode(db, value) {
 
   const promotionCode = normalizePromotionCode(raw);
   const promotion = db.promotions.find((item) => item.code === promotionCode);
-  if (!promotion || !['mcoin_credit', 'subscription_percent'].includes(promotion.kind)) {
+  if (!promotion || promotion.kind !== 'subscription_percent') {
     return { claim: null, error: 'That Lucky code is not valid.' };
   }
   const error = promotionSignupAvailability(db, promotion);
   if (error) return { claim: null, error };
   return {
     claim: {
-      type: promotion.kind === 'mcoin_credit' ? 'mcoin_credit' : 'subscription_percent',
+      type: 'subscription_percent',
       promotion,
     },
     error: '',
@@ -1206,15 +1221,11 @@ function applySignupLuckyCode(db, user, claim) {
     friendId: claim.friendId || null,
     claimedAt: new Date().toISOString(),
   };
-  if (claim.type === 'mcoin_credit') {
-    user.mcoins += promotion.value;
-    addLedger(db, user.id, promotion.value, 'signup_lucky_code', promotion.code);
-  }
   recordPromotionRedemption(db, promotion, user, {
     source: 'registration_lucky_code',
     friendId: claim.friendId || null,
-    creditedMcoins: claim.type === 'mcoin_credit' ? promotion.value : 0,
-    subscriptionDiscountPercent: claim.type === 'subscription_percent' ? promotion.value : 0,
+    creditedMcoins: 0,
+    subscriptionDiscountPercent: promotion.value,
   });
 }
 
@@ -1285,14 +1296,76 @@ function publicListing(listing, db, viewerId = null) {
   const purchased = Boolean(viewerId && db.purchases.some(
     (purchase) => purchase.listingId === listing.id && purchase.buyerId === viewerId,
   ));
+  const reviewSummary = listingReviewSummary(db, listing.id);
+  const composer = publicComposer(seller, db, viewerId);
   return {
     ...listing,
     assetPath: undefined,
     seller: seller
-      ? { user_id: seller.id, friend_id: seller.friendId || '', name: seller.name }
-      : { user_id: listing.sellerId, friend_id: '', name: 'Seller' },
+      ? composer
+      : { user_id: listing.sellerId, friend_id: '', name: 'Composer', avatarUrl: '', followerCount: 0, averageRating: 0, ratingCount: 0 },
+    reviewSummary,
     purchased,
     owned: viewerId === listing.sellerId,
+  };
+}
+
+function listingReviewSummary(db, listingId) {
+  const reviews = db.listingReviews.filter((review) => review.listingId === listingId);
+  const total = reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0);
+  return {
+    averageRating: reviews.length ? Number((total / reviews.length).toFixed(2)) : 0,
+    reviewCount: reviews.length,
+  };
+}
+
+function composerRatingSummary(db, composerId) {
+  const listingIds = new Set(db.listings.filter((listing) => listing.sellerId === composerId).map((listing) => listing.id));
+  const reviews = db.listingReviews.filter((review) => listingIds.has(review.listingId));
+  const total = reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0);
+  return {
+    averageRating: reviews.length ? Number((total / reviews.length).toFixed(2)) : 0,
+    ratingCount: reviews.length,
+  };
+}
+
+function publicComposer(user, db, viewerId = null) {
+  if (!user) return null;
+  const rating = composerRatingSummary(db, user.id);
+  return {
+    user_id: user.id,
+    friend_id: user.friendId || '',
+    name: user.name || 'Composer',
+    avatarUrl: user.avatarUrl || '',
+    followerCount: db.composerFollows.filter((follow) => follow.composerId === user.id).length,
+    averageRating: rating.averageRating,
+    ratingCount: rating.ratingCount,
+    publishedCount: db.listings.filter((listing) => listing.sellerId === user.id).length,
+    isFollowing: Boolean(viewerId && db.composerFollows.some(
+      (follow) => follow.composerId === user.id && follow.followerId === viewerId,
+    )),
+    isSelf: viewerId === user.id,
+  };
+}
+
+function publicListingReview(review, db, viewerId = null) {
+  const author = db.users.find((user) => user.id === review.userId);
+  return {
+    id: review.id,
+    listingId: review.listingId,
+    rating: Number(review.rating),
+    comment: review.comment,
+    createdAt: review.createdAt,
+    updatedAt: review.updatedAt || null,
+    mine: viewerId === review.userId,
+    verifiedPurchase: db.purchases.some(
+      (purchase) => purchase.listingId === review.listingId && purchase.buyerId === review.userId,
+    ),
+    author: {
+      user_id: review.userId,
+      name: author?.name || 'Former customer',
+      avatarUrl: author?.avatarUrl || '',
+    },
   };
 }
 
@@ -1807,7 +1880,7 @@ app.get('/api/catalog', (req, res) => {
   res.json({
     products: Object.values(PRODUCTS).filter((product) => !product.legacy),
     withdrawalFeeRate: WITHDRAWAL_FEE_RATE,
-    withdrawalFeeLabel: 'No additional Polymath Musician withdrawal fee',
+    withdrawalFeeLabel: '25% cash-out fee for every account',
     marketplaceFeeRate: MARKETPLACE_FEE_RATE,
     mcoinsPerUsd: MCOINS_PER_USD,
     translationMcoinCosts: {
@@ -2090,6 +2163,113 @@ app.get('/api/listings', (req, res) => {
   res.json({ listings });
 });
 
+app.get('/api/listings/:listingId/reviews', (req, res) => {
+  const db = readDb();
+  const viewer = authUser(req, db);
+  const listing = db.listings.find((item) => item.id === req.params.listingId);
+  if (!listing) return res.status(404).json({ error: 'Music sheet not found.' });
+  const reviews = db.listingReviews
+    .filter((review) => review.listingId === listing.id)
+    .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))
+    .map((review) => publicListingReview(review, db, viewer?.id));
+  return res.json({ reviews, summary: listingReviewSummary(db, listing.id) });
+});
+
+app.post('/api/listings/:listingId/reviews', requireAuth, (req, res) => {
+  const listing = req.db.listings.find((item) => item.id === req.params.listingId);
+  if (!listing) return res.status(404).json({ error: 'Music sheet not found.' });
+  if (listing.sellerId === req.user.id) {
+    return res.status(403).json({ error: 'Composers cannot review their own music sheets.' });
+  }
+  const purchased = req.db.purchases.some(
+    (purchase) => purchase.listingId === listing.id && purchase.buyerId === req.user.id,
+  );
+  if (!purchased) return res.status(403).json({ error: 'Only verified buyers can review this music sheet.' });
+
+  const rating = Number(req.body.rating);
+  const comment = String(req.body.comment || '').trim();
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return res.status(400).json({ error: 'Choose a star rating from 1 to 5.' });
+  }
+  if (comment.length < 2 || comment.length > 1000) {
+    return res.status(400).json({ error: 'Write a review between 2 and 1,000 characters.' });
+  }
+
+  const now = new Date().toISOString();
+  let review = req.db.listingReviews.find(
+    (item) => item.listingId === listing.id && item.userId === req.user.id,
+  );
+  if (review) {
+    review.rating = rating;
+    review.comment = comment;
+    review.updatedAt = now;
+  } else {
+    review = {
+      id: id('review'),
+      listingId: listing.id,
+      userId: req.user.id,
+      rating,
+      comment,
+      createdAt: now,
+    };
+    req.db.listingReviews.push(review);
+  }
+  writeDb(req.db);
+  return res.status(review.updatedAt ? 200 : 201).json({
+    review: publicListingReview(review, req.db, req.user.id),
+    summary: listingReviewSummary(req.db, listing.id),
+  });
+});
+
+app.delete('/api/listings/:listingId/reviews/:reviewId', requireAuth, (req, res) => {
+  return res.status(403).json({ error: 'Published reviews are permanent and cannot be deleted by composers.' });
+});
+
+app.get('/api/composers/:composerId', (req, res) => {
+  const db = readDb();
+  const viewer = authUser(req, db);
+  const composer = db.users.find((item) => item.id === req.params.composerId);
+  const listings = db.listings.filter((listing) => listing.sellerId === composer?.id);
+  if (!composer || !listings.length) return res.status(404).json({ error: 'Composer profile not found.' });
+  return res.json({
+    composer: publicComposer(composer, db, viewer?.id),
+    listings: listings
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .map((listing) => publicListing(listing, db, viewer?.id)),
+  });
+});
+
+app.post('/api/composers/:composerId/follow', requireAuth, (req, res) => {
+  const composer = req.db.users.find((item) => item.id === req.params.composerId);
+  const hasListings = req.db.listings.some((listing) => listing.sellerId === composer?.id);
+  if (!composer || !hasListings) return res.status(404).json({ error: 'Composer profile not found.' });
+  if (composer.id === req.user.id) return res.status(400).json({ error: 'You cannot follow your own composer profile.' });
+  const existing = req.db.composerFollows.find(
+    (follow) => follow.composerId === composer.id && follow.followerId === req.user.id,
+  );
+  if (!existing) {
+    req.db.composerFollows.push({
+      id: id('follow'),
+      composerId: composer.id,
+      followerId: req.user.id,
+      createdAt: new Date().toISOString(),
+    });
+    writeDb(req.db);
+  }
+  return res.json({ composer: publicComposer(composer, req.db, req.user.id) });
+});
+
+app.delete('/api/composers/:composerId/follow', requireAuth, (req, res) => {
+  const composer = req.db.users.find((item) => item.id === req.params.composerId);
+  const hasListings = req.db.listings.some((listing) => listing.sellerId === composer?.id);
+  if (!composer || !hasListings) return res.status(404).json({ error: 'Composer profile not found.' });
+  req.db.composerFollows = req.db.composerFollows.filter(
+    (follow) => !(follow.composerId === composer.id && follow.followerId === req.user.id),
+  );
+  writeDb(req.db);
+  return res.json({ composer: publicComposer(composer, req.db, req.user.id) });
+});
+
 app.get('/api/library', requireAuth, (req, res) => {
   const purchasedSongs = req.db.purchases
     .filter((purchase) => purchase.buyerId === req.user.id)
@@ -2127,10 +2307,10 @@ app.post('/api/listings', requireAuth, (req, res) => {
 
   if (!artist || !title) return res.status(400).json({ error: 'Artist and song title are required.' });
   if (!rightsConfirmed) return res.status(400).json({ error: 'Confirm that you own the rights or have permission to sell this file.' });
-  if (!feeConfirmed) return res.status(400).json({ error: 'Confirm the 10% marketplace fee before publishing.' });
+  if (!feeConfirmed) return res.status(400).json({ error: 'Confirm the 25% sale fee before publishing.' });
   if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
   if (!['JSON', 'PDF', 'MIDI', 'MUSICXML'].includes(format)) return res.status(400).json({ error: 'Unsupported listing format.' });
-  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments so the 10% fee is exact.` });
+  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments.` });
   if (!contentBase64) return res.status(400).json({ error: 'Attach the song file before publishing.' });
 
   let bytes;
@@ -2213,7 +2393,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
   const promotionCode = String(req.body.promotionCode || '').trim();
   const requestedFriendId = String(req.body.friendId || '').trim();
   if (promotionCode && requestedFriendId) {
-    return res.status(400).json({ error: 'Use either a marketplace coupon or a Friend ID voucher, not both together.' });
+    return res.status(400).json({ error: 'Use either a music-sheet coupon or a Friend ID voucher, not both together.' });
   }
   const promotionResult = requestedFriendId
     ? friendPromotionForUse(req.db, requestedFriendId, req.user, listing.priceMcoins)
@@ -2221,26 +2401,21 @@ app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
       req.db,
       promotionCode,
       req.user,
-      ['marketplace_percent', 'marketplace_fixed'],
+      ['marketplace_percent'],
       listing.priceMcoins,
     );
   if (promotionResult.error) return res.status(400).json({ error: promotionResult.error });
   const promotion = promotionResult.promotion;
   const friendUser = promotionResult.friendUser || null;
   const discountMcoins = promotion
-    ? Math.min(
-      listing.priceMcoins,
-      ['marketplace_percent', 'friend_id_percent'].includes(promotion.kind)
-        ? Math.floor(listing.priceMcoins * promotion.value / 100)
-        : promotion.value,
-    )
+    ? Math.min(listing.priceMcoins, Math.floor(listing.priceMcoins * promotion.value / 100))
     : 0;
   const buyerPaidMcoins = listing.priceMcoins - discountMcoins;
   if (req.user.mcoins < buyerPaidMcoins) return res.status(402).json({ error: 'Not enough Mcoins.' });
 
   const seller = req.db.users.find((user) => user.id === listing.sellerId);
   const platform = req.db.users.find((user) => user.id === 'platform');
-  const platformFeeMcoins = listing.priceMcoins / 10;
+  const platformFeeMcoins = listing.priceMcoins * MARKETPLACE_FEE_RATE;
   const sellerEarningsMcoins = listing.priceMcoins - platformFeeMcoins;
 
   req.user.mcoins -= buyerPaidMcoins;
@@ -2276,7 +2451,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
   };
   req.db.purchases.push(purchase);
   addLedger(req.db, req.user.id, -buyerPaidMcoins, 'listing_purchase', `${listing.title} (${listing.format})${promotion ? `; coupon ${promotion.code}: -${discountMcoins} Mcoins` : ''}`);
-  if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; 10% platform fee: ${platformFeeMcoins} Mcoins`);
+  if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; 25% platform fee: ${platformFeeMcoins} Mcoins`);
   if (platform) addLedger(req.db, platform.id, platformFeeMcoins - discountMcoins, 'marketplace_fee', promotion ? `${listing.title}; sponsored discount ${discountMcoins} Mcoins` : listing.title);
   if (promotion) {
     recordPromotionRedemption(req.db, promotion, req.user, {
@@ -2785,14 +2960,13 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
   const code = normalizePromotionCode(req.body.code);
   const name = String(req.body.name || '').trim().slice(0, 100);
   const kind = String(req.body.kind || '');
-  const isPercentage = ['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(kind);
-  const value = clampInteger(req.body.value, 1, isPercentage ? 100 : 100000, 1);
+  const value = clampInteger(req.body.value, 1, 100, 1);
   const startsAtDate = req.body.startsAt ? new Date(req.body.startsAt) : null;
   const expiresAtDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
   if (code.length < 3) return res.status(400).json({ error: 'Promotion code must contain at least 3 letters or numbers.' });
   if (!name) return res.status(400).json({ error: 'Give the promotion a short name.' });
-  if (!['mcoin_credit', 'marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
-    return res.status(400).json({ error: 'Choose an Mcoin, marketplace, subscription, or Friend ID promotion.' });
+  if (!['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
+    return res.status(400).json({ error: 'Promotions must be a Composers, subscription, or Friend ID percentage discount.' });
   }
   if (req.db.promotions.some((promotion) => promotion.code === code)) {
     return res.status(409).json({ error: 'That promotion code already exists.' });
@@ -2812,7 +2986,7 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
     name,
     kind,
     value,
-    minimumSpendMcoins: kind === 'mcoin_credit' ? 0 : clampInteger(req.body.minimumSpendMcoins, 0, 100000, 0),
+    minimumSpendMcoins: clampInteger(req.body.minimumSpendMcoins, 0, 100000, 0),
     minimumAccountAgeDays: clampInteger(req.body.minimumAccountAgeDays, 0, 3650, 0),
     maxRedemptions: clampInteger(req.body.maxRedemptions, 0, 1000000, 0),
     perUserLimit: clampInteger(req.body.perUserLimit, 0, 100, 1),
@@ -2839,6 +3013,9 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
 app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, (req, res) => {
   const promotion = req.db.promotions.find((item) => item.id === req.params.promotionId);
   if (!promotion) return res.status(404).json({ error: 'Promotion not found.' });
+  if (promotion.retired && req.body.active === true) {
+    return res.status(400).json({ error: 'Legacy Mcoin and fixed-value promotions are permanently retired.' });
+  }
   if (req.body.active !== undefined) promotion.active = Boolean(req.body.active);
   promotion.updatedAt = new Date().toISOString();
   promotion.updatedBy = req.user.id;
@@ -2850,18 +3027,8 @@ app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, (req,
 });
 
 app.post('/api/promotions/redeem', requireAuth, (req, res) => {
-  const result = promotionForUse(req.db, req.body.code, req.user, ['mcoin_credit']);
-  if (result.error) return res.status(400).json({ error: result.error });
-  if (!result.promotion) return res.status(400).json({ error: 'Enter a voucher code.' });
-  const promotion = result.promotion;
-  req.user.mcoins += promotion.value;
-  addLedger(req.db, req.user.id, promotion.value, 'voucher_redeemed', promotion.code);
-  recordPromotionRedemption(req.db, promotion, req.user, { creditedMcoins: promotion.value });
-  writeDb(req.db);
-  res.json({
-    user: safeUser(req.user),
-    promotion: publicPromotion(promotion, req.db),
-    message: `${promotion.value.toLocaleString()} Mcoins were added to your wallet.`,
+  res.status(410).json({
+    error: 'Mcoin-credit vouchers are retired. Promotion codes now provide percentage discounts only.',
   });
 });
 
@@ -2906,17 +3073,27 @@ app.post('/api/wallet/buy-pro', requireAuth, (req, res) => {
 });
 
 app.post('/api/wallet/withdraw', requireAuth, (req, res) => {
-  const amountMcoins = Math.floor(Number(req.body.amountMcoins));
+  const requestedMcoins = Number(req.body.amountMcoins);
+  const amountMcoins = Number.isFinite(requestedMcoins)
+    ? Math.floor(requestedMcoins * 100) / 100
+    : Number.NaN;
   const payoutEmail = String(req.body.payoutEmail || '').trim().toLowerCase();
   const minimumWithdrawalMcoins = sitePolicies(req.db).minimumWithdrawalMcoins;
   if (!Number.isFinite(amountMcoins) || amountMcoins < minimumWithdrawalMcoins) return res.status(400).json({ error: `Minimum withdrawal is ${minimumWithdrawalMcoins.toLocaleString()} Mcoins.` });
   if (req.user.mcoins < amountMcoins) return res.status(402).json({ error: 'Insufficient Mcoin balance.' });
-  if (Number(req.user.withdrawableMcoins || 0) < amountMcoins) return res.status(402).json({ error: 'Only Mcoins earned from song sales can be withdrawn.' });
   if (!/^\S+@\S+\.\S+$/.test(payoutEmail)) return res.status(400).json({ error: 'Enter a valid payout email.' });
-  const feeMcoins = 0;
-  const netMcoins = amountMcoins;
-  req.user.mcoins -= amountMcoins;
-  req.user.withdrawableMcoins = Number(req.user.withdrawableMcoins || 0) - amountMcoins;
+  const feeMcoins = Number((amountMcoins * WITHDRAWAL_FEE_RATE).toFixed(2));
+  const netMcoins = Number((amountMcoins - feeMcoins).toFixed(2));
+  req.user.mcoins = Number((req.user.mcoins - amountMcoins).toFixed(2));
+  req.user.withdrawableMcoins = Math.min(
+    Number(req.user.withdrawableMcoins || 0),
+    req.user.mcoins,
+  );
+  const platform = req.db.users.find((user) => user.id === 'platform');
+  if (platform) {
+    platform.mcoins = Number((Number(platform.mcoins || 0) + feeMcoins).toFixed(2));
+    addLedger(req.db, platform.id, feeMcoins, 'cashout_fee', `${req.user.name} cash-out fee`);
+  }
   const withdrawal = {
     id: id('withdrawal'),
     userId: req.user.id,
@@ -2929,7 +3106,7 @@ app.post('/api/wallet/withdraw', requireAuth, (req, res) => {
     createdAt: new Date().toISOString(),
   };
   req.db.withdrawals.push(withdrawal);
-  addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `No additional Polymath Musician fee; net: ${netMcoins} Mcoins`);
+  addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `25% cash-out fee: ${feeMcoins} Mcoins; net: ${netMcoins} Mcoins`);
   writeDb(req.db);
   res.status(201).json({ withdrawal, user: safeUser(req.user) });
 });

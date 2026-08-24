@@ -61,7 +61,7 @@ export default function MessagesPage({ user, initialUser, onNavigate }) {
       <section className="page-shell narrow-page empty-state-page">
         <div className="empty-state">
           <h1>Sign in to view messages.</h1>
-          <p>Buyer and seller chat histories are stored under your user_id.</p>
+          <p>Buyer and composer chat histories are stored under your user_id.</p>
           <button className="primary" type="button" onClick={() => onNavigate('account')}>Open account</button>
         </div>
       </section>
@@ -72,7 +72,7 @@ export default function MessagesPage({ user, initialUser, onNavigate }) {
     <section className="page-shell messages-page">
       <div className="page-heading">
         <p className="eyebrow">Messages</p>
-        <h1>Buyer and seller conversations.</h1>
+        <h1>Buyer and composer conversations.</h1>
       </div>
       <div className="chat-layout">
         <aside className="thread-list">
@@ -88,12 +88,12 @@ export default function MessagesPage({ user, initialUser, onNavigate }) {
               <span><strong>{thread.otherUser.name}</strong><small>{thread.lastMessage.text}</small></span>
             </button>
           ))}
-          {!mergedThreads.length && <p className="muted thread-empty">Start from a seller’s Chat button.</p>}
+          {!mergedThreads.length && <p className="muted thread-empty">Start from a composer’s Chat button.</p>}
         </aside>
         <section className="conversation-panel">
           {activeUser ? (
             <>
-              <header className="conversation-header"><span className="avatar">{activeUser.name.slice(0, 1).toUpperCase()}</span><div><strong>{activeUser.name}</strong><small>Marketplace conversation</small></div></header>
+              <header className="conversation-header"><span className="avatar">{activeUser.name.slice(0, 1).toUpperCase()}</span><div><strong>{activeUser.name}</strong><small>Composer conversation</small></div></header>
               <div className="message-stream">
                 {messages.map((message) => (
                   <div key={message.id} className={`message-bubble ${message.fromUserId === user.user_id ? 'mine' : ''}`}>

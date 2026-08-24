@@ -2,7 +2,7 @@ const PRIMARY_ITEMS = [
   ['studio', 'Piano'],
   ['guitar', 'Guitar'],
   ['ensemble', 'Instruments'],
-  ['published-songs', 'Marketplace'],
+  ['published-songs', 'Composers'],
 ];
 
 export default function AppNav({ route, onNavigate, user }) {
@@ -44,6 +44,13 @@ export default function AppNav({ route, onNavigate, user }) {
         <details className='nav-more'>
           <summary className={moreIsActive ? 'active' : ''}>More</summary>
           <div className='nav-more-menu'>
+            <button
+              type='button'
+              className={`mobile-nav-only ${route === 'published-songs' ? 'active' : ''}`}
+              onClick={(event) => navigateFromMenu(event, 'published-songs')}
+            >
+              Composers
+            </button>
             {moreItems.map(([value, label]) => (
               <button
                 key={value}

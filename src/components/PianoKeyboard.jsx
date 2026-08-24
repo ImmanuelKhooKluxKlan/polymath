@@ -34,7 +34,7 @@ function strikeVersionFor(strikeVersions, note) {
   return strikeVersions?.get?.(note) || 0;
 }
 
-function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease }) {
+function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease, disabled, showKeyNotes }) {
   return (
     <div
       className="piano-row-shell"
@@ -49,10 +49,11 @@ function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease }) {
               <button
                 key={key.note}
                 className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''}`}
-                {...pointerHandlers(key.note, onPress, onRelease)}
+                disabled={disabled}
+                {...(disabled ? {} : pointerHandlers(key.note, onPress, onRelease))}
               >
                 {version > 0 && <span key={`${key.note}-${version}`} className="key-strike-flash" />}
-                <span className="key-note">{noteToDisplayName(key.midi, true)}</span>
+                {showKeyNotes && <span className="key-note">{noteToDisplayName(key.midi, true)}</span>}
                 <span className="computer-key">{labelFor(key.note)}</span>
               </button>
             );
@@ -69,10 +70,11 @@ function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease }) {
                 style={{
                   left: `calc(${key.position.leftEdgeWhiteUnits} * (100% / var(--white-count)))`,
                 }}
-                {...pointerHandlers(key.note, onPress, onRelease)}
+                disabled={disabled}
+                {...(disabled ? {} : pointerHandlers(key.note, onPress, onRelease))}
               >
                 {version > 0 && <span key={`${key.note}-${version}`} className="key-strike-flash black-flash" />}
-                <span className="key-note black-label">{noteToDisplayName(key.midi, true)}</span>
+                {showKeyNotes && <span className="key-note black-label">{noteToDisplayName(key.midi, true)}</span>}
                 <span className="computer-key black-computer-key">{labelFor(key.note)}</span>
               </button>
             );
@@ -83,10 +85,21 @@ function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease }) {
   );
 }
 
-export default function PianoKeyboard({ layout, activeNotes, strikeVersions, onPress, onRelease }) {
+export default function PianoKeyboard({
+  layout,
+  activeNotes,
+  strikeVersions,
+  onPress,
+  onRelease,
+  showKeyNotes = true,
+  preparationStatus = 'locked',
+  preparationProgress = 0,
+  onPrepare,
+}) {
+  const disabled = preparationStatus !== 'ready';
   return (
     <section
-      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'}`}
+      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
       aria-label={`Playable piano section, ${layout.rangeLabel}`}
     >
       <div className="piano-mode-label">
@@ -102,9 +115,29 @@ export default function PianoKeyboard({ layout, activeNotes, strikeVersions, onP
             strikeVersions={strikeVersions}
             onPress={onPress}
             onRelease={onRelease}
+            disabled={disabled}
+            showKeyNotes={showKeyNotes}
           />
         ))}
       </div>
+      {disabled && (
+        <div className="piano-preparation" aria-live="polite">
+          {preparationStatus === 'loading' ? (
+            <>
+              <strong>Preparing piano</strong>
+              <progress max="100" value={preparationProgress} aria-label="Piano preparation progress" />
+              <small>{preparationProgress}% loaded. Keep this page open.</small>
+            </>
+          ) : (
+            <>
+              <button type="button" className="primary" onClick={onPrepare}>
+                {preparationStatus === 'error' ? 'Try keyboard again' : 'Unlock keyboard'}
+              </button>
+              <small>Tap once to load the piano sounds.</small>
+            </>
+          )}
+        </div>
+      )}
     </section>
   );
 }

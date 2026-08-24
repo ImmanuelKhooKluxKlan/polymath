@@ -3,8 +3,8 @@ import { apiRequest } from '../services/api.js';
 
 const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
-  ['devices', 'Device preview', 'Phone, tablet, and desktop checks'],
-  ['promotions', 'Vouchers & coupons', 'Create and pause promotion codes'],
+  ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
+  ['promotions', 'Discounts', 'Create and pause percentage codes'],
   ['policies', 'Rules & policies', 'Signup and spending minimums'],
   ['users', 'Users & passwords', 'Accounts and secure resets'],
 ];
@@ -25,12 +25,23 @@ const DEVICE_PRESETS = [
 
 const PREVIEW_PAGES = [
   ['studio', 'Piano Studio'], ['guitar', 'Guitar Studio'], ['ensemble', 'Instrument Studio'],
-  ['band', 'Band'], ['your-songs', 'Your Songs'], ['published-songs', 'Marketplace'],
+  ['band', 'Band'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
   ['payment', 'Payments'], ['account', 'Account'],
 ];
 
+const PHONE_REVIEW_STORAGE_KEY = 'polymath-admin-phone-reviews-v1';
+
+function loadPhoneReviews() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(PHONE_REVIEW_STORAGE_KEY) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
 const EMPTY_PROMOTION = {
-  code: '', name: '', kind: 'mcoin_credit', value: 50, minimumSpendMcoins: 0,
+  code: '', name: '', kind: 'subscription_percent', value: 20, minimumSpendMcoins: 0,
   minimumAccountAgeDays: 0, maxRedemptions: 0, perUserLimit: 1, startsAt: '', expiresAt: '',
 };
 
@@ -40,17 +51,14 @@ function formatAmount(amount, currency) {
 }
 
 function promotionKindLabel(kind) {
-  if (kind === 'mcoin_credit') return 'Mcoin voucher';
-  if (kind === 'marketplace_percent') return 'Marketplace percentage';
+  if (kind === 'marketplace_percent') return 'Composers percentage';
   if (kind === 'friend_id_percent') return 'Friend ID percentage voucher';
   if (kind === 'subscription_percent') return 'Lucky code subscription discount';
-  return 'Marketplace Mcoin discount';
+  return 'Retired legacy promotion';
 }
 
 function promotionValueLabel(item) {
-  return ['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(item.kind)
-    ? `${item.value}% off`
-    : `${item.value.toLocaleString()} Mcoins`;
+  return item.retired ? 'Retired' : String(item.value) + '% off';
 }
 
 export default function AdminDatabasePage({ user, onNavigate }) {
@@ -69,6 +77,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [previewScale, setPreviewScale] = useState(0.65);
   const [previewVersion, setPreviewVersion] = useState(0);
   const [customViewport, setCustomViewport] = useState({ width: 390, height: 844 });
+  const [phoneReviews, setPhoneReviews] = useState(loadPhoneReviews);
 
   async function loadConsole() {
     const [usersData, policiesData, promotionsData] = await Promise.all([
@@ -85,6 +94,14 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     if (!user?.admin) return;
     loadConsole().then(() => setStatus('')).catch((error) => setStatus(error.message));
   }, [user?.admin]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PHONE_REVIEW_STORAGE_KEY, JSON.stringify(phoneReviews));
+    } catch {
+      // Reviewing still works for this session when browser storage is unavailable.
+    }
+  }, [phoneReviews]);
 
   const spendingUsers = useMemo(
     () => database.rows.filter((row) => row.usdSpent > 0 || row.marketplaceSpentMcoins > 0).length,
@@ -103,6 +120,32 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const viewportWidth = landscape ? baseHeight : baseWidth;
   const viewportHeight = landscape ? baseWidth : baseHeight;
   const previewUrl = `${window.location.origin}${window.location.pathname}#${previewRoute}`;
+  const reviewOrientation = landscape ? 'landscape' : 'portrait';
+  const reviewKey = `${deviceId}:${reviewOrientation}:${previewRoute}`;
+  const currentReview = phoneReviews[reviewKey] || { status: '', notes: '' };
+  const reviewPrefix = `${deviceId}:${reviewOrientation}:`;
+  const reviewedPageCount = PREVIEW_PAGES.filter(([route]) => phoneReviews[`${reviewPrefix}${route}`]?.status).length;
+
+  function updatePhoneReview(changes) {
+    setPhoneReviews((current) => ({
+      ...current,
+      [reviewKey]: {
+        status: '',
+        notes: '',
+        ...current[reviewKey],
+        ...changes,
+        updatedAt: new Date().toISOString(),
+      },
+    }));
+  }
+
+  function clearPhoneReview() {
+    setPhoneReviews((current) => {
+      const next = { ...current };
+      delete next[reviewKey];
+      return next;
+    });
+  }
 
   async function savePolicies(event) {
     event.preventDefault();
@@ -229,7 +272,8 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       {activeSection === 'devices' && (
         <section className='admin-workspace device-lab'>
           <header className='device-lab-heading'>
-            <div><p className='eyebrow'>Responsive QA</p><h2>Device preview lab</h2><p>Inspect the live application at exact CSS viewport sizes. Rotate, scale, reload, or enter any custom dimensions.</p></div>
+            <div><p className='eyebrow'>Mobile quality check</p><h2>Phone site review</h2><p>Use the site like a phone user, then record whether each page is ready or needs work.</p></div>
+            <span className='phone-review-count'>{reviewedPageCount}/{PREVIEW_PAGES.length} reviewed</span>
           </header>
           <div className='device-lab-controls'>
             <label>Device
@@ -247,7 +291,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             </label>
             <button className='ghost' type='button' onClick={() => setLandscape((value) => !value)}>{landscape ? 'Use portrait' : 'Rotate landscape'}</button>
             <button className='ghost' type='button' onClick={() => setPreviewVersion((value) => value + 1)}>Reload</button>
-            <button className='primary' type='button' onClick={() => window.open(previewUrl, '_blank', `popup=yes,width=${viewportWidth},height=${viewportHeight}`)}>Open window</button>
+            <button className='primary' type='button' onClick={() => window.open(previewUrl, '_blank', `popup=yes,width=${viewportWidth},height=${viewportHeight}`)}>Open phone window</button>
           </div>
           {deviceId === 'custom' && (
             <div className='custom-viewport-controls'>
@@ -256,27 +300,56 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             </div>
           )}
           <div className='device-lab-readout'><strong>{preset.label} - {landscape ? 'Landscape' : 'Portrait'}</strong><span>{viewportWidth} x {viewportHeight} CSS pixels</span></div>
-          <div className='device-preview-scroll'>
-            <div className='device-preview-scale' style={{ width: `${viewportWidth * previewScale}px`, height: `${viewportHeight * previewScale}px` }}>
-              <div className='device-preview-frame' style={{ width: `${viewportWidth}px`, height: `${viewportHeight}px`, transform: `scale(${previewScale})` }}>
-                <iframe key={`${previewRoute}-${deviceId}-${landscape}-${previewVersion}`} title={`${preset.label} responsive preview`} src={previewUrl} width={viewportWidth} height={viewportHeight} />
+          <div className='phone-review-workspace'>
+            <div className='device-preview-scroll'>
+              <div className='device-preview-scale' style={{ width: `${viewportWidth * previewScale}px`, height: `${viewportHeight * previewScale}px` }}>
+                <div className='device-preview-frame' style={{ width: `${viewportWidth}px`, height: `${viewportHeight}px`, transform: `scale(${previewScale})` }}>
+                  <iframe key={`${previewRoute}-${deviceId}-${landscape}-${previewVersion}`} title={`${preset.label} responsive preview`} src={previewUrl} width={viewportWidth} height={viewportHeight} />
+                </div>
               </div>
             </div>
+            <aside className='phone-review-card'>
+              <div>
+                <p className='eyebrow'>Review this screen</p>
+                <h3>{PREVIEW_PAGES.find(([route]) => route === previewRoute)?.[1] || 'Selected page'}</h3>
+                <small>{preset.label} · {reviewOrientation}</small>
+              </div>
+              <div className='phone-review-actions' role='group' aria-label='Review result'>
+                <button className={currentReview.status === 'pass' ? 'review-pass active' : 'review-pass'} type='button' aria-pressed={currentReview.status === 'pass'} onClick={() => updatePhoneReview({ status: 'pass' })}>Looks good</button>
+                <button className={currentReview.status === 'fix' ? 'review-fix active' : 'review-fix'} type='button' aria-pressed={currentReview.status === 'fix'} onClick={() => updatePhoneReview({ status: 'fix' })}>Needs work</button>
+              </div>
+              <label className='phone-review-notes'>Notes
+                <textarea rows='4' maxLength='600' placeholder='What looks wrong or feels difficult to use?' value={currentReview.notes || ''} onChange={(event) => updatePhoneReview({ notes: event.target.value })} />
+              </label>
+              {(currentReview.status || currentReview.notes) && <button className='ghost compact-action' type='button' onClick={clearPhoneReview}>Clear this review</button>}
+              <div className='phone-review-pages' aria-label='Page review progress'>
+                {PREVIEW_PAGES.map(([route, label]) => {
+                  const pageReview = phoneReviews[`${reviewPrefix}${route}`];
+                  return (
+                    <button key={route} className={previewRoute === route ? 'selected' : ''} type='button' onClick={() => setPreviewRoute(route)}>
+                      <span>{label}</span>
+                      <b className={pageReview?.status || 'pending'}>{pageReview?.status === 'pass' ? 'Good' : pageReview?.status === 'fix' ? 'Fix' : 'Unchecked'}</b>
+                    </button>
+                  );
+                })}
+              </div>
+              <small className='phone-review-storage-note'>Reviews save automatically on this browser.</small>
+            </aside>
           </div>
         </section>
       )}
       {activeSection === 'promotions' && (
         <section className='admin-workspace'>
           <div className='admin-section-heading'>
-            <div><p className='eyebrow'>Commercial tools</p><h2>Vouchers and coupons</h2><p>Mcoin vouchers are redeemed from Account. Marketplace coupons use a code. Friend ID vouchers apply a percentage when a buyer enters any other valid user’s short Friend ID.</p></div>
+            <div><p className='eyebrow'>Commercial tools</p><h2>Percentage discounts</h2><p>Codes reduce a subscription or Composers purchase by a percentage. They never add Mcoins to a wallet.</p></div>
           </div>
           <form className='admin-form-card' onSubmit={createPromotion}>
             <div className='admin-form-grid'>
               <label className='field'>Code<input value={promotion.code} maxLength='32' placeholder='WELCOME50' onChange={(event) => setPromotion({ ...promotion, code: event.target.value.toUpperCase() })} required /></label>
               <label className='field'>Internal name<input value={promotion.name} placeholder='Launch voucher' onChange={(event) => setPromotion({ ...promotion, name: event.target.value })} required /></label>
-              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value })}><option value='mcoin_credit'>Mcoin wallet voucher</option><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Marketplace percentage coupon</option><option value='marketplace_fixed'>Marketplace fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
-              <label className='field'>{['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind) ? 'Percentage off' : 'Mcoin value'}<input type='number' min='1' max={['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind) ? 100 : 100000} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /></label>
-              <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} disabled={promotion.kind === 'mcoin_credit'} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>
+              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value })}><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
+              <label className='field'>Percentage off<input type='number' min='1' max='100' value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /></label>
+              <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>
               <label className='field'>Minimum account age (days)<input type='number' min='0' value={promotion.minimumAccountAgeDays} onChange={(event) => setPromotion({ ...promotion, minimumAccountAgeDays: event.target.value })} /></label>
               <label className='field'>Total redemption limit<input type='number' min='0' value={promotion.maxRedemptions} onChange={(event) => setPromotion({ ...promotion, maxRedemptions: event.target.value })} /><small>0 means unlimited</small></label>
               <label className='field'>Uses per buyer<input type='number' min='0' max='100' value={promotion.perUserLimit} onChange={(event) => setPromotion({ ...promotion, perUserLimit: event.target.value })} /><small>0 means unlimited. A friend’s ID can be shared with many buyers.</small></label>
@@ -291,10 +364,10 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 <div><code>{item.code}</code><strong>{item.name}</strong><small>{promotionKindLabel(item.kind)}</small></div>
                 <div><strong>{promotionValueLabel(item)}</strong><small>{item.minimumSpendMcoins ? `Minimum ${item.minimumSpendMcoins} Mcoins` : 'No minimum spend'}</small></div>
                 <div><strong>{item.redemptionCount.toLocaleString()}</strong><small>{item.maxRedemptions ? `of ${item.maxRedemptions} uses` : 'redemptions'}</small></div>
-                <button className='ghost compact-action' type='button' onClick={() => togglePromotion(item)}>{item.active ? 'Pause' : 'Activate'}</button>
+                <button className='ghost compact-action' type='button' disabled={item.retired} onClick={() => togglePromotion(item)}>{item.retired ? 'Retired' : item.active ? 'Pause' : 'Activate'}</button>
               </article>
             ))}
-            {!promotions.length && <div className='empty-state'>No vouchers or coupons yet.</div>}
+            {!promotions.length && <div className='empty-state'>No percentage discounts yet.</div>}
           </div>
         </section>
       )}
@@ -335,7 +408,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                     <td><strong>{row.name}</strong><code className='friend-id-chip'>{row.friendId}</code><small>Joined {row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '-'}</small></td>
                     <td>{row.email}<small>{row.phone || 'No phone'}</small></td>
                     <td className='amount-cell'>{row.mcoins.toLocaleString()} Mcoins</td>
-                    <td>{formatAmount(row.usdSpent, 'USD')}<small>{row.marketplaceSpentMcoins.toLocaleString()} marketplace Mcoins</small></td>
+                    <td>{formatAmount(row.usdSpent, 'USD')}<small>{row.marketplaceSpentMcoins.toLocaleString()} music-sheet Mcoins</small></td>
                     <td><span className='status-pill'>{row.proStatus}</span></td>
                     <td>{row.lastLoginAt ? new Date(row.lastLoginAt).toLocaleString() : 'Never'}<small>{row.loginCount} recorded sign-ins</small></td>
                     <td><button className='ghost compact-action' type='button' disabled={row.userId === user.user_id} onClick={() => openPasswordReset(row)}>{row.userId === user.user_id ? 'Your account' : 'Reset password'}</button></td>
