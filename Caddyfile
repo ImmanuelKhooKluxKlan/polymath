@@ -1,15 +1,27 @@
 polymathmusician67.com {
-  encode zstd gzip
+	encode zstd gzip
 
-  header {
-    X-Content-Type-Options nosniff
-    Referrer-Policy strict-origin-when-cross-origin
-    -Server
-  }
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
 
-  reverse_proxy app:3000
+	reverse_proxy app:3000
+}
+
+api.polymathmusician67.com {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	reverse_proxy app:3000
 }
 
 www.polymathmusician67.com {
-  redir https://polymathmusician67.com{uri} permanent
+	redir https://polymathmusician67.com{uri} permanent
 }
