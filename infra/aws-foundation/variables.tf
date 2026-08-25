@@ -16,8 +16,9 @@ variable "singapore_region" {
 }
 
 variable "github_repository" {
+  description = "Immutable GitHub OIDC owner/repository subject, including numeric IDs."
   type    = string
-  default = "ImmanuelKhooKluxKlan/polymath"
+  default = "ImmanuelKhooKluxKlan@293514804/polymath@1317923756"
 }
 
 variable "budget_email" {
