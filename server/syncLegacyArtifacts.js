@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const {
@@ -31,6 +32,16 @@ function contentType(filename) {
   return 'application/octet-stream';
 }
 
+function sha256File(filename) {
+  return new Promise((resolve, reject) => {
+    const digest = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filename);
+    stream.on('data', (chunk) => digest.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(digest.digest('hex')));
+  });
+}
+
 async function main() {
   const files = walk(uploadRoot);
   const bytes = files.reduce((total, file) => total + fs.statSync(file).size, 0);
@@ -53,9 +64,13 @@ async function main() {
   for (const filename of files) {
     const key = path.relative(uploadRoot, filename).replace(/\\/g, '/');
     const size = fs.statSync(filename).size;
+    const digest = await sha256File(filename);
     try {
       const existing = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-      if (Number(existing.ContentLength) === size) {
+      if (
+        Number(existing.ContentLength) === size
+        && String(existing.Metadata?.sha256 || '') === digest
+      ) {
         skipped += 1;
         continue;
       }
@@ -68,6 +83,7 @@ async function main() {
       Body: fs.createReadStream(filename),
       ContentLength: size,
       ContentType: contentType(filename),
+      Metadata: { sha256: digest },
       ServerSideEncryption: String(process.env.ARTIFACT_S3_SSE || '').trim() || undefined,
     }));
     uploaded += 1;
