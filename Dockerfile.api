@@ -4,7 +4,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl python3 \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu python3 \
     && curl --fail --silent --show-error \
       --output /app/aws-rds-global-bundle.pem \
       https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
@@ -16,12 +16,13 @@ RUN npm ci --omit=dev --prefix server
 COPY server ./server
 
 RUN mkdir -p /app/server/data/uploads \
-    && chown -R node:node /app/server/data
+    && chown -R node:node /app/server/data \
+    && chmod 755 /app/server/docker-entrypoint.sh
 
-USER node
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl --fail --silent --show-error http://127.0.0.1:3000/api/health || exit 1
 
+ENTRYPOINT ["/app/server/docker-entrypoint.sh"]
 CMD ["node", "server/startAwsRuntime.js"]
