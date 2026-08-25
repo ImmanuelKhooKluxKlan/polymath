@@ -52,6 +52,11 @@ const ARTIFACT_STORE = createArtifactStore({
 
 const STATE_STORE = createStateStore({
   databaseUrl: process.env.DATABASE_URL,
+  databaseHost: process.env.PGHOST,
+  databasePort: process.env.PGPORT,
+  databaseUser: process.env.PGUSER,
+  databasePassword: process.env.PGPASSWORD,
+  databaseName: process.env.PGDATABASE,
   filePath: DB_PATH,
   stateKey: process.env.DATABASE_STATE_KEY || 'primary',
 });

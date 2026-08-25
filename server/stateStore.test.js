@@ -1,6 +1,18 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { StateConflictError, mergeDocuments } = require('./stateStore');
+const { StateConflictError, createStateStore, mergeDocuments } = require('./stateStore');
+
+test('separate PostgreSQL environment fields select the PostgreSQL provider', () => {
+  const store = createStateStore({
+    databaseHost: 'database.internal',
+    databasePort: 5432,
+    databaseUser: 'polymath',
+    databasePassword: 'secret',
+    databaseName: 'polymath',
+    filePath: 'unused.json',
+  });
+  assert.equal(store.provider, 'postgresql');
+});
 
 test('three-way merge preserves independent records from regional writers', () => {
   const base = { users: [{ id: 'u1', name: 'One', mcoins: 0 }], sessions: [], settings: { tax: 25 } };

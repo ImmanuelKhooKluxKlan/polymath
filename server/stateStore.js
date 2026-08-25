@@ -94,8 +94,29 @@ function attachMetadata(document, revision, baseline = document) {
 }
 
 class StateStore {
-  constructor({ databaseUrl, filePath, stateKey = 'primary' }) {
+  constructor({
+    databaseUrl,
+    databaseHost,
+    databasePort,
+    databaseUser,
+    databasePassword,
+    databaseName,
+    filePath,
+    stateKey = 'primary',
+  }) {
     this.databaseUrl = String(databaseUrl || '').trim();
+    this.databaseHost = String(databaseHost || '').trim();
+    this.databaseConfig = this.databaseUrl
+      ? { connectionString: this.databaseUrl }
+      : this.databaseHost
+        ? {
+            host: this.databaseHost,
+            port: Math.max(1, Number(databasePort || 5432)),
+            user: String(databaseUser || '').trim(),
+            password: String(databasePassword || ''),
+            database: String(databaseName || 'polymath').trim(),
+          }
+        : null;
     this.filePath = filePath;
     this.stateKey = stateKey;
     this.pool = null;
@@ -103,22 +124,26 @@ class StateStore {
   }
 
   get provider() {
-    return this.databaseUrl ? 'postgresql' : 'atomic-json';
+    return this.databaseConfig ? 'postgresql' : 'atomic-json';
   }
 
   async initialize(seedDocument) {
     if (this.initialized) return;
-    if (!this.databaseUrl) {
+    if (!this.databaseConfig) {
       this.initialized = true;
       return;
     }
 
     const sslEnabled = String(process.env.DATABASE_SSL || 'true').toLowerCase() !== 'false';
     const rejectUnauthorized = String(process.env.DATABASE_SSL_REJECT_UNAUTHORIZED || 'true').toLowerCase() !== 'false';
+    const sslCaPath = String(process.env.DATABASE_SSL_CA_PATH || '').trim();
     this.pool = new Pool({
-      connectionString: this.databaseUrl,
+      ...this.databaseConfig,
       max: Math.max(2, Math.min(30, Number(process.env.DATABASE_POOL_MAX || 10))),
-      ssl: sslEnabled ? { rejectUnauthorized } : false,
+      ssl: sslEnabled ? {
+        rejectUnauthorized,
+        ...(sslCaPath ? { ca: fs.readFileSync(sslCaPath, 'utf8') } : {}),
+      } : false,
       application_name: process.env.APP_REGION ? `polymath-${process.env.APP_REGION}` : 'polymath',
     });
 
