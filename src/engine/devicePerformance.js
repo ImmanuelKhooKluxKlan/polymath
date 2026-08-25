@@ -89,7 +89,7 @@ function measureCpuWork() {
   return { milliseconds: performance.now() - startedAt, checksum: state };
 }
 
-export async function calibrateDevice({ durationMs = 900 } = {}) {
+export async function calibrateDevice({ durationMs = 3000, onProgress } = {}) {
   if (typeof window === 'undefined' || document.visibilityState === 'hidden') {
     return { tier: getInitialPerformanceTier(), skipped: true, reason: 'page-hidden' };
   }
@@ -104,7 +104,11 @@ export async function calibrateDevice({ durationMs = 900 } = {}) {
     function frame(now) {
       if (previousFrame) frameDeltas.push(now - previousFrame);
       previousFrame = now;
+      if (typeof onProgress === 'function') {
+        onProgress(Math.min(1, Math.max(0, (now - startedAt) / durationMs)));
+      }
       if (now - startedAt >= durationMs) {
+        if (typeof onProgress === 'function') onProgress(1);
         resolve();
         return;
       }

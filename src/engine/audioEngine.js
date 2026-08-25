@@ -462,6 +462,22 @@ function targetRmsForMidi(midi) {
   );
 }
 
+function lowRegisterCompensation(midi) {
+  return interpolate(
+    [
+      [21, 3.2],
+      [23, 3.1],
+      [24, 2.5],
+      [28, 2.25],
+      [33, 1.9],
+      [36, 1.65],
+      [40, 1.3],
+      [48, 1],
+    ],
+    midi
+  );
+}
+
 function analyzeSample(
   buffer,
   requestedMidi
@@ -2272,7 +2288,10 @@ class PianoAudioEngine {
             .playbackRate;
 
         sourceGain.gain.value =
-          sample.analysis.gain;
+          sample.analysis.gain *
+          lowRegisterCompensation(
+            requestedMidi
+          );
 
         source.connect(
           sourceGain

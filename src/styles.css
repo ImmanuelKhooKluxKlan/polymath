@@ -241,16 +241,17 @@ select {
   position: absolute;
   transform: translateX(-50%);
   border-radius: 13px;
-  background: linear-gradient(180deg, rgba(88,240,255,0.95), rgba(69,108,255,0.85));
-  box-shadow: 0 0 24px rgba(88,240,255,0.35), inset 0 1px rgba(255,255,255,0.35);
+  color: #fff;
+  background: linear-gradient(180deg, rgba(151, 126, 255, 0.97), rgba(76, 91, 218, 0.9));
+  box-shadow: 0 0 24px rgba(117, 94, 255, 0.38), inset 0 1px rgba(255,255,255,0.35);
   display: grid;
   place-items: center;
   transition: filter 0.08s ease, box-shadow 0.08s ease;
   min-width: 14px;
   z-index: 4;
 }
-.falling-note.black-falling-note { border-radius: 10px; filter: saturate(0.96); background: linear-gradient(180deg, rgba(255,107,214,0.96), rgba(166,107,255,0.88)); box-shadow: 0 0 24px rgba(255,107,214,0.35); }
-.falling-note.hot { filter: brightness(1.5); box-shadow: 0 0 38px rgba(255,255,255,0.65), 0 0 60px rgba(88,240,255,0.4); }
+.falling-note.black-falling-note { border-radius: 10px; filter: saturate(0.98); background: linear-gradient(180deg, rgba(239, 96, 188, 0.97), rgba(160, 66, 207, 0.91)); box-shadow: 0 0 24px rgba(218, 75, 183, 0.38); }
+.falling-note.hot { filter: brightness(1.42); box-shadow: 0 0 38px rgba(255,255,255,0.65), 0 0 60px rgba(136, 91, 255, 0.42); }
 .falling-note strong { font-size: clamp(0.48rem, 0.62vw, 0.68rem); text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
 .paused-badge {
   position: absolute;
@@ -403,22 +404,22 @@ select {
 
 /* V9 Pianella refinements */
 .falling-note.left-hand-note {
-  background: linear-gradient(180deg, rgba(79, 194, 255, 0.97), rgba(42, 105, 255, 0.9));
-  box-shadow: 0 0 22px rgba(79, 194, 255, 0.38), inset 0 1px rgba(255,255,255,0.36);
+  background: linear-gradient(180deg, rgba(139, 121, 255, 0.98), rgba(72, 85, 211, 0.92));
+  box-shadow: 0 0 22px rgba(111, 92, 255, 0.4), inset 0 1px rgba(255,255,255,0.36);
 }
 .falling-note.right-hand-note {
-  background: linear-gradient(180deg, rgba(255, 236, 128, 0.98), rgba(255, 169, 48, 0.9));
-  color: #1b1200;
-  box-shadow: 0 0 22px rgba(255, 206, 77, 0.38), inset 0 1px rgba(255,255,255,0.46);
+  background: linear-gradient(180deg, rgba(242, 102, 181, 0.98), rgba(165, 67, 207, 0.93));
+  color: #fff;
+  box-shadow: 0 0 22px rgba(222, 75, 180, 0.4), inset 0 1px rgba(255,255,255,0.42);
 }
 .falling-note.both-hand-note {
-  background: linear-gradient(180deg, rgba(180, 145, 255, 0.96), rgba(88, 240, 255, 0.86));
+  background: linear-gradient(180deg, rgba(196, 108, 238, 0.97), rgba(93, 96, 226, 0.91));
 }
 .falling-note.black-falling-note.left-hand-note,
 .falling-note.black-falling-note.right-hand-note {
   filter: saturate(1.08);
 }
-.falling-note.right-hand-note strong { color: #271a00; text-shadow: 0 1px 8px rgba(255,255,255,0.35); }
+.falling-note.right-hand-note strong { color: #fff; text-shadow: 0 1px 8px rgba(38, 10, 65, 0.7); }
 .export-row { grid-template-columns: 1fr 1fr; }
 .upload-box { gap: 6px; text-align: center; padding: 18px; }
 .upload-box small { color: var(--muted); font-weight: 750; }

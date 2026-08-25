@@ -315,18 +315,23 @@ export default function App() {
     // Create/resume Web Audio directly inside the tap event so iOS grants audio access.
     pianoAudio.ensure();
     setKeyboardPreparationStatus('calibrating');
-    setKeyboardPreparationStage('Checking this device');
-    setKeyboardPreparationProgress(3);
+    setKeyboardPreparationStage('Running 3-second device check');
+    setKeyboardPreparationProgress(0);
 
-    const task = calibrateDevice()
+    const task = calibrateDevice({
+      durationMs: 3000,
+      onProgress: (progress) => {
+        setKeyboardPreparationProgress(Math.round(Math.max(0, Math.min(1, progress)) * 20));
+      },
+    })
       .then(async (calibration) => {
         calibrationRef.current = calibration;
         const calibratedTier = applyPerformanceTier(calibration.tier, { calibration }, false);
         setKeyboardPreparationStatus('loading');
         setKeyboardPreparationStage('Loading ' + calibratedTier + ' piano');
-        setKeyboardPreparationProgress(8);
+        setKeyboardPreparationProgress(20);
         const loading = await pianoAudio.prepareKeyboard(({ percent }) => {
-          const mappedProgress = 8 + (Math.max(0, Math.min(100, Number(percent) || 0)) * 0.92);
+          const mappedProgress = 20 + (Math.max(0, Math.min(100, Number(percent) || 0)) * 0.8);
           setKeyboardPreparationProgress(Math.round(mappedProgress));
         });
         const refinedTier = refineTierFromLoading(calibratedTier, loading);
