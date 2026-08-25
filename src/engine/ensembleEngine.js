@@ -1,4 +1,5 @@
 import { parseNote } from './noteMath.js';
+import { publicAssetUrl, relativeAssetUrl } from '../services/assetUrls.js';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -48,7 +49,7 @@ const SAMPLE_PACKS = {
 };
 
 function sampleManifestUrl(pack) {
-  return `${import.meta.env.BASE_URL}samples/instruments/${pack}/manifest.json`;
+  return publicAssetUrl(`samples/instruments/${pack}/manifest.json`);
 }
 
 const DRUM_PACK = 'drums';
@@ -341,9 +342,8 @@ class EnsembleAudioEngine {
         return response.json();
       })
       .then(async (manifest) => {
-        const baseUrl = manifestUrl.replace(/manifest\.json$/, '');
         const decoded = await Promise.all(manifest.zones.map(async (zone) => {
-          const response = await fetch(`${baseUrl}${zone.file}`);
+          const response = await fetch(relativeAssetUrl(manifestUrl, zone.file), { cache: 'force-cache' });
           if (!response.ok) throw new Error(`${pack} sample failed (${response.status}): ${zone.file}`);
           return [zone.file, await this.context.decodeAudioData(await response.arrayBuffer())];
         }));
@@ -371,9 +371,8 @@ class EnsembleAudioEngine {
         return response.json();
       })
       .then(async (manifest) => {
-        const baseUrl = manifestUrl.replace(/manifest\.json$/, 'samples/');
         const decoded = await Promise.all(manifest.zones.map(async (zone) => {
-          const response = await fetch(`${baseUrl}${zone.file}`);
+          const response = await fetch(relativeAssetUrl(manifestUrl, `samples/${zone.file}`), { cache: 'force-cache' });
           if (!response.ok) throw new Error(`drum sample failed (${response.status}): ${zone.file}`);
           return [zone.file, await this.context.decodeAudioData(await response.arrayBuffer())];
         }));

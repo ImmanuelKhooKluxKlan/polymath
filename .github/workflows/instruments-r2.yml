@@ -1,0 +1,39 @@
+name: Instruments - Cloudflare R2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/samples/**'
+      - 'server/syncR2Assets.js'
+      - '.github/workflows/instruments-r2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-r2-instruments
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ vars.R2_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --prefix server
+      - name: Upload changed instrument recordings
+        run: npm --prefix server run r2:sync-instruments
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          INSTRUMENT_R2_BUCKET: ${{ vars.INSTRUMENT_R2_BUCKET }}
+          INSTRUMENT_R2_ACCESS_KEY_ID: ${{ secrets.INSTRUMENT_R2_ACCESS_KEY_ID }}
+          INSTRUMENT_R2_SECRET_ACCESS_KEY: ${{ secrets.INSTRUMENT_R2_SECRET_ACCESS_KEY }}
+          INSTRUMENT_ASSET_RELEASE: ${{ vars.VITE_ASSET_RELEASE }}
+          INSTRUMENT_ALLOWED_ORIGINS: https://polymathmusician67.com

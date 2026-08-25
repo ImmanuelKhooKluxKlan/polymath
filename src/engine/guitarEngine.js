@@ -1,7 +1,9 @@
+import { publicAssetUrl, relativeAssetUrl } from '../services/assetUrls.js';
+
 const OPEN_STRING_MIDI = [40, 45, 50, 55, 59, 64];
 const MIN_GAIN = 0.0001;
 const MAX_GUITAR_VOICES = 30;
-const ACOUSTIC_SAMPLE_MANIFEST = `${import.meta.env.BASE_URL}samples/acoustic-guitar/manifest.json`;
+const ACOUSTIC_SAMPLE_MANIFEST = publicAssetUrl('samples/acoustic-guitar/manifest.json');
 
 export const GUITAR_TONE_LABELS = {
   lounge: 'Close-miked acoustic karaoke',
@@ -217,9 +219,8 @@ class GuitarEngine {
         return response.json();
       })
       .then(async (manifest) => {
-        const baseUrl = ACOUSTIC_SAMPLE_MANIFEST.replace(/manifest\.json$/, '');
         const decoded = await Promise.all(manifest.zones.map(async (zone) => {
-          const response = await fetch(`${baseUrl}${zone.file}`);
+          const response = await fetch(relativeAssetUrl(ACOUSTIC_SAMPLE_MANIFEST, zone.file), { cache: 'force-cache' });
           if (!response.ok) throw new Error(`Guitar sample failed (${response.status}): ${zone.file}`);
           const buffer = await this.context.decodeAudioData(await response.arrayBuffer());
           return [zone.file, buffer];

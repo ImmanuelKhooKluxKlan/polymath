@@ -1,0 +1,79 @@
+name: Backend - AWS ECS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'Dockerfile.api'
+      - '.github/workflows/backend-aws.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-ecs-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --prefix server
+      - run: npm test --prefix server
+
+  deploy:
+    needs: test
+    if: ${{ vars.AWS_ECS_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - region: us-east-2
+            cluster: polymath-us
+            service: polymath-api-us
+            task_family: polymath-api-us
+          - region: ap-southeast-1
+            cluster: polymath-apac
+            service: polymath-api-apac
+            task_family: polymath-api-apac
+    steps:
+      - uses: actions/checkout@v5
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ matrix.region }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push immutable API image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.AWS_ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.api -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          echo IMAGE=$REGISTRY/$REPOSITORY:$IMAGE_TAG >> $GITHUB_ENV
+      - name: Register task revision and deploy
+        env:
+          ECS_CLUSTER: ${{ matrix.cluster }}
+          ECS_SERVICE: ${{ matrix.service }}
+          TASK_FAMILY: ${{ matrix.task_family }}
+        run: |
+          aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition > current-task.json
+          jq --arg image $IMAGE '
+            .containerDefinitions[0].image = $image
+            | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
+          ' current-task.json > next-task.json
+          TASK_ARN=$(aws ecs register-task-definition --cli-input-json file://next-task.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $TASK_ARN
+          aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE

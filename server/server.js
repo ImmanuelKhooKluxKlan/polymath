@@ -10,6 +10,9 @@ const bundledFfmpegPath = require('ffmpeg-static');
 const { postProcessMuscriptorResult } = require('./muscriptorPostprocess');
 const { createMuscriptorEventCollector } = require('./muscriptorEvents');
 const { RegistrationOtpError, createRegistrationOtpService } = require('./registrationOtp');
+const { StateConflictError, createStateStore } = require('./stateStore');
+const { createArtifactStore } = require('./artifactStore');
+const { createJobQueue } = require('./jobQueue');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -17,8 +20,15 @@ require('dotenv').config({
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+const CLIENT_ORIGINS = new Set(
+  [CLIENT_ORIGIN, ...String(process.env.CLIENT_ORIGINS || '').split(',')]
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean),
+);
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
+const PROCESS_INSTANCE_ID = crypto.randomUUID();
+const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
 
 const PAYPAL_ENV = String(process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
 const PAYPAL_API_BASE = PAYPAL_ENV === 'sandbox'
@@ -30,6 +40,26 @@ const DATA_DIR = process.env.POLYMATH_DATA_DIR
   : path.join(__dirname, "data");
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const DB_PATH = path.join(DATA_DIR, "database.json");
+
+const ARTIFACT_STORE = createArtifactStore({
+  localRoot: UPLOAD_DIR,
+  bucket: process.env.ARTIFACT_S3_BUCKET,
+  region: process.env.ARTIFACT_S3_REGION,
+  endpoint: process.env.ARTIFACT_S3_ENDPOINT,
+  accessKeyId: process.env.ARTIFACT_S3_ACCESS_KEY_ID,
+  secretAccessKey: process.env.ARTIFACT_S3_SECRET_ACCESS_KEY,
+});
+
+const STATE_STORE = createStateStore({
+  databaseUrl: process.env.DATABASE_URL,
+  filePath: DB_PATH,
+  stateKey: process.env.DATABASE_STATE_KEY || 'primary',
+});
+
+const JOB_QUEUE = createJobQueue({
+  queueUrl: process.env.JOB_QUEUE_URL,
+  region: process.env.JOB_QUEUE_REGION || process.env.AWS_REGION,
+});
 
 const WITHDRAWAL_FEE_RATE = 0.25;
 const MARKETPLACE_FEE_RATE = 0.25;
@@ -81,6 +111,11 @@ const MEDIA_EXTENSIONS = new Set([
   '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac',
   '.mp4', '.mov', '.webm', '.mkv', '.avi', '.mpeg', '.mpg',
 ]);
+
+function artifactKey(group, filename) {
+  const name = path.basename(String(filename || 'artifact'));
+  return ARTIFACT_STORE.remote ? `${group}/${name}` : name;
+}
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-5.6').trim();
@@ -452,15 +487,14 @@ function normalizeDb(db) {
   return normalized;
 }
 
-function readDb() {
+async function readDb() {
   ensureStorage();
-  return normalizeDb(JSON.parse(fs.readFileSync(DB_PATH, 'utf8')));
+  const seed = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+  return normalizeDb(await STATE_STORE.read(seed));
 }
 
-function writeDb(db) {
-  const temp = `${DB_PATH}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(db, null, 2));
-  fs.renameSync(temp, DB_PATH);
+async function writeDb(db) {
+  await STATE_STORE.write(db);
 }
 
 function id(prefix) {
@@ -607,13 +641,13 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   return { salt, hash };
 }
 
-function bootstrapAdminAccounts() {
+async function bootstrapAdminAccounts() {
   const password = String(process.env.ADMIN_PASSWORD || '');
   if (!password) return { created: 0 };
   if (ADMIN_EMAILS.size === 0) throw new Error('ADMIN_PASSWORD requires at least one address in ADMIN_EMAILS.');
   if (password.length < 12) throw new Error('ADMIN_PASSWORD must contain at least 12 characters.');
 
-  const db = readDb();
+  const db = await readDb();
   const now = new Date().toISOString();
   let created = 0;
   ADMIN_EMAILS.forEach((email) => {
@@ -647,7 +681,7 @@ function bootstrapAdminAccounts() {
   });
   if (created > 0) {
     db.authEvents = db.authEvents.slice(-5000);
-    writeDb(db);
+    await writeDb(db);
   }
   return { created };
 }
@@ -949,8 +983,8 @@ function authUser(req, db) {
   return db.users.find((user) => user.id === session.userId) || null;
 }
 
-function requireAuth(req, res, next) {
-  const db = readDb();
+async function requireAuth(req, res, next) {
+  const db = await readDb();
   const user = authUser(req, db);
   if (!user) return res.status(401).json({ error: 'Please sign in first.' });
   req.db = db;
@@ -1525,13 +1559,40 @@ function publicMediaTranscriptionJob(job) {
   };
 }
 
-function updateMediaTranscriptionJob(jobId, changes) {
-  const db = readDb();
+async function updateMediaTranscriptionJob(jobId, changes) {
+  const db = await readDb();
   const job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
   if (!job) return null;
   Object.assign(job, changes);
-  writeDb(db);
+  await writeDb(db);
   return job;
+}
+
+async function claimBackgroundJob(collection, jobId) {
+  const db = await readDb();
+  const job = db[collection]?.find((candidate) => candidate.id === jobId);
+  if (!job || job.status !== 'processing') return null;
+  const claimExpires = Date.parse(job.claimExpiresAt || '');
+  const activeClaim = Number.isFinite(claimExpires) && claimExpires > Date.now();
+  if (activeClaim && job.claimedBy !== PROCESS_INSTANCE_ID && JOB_QUEUE.enabled) return null;
+  if (activeClaim && job.claimedBy === PROCESS_INSTANCE_ID) return null;
+  job.claimedBy = PROCESS_INSTANCE_ID;
+  job.claimExpiresAt = new Date(Date.now() + JOB_CLAIM_MS).toISOString();
+  try {
+    await writeDb(db);
+    return job;
+  } catch (error) {
+    if (error instanceof StateConflictError) return null;
+    throw error;
+  }
+}
+
+let mediaProgressWriteQueue = Promise.resolve();
+
+function queueMediaTranscriptionUpdate(jobId, changes) {
+  mediaProgressWriteQueue = mediaProgressWriteQueue
+    .then(() => updateMediaTranscriptionJob(jobId, changes))
+    .catch((error) => console.error('MuScriptor progress update failed:', error));
 }
 
 function safeRemoveUpload(filePath) {
@@ -1617,7 +1678,7 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
       });
       if (response.status !== 503) break;
       await response.text();
-      updateMediaTranscriptionJob(job.id, {
+      await updateMediaTranscriptionJob(job.id, {
         stage: 'Waiting for the RunPod GPU to finish the previous transcription',
         progress: 20,
       });
@@ -1642,7 +1703,7 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     source: 'runpod',
     onProgress(progress) {
       const ratio = Math.max(0, Math.min(1, progress.completed / progress.total));
-      updateMediaTranscriptionJob(job.id, {
+      queueMediaTranscriptionUpdate(job.id, {
         stage: `Transcribing ${progress.completed} of ${progress.total} audio sections on RunPod GPU`,
         progress: 22 + Math.round(ratio * 70),
       });
@@ -1713,17 +1774,18 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
 }
 
 async function processMediaTranscriptionJob(jobId) {
-  let db = readDb();
-  let job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
-  if (!job || job.status !== 'processing') return;
+  let job = await claimBackgroundJob('mediaTranscriptionJobs', jobId);
+  if (!job) return;
+  let db;
 
-  const sourcePath = path.join(UPLOAD_DIR, job.sourcePath);
+  const sourceWorkPath = path.join(UPLOAD_DIR, `${job.id}-source${path.extname(job.filename || '')}`);
+  const sourcePath = await ARTIFACT_STORE.materialize(job.sourcePath, sourceWorkPath);
   const preparedPath = path.join(UPLOAD_DIR, `${job.id}-prepared.wav`);
   const outputPath = path.join(UPLOAD_DIR, `${job.id}-ready-to-play.json`);
   const arrangedPath = path.join(UPLOAD_DIR, `${job.id}-piano-arranged.json`);
 
   try {
-    updateMediaTranscriptionJob(jobId, {
+    await updateMediaTranscriptionJob(jobId, {
       stage: 'Preparing audio from your upload',
       progress: 12,
     });
@@ -1735,7 +1797,7 @@ async function processMediaTranscriptionJob(jobId) {
       preparedPath,
     ], { timeoutMs: 10 * 60 * 1000 });
 
-    updateMediaTranscriptionJob(jobId, {
+    await updateMediaTranscriptionJob(jobId, {
       stage: MUSCRIPTOR_REMOTE_URL
         ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
         : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
@@ -1762,10 +1824,10 @@ async function processMediaTranscriptionJob(jobId) {
           try {
             const message = JSON.parse(line);
             if (message.type === 'stage') {
-              updateMediaTranscriptionJob(jobId, { stage: message.stage });
+              queueMediaTranscriptionUpdate(jobId, { stage: message.stage });
             } else if (message.type === 'progress' && Number(message.total) > 0) {
               const ratio = Math.max(0, Math.min(1, Number(message.completed) / Number(message.total)));
-              updateMediaTranscriptionJob(jobId, {
+              queueMediaTranscriptionUpdate(jobId, {
                 stage: `Transcribing ${message.completed} of ${message.total} audio sections`,
                 progress: 22 + Math.round(ratio * 70),
               });
@@ -1777,7 +1839,7 @@ async function processMediaTranscriptionJob(jobId) {
       });
     }
 
-    updateMediaTranscriptionJob(jobId, {
+    await updateMediaTranscriptionJob(jobId, {
       stage: 'Cleaning rapid repeats and shaping the piano arrangement',
       progress: 94,
     });
@@ -1791,7 +1853,7 @@ async function processMediaTranscriptionJob(jobId) {
     result.vocalMelodyIncluded = job.playbackMode === 'full';
     fs.writeFileSync(outputPath, JSON.stringify(result, null, 2), 'utf8');
     if (job.instrument === 'piano') {
-      updateMediaTranscriptionJob(jobId, {
+      await updateMediaTranscriptionJob(jobId, {
         stage: 'Building a playable 88-key acoustic-piano arrangement',
         progress: 97,
       });
@@ -1808,10 +1870,14 @@ async function processMediaTranscriptionJob(jobId) {
       fs.writeFileSync(outputPath, JSON.stringify(result, null, 2), 'utf8');
       safeRemoveUpload(arrangedPath);
     }
-    db = readDb();
+    db = await readDb();
     job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
-    job.outputPath = path.basename(outputPath);
+    job.outputPath = await ARTIFACT_STORE.putFile(
+      artifactKey('transcriptions', path.basename(outputPath)),
+      outputPath,
+      'application/json',
+    );
     job.outputFilename = `${sanitizeFilename(job.title || 'muscriptor-transcription')}.json`;
     job.vocalMelodyNoteCount = Number(result.transcriptionCleanup?.vocalMelodyNotes || 0);
     job.noteCount = Array.isArray(result.notes) ? result.notes.length : 0;
@@ -1820,15 +1886,16 @@ async function processMediaTranscriptionJob(jobId) {
     job.stage = 'Ready to play';
     job.progress = 100;
     job.completedAt = new Date().toISOString();
-    writeDb(db);
+    await writeDb(db);
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
+    if (ARTIFACT_STORE.remote) safeRemoveUpload(outputPath);
   } catch (error) {
-    db = readDb();
+    db = await readDb();
     job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
     if (job && job.status === 'processing') {
       refundTranslationJob(db, job, error.message || 'MuScriptor could not transcribe this recording.');
-      writeDb(db);
+      await writeDb(db);
     }
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
@@ -1846,9 +1913,29 @@ function enqueueMediaTranscription(jobId) {
   return mediaTranscriptionQueue;
 }
 
+async function dispatchBackgroundJob(type, jobId) {
+  if (JOB_QUEUE.enabled) {
+    await JOB_QUEUE.enqueue({ type, jobId });
+    return;
+  }
+  setImmediate(() => {
+    const task = type === 'media-transcription'
+      ? enqueueMediaTranscription(jobId)
+      : processTranslationJob(jobId);
+    Promise.resolve(task).catch((error) => console.error('Background job failed:', error));
+  });
+}
+
+async function runQueuedJob(message) {
+  if (message?.type === 'media-transcription') return enqueueMediaTranscription(message.jobId);
+  if (message?.type === 'score-translation') return processTranslationJob(message.jobId);
+  throw new Error('Unknown background job type.');
+}
+
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || origin === CLIENT_ORIGIN || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+    const normalizedOrigin = String(origin || '').replace(/\/+$/, '');
+    if (!origin || CLIENT_ORIGINS.has(normalizedOrigin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
       callback(null, true);
       return;
     }
@@ -1858,24 +1945,30 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '18mb' }));
 
-app.get('/', (req, res, next) => {
+app.get('/', async (req, res, next) => {
   if (IS_PRODUCTION) return next();
   return res.send('Polymath Musician backend is running');
 });
-app.get('/api/health', (req, res) => res.json({ ok: true }));
-app.get('/api/test', (req, res) => res.json({
+app.get('/api/health', async (req, res) => res.json({
+  ok: true,
+  storage: STATE_STORE.provider,
+  artifacts: ARTIFACT_STORE.provider,
+  queue: JOB_QUEUE.enabled ? 'sqs' : 'in-process',
+  region: process.env.APP_REGION || 'local',
+}));
+app.get('/api/test', async (req, res) => res.json({
   message: 'Backend is working',
   environment: PAYPAL_ENV,
   openaiConfigured: Boolean(String(process.env.OPENAI_API_KEY || '').trim()),
   openaiModel: OPENAI_MODEL,
 }));
 
-app.get('/api/media-transcriptions/capabilities', (req, res) => {
+app.get('/api/media-transcriptions/capabilities', async (req, res) => {
   res.json(muscriptorAvailability());
 });
 
-app.get('/api/catalog', (req, res) => {
-  const db = readDb();
+app.get('/api/catalog', async (req, res) => {
+  const db = await readDb();
   const { updatedBy: _updatedBy, ...publicPolicies } = sitePolicies(db);
   res.json({
     products: Object.values(PRODUCTS).filter((product) => !product.legacy),
@@ -1910,7 +2003,7 @@ function registrationOtpFailure(res, error) {
 app.post('/api/auth/register/otp', async (req, res) => {
   const channel = String(req.body.channel || '').trim().toLowerCase();
   const destination = channel === 'email' ? req.body.email : req.body.phone;
-  const db = readDb();
+  const db = await readDb();
   const policies = sitePolicies(db);
   if (!policies.registrationEnabled) {
     return res.status(403).json({ error: 'New account registration is temporarily closed.' });
@@ -1927,7 +2020,7 @@ app.post('/api/auth/register/otp', async (req, res) => {
       channel,
       destination: normalizedDestination,
     });
-    writeDb(db);
+    await writeDb(db);
     return res.status(202).json({
       challengeId: challenge.challengeId,
       channel: challenge.channel,
@@ -1940,14 +2033,14 @@ app.post('/api/auth/register/otp', async (req, res) => {
   }
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const name = String(req.body.name || '').trim();
   const password = String(req.body.password || '');
   const birthDate = String(req.body.birthDate || '').trim();
   const challengeId = String(req.body.challengeId || '').trim();
   const verificationCode = String(req.body.verificationCode || '').trim();
   const luckyCode = String(req.body.luckyCode || '').trim();
-  const db = readDb();
+  const db = await readDb();
   const policies = sitePolicies(db);
   if (!policies.registrationEnabled) return res.status(403).json({ error: 'New account registration is temporarily closed.' });
   if (name.length < 2) return res.status(400).json({ error: 'Name must contain at least 2 characters.' });
@@ -2011,7 +2104,7 @@ app.post('/api/auth/register', (req, res) => {
       code: verificationCode,
     });
   } catch (error) {
-    writeDb(db);
+    await writeDb(db);
     return registrationOtpFailure(res, error);
   }
 
@@ -2053,16 +2146,16 @@ app.post('/api/auth/register', (req, res) => {
   if (policies.welcomeMcoins > 0) addLedger(db, user.id, policies.welcomeMcoins, 'welcome_bonus', 'Configured welcome balance');
   applySignupLuckyCode(db, user, luckyResult.claim);
   db.authEvents.push({ id: id('auth'), userId: user.id, type: 'register_verified', channel: verification.channel, createdAt });
-  writeDb(db);
+  await writeDb(db);
   res.status(201).json({ token, user: safeUser(user) });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const identifier = String(req.body.identifier || req.body.email || '').trim();
   const email = identifier.toLowerCase();
   const phone = normalizePhone(identifier);
   const password = String(req.body.password || '');
-  const db = readDb();
+  const db = await readDb();
   const user = db.users.find((candidate) => (
     String(candidate.email || '').toLowerCase() === email
     || (phone.length >= 7 && normalizePhone(candidate.phone) === phone)
@@ -2077,19 +2170,19 @@ app.post('/api/auth/login', (req, res) => {
   user.loginCount = Number(user.loginCount || 0) + 1;
   db.authEvents.push({ id: id('auth'), userId: user.id, type: 'login', createdAt: user.lastLoginAt });
   db.authEvents = db.authEvents.slice(-5000);
-  writeDb(db);
+  await writeDb(db);
   res.json({ token, user: safeUser(user) });
 });
 
-app.get('/api/auth/me', requireAuth, (req, res) => {
+app.get('/api/auth/me', requireAuth, async (req, res) => {
   res.json({ user: safeUser(req.user) });
 });
 
-app.put('/api/profile/avatar', requireAuth, (req, res) => {
+app.put('/api/profile/avatar', requireAuth, async (req, res) => {
   const avatarDataUrl = String(req.body.avatarDataUrl || '').trim();
   if (!avatarDataUrl) {
     req.user.avatarUrl = '';
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.json({ user: safeUser(req.user) });
   }
   const match = avatarDataUrl.match(/^data:image\/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/=]+)$/);
@@ -2099,11 +2192,11 @@ app.put('/api/profile/avatar', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Profile pictures must be 384 KB or smaller after resizing.' });
   }
   req.user.avatarUrl = avatarDataUrl;
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ user: safeUser(req.user) });
 });
 
-app.post('/api/ready-sheet-uploads', requireAuth, (req, res) => {
+app.post('/api/ready-sheet-uploads', requireAuth, async (req, res) => {
   const filename = sanitizeFilename(String(req.body.filename || 'ready-to-play-sheet'));
   const format = path.extname(filename).slice(1).toLowerCase();
   if (!['json', 'mid', 'midi'].includes(format)) {
@@ -2116,7 +2209,7 @@ app.post('/api/ready-sheet-uploads', requireAuth, (req, res) => {
       costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
     });
   }
-  writeDb(req.db);
+  await writeDb(req.db);
   return res.status(201).json({
     user: safeUser(req.user),
     costMcoins: charged.costMcoins,
@@ -2124,7 +2217,7 @@ app.post('/api/ready-sheet-uploads', requireAuth, (req, res) => {
   });
 });
 
-app.post('/api/auth/change-password', requireAuth, (req, res) => {
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const password = String(req.body.password || '');
   const minimumLength = Math.max(12, sitePolicies(req.db).minimumPasswordLength);
   if (password.length < minimumLength) return res.status(400).json({ error: `Your new password must contain at least ${minimumLength} characters.` });
@@ -2134,20 +2227,20 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
   req.user.mustChangePassword = false;
   const currentToken = bearerToken(req);
   req.db.sessions = req.db.sessions.filter((session) => session.userId !== req.user.id || session.token === currentToken);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ user: safeUser(req.user) });
 });
 
-app.post('/api/auth/logout', requireAuth, (req, res) => {
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
   const token = bearerToken(req);
   const tokenHash = hashSessionToken(token);
   req.db.sessions = req.db.sessions.filter((session) => session.tokenHash !== tokenHash && session.token !== token);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ ok: true });
 });
 
-app.get('/api/listings', (req, res) => {
-  const db = readDb();
+app.get('/api/listings', async (req, res) => {
+  const db = await readDb();
   const viewer = authUser(req, db);
   const instrument = String(req.query.instrument || '').toLowerCase();
   const artist = String(req.query.artist || '').toLowerCase();
@@ -2163,8 +2256,8 @@ app.get('/api/listings', (req, res) => {
   res.json({ listings });
 });
 
-app.get('/api/listings/:listingId/reviews', (req, res) => {
-  const db = readDb();
+app.get('/api/listings/:listingId/reviews', async (req, res) => {
+  const db = await readDb();
   const viewer = authUser(req, db);
   const listing = db.listings.find((item) => item.id === req.params.listingId);
   if (!listing) return res.status(404).json({ error: 'Music sheet not found.' });
@@ -2175,7 +2268,7 @@ app.get('/api/listings/:listingId/reviews', (req, res) => {
   return res.json({ reviews, summary: listingReviewSummary(db, listing.id) });
 });
 
-app.post('/api/listings/:listingId/reviews', requireAuth, (req, res) => {
+app.post('/api/listings/:listingId/reviews', requireAuth, async (req, res) => {
   const listing = req.db.listings.find((item) => item.id === req.params.listingId);
   if (!listing) return res.status(404).json({ error: 'Music sheet not found.' });
   if (listing.sellerId === req.user.id) {
@@ -2214,19 +2307,19 @@ app.post('/api/listings/:listingId/reviews', requireAuth, (req, res) => {
     };
     req.db.listingReviews.push(review);
   }
-  writeDb(req.db);
+  await writeDb(req.db);
   return res.status(review.updatedAt ? 200 : 201).json({
     review: publicListingReview(review, req.db, req.user.id),
     summary: listingReviewSummary(req.db, listing.id),
   });
 });
 
-app.delete('/api/listings/:listingId/reviews/:reviewId', requireAuth, (req, res) => {
+app.delete('/api/listings/:listingId/reviews/:reviewId', requireAuth, async (req, res) => {
   return res.status(403).json({ error: 'Published reviews are permanent and cannot be deleted by composers.' });
 });
 
-app.get('/api/composers/:composerId', (req, res) => {
-  const db = readDb();
+app.get('/api/composers/:composerId', async (req, res) => {
+  const db = await readDb();
   const viewer = authUser(req, db);
   const composer = db.users.find((item) => item.id === req.params.composerId);
   const listings = db.listings.filter((listing) => listing.sellerId === composer?.id);
@@ -2239,7 +2332,7 @@ app.get('/api/composers/:composerId', (req, res) => {
   });
 });
 
-app.post('/api/composers/:composerId/follow', requireAuth, (req, res) => {
+app.post('/api/composers/:composerId/follow', requireAuth, async (req, res) => {
   const composer = req.db.users.find((item) => item.id === req.params.composerId);
   const hasListings = req.db.listings.some((listing) => listing.sellerId === composer?.id);
   if (!composer || !hasListings) return res.status(404).json({ error: 'Composer profile not found.' });
@@ -2254,23 +2347,23 @@ app.post('/api/composers/:composerId/follow', requireAuth, (req, res) => {
       followerId: req.user.id,
       createdAt: new Date().toISOString(),
     });
-    writeDb(req.db);
+    await writeDb(req.db);
   }
   return res.json({ composer: publicComposer(composer, req.db, req.user.id) });
 });
 
-app.delete('/api/composers/:composerId/follow', requireAuth, (req, res) => {
+app.delete('/api/composers/:composerId/follow', requireAuth, async (req, res) => {
   const composer = req.db.users.find((item) => item.id === req.params.composerId);
   const hasListings = req.db.listings.some((listing) => listing.sellerId === composer?.id);
   if (!composer || !hasListings) return res.status(404).json({ error: 'Composer profile not found.' });
   req.db.composerFollows = req.db.composerFollows.filter(
     (follow) => !(follow.composerId === composer.id && follow.followerId === req.user.id),
   );
-  writeDb(req.db);
+  await writeDb(req.db);
   return res.json({ composer: publicComposer(composer, req.db, req.user.id) });
 });
 
-app.get('/api/library', requireAuth, (req, res) => {
+app.get('/api/library', requireAuth, async (req, res) => {
   const purchasedSongs = req.db.purchases
     .filter((purchase) => purchase.buyerId === req.user.id)
     .map((purchase) => {
@@ -2291,7 +2384,7 @@ app.get('/api/library', requireAuth, (req, res) => {
   res.json({ purchasedSongs, sellingSongs });
 });
 
-app.post('/api/listings', requireAuth, (req, res) => {
+app.post('/api/listings', requireAuth, async (req, res) => {
   const artist = String(req.body.artist || '').trim();
   const title = String(req.body.title || '').trim();
   const instrument = String(req.body.instrument || '').trim().toLowerCase();
@@ -2327,7 +2420,11 @@ app.post('/api/listings', requireAuth, (req, res) => {
 
   const listingId = id('listing');
   const storedName = `${listingId}-${filename}`;
-  fs.writeFileSync(path.join(UPLOAD_DIR, storedName), bytes);
+  const storedKey = await ARTIFACT_STORE.putBuffer(
+    artifactKey('marketplace', storedName),
+    bytes,
+    'application/octet-stream',
+  );
   const listing = {
     id: listingId,
     sellerId: req.user.id,
@@ -2339,7 +2436,7 @@ app.post('/api/listings', requireAuth, (req, res) => {
     description,
     cover: INSTRUMENTS[instrument].cover,
     filename,
-    assetPath: storedName,
+    assetPath: storedKey,
     demo: false,
     rightsConfirmed: true,
     feeConfirmed: true,
@@ -2347,11 +2444,11 @@ app.post('/api/listings', requireAuth, (req, res) => {
     createdAt: new Date().toISOString(),
   };
   req.db.listings.push(listing);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ listing: publicListing(listing, req.db, req.user.id) });
 });
 
-app.put('/api/listings/:listingId', requireAuth, (req, res) => {
+app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
   const listing = req.db.listings.find((item) => item.id === req.params.listingId);
   if (!listing) return res.status(404).json({ error: 'Listing not found.' });
   if (listing.sellerId !== req.user.id) {
@@ -2379,11 +2476,11 @@ app.put('/api/listings/:listingId', requireAuth, (req, res) => {
     cover: INSTRUMENTS[instrument].cover,
     updatedAt: new Date().toISOString(),
   });
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ listing: publicListing(listing, req.db, req.user.id) });
 });
 
-app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
+app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
   const listing = req.db.listings.find((item) => item.id === req.params.listingId);
   if (!listing) return res.status(404).json({ error: 'Listing not found.' });
   if (listing.sellerId === req.user.id) return res.status(400).json({ error: 'You already own this listing.' });
@@ -2463,11 +2560,11 @@ app.post('/api/listings/:listingId/purchase', requireAuth, (req, res) => {
       friendId: friendUser?.friendId || null,
     });
   }
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ purchase, user: safeUser(req.user), promotion: promotion ? publicPromotion(promotion, req.db) : null });
 });
 
-app.get('/api/listings/:listingId/download', requireAuth, (req, res) => {
+app.get('/api/listings/:listingId/download', requireAuth, async (req, res) => {
   const listing = req.db.listings.find((item) => item.id === req.params.listingId);
   if (!listing) return res.status(404).json({ error: 'Listing not found.' });
   const allowed = listing.sellerId === req.user.id || req.db.purchases.some(
@@ -2477,10 +2574,14 @@ app.get('/api/listings/:listingId/download', requireAuth, (req, res) => {
   if (!listing.assetPath) {
     return res.status(409).json({ error: 'This demonstration listing does not include a downloadable asset.' });
   }
-  res.download(path.join(UPLOAD_DIR, listing.assetPath), listing.filename || listing.assetPath);
+  return ARTIFACT_STORE.sendDownload(
+    res,
+    listing.assetPath,
+    listing.filename || path.basename(listing.assetPath),
+  );
 });
 
-app.get('/api/bands', requireMusician, (req, res) => {
+app.get('/api/bands', requireMusician, async (req, res) => {
   const visible = req.db.bands
     .filter((band) => band.accessMode !== 'invite')
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
@@ -2488,7 +2589,7 @@ app.get('/api/bands', requireMusician, (req, res) => {
   res.json({ bands: visible });
 });
 
-app.get('/api/bands/me', requireMusician, (req, res) => {
+app.get('/api/bands/me', requireMusician, async (req, res) => {
   const bands = req.db.bands
     .filter((band) => band.hostId === req.user.id || bandMembership(req.db, band.id, req.user.id))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
@@ -2496,7 +2597,7 @@ app.get('/api/bands/me', requireMusician, (req, res) => {
   res.json({ bands });
 });
 
-app.post('/api/bands', requireMusician, (req, res) => {
+app.post('/api/bands', requireMusician, async (req, res) => {
   const name = String(req.body.name || '').trim().slice(0, 80);
   const description = String(req.body.description || '').trim().slice(0, 500);
   const accessMode = String(req.body.accessMode || 'open').toLowerCase();
@@ -2536,11 +2637,11 @@ app.post('/api/bands', requireMusician, (req, res) => {
     role: 'host',
     joinedAt: band.createdAt,
   });
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
 });
 
-app.post('/api/bands/join-by-code', requireMusician, (req, res) => {
+app.post('/api/bands/join-by-code', requireMusician, async (req, res) => {
   const code = String(req.body.code || '').trim().toUpperCase();
   const band = req.db.bands.find((candidate) => candidate.inviteCode === code);
   if (!band) return res.status(404).json({ error: 'That friend invite code is not valid.' });
@@ -2553,12 +2654,12 @@ app.post('/api/bands/join-by-code', requireMusician, (req, res) => {
       role: 'member',
       joinedAt: new Date().toISOString(),
     });
-    writeDb(req.db);
+    await writeDb(req.db);
   }
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.post('/api/bands/:bandId/join', requireMusician, (req, res) => {
+app.post('/api/bands/:bandId/join', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   if (bandBan(band, req.user.id)) return res.status(403).json({ error: 'The band creator has banned this account.' });
@@ -2594,11 +2695,11 @@ app.post('/api/bands/:bandId/join', requireMusician, (req, res) => {
     role: 'member',
     joinedAt: new Date().toISOString(),
   });
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
 });
 
-app.get('/api/bands/:bandId/chat', requireMusician, (req, res) => {
+app.get('/api/bands/:bandId/chat', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   if (!bandMembership(req.db, band.id, req.user.id) && band.hostId !== req.user.id) {
@@ -2612,7 +2713,7 @@ app.get('/api/bands/:bandId/chat', requireMusician, (req, res) => {
   res.json({ messages });
 });
 
-app.post('/api/bands/:bandId/chat', requireMusician, (req, res) => {
+app.post('/api/bands/:bandId/chat', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   if (!bandMembership(req.db, band.id, req.user.id) && band.hostId !== req.user.id) {
@@ -2635,11 +2736,11 @@ app.post('/api/bands/:bandId/chat', requireMusician, (req, res) => {
   };
   req.db.bandMessages.push(message);
   req.db.bandMessages = req.db.bandMessages.slice(-5000);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ message: safeBandMessage(message, req.db) });
 });
 
-app.delete('/api/bands/:bandId/members/:userId', requireMusician, (req, res) => {
+app.delete('/api/bands/:bandId/members/:userId', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   if (band.hostId !== req.user.id) return res.status(403).json({ error: 'Only the band creator can remove members.' });
@@ -2647,11 +2748,11 @@ app.delete('/api/bands/:bandId/members/:userId', requireMusician, (req, res) => 
   const membership = bandMembership(req.db, band.id, req.params.userId);
   if (!membership) return res.status(404).json({ error: 'That account is not in this band.' });
   req.db.bandMemberships = req.db.bandMemberships.filter((item) => item.id !== membership.id);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.post('/api/bands/:bandId/bans', requireMusician, (req, res) => {
+app.post('/api/bands/:bandId/bans', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   if (band.hostId !== req.user.id) return res.status(403).json({ error: 'Only the band creator can ban accounts.' });
@@ -2663,20 +2764,20 @@ app.post('/api/bands/:bandId/bans', requireMusician, (req, res) => {
     band.bans.push({ userId, bannedBy: req.user.id, bannedAt: new Date().toISOString() });
   }
   req.db.bandMemberships = req.db.bandMemberships.filter((item) => !(item.bandId === band.id && item.userId === userId));
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.delete('/api/bands/:bandId/bans/:userId', requireMusician, (req, res) => {
+app.delete('/api/bands/:bandId/bans/:userId', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   if (band.hostId !== req.user.id) return res.status(403).json({ error: 'Only the band creator can unban accounts.' });
   band.bans = (Array.isArray(band.bans) ? band.bans : []).filter((ban) => ban.userId !== req.params.userId);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.put('/api/bands/:bandId/general-score', requireMusician, (req, res) => {
+app.put('/api/bands/:bandId/general-score', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const membership = bandMembership(req.db, band.id, req.user.id);
@@ -2704,11 +2805,11 @@ app.put('/api/bands/:bandId/general-score', requireMusician, (req, res) => {
       })),
     };
   }
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.post('/api/bands/:bandId/instruments', requireMusician, (req, res) => {
+app.post('/api/bands/:bandId/instruments', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const membership = bandMembership(req.db, band.id, req.user.id);
@@ -2729,11 +2830,11 @@ app.post('/api/bands/:bandId/instruments', requireMusician, (req, res) => {
     createdAt: new Date().toISOString(),
   };
   band.instruments.push(part);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ band: safeBand(band, req.db, req.user.id), part });
 });
 
-app.put('/api/bands/:bandId/instruments/:partId', requireMusician, (req, res) => {
+app.put('/api/bands/:bandId/instruments/:partId', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const membership = bandMembership(req.db, band.id, req.user.id);
@@ -2765,11 +2866,11 @@ app.put('/api/bands/:bandId/instruments/:partId', requireMusician, (req, res) =>
   if (req.body.muted !== undefined) part.muted = Boolean(req.body.muted);
   if (req.body.volume !== undefined) part.volume = Math.max(0, Math.min(1.2, Number(req.body.volume || 0)));
   if (req.body.visualEnabled !== undefined) part.visualEnabled = Boolean(req.body.visualEnabled);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ band: safeBand(band, req.db, req.user.id), part });
 });
 
-app.delete('/api/bands/:bandId/instruments/:partId', requireMusician, (req, res) => {
+app.delete('/api/bands/:bandId/instruments/:partId', requireMusician, async (req, res) => {
   const band = req.db.bands.find((candidate) => candidate.id === req.params.bandId);
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   const part = (band.instruments || []).find((candidate) => candidate.id === req.params.partId);
@@ -2778,11 +2879,11 @@ app.delete('/api/bands/:bandId/instruments/:partId', requireMusician, (req, res)
     return res.status(403).json({ error: 'Only the host or the person who added this part can remove it.' });
   }
   band.instruments = band.instruments.filter((candidate) => candidate.id !== part.id);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ band: safeBand(band, req.db, req.user.id) });
 });
 
-app.get('/api/messages/threads', requireAuth, (req, res) => {
+app.get('/api/messages/threads', requireAuth, async (req, res) => {
   const related = req.db.messages.filter((message) => message.fromUserId === req.user.id || message.toUserId === req.user.id);
   const latestByOther = new Map();
   related.forEach((message) => {
@@ -2799,7 +2900,7 @@ app.get('/api/messages/threads', requireAuth, (req, res) => {
   res.json({ threads });
 });
 
-app.get('/api/messages/:otherUserId', requireAuth, (req, res) => {
+app.get('/api/messages/:otherUserId', requireAuth, async (req, res) => {
   const otherId = req.params.otherUserId;
   const messages = req.db.messages
     .filter((message) => (
@@ -2811,7 +2912,7 @@ app.get('/api/messages/:otherUserId', requireAuth, (req, res) => {
   res.json({ messages, otherUser: other ? { user_id: other.id, name: other.name } : null });
 });
 
-app.post('/api/messages', requireAuth, (req, res) => {
+app.post('/api/messages', requireAuth, async (req, res) => {
   const toUserId = String(req.body.toUserId || '');
   const text = String(req.body.text || '').trim().slice(0, 2000);
   if (!text) return res.status(400).json({ error: 'Message cannot be empty.' });
@@ -2819,17 +2920,17 @@ app.post('/api/messages', requireAuth, (req, res) => {
   if (!req.db.users.some((user) => user.id === toUserId)) return res.status(404).json({ error: 'Recipient not found.' });
   const message = { id: id('message'), fromUserId: req.user.id, toUserId, text, createdAt: new Date().toISOString() };
   req.db.messages.push(message);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ message });
 });
 
-app.get('/api/wallet', requireAuth, (req, res) => {
+app.get('/api/wallet', requireAuth, async (req, res) => {
   const ledger = req.db.ledger.filter((entry) => entry.userId === req.user.id).slice(-100).reverse();
   const withdrawals = req.db.withdrawals.filter((item) => item.userId === req.user.id).slice(-20).reverse();
   res.json({ user: safeUser(req.user), ledger, withdrawals, withdrawalFeeRate: WITHDRAWAL_FEE_RATE });
 });
 
-app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, async (req, res) => {
   const rows = adminPurchaseRows(req.db);
   const totals = rows.reduce((result, row) => {
     result[row.currency] = Number((Number(result[row.currency] || 0) + row.amount).toFixed(2));
@@ -2845,7 +2946,7 @@ app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, (req, res) =
   });
 });
 
-app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   const customers = req.db.users.filter((user) => user.id !== 'platform');
   const rows = customers.map((user) => {
     const completedOrders = req.db.paymentOrders.filter((order) => order.userId === user.id && order.status === 'COMPLETED');
@@ -2915,11 +3016,11 @@ app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
   });
 });
 
-app.get('/api/admin/policies', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   res.json({ policies: sitePolicies(req.db) });
 });
 
-app.put('/api/admin/policies', requireAuth, requireAdmin, (req, res) => {
+app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   const next = {
     registrationEnabled: req.body.registrationEnabled !== false,
     minimumSignupAge: clampInteger(req.body.minimumSignupAge, 0, 120, 0),
@@ -2944,11 +3045,11 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, (req, res) => {
     }
   }
   req.db.settings = next;
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({ policies: sitePolicies(req.db), message: 'Rules and policies saved.' });
 });
 
-app.get('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) => {
   const promotions = req.db.promotions
     .slice()
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
@@ -2956,7 +3057,7 @@ app.get('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
   res.json({ promotions });
 });
 
-app.post('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) => {
   const code = normalizePromotionCode(req.body.code);
   const name = String(req.body.name || '').trim().slice(0, 100);
   const kind = String(req.body.kind || '');
@@ -3006,11 +3107,11 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, (req, res) => {
       });
   }
   req.db.promotions.push(promotion);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ promotion: publicPromotion(promotion, req.db), message: `${promotion.code} is ready to use.` });
 });
 
-app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, (req, res) => {
+app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, async (req, res) => {
   const promotion = req.db.promotions.find((item) => item.id === req.params.promotionId);
   if (!promotion) return res.status(404).json({ error: 'Promotion not found.' });
   if (promotion.retired && req.body.active === true) {
@@ -3019,20 +3120,20 @@ app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, (req,
   if (req.body.active !== undefined) promotion.active = Boolean(req.body.active);
   promotion.updatedAt = new Date().toISOString();
   promotion.updatedBy = req.user.id;
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({
     promotion: publicPromotion(promotion, req.db),
     message: `${promotion.code} is now ${promotion.active ? 'active' : 'paused'}.`,
   });
 });
 
-app.post('/api/promotions/redeem', requireAuth, (req, res) => {
+app.post('/api/promotions/redeem', requireAuth, async (req, res) => {
   res.status(410).json({
     error: 'Mcoin-credit vouchers are retired. Promotion codes now provide percentage discounts only.',
   });
 });
 
-app.post('/api/admin/users/:userId/reset-password', requireAuth, requireAdmin, (req, res) => {
+app.post('/api/admin/users/:userId/reset-password', requireAuth, requireAdmin, async (req, res) => {
   const user = req.db.users.find((candidate) => candidate.id === req.params.userId && candidate.id !== 'platform');
   if (!user) return res.status(404).json({ error: 'User account not found.' });
   if (user.id === req.user.id) {
@@ -3058,7 +3159,7 @@ app.post('/api/admin/users/:userId/reset-password', requireAuth, requireAdmin, (
     createdAt: user.passwordResetAt,
   });
   req.db.sessions = req.db.sessions.filter((session) => session.userId !== user.id);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.json({
     userId: user.id,
     temporaryPassword: password,
@@ -3066,13 +3167,13 @@ app.post('/api/admin/users/:userId/reset-password', requireAuth, requireAdmin, (
   });
 });
 
-app.post('/api/wallet/buy-pro', requireAuth, (req, res) => {
+app.post('/api/wallet/buy-pro', requireAuth, async (req, res) => {
   res.status(410).json({
     error: 'Subscriptions use recurring PayPal billing. Mcoins are reserved for one-time purchases and translation overages.',
   });
 });
 
-app.post('/api/wallet/withdraw', requireAuth, (req, res) => {
+app.post('/api/wallet/withdraw', requireAuth, async (req, res) => {
   const requestedMcoins = Number(req.body.amountMcoins);
   const amountMcoins = Number.isFinite(requestedMcoins)
     ? Math.floor(requestedMcoins * 100) / 100
@@ -3107,7 +3208,7 @@ app.post('/api/wallet/withdraw', requireAuth, (req, res) => {
   };
   req.db.withdrawals.push(withdrawal);
   addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `25% cash-out fee: ${feeMcoins} Mcoins; net: ${netMcoins} Mcoins`);
-  writeDb(req.db);
+  await writeDb(req.db);
   res.status(201).json({ withdrawal, user: safeUser(req.user) });
 });
 
@@ -3372,7 +3473,7 @@ app.post('/api/paypal/create-order', requireAuth, async (req, res) => {
       status: data.status,
       createdAt: new Date().toISOString(),
     });
-    writeDb(req.db);
+    await writeDb(req.db);
     res.status(201).json({ orderId: data.id, approveUrl, product });
   } catch (error) {
     console.error('PayPal create order failed:', error.message);
@@ -3432,7 +3533,7 @@ app.post('/api/paypal/capture-order', requireAuth, async (req, res) => {
     record.completedAt = new Date().toISOString();
     req.user.mcoins += product.mcoins;
     addLedger(req.db, req.user.id, product.mcoins, 'mcoin_purchase', product.name);
-    writeDb(req.db);
+    await writeDb(req.db);
     res.json({ user: safeUser(req.user), product, paypalStatus: paymentData.status });
   } catch (error) {
     console.error('PayPal capture order failed:', error.message);
@@ -3552,7 +3653,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       req.user.proStatus = data.status || 'APPROVAL_PENDING';
       req.user.pro = false;
     }
-    writeDb(req.db);
+    await writeDb(req.db);
     res.status(201).json({
       subscriptionId: data.id,
       approveUrl,
@@ -3606,7 +3707,7 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
         `${product.name} ${product.interval.toLowerCase()}`,
       );
     }
-    writeDb(req.db);
+    await writeDb(req.db);
 
     res.json({
       user: safeUser(req.user),
@@ -3643,7 +3744,7 @@ app.post('/api/paypal/webhook', async (req, res) => {
       return res.status(400).json({ error: 'PayPal webhook signature verification failed.' });
     }
 
-    const db = readDb();
+    const db = await readDb();
     const eventId = String(req.body.id || '');
     if (eventId && db.webhookEvents.some((event) => event.eventId === eventId)) {
       return res.json({ received: true, duplicate: true });
@@ -3669,7 +3770,7 @@ app.post('/api/paypal/webhook', async (req, res) => {
         try {
           await cancelPreviousSubscriptionForUpgrade(db, record);
         } catch (error) {
-          writeDb(db);
+          await writeDb(db);
           throw error;
         }
       }
@@ -3683,7 +3784,7 @@ app.post('/api/paypal/webhook', async (req, res) => {
       receivedAt: new Date().toISOString(),
     });
     if (db.webhookEvents.length > 1000) db.webhookEvents = db.webhookEvents.slice(-1000);
-    writeDb(db);
+    await writeDb(db);
     res.json({ received: true });
   } catch (error) {
     console.error('PayPal webhook failed:', error.message);
@@ -4248,24 +4349,25 @@ async function translatePdfWithOpenAI(bytes, filename, instrument) {
 }
 
 async function processTranslationJob(jobId) {
-  let db = readDb();
-  let job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
-  if (!job || job.status !== 'processing') return;
+  let job = await claimBackgroundJob('scoreTranslationJobs', jobId);
+  if (!job) return;
+  let db;
 
   try {
     job.stage = 'Reading music notation with OpenAI';
     job.progress = 18;
-    writeDb(db);
+    await writeDb(db);
 
-    const sourcePath = path.join(UPLOAD_DIR, job.sourcePath);
+    const sourceWorkPath = path.join(UPLOAD_DIR, `${job.id}-source.pdf`);
+    const sourcePath = await ARTIFACT_STORE.materialize(job.sourcePath, sourceWorkPath);
     const bytes = fs.readFileSync(sourcePath);
 
-    db = readDb();
+    db = await readDb();
     job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
     job.stage = 'Translating notes and timing';
     job.progress = 42;
-    writeDb(db);
+    await writeDb(db);
 
     const openaiResult = await translatePdfWithOpenAI(
       bytes,
@@ -4274,14 +4376,14 @@ async function processTranslationJob(jobId) {
     );
     const result = openaiResult.song;
 
-    db = readDb();
+    db = await readDb();
     job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
     job.stage = 'Checking ready-to-play sheet';
     job.progress = 82;
     job.openaiResponseId = openaiResult.openaiResponseId;
     job.openaiModel = openaiResult.model;
-    writeDb(db);
+    await writeDb(db);
 
     const outputName = `${job.id}-${sanitizeFilename(job.filename.replace(/\.pdf$/i, '') || 'ready-to-play-sheet')}.json`;
     fs.writeFileSync(path.join(UPLOAD_DIR, outputName), JSON.stringify({
@@ -4292,26 +4394,34 @@ async function processTranslationJob(jobId) {
       translatedAt: new Date().toISOString(),
     }, null, 2));
 
-    db = readDb();
+    db = await readDb();
     job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
-    job.outputPath = outputName;
+    job.outputPath = await ARTIFACT_STORE.putFile(
+      artifactKey('score-translations', outputName),
+      path.join(UPLOAD_DIR, outputName),
+      'application/json',
+    );
     job.outputFilename = `${sanitizeFilename(job.filename.replace(/\.pdf$/i, '') || 'ready-to-play-sheet')}.json`;
     job.status = 'completed';
     job.stage = 'Ready to download';
     job.progress = 100;
     job.completedAt = new Date().toISOString();
-    writeDb(db);
+    await writeDb(db);
+    if (ARTIFACT_STORE.remote) {
+      safeRemoveUpload(sourcePath);
+      safeRemoveUpload(path.join(UPLOAD_DIR, outputName));
+    }
   } catch (error) {
-    db = readDb();
+    db = await readDb();
     job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
     refundTranslationJob(db, job, error.message);
-    writeDb(db);
+    await writeDb(db);
   }
 }
 
-app.get('/api/media-transcriptions', requireAuth, (req, res) => {
+app.get('/api/media-transcriptions', requireAuth, async (req, res) => {
   const jobs = req.db.mediaTranscriptionJobs
     .filter((job) => job.userId === req.user.id)
     .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
@@ -4320,7 +4430,7 @@ app.get('/api/media-transcriptions', requireAuth, (req, res) => {
   res.json({ jobs, capability: muscriptorAvailability(), user: safeUser(req.user) });
 });
 
-app.post('/api/media-transcriptions', requireAuth, (req, res) => {
+app.post('/api/media-transcriptions', requireAuth, async (req, res) => {
   const capability = muscriptorAvailability();
   if (!capability.enabled) {
     return res.status(503).json({ error: capability.reason, capability });
@@ -4332,7 +4442,7 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
     });
   }
 
-  return mediaUpload.single('media')(req, res, (uploadError) => {
+  return mediaUpload.single('media')(req, res, async (uploadError) => {
     if (uploadError) {
       const message = uploadError.message || 'The audio or video upload failed.';
       return res.status(400).json({ error: message });
@@ -4386,6 +4496,9 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
       .trim()
       .slice(0, 120);
     const now = new Date().toISOString();
+    const sourceKey = artifactKey('media', path.basename(req.file.path));
+    await ARTIFACT_STORE.putFile(sourceKey, req.file.path, req.file.mimetype);
+    if (ARTIFACT_STORE.remote) safeRemoveUpload(req.file.path);
     const job = {
       id: id('media_tx'),
       userId: req.user.id,
@@ -4398,7 +4511,7 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
       costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
       model: `muscriptor-${MUSCRIPTOR_MODEL}`,
       modelLicense: 'CC-BY-NC-4.0',
-      sourcePath: path.basename(req.file.path),
+      sourcePath: sourceKey,
       status: 'processing',
       stage: 'Queued for MuScriptor',
       progress: 5,
@@ -4412,8 +4525,8 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
     } else {
       addLedger(req.db, req.user.id, 0, 'admin_audio_translation', `${filename} (unlimited administrator access)`);
     }
-    writeDb(req.db);
-    setImmediate(() => enqueueMediaTranscription(job.id));
+    await writeDb(req.db);
+    await dispatchBackgroundJob('media-transcription', job.id);
     return res.status(202).json({
       job: publicMediaTranscriptionJob(job),
       capability,
@@ -4423,7 +4536,7 @@ app.post('/api/media-transcriptions', requireAuth, (req, res) => {
   });
 });
 
-app.get('/api/media-transcriptions/:jobId', requireAuth, (req, res) => {
+app.get('/api/media-transcriptions/:jobId', requireAuth, async (req, res) => {
   const job = req.db.mediaTranscriptionJobs.find((candidate) => (
     candidate.id === req.params.jobId && candidate.userId === req.user.id
   ));
@@ -4435,7 +4548,7 @@ app.get('/api/media-transcriptions/:jobId', requireAuth, (req, res) => {
   });
 });
 
-app.get('/api/media-transcriptions/:jobId/download', requireAuth, (req, res) => {
+app.get('/api/media-transcriptions/:jobId/download', requireAuth, async (req, res) => {
   const job = req.db.mediaTranscriptionJobs.find((candidate) => (
     candidate.id === req.params.jobId && candidate.userId === req.user.id
   ));
@@ -4443,14 +4556,16 @@ app.get('/api/media-transcriptions/:jobId/download', requireAuth, (req, res) => 
   if (job.status !== 'completed' || !job.outputPath) {
     return res.status(409).json({ error: 'The ready-to-play transcription is not available yet.' });
   }
-  return res.download(
-    path.join(UPLOAD_DIR, job.outputPath),
+  return ARTIFACT_STORE.sendDownload(
+    res,
+    job.outputPath,
     job.outputFilename || 'muscriptor-ready-to-play.json',
+    'application/json',
   );
 });
 
-app.get('/api/score-translations/usage', requireAuth, (req, res) => {
-  writeDb(req.db);
+app.get('/api/score-translations/usage', requireAuth, async (req, res) => {
+  await writeDb(req.db);
   res.json({
     user: safeUser(req.user),
     translationMcoinCost: translationMcoinCost(req.user),
@@ -4458,7 +4573,7 @@ app.get('/api/score-translations/usage', requireAuth, (req, res) => {
   });
 });
 
-app.get('/api/score-translations', requireAuth, (req, res) => {
+app.get('/api/score-translations', requireAuth, async (req, res) => {
   let changed = false;
   const jobs = req.db.scoreTranslationJobs
     .filter((job) => job.userId === req.user.id)
@@ -4468,11 +4583,11 @@ app.get('/api/score-translations', requireAuth, (req, res) => {
       if (extendTranslationEstimate(job)) changed = true;
       return publicTranslationJob(job);
     });
-  if (changed) writeDb(req.db);
+  if (changed) await writeDb(req.db);
   res.json({ jobs, user: safeUser(req.user) });
 });
 
-app.post('/api/score-translations', requireAuth, (req, res) => {
+app.post('/api/score-translations', requireAuth, async (req, res) => {
   const openaiApiKey = String(process.env.OPENAI_API_KEY || '').trim();
   if (!openaiApiKey) {
     return res.status(503).json({
@@ -4515,7 +4630,7 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   ));
   if (recentDuplicate) {
     extendTranslationEstimate(recentDuplicate);
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.json({ job: publicTranslationJob(recentDuplicate), user: safeUser(req.user), duplicate: true });
   }
 
@@ -4539,7 +4654,11 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
 
   const jobId = id('translation');
   const sourceName = `${jobId}-${filename}`;
-  fs.writeFileSync(path.join(UPLOAD_DIR, sourceName), bytes);
+  const sourceKey = await ARTIFACT_STORE.putBuffer(
+    artifactKey('score-sources', sourceName),
+    bytes,
+    'application/pdf',
+  );
   const now = Date.now();
   const job = {
     id: jobId,
@@ -4550,7 +4669,7 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
     allowanceBucket,
     costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
     fileHash,
-    sourcePath: sourceName,
+    sourcePath: sourceKey,
     status: 'processing',
     stage: 'Queued for music translation',
     progress: 5,
@@ -4564,11 +4683,9 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   } else if (paymentMethod === 'admin') {
     addLedger(req.db, req.user.id, 0, 'admin_pdf_translation', `${filename} (unlimited administrator access)`);
   }
-  writeDb(req.db);
+  await writeDb(req.db);
 
-  setImmediate(() => {
-    processTranslationJob(job.id).catch((error) => console.error('Translation job failed:', error));
-  });
+  await dispatchBackgroundJob('score-translation', job.id);
 
   res.status(202).json({
     job: publicTranslationJob(job),
@@ -4577,24 +4694,29 @@ app.post('/api/score-translations', requireAuth, (req, res) => {
   });
 });
 
-app.get('/api/score-translations/:jobId', requireAuth, (req, res) => {
+app.get('/api/score-translations/:jobId', requireAuth, async (req, res) => {
   const job = req.db.scoreTranslationJobs.find((candidate) => candidate.id === req.params.jobId && candidate.userId === req.user.id);
   if (!job) return res.status(404).json({ error: 'Translation job not found.' });
   const changed = extendTranslationEstimate(job);
-  if (changed) writeDb(req.db);
+  if (changed) await writeDb(req.db);
   res.json({ job: publicTranslationJob(job), user: safeUser(req.user) });
 });
 
-app.get('/api/score-translations/:jobId/download', requireAuth, (req, res) => {
+app.get('/api/score-translations/:jobId/download', requireAuth, async (req, res) => {
   const job = req.db.scoreTranslationJobs.find((candidate) => candidate.id === req.params.jobId && candidate.userId === req.user.id);
   if (!job) return res.status(404).json({ error: 'Translation job not found.' });
   if (job.status !== 'completed' || !job.outputPath) {
     return res.status(409).json({ error: 'The ready-to-play sheet is not available yet.' });
   }
-  res.download(path.join(UPLOAD_DIR, job.outputPath), job.outputFilename || 'ready-to-play-sheet.json');
+  return ARTIFACT_STORE.sendDownload(
+    res,
+    job.outputPath,
+    job.outputFilename || 'ready-to-play-sheet.json',
+    'application/json',
+  );
 });
 
-app.post('/api/score-import', (req, res) => {
+app.post('/api/score-import', async (req, res) => {
   res.status(410).json({
     error: 'Direct PDF conversion has been replaced by the user-facing translation queue. Sign in and use /api/score-translations.',
   });
@@ -4603,13 +4725,26 @@ app.post('/api/score-import', (req, res) => {
 if (IS_PRODUCTION) {
   const frontendDir = path.resolve(__dirname, '..', 'dist');
 
+  app.use('/samples', express.static(path.join(frontendDir, 'samples'), {
+    etag: true,
+    setHeaders(res, filename) {
+      const immutable = path.extname(filename).toLowerCase() === '.wav';
+      res.setHeader(
+        'Cache-Control',
+        immutable
+          ? 'public, max-age=31536000, immutable'
+          : 'public, max-age=300, must-revalidate',
+      );
+    },
+  }));
+
   app.use(express.static(frontendDir, {
     etag: true,
     maxAge: '1h',
   }));
 
   // React owns browser routes. Unknown API routes must still return JSON 404s.
-  app.use((req, res, next) => {
+  app.use(async (req, res, next) => {
     if (req.path.startsWith('/api/')) {
       return res.status(404).json({ error: 'API route not found.' });
     }
@@ -4620,31 +4755,60 @@ if (IS_PRODUCTION) {
   });
 }
 
-function resumePendingTranslationJobs() {
+app.use((error, req, res, next) => {
+  if (error instanceof StateConflictError) {
+    return res.status(409).json({
+      error: 'Another request updated the same account data. Please retry.',
+      code: 'STATE_CONFLICT',
+    });
+  }
+  if (res.headersSent) return next(error);
+  console.error('Request failed:', error);
+  return res.status(Number(error.status || 500)).json({
+    error: Number(error.status) < 500 ? error.message : 'The server could not complete this request.',
+  });
+});
+
+async function resumePendingTranslationJobs() {
   if (!String(process.env.OPENAI_API_KEY || '').trim()) return;
-  const db = readDb();
-  db.scoreTranslationJobs
-    .filter((job) => job.status === 'processing')
-    .forEach((job) => setImmediate(() => {
-      processTranslationJob(job.id).catch((error) => console.error('Translation resume failed:', error));
-    }));
+  const db = await readDb();
+  for (const job of db.scoreTranslationJobs.filter((candidate) => candidate.status === 'processing')) {
+    await dispatchBackgroundJob('score-translation', job.id);
+  }
 }
 
-function resumePendingMediaTranscriptionJobs() {
+async function resumePendingMediaTranscriptionJobs() {
   if (!muscriptorAvailability().enabled) return;
-  const db = readDb();
-  db.mediaTranscriptionJobs
-    .filter((job) => job.status === 'processing' && job.sourcePath)
-    .forEach((job) => setImmediate(() => enqueueMediaTranscription(job.id)));
+  const db = await readDb();
+  for (const job of db.mediaTranscriptionJobs.filter((candidate) => (
+    candidate.status === 'processing' && candidate.sourcePath
+  ))) {
+    await dispatchBackgroundJob('media-transcription', job.id);
+  }
+}
+
+async function startServer() {
+  ensureStorage();
+  await bootstrapAdminAccounts();
+  await writeDb(await readDb());
+  if (JOB_QUEUE.enabled) {
+    JOB_QUEUE.start(runQueuedJob).catch((error) => console.error('Job queue stopped:', error));
+  }
+  await resumePendingTranslationJobs();
+  await resumePendingMediaTranscriptionJobs();
+  return app.listen(PORT, () => {
+    console.log(
+      `Polymath Musician backend running on http://localhost:${PORT} `
+      + `(${STATE_STORE.provider}, region ${process.env.APP_REGION || 'local'})`,
+    );
+  });
 }
 
 if (require.main === module) {
-  ensureStorage();
-  bootstrapAdminAccounts();
-  writeDb(readDb());
-  resumePendingTranslationJobs();
-  resumePendingMediaTranscriptionJobs();
-  app.listen(PORT, () => console.log(`Polymath Musician backend running on http://localhost:${PORT}`));
+  startServer().catch((error) => {
+    console.error('Polymath Musician failed to start:', error);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = {
@@ -4653,6 +4817,7 @@ module.exports = {
   bootstrapAdminAccounts,
   readDb,
   writeDb,
+  startServer,
   subscriptionRules: {
     products: PRODUCTS,
     activeSubscriptionTier,

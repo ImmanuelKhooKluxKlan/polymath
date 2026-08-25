@@ -226,7 +226,13 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
 
   const health = await api('/api/health');
   assert.equal(health.status, 200);
-  assert.deepEqual(health.data, { ok: true });
+  assert.deepEqual(health.data, {
+    ok: true,
+    storage: 'atomic-json',
+    artifacts: 'local-disk',
+    queue: 'in-process',
+    region: 'local',
+  });
 
   const catalog = await api('/api/catalog');
   assert.equal(catalog.status, 200);

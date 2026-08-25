@@ -9,8 +9,9 @@ import {
   parseNote,
 } from './noteMath.js';
 import { getInitialPerformanceTier, normalizePerformanceTier } from './devicePerformance.js';
+import { publicAssetUrl } from '../services/assetUrls.js';
 
-const IOWA_MF_BASE_URL = '/samples/iowa-mf';
+const IOWA_MF_BASE_URL = publicAssetUrl('samples/iowa-mf');
 
 const MIN_GAIN = 0.00008;
 const SAMPLE_FADE_SECONDS = 0.006;

@@ -12,11 +12,11 @@ process.env.MUSCRIPTOR_ENABLED = 'false';
 
 const { bootstrapAdminAccounts, readDb } = require('./server');
 
-test('ADMIN_PASSWORD creates only missing admins and never overwrites an account', (context) => {
+test('ADMIN_PASSWORD creates only missing admins and never overwrites an account', async (context) => {
   context.after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
 
-  assert.deepEqual(bootstrapAdminAccounts(), { created: 1 });
-  const firstDb = readDb();
+  assert.deepEqual(await bootstrapAdminAccounts(), { created: 1 });
+  const firstDb = await readDb();
   const admin = firstDb.users.find((user) => user.email === 'owner@example.test');
   assert.ok(admin);
   assert.equal(admin.mustChangePassword, true);
@@ -25,7 +25,7 @@ test('ADMIN_PASSWORD creates only missing admins and never overwrites an account
 
   const originalHash = admin.passwordHash;
   process.env.ADMIN_PASSWORD = 'a-different-temporary-password';
-  assert.deepEqual(bootstrapAdminAccounts(), { created: 0 });
-  const unchangedAdmin = readDb().users.find((user) => user.email === 'owner@example.test');
+  assert.deepEqual(await bootstrapAdminAccounts(), { created: 0 });
+  const unchangedAdmin = (await readDb()).users.find((user) => user.email === 'owner@example.test');
   assert.equal(unchangedAdmin.passwordHash, originalHash);
 });
