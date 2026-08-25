@@ -20,6 +20,9 @@ const ENDPOINT = String(
 const ACCESS_KEY_ID = String(process.env.INSTRUMENT_R2_ACCESS_KEY_ID || '').trim();
 const SECRET_ACCESS_KEY = String(process.env.INSTRUMENT_R2_SECRET_ACCESS_KEY || '').trim();
 const CONCURRENCY = Math.max(1, Math.min(16, Number(process.env.INSTRUMENT_SYNC_CONCURRENCY || 6)));
+const CONFIGURE_CORS = !/^(0|false|no)$/i.test(
+  String(process.env.INSTRUMENT_CONFIGURE_CORS || 'true').trim(),
+);
 
 if (!/^[a-z0-9][a-z0-9._-]{0,62}$/i.test(RELEASE)) {
   throw new Error('INSTRUMENT_ASSET_RELEASE must be a simple version such as v1 or 2026-08-25.');
@@ -118,7 +121,11 @@ async function main() {
     },
   });
 
-  await configureCors(client);
+  if (CONFIGURE_CORS) {
+    await configureCors(client);
+  } else {
+    console.log('CORS configuration skipped; expecting bucket CORS to be managed separately.');
+  }
   let uploaded = 0;
   let unchanged = 0;
 

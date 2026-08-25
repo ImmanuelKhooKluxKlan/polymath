@@ -37,3 +37,4 @@ jobs:
           INSTRUMENT_R2_SECRET_ACCESS_KEY: ${{ secrets.INSTRUMENT_R2_SECRET_ACCESS_KEY }}
           INSTRUMENT_ASSET_RELEASE: ${{ vars.VITE_ASSET_RELEASE }}
           INSTRUMENT_ALLOWED_ORIGINS: https://polymathmusician67.com
+          INSTRUMENT_CONFIGURE_CORS: 'false'
