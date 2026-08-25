@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+.env.*.local
 server/.env
 server/data/database.json
 server/data/uploads/
@@ -9,5 +10,10 @@ server/data/uploads/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
 server/server-live.stdout.log
 server/server-live.stderr.log
