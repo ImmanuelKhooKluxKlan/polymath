@@ -8,6 +8,7 @@ import {
   noteToFrequency,
   parseNote,
 } from './noteMath.js';
+import { getInitialPerformanceTier, normalizePerformanceTier } from './devicePerformance.js';
 
 const IOWA_MF_BASE_URL = '/samples/iowa-mf';
 
@@ -19,6 +20,8 @@ const STOP_ALL_RELEASE_SECONDS = 0.055;
 const MIN_KEYBOARD_RELEASE_SECONDS = 0.22;
 const MAX_RELEASE_SECONDS = 3.2;
 const MAX_POLYPHONY = 96;
+const BALANCED_MAX_POLYPHONY = 64;
+const LITE_MAX_POLYPHONY = 36;
 const MAX_PENDING_VOICES = 128;
 
 export const TONE_MODE_LABELS = {
@@ -313,25 +316,40 @@ const AVAILABLE_SAMPLE_MIDI_SET =
     AVAILABLE_SAMPLE_MIDIS
   );
 
+function sampleMidisForTier(tier) {
+  if (tier === 'full') return AVAILABLE_SAMPLE_MIDIS;
+
+  const stride = tier === 'lite' ? 3 : 2;
+  return AVAILABLE_SAMPLE_MIDIS.filter((midi, index) => (
+    index === 0
+    || index === AVAILABLE_SAMPLE_MIDIS.length - 1
+    || midi === 60
+    || index % stride === 0
+  ));
+}
+
 function chooseSampleMidi(
-  requestedMidi
+  requestedMidi,
+  candidateMidis = AVAILABLE_SAMPLE_MIDIS
 ) {
   if (
-    AVAILABLE_SAMPLE_MIDI_SET.has(
-      requestedMidi
+    (
+      candidateMidis === AVAILABLE_SAMPLE_MIDIS
+        ? AVAILABLE_SAMPLE_MIDI_SET.has(requestedMidi)
+        : candidateMidis.includes(requestedMidi)
     )
   ) {
     return requestedMidi;
   }
 
   if (
-    !AVAILABLE_SAMPLE_MIDIS.length
+    !candidateMidis.length
   ) {
     return null;
   }
 
   let best =
-    AVAILABLE_SAMPLE_MIDIS[0];
+    candidateMidis[0];
 
   let bestDistance =
     Math.abs(
@@ -340,7 +358,7 @@ function chooseSampleMidi(
 
   for (
     const candidate of
-    AVAILABLE_SAMPLE_MIDIS
+    candidateMidis
   ) {
     const distance =
       Math.abs(
@@ -360,7 +378,8 @@ function chooseSampleMidi(
 }
 
 function buildSamplePlan(
-  requestedMidi
+  requestedMidi,
+  candidateMidis = AVAILABLE_SAMPLE_MIDIS
 ) {
   const midi =
     Math.round(
@@ -376,7 +395,7 @@ function buildSamplePlan(
   }
 
   const sampleMidi =
-    chooseSampleMidi(midi);
+    chooseSampleMidi(midi, candidateMidis);
 
   if (sampleMidi === null) {
     return null;
@@ -606,8 +625,21 @@ class PianoAudioEngine {
     this.analysisCache =
       new Map();
 
+    this.performanceTier =
+      getInitialPerformanceTier();
+
+    this.mobilePerformanceMode =
+      this.performanceTier !== 'full';
+
+    this.sampleMidis =
+      sampleMidisForTier(this.performanceTier);
+
     this.maxPolyphony =
-      MAX_POLYPHONY;
+      this.performanceTier === 'lite'
+        ? LITE_MAX_POLYPHONY
+        : this.performanceTier === 'balanced'
+          ? BALANCED_MAX_POLYPHONY
+          : MAX_POLYPHONY;
 
     this.sampleFailures =
       new Set();
@@ -629,6 +661,50 @@ class PianoAudioEngine {
 
     this.preloadProgressListener =
       null;
+
+    this.loadingMetrics = {
+      startedAt: 0,
+      wallMs: 0,
+      networkMs: 0,
+      decodeMs: 0,
+      bytes: 0,
+      decodedSamples: 0,
+    };
+  }
+
+  setPerformanceTier(tier, { preserveSampleSet = false } = {}) {
+    const nextTier = normalizePerformanceTier(tier, this.performanceTier);
+    this.performanceTier = nextTier;
+    this.mobilePerformanceMode = nextTier !== 'full';
+    this.maxPolyphony = nextTier === 'lite'
+      ? LITE_MAX_POLYPHONY
+      : nextTier === 'balanced'
+        ? BALANCED_MAX_POLYPHONY
+        : MAX_POLYPHONY;
+
+    if (!preserveSampleSet) {
+      this.sampleMidis = sampleMidisForTier(nextTier);
+    }
+    return nextTier;
+  }
+
+  resetLoadingMetrics() {
+    this.loadingMetrics = {
+      startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+      wallMs: 0,
+      networkMs: 0,
+      decodeMs: 0,
+      bytes: 0,
+      decodedSamples: 0,
+    };
+  }
+
+  getLoadingMetrics() {
+    return {
+      ...this.loadingMetrics,
+      tier: this.performanceTier,
+      sampleZones: this.sampleMidis.length,
+    };
   }
 
   ensure() {
@@ -657,7 +733,11 @@ class PianoAudioEngine {
     if (this.context.state === 'suspended') {
       await this.context.resume();
     }
-    return this.preloadCoreSamples(onProgress);
+    this.resetLoadingMetrics();
+    await this.preloadCoreSamples(onProgress);
+    const endedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.loadingMetrics.wallMs = Math.max(0, endedAt - this.loadingMetrics.startedAt);
+    return this.getLoadingMetrics();
   }
 
   getCurrentTime() {
@@ -1152,7 +1232,7 @@ class PianoAudioEngine {
       }
 
       const info =
-        buildSamplePlan(midi);
+        buildSamplePlan(midi, this.sampleMidis);
 
       if (info?.exact) {
         samples.push(info);
@@ -1225,7 +1305,7 @@ class PianoAudioEngine {
       ...uniqueMidis,
     ].map((midi) => {
       const info =
-        buildSamplePlan(midi);
+        buildSamplePlan(midi, this.sampleMidis);
 
       return info
         ? this
@@ -1331,7 +1411,7 @@ class PianoAudioEngine {
       parseNote(note);
 
     const info =
-      buildSamplePlan(midi);
+      buildSamplePlan(midi, this.sampleMidis);
 
     if (!info) {
       return {
@@ -1393,6 +1473,10 @@ class PianoAudioEngine {
   }
 
   async fetchAndDecode(url) {
+    const requestStartedAt =
+      typeof performance !== 'undefined'
+        ? performance.now()
+        : Date.now();
     const response =
       await fetch(
         url,
@@ -1424,11 +1508,29 @@ class PianoAudioEngine {
     const arrayBuffer =
       await response
         .arrayBuffer();
+    const downloadEndedAt =
+      typeof performance !== 'undefined'
+        ? performance.now()
+        : Date.now();
+    const decoded =
+      await this.context
+        .decodeAudioData(
+          arrayBuffer
+        );
+    const decodeEndedAt =
+      typeof performance !== 'undefined'
+        ? performance.now()
+        : Date.now();
 
-    return this.context
-      .decodeAudioData(
-        arrayBuffer
-      );
+    this.loadingMetrics.networkMs +=
+      Math.max(0, downloadEndedAt - requestStartedAt);
+    this.loadingMetrics.decodeMs +=
+      Math.max(0, decodeEndedAt - downloadEndedAt);
+    this.loadingMetrics.bytes +=
+      arrayBuffer.byteLength;
+    this.loadingMetrics.decodedSamples += 1;
+
+    return decoded;
   }
 
   async loadSampleByInfo(
@@ -1534,7 +1636,7 @@ class PianoAudioEngine {
       parseNote(note);
 
     const plan =
-      buildSamplePlan(midi);
+      buildSamplePlan(midi, this.sampleMidis);
 
     if (!plan) {
       return [];
@@ -2250,9 +2352,11 @@ class PianoAudioEngine {
         this.wetInput
       );
 
-      panNode.connect(
-        this.resonanceInput
-      );
+      if (!this.mobilePerformanceMode) {
+        panNode.connect(
+          this.resonanceInput
+        );
+      }
     } else {
       voiceGain.connect(
         this.dryGain
@@ -2262,9 +2366,11 @@ class PianoAudioEngine {
         this.wetInput
       );
 
-      voiceGain.connect(
-        this.resonanceInput
-      );
+      if (!this.mobilePerformanceMode) {
+        voiceGain.connect(
+          this.resonanceInput
+        );
+      }
     }
 
     voice.voiceGain =
@@ -2559,9 +2665,11 @@ class PianoAudioEngine {
       this.wetInput
     );
 
-    voiceGain.connect(
-      this.resonanceInput
-    );
+    if (!this.mobilePerformanceMode) {
+      voiceGain.connect(
+        this.resonanceInput
+      );
+    }
 
     this.registerVoiceNodes(
       voice,
@@ -3338,6 +3446,10 @@ class PianoAudioEngine {
       analyzedSamples: this.analysisCache.size,
       contextState: this.context?.state || 'not-created',
       maxPolyphony: this.maxPolyphony,
+      mobilePerformanceMode: this.mobilePerformanceMode,
+      performanceTier: this.performanceTier,
+      availableSampleZones: this.sampleMidis.length,
+      loadingMetrics: this.getLoadingMetrics(),
     };
   }
 

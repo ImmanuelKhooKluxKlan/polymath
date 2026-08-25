@@ -1,6 +1,17 @@
 import { parseNote, clamp, noteToDisplayName } from '../engine/noteMath.js';
+import { PERFORMANCE_TIERS, normalizePerformanceTier } from '../engine/devicePerformance.js';
+const MAX_VISUAL_NOTE_SECONDS = 12;
 
-const MAX_RENDERED_NOTES = 820;
+function findFirstRelevantNote(notes, minimumTime) {
+  let low = 0;
+  let high = notes.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (Number(notes[middle]?.time || 0) < minimumTime) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
 
 function handClassFor(event) {
   const role = String(event.scoreRole || '').toLowerCase();
@@ -71,16 +82,30 @@ function FallingRow({ row, layout, visibleNotes, currentTime, leadTime, activeNo
   );
 }
 
-export default function FallingNotes({ song, layout, currentTime, isPlaying, leadTime, activeNotes }) {
+export default function FallingNotes({
+  song,
+  layout,
+  currentTime,
+  isPlaying,
+  leadTime,
+  activeNotes,
+  performanceTier = 'full',
+}) {
   const notes = song?.notes || [];
   const visibleNotes = [];
+  const normalizedTier = normalizePerformanceTier(performanceTier, 'full');
+  const maximumNotes = PERFORMANCE_TIERS[normalizedTier].maximumNotes;
+  const firstRelevantIndex = findFirstRelevantNote(notes, currentTime - MAX_VISUAL_NOTE_SECONDS);
+  const latestVisibleTime = currentTime + leadTime + 0.25;
 
-  for (const event of notes) {
+  for (let index = firstRelevantIndex; index < notes.length; index += 1) {
+    const event = notes[index];
+    if (event.time > latestVisibleTime) break;
     const duration = event.visualDuration ?? event.duration ?? 0.2;
     const untilPress = event.time - currentTime;
     const visible = untilPress < leadTime + 0.25 && currentTime < event.time + duration + 0.7;
     if (visible) visibleNotes.push(event);
-    if (visibleNotes.length > MAX_RENDERED_NOTES) break;
+    if (visibleNotes.length >= maximumNotes) break;
   }
 
   return (

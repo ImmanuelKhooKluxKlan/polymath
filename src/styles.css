@@ -280,12 +280,26 @@ select {
   top: 12px;
   left: 18px;
   right: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 850;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   z-index: 7;
+}
+.performance-tier-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid rgba(155, 132, 255, 0.42);
+  border-radius: 999px;
+  color: #cabdff;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: capitalize;
 }
 .piano-glow { position: absolute; inset: auto 10% 0; height: 80px; background: radial-gradient(ellipse, rgba(88,240,255,0.22), transparent 66%); }
 .piano-rows { position: relative; z-index: 2; display: grid; gap: 16px; }
@@ -4482,6 +4496,47 @@ details[open] > summary {
   border: 0;
   border-radius: 999px;
   accent-color: #8a6cff;
+}
+
+/* Phone performance profile: preserve colours and timing while removing costly glow layers. */
+@media (max-width: 1100px) and (pointer: coarse) {
+  .piano-scroll-wrap .piano-mode-label {
+    display: flex;
+    left: auto;
+    right: 6px;
+    max-width: max-content;
+  }
+  .piano-mode-label > span { display: none; }
+  .app-root[data-performance-tier=balanced] .falling-stage .stage-stars,
+  .app-root[data-performance-tier=balanced] .key-strike-flash,
+  .app-root[data-performance-tier=lite] .falling-stage .stage-stars,
+  .app-root[data-performance-tier=lite] .key-strike-flash {
+    display: none;
+  }
+  .app-root[data-performance-tier=lite] .falling-note,
+  .app-root[data-performance-tier=lite] .falling-note.black-falling-note,
+  .app-root[data-performance-tier=lite] .falling-note.left-hand-note,
+  .app-root[data-performance-tier=lite] .falling-note.right-hand-note,
+  .app-root[data-performance-tier=lite] .falling-note.both-hand-note {
+    filter: none;
+    box-shadow: none;
+    transition: none;
+  }
+  .app-root[data-performance-tier=lite] .falling-note.hot {
+    filter: none;
+    box-shadow: none;
+    outline: 2px solid rgba(255, 255, 255, 0.72);
+  }
+  .app-root[data-performance-tier=lite] .piano-key,
+  .app-root[data-performance-tier=lite] .white,
+  .app-root[data-performance-tier=lite] .black,
+  .app-root[data-performance-tier=lite] .white.active,
+  .app-root[data-performance-tier=lite] .black.active {
+    box-shadow: none;
+  }
+  .app-root[data-performance-tier=lite] .piano-key {
+    transition: background 0.04s ease;
+  }
 }
 
 /* A portrait phone should show the falling notes and the keyboard together. */

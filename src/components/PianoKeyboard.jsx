@@ -94,16 +94,20 @@ export default function PianoKeyboard({
   showKeyNotes = true,
   preparationStatus = 'locked',
   preparationProgress = 0,
+  preparationStage = 'Tap once to prepare',
+  performanceTier = 'full',
   onPrepare,
 }) {
   const disabled = preparationStatus !== 'ready';
+  const isPreparing = preparationStatus === 'loading' || preparationStatus === 'calibrating';
   return (
     <section
       className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
       aria-label={`Playable piano section, ${layout.rangeLabel}`}
     >
       <div className="piano-mode-label">
-        {layout.isTwoStorey ? 'Two-storey A0-C8 grand piano' : 'Polymath Musician A1-C7 row'} • Song range {layout.songRange.minNote}-{layout.songRange.maxNote}
+        <span>{layout.isTwoStorey ? 'Two-storey A0-C8 grand piano' : 'Polymath Musician A1-C7 row'} • Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
+        <small className="performance-tier-badge">Auto · {performanceTier}</small>
       </div>
       <div className="piano-glow" />
       <div className="piano-rows">
@@ -122,11 +126,11 @@ export default function PianoKeyboard({
       </div>
       {disabled && (
         <div className="piano-preparation" aria-live="polite">
-          {preparationStatus === 'loading' ? (
+          {isPreparing ? (
             <>
-              <strong>Preparing piano</strong>
+              <strong>{preparationStage}</strong>
               <progress max="100" value={preparationProgress} aria-label="Piano preparation progress" />
-              <small>{preparationProgress}% loaded. Keep this page open.</small>
+              <small>{preparationProgress}% · Keep this page open.</small>
             </>
           ) : (
             <>

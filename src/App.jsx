@@ -18,6 +18,16 @@ import YourSongsPage from './pages/YourSongsPage.jsx';
 import AdminDatabasePage from './pages/AdminDatabasePage.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
+import {
+  calibrateDevice,
+  getInitialPerformanceTier,
+  lowerPerformanceTier,
+  normalizePerformanceTier,
+  raisePerformanceTier,
+  refineTierFromLoading,
+  savePerformanceProfile,
+  visualFrameInterval,
+} from './engine/devicePerformance.js';
 import { buildAdaptivePianoLayout, buildLearningHandLayout } from './engine/grandPianoLayout.js';
 import {
   findStartIndex,
@@ -93,6 +103,8 @@ export default function App() {
   const [orientationPromptDismissed, setOrientationPromptDismissed] = useState(false);
   const [keyboardPreparationStatus, setKeyboardPreparationStatus] = useState('locked');
   const [keyboardPreparationProgress, setKeyboardPreparationProgress] = useState(0);
+  const [keyboardPreparationStage, setKeyboardPreparationStage] = useState('Tap once to prepare');
+  const [performanceTier, setPerformanceTier] = useState(getInitialPerformanceTier);
 
   const nextEventIndex = useRef(0);
   const nextPedalIndex = useRef(0);
@@ -101,6 +113,7 @@ export default function App() {
   const startStamp = useRef(0);
   const pauseOffset = useRef(0);
   const animationFrame = useRef(null);
+  const lastVisualFrame = useRef(0);
   const audioScheduler = useRef(null);
   const visualTimers = useRef([]);
   const pedalTimers = useRef([]);
@@ -109,6 +122,17 @@ export default function App() {
   const studioPlayerRef = useRef(null);
   const keyboardReadyRef = useRef(false);
   const keyboardPreparationPromise = useRef(null);
+  const performanceTierRef = useRef(performanceTier);
+  const calibrationRef = useRef(null);
+  const runtimePerformanceRef = useRef({
+    lastFrame: 0,
+    windowStarted: 0,
+    frameDeltas: [],
+    audioEvents: 0,
+    lateAudioEvents: 0,
+    stableWindows: 0,
+    lastChangeAt: 0,
+  });
 
   const song = useMemo(
     () => songs.find((candidate) => candidate.title === songTitle) || songs[0],
@@ -270,19 +294,50 @@ export default function App() {
     setPedalDown(down);
   }
 
+  function applyPerformanceTier(nextTier, measurements = {}, preserveSampleSet = keyboardReadyRef.current) {
+    const normalized = normalizePerformanceTier(nextTier, performanceTierRef.current);
+    performanceTierRef.current = normalized;
+    setPerformanceTier(normalized);
+    pianoAudio.setPerformanceTier(normalized, { preserveSampleSet });
+    savePerformanceProfile(normalized, measurements);
+    window.__POLYMATH_PERFORMANCE__ = {
+      tier: normalized,
+      ...measurements,
+      audio: pianoAudio.getDiagnostics(),
+    };
+    return normalized;
+  }
+
   async function prepareKeyboard() {
     if (keyboardReadyRef.current) return true;
     if (keyboardPreparationPromise.current) return keyboardPreparationPromise.current;
 
-    setKeyboardPreparationStatus('loading');
-    setKeyboardPreparationProgress(0);
-    const task = pianoAudio.prepareKeyboard(({ percent }) => {
-      setKeyboardPreparationProgress(Math.max(0, Math.min(100, Number(percent) || 0)));
-    })
+    // Create/resume Web Audio directly inside the tap event so iOS grants audio access.
+    pianoAudio.ensure();
+    setKeyboardPreparationStatus('calibrating');
+    setKeyboardPreparationStage('Checking this device');
+    setKeyboardPreparationProgress(3);
+
+    const task = calibrateDevice()
+      .then(async (calibration) => {
+        calibrationRef.current = calibration;
+        const calibratedTier = applyPerformanceTier(calibration.tier, { calibration }, false);
+        setKeyboardPreparationStatus('loading');
+        setKeyboardPreparationStage('Loading ' + calibratedTier + ' piano');
+        setKeyboardPreparationProgress(8);
+        const loading = await pianoAudio.prepareKeyboard(({ percent }) => {
+          const mappedProgress = 8 + (Math.max(0, Math.min(100, Number(percent) || 0)) * 0.92);
+          setKeyboardPreparationProgress(Math.round(mappedProgress));
+        });
+        const refinedTier = refineTierFromLoading(calibratedTier, loading);
+        applyPerformanceTier(refinedTier, { calibration, loading }, true);
+        return { loading, refinedTier };
+      })
       .then(() => {
         keyboardReadyRef.current = true;
         setKeyboardPreparationProgress(100);
         setKeyboardPreparationStatus('ready');
+        setKeyboardPreparationStage(performanceTierRef.current + ' mode ready');
         return true;
       })
       .catch((error) => {
@@ -513,6 +568,80 @@ export default function App() {
       ? Math.min(getSongDuration(song), practiceRange.end)
       : getSongDuration(song);
     const runId = playbackRunId.current;
+    runtimePerformanceRef.current = {
+      lastFrame: 0,
+      windowStarted: performance.now(),
+      frameDeltas: [],
+      audioEvents: 0,
+      lateAudioEvents: 0,
+      stableWindows: 0,
+      lastChangeAt: 0,
+    };
+
+    function evaluateRuntimePerformance(now) {
+      const monitor = runtimePerformanceRef.current;
+      if (now - monitor.windowStarted < 5000 || document.visibilityState === 'hidden') return;
+
+      const sortedFrames = [...monitor.frameDeltas].sort((a, b) => a - b);
+      const p95FrameMs = sortedFrames.length
+        ? sortedFrames[Math.min(sortedFrames.length - 1, Math.floor(sortedFrames.length * 0.95))]
+        : 100;
+      const delayedFrameRatio = sortedFrames.length
+        ? sortedFrames.filter((value) => value > 34).length / sortedFrames.length
+        : 1;
+      const lateAudioRatio = monitor.audioEvents
+        ? monitor.lateAudioEvents / monitor.audioEvents
+        : 0;
+      const struggling = p95FrameMs > 42
+        || delayedFrameRatio > 0.18
+        || lateAudioRatio > 0.12;
+      const strong = p95FrameMs <= 25
+        && delayedFrameRatio < 0.05
+        && lateAudioRatio < 0.03;
+      const runtime = {
+        p95FrameMs: Math.round(p95FrameMs * 10) / 10,
+        delayedFrameRatio: Math.round(delayedFrameRatio * 1000) / 1000,
+        lateAudioRatio: Math.round(lateAudioRatio * 1000) / 1000,
+        observedFrames: sortedFrames.length,
+        observedAudioEvents: monitor.audioEvents,
+      };
+
+      if (struggling && performanceTierRef.current !== 'lite' && now - monitor.lastChangeAt > 8000) {
+        const nextTier = lowerPerformanceTier(performanceTierRef.current);
+        applyPerformanceTier(nextTier, {
+          calibration: calibrationRef.current,
+          runtime,
+          reason: 'runtime-slowdown',
+        }, true);
+        setKeyboardPreparationStage(nextTier + ' mode ready');
+        monitor.stableWindows = 0;
+        monitor.lastChangeAt = now;
+      } else if (strong) {
+        monitor.stableWindows += 1;
+        if (
+          monitor.stableWindows >= 3
+          && performanceTierRef.current !== 'full'
+          && now - monitor.lastChangeAt > 12000
+        ) {
+          const nextTier = raisePerformanceTier(performanceTierRef.current);
+          applyPerformanceTier(nextTier, {
+            calibration: calibrationRef.current,
+            runtime,
+            reason: 'runtime-stable',
+          }, true);
+          setKeyboardPreparationStage(nextTier + ' mode ready');
+          monitor.stableWindows = 0;
+          monitor.lastChangeAt = now;
+        }
+      } else {
+        monitor.stableWindows = 0;
+      }
+
+      monitor.windowStarted = now;
+      monitor.frameDeltas = [];
+      monitor.audioEvents = 0;
+      monitor.lateAudioEvents = 0;
+    }
 
     function scheduleDueAudioEvents() {
       if (playbackRunId.current !== runId) return;
@@ -533,6 +662,11 @@ export default function App() {
       while (nextEventIndex.current < playbackNotes.length && playbackNotes[nextEventIndex.current].time <= lookAheadSongTime && playbackNotes[nextEventIndex.current].time < duration) {
         const event = playbackNotes[nextEventIndex.current];
         nextEventIndex.current += 1;
+        const schedulingLatenessMs = Math.max(0, ((songNow - event.time) / speed) * 1000);
+        runtimePerformanceRef.current.audioEvents += 1;
+        if (schedulingLatenessMs > 45) {
+          runtimePerformanceRef.current.lateAudioEvents += 1;
+        }
         const delaySeconds = Math.max(0, (event.time - songNow) / speed);
         const audioStartAt = audioNow + delaySeconds;
         const noteDuration = Math.max(0.035, (event.audioDuration ?? event.duration) / speed);
@@ -564,8 +698,21 @@ export default function App() {
 
     function tick(now) {
       if (playbackRunId.current !== runId) return;
+      const monitor = runtimePerformanceRef.current;
+      if (monitor.lastFrame) {
+        const frameDelta = now - monitor.lastFrame;
+        if (frameDelta > 0 && frameDelta < 250) monitor.frameDeltas.push(frameDelta);
+      }
+      monitor.lastFrame = now;
+      evaluateRuntimePerformance(now);
       const nextTime = getSongTimeFromPerformanceClock(now);
-      setCurrentTime(nextTime);
+      if (
+        now - lastVisualFrame.current >= visualFrameInterval(performanceTierRef.current)
+        || nextTime >= duration
+      ) {
+        lastVisualFrame.current = now;
+        setCurrentTime(nextTime);
+      }
       if (nextTime >= duration) {
         if (!(teachingMode === 'learn' && practiceRange)) stopPlayback();
         return;
@@ -726,7 +873,7 @@ export default function App() {
             </div>
           </div>
           <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
-            <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} />
+            <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} performanceTier={performanceTier} />
             <div className="piano-scroll-wrap">
               <PianoKeyboard
                 layout={pianoLayout}
@@ -737,6 +884,8 @@ export default function App() {
                 onRelease={releaseNote}
                 preparationStatus={keyboardPreparationStatus}
                 preparationProgress={keyboardPreparationProgress}
+                preparationStage={keyboardPreparationStage}
+                performanceTier={performanceTier}
                 onPrepare={prepareKeyboard}
               />
             </div>
@@ -788,7 +937,7 @@ export default function App() {
   })();
 
   return (
-    <div className="app-root">
+    <div className="app-root" data-performance-tier={performanceTier}>
       {portraitDevice && !orientationPromptDismissed && (
         <aside className="orientation-recommendation" role="dialog" aria-label="Landscape orientation recommendation">
           <div className="orientation-phone-icon" aria-hidden="true"><span /></div>
