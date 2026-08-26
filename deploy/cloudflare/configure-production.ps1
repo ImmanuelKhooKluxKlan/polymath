@@ -240,8 +240,10 @@ if (-not $Cutover) {
 Write-Host '[5/5] Checking pool health before production cutover'
 $ohioHealth = Invoke-Cloudflare -Method GET -Path "/accounts/$AccountId/load_balancers/pools/$($ohioPool.id)/health"
 $singaporeHealth = Invoke-Cloudflare -Method GET -Path "/accounts/$AccountId/load_balancers/pools/$($singaporePool.id)/health"
-$ohioHealthy = $ohioHealth.result.pop_health.healthy -eq $true
-$singaporeHealthy = $singaporeHealth.result.pop_health.healthy -eq $true
+$ohioRegions = @($ohioHealth.result.pop_health.PSObject.Properties.Value)
+$singaporeRegions = @($singaporeHealth.result.pop_health.PSObject.Properties.Value)
+$ohioHealthy = ($ohioRegions.Count -gt 0) -and ((@($ohioRegions | Where-Object { $_.healthy -ne $true })).Count -eq 0)
+$singaporeHealthy = ($singaporeRegions.Count -gt 0) -and ((@($singaporeRegions | Where-Object { $_.healthy -ne $true })).Count -eq 0)
 if (-not $ohioHealthy -or -not $singaporeHealthy) {
   throw 'Cutover stopped: both Cloudflare pools must report healthy first.'
 }
