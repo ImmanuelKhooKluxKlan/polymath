@@ -169,7 +169,7 @@ function Get-OrCreatePool {
     enabled = $true
     minimum_origins = 1
     monitor = $MonitorId
-    check_regions = @('WNAM', 'ENAM', 'SEAS', 'NEAS')
+    check_regions = @('ENAM')
     origins = @(
       @{
         name = $OriginName
@@ -248,10 +248,15 @@ if (-not $ohioHealthy -or -not $singaporeHealthy) {
 
 $loadBalancerPath = "/zones/$ZoneId/load_balancers"
 $loadBalancers = Invoke-Cloudflare -Method GET -Path $loadBalancerPath
-$existingLoadBalancer = @($loadBalancers.result) | Where-Object { $_.name -eq $ApiHostname } | Select-Object -First 1
+$loadBalancerDescription = 'Polymath API regional routing and automatic failover'
+# Reuse the tested staging load balancer during cutover. This avoids creating
+# and billing a second load balancer while preserving the exact tested pools.
+$existingLoadBalancer = @($loadBalancers.result) | Where-Object {
+  $_.name -eq $ApiHostname -or $_.description -eq $loadBalancerDescription
+} | Select-Object -First 1
 $loadBalancerBody = @{
   name = $ApiHostname
-  description = 'Polymath API regional routing and automatic failover'
+  description = $loadBalancerDescription
   enabled = $true
   proxied = $true
   ttl = 30
