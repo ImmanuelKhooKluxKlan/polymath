@@ -307,6 +307,9 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
 
   useEffect(() => () => {
     if (vibrationTimer.current) window.clearTimeout(vibrationTimer.current);
+    runId.current += 1;
+    stopClocks();
+    guitarAudio.suspendAfter(90);
   }, []);
 
   useEffect(() => {
@@ -378,7 +381,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   }
 
   async function pressFret(stringIndex, fret) {
-    await guitarAudio.preloadSamples();
+    if (!(await guitarAudio.prepareForPlayback())) return;
     guitarAudio.pluck(stringIndex, fret, 0.82, null, {
       duration: 3.2,
       releaseSeconds: 0.48,
@@ -390,8 +393,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     const target = clampTime(position);
     const safeSpeed = clamp(Number(speedOverride) || 1, 0.2, 1.75);
     runId.current += 1;
-    guitarAudio.ensure();
-    await guitarAudio.preloadSamples();
+    if (!(await guitarAudio.prepareForPlayback())) return;
     nextEventIndex.current = findStartIndex(lesson.events, Math.max(0, target - 0.0005));
     pauseOffset.current = target;
     startStamp.current = performance.now() - (target * 1000) / safeSpeed;
@@ -614,7 +616,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   async function playChord(chord) {
     setSelectedChord(chord);
     guitarAudio.setToneMode(toneMode);
-    await guitarAudio.preloadSamples();
+    if (!(await guitarAudio.prepareForPlayback())) return;
     guitarAudio.strum(CHORDS[chord], 0.82, 'down', null, {
       duration: 3.1,
       releaseSeconds: 0.5,
@@ -761,7 +763,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
                 className="primary"
                 type="button"
                 onClick={async () => {
-                  await guitarAudio.preloadSamples();
+                  if (!(await guitarAudio.prepareForPlayback())) return;
                   guitarAudio.strum(displayedFrets, 0.84, 'down', null, {
                     duration: 3.1,
                     releaseSeconds: 0.5,

@@ -16,6 +16,7 @@ import PaymentPage from './pages/PaymentPage.jsx';
 import BandPage from './pages/BandPage.jsx';
 import YourSongsPage from './pages/YourSongsPage.jsx';
 import AdminDatabasePage from './pages/AdminDatabasePage.jsx';
+import ModelLabPage from './pages/ModelLabPage.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import {
@@ -73,6 +74,12 @@ function pianoHandForEvent(event) {
   if (explicit === 'right' || role.includes('right') || role.includes('melody') || role.includes('top')) return 'right';
   const midi = Number(event?.midi);
   return Number.isFinite(midi) && midi < 60 ? 'left' : 'right';
+}
+
+function manualVoiceKey(note, interaction = {}) {
+  return interaction.pointerId === undefined
+    ? `key:${note}`
+    : `pointer:${interaction.pointerId}`;
 }
 
 export default function App() {
@@ -222,6 +229,15 @@ export default function App() {
     pianoAudio.setToneMode(toneMode);
   }, [toneMode]);
 
+  useEffect(() => {
+    if (route.page === 'studio') return;
+
+    stopPlayback();
+    manualVoices.current.clear();
+    clearActiveNotes();
+    pianoAudio.suspendAfter(90);
+  }, [route.page]);
+
   function navigate(page, params = {}) {
     if (window.location.search) {
       window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash || ''}`);
@@ -368,19 +384,26 @@ export default function App() {
     });
     if (!voice) return null;
     addActiveNote(note, true);
-    if (source === 'manual' && duration === null) manualVoices.current.set(note, voice);
+    if (source === 'manual' && duration === null) {
+      manualVoices.current.set(
+        manualVoiceKey(note, playbackOptions),
+        voice
+      );
+    }
     return voice;
   }
 
-  function releaseNote(note) {
-    const manualVoice = manualVoices.current.get(note);
+  function releaseNote(note, interaction = {}) {
+    const key = manualVoiceKey(note, interaction);
+    const manualVoice = manualVoices.current.get(key);
     if (manualVoice && typeof pianoAudio.releaseVoice === 'function') {
       pianoAudio.releaseVoice(manualVoice);
-      manualVoices.current.delete(note);
-    } else {
+      manualVoices.current.delete(key);
+      removeActiveNote(note);
+    } else if (interaction.pointerId === undefined) {
       pianoAudio.release(note);
+      removeActiveNote(note);
     }
-    removeActiveNote(note);
   }
 
   function stopPlaybackClocks() {
@@ -759,6 +782,10 @@ export default function App() {
   const messageUserId = route.params.get('userId');
   const messageName = route.params.get('name') || 'Composer';
   const content = (() => {
+    if (route.page === 'model-lab' && import.meta.env.DEV) {
+      if (!user?.admin) return <AdminDatabasePage user={user} onNavigate={navigate} />;
+      return <ModelLabPage onNavigate={navigate} />;
+    }
     if (user?.mustChangePassword && route.page !== 'account') {
       return <AccountPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
@@ -885,7 +912,13 @@ export default function App() {
                 activeNotes={activeNotes}
                 strikeVersions={strikeVersions}
                 showKeyNotes={showKeyNotes}
-                onPress={(note) => pressNote(note, 0.85, null, 'manual')}
+                onPress={(note, interaction) => pressNote(
+                  note,
+                  0.85,
+                  null,
+                  'manual',
+                  interaction
+                )}
                 onRelease={releaseNote}
                 preparationStatus={keyboardPreparationStatus}
                 preparationProgress={keyboardPreparationProgress}

@@ -15,6 +15,7 @@ const IOWA_MF_BASE_URL = publicAssetUrl('samples/iowa-mf');
 
 const MIN_GAIN = 0.00008;
 const SAMPLE_FADE_SECONDS = 0.006;
+const MIN_AUDIBLE_MANUAL_STRIKE_SECONDS = 0.045;
 const MIN_AUTOPLAY_NOTE_SECONDS = 0.035;
 
 const STOP_ALL_RELEASE_SECONDS = 0.055;
@@ -601,6 +602,10 @@ class PianoAudioEngine {
   constructor() {
     this.context = null;
 
+    this.contextResumePromise = null;
+
+    this.contextSuspendTimer = null;
+
     this.toneMode =
       'pianella';
 
@@ -725,30 +730,161 @@ class PianoAudioEngine {
   }
 
   ensure() {
-    if (!this.context) {
+    if (
+      !this.context ||
+      this.context.state === 'closed'
+    ) {
+      this.contextResumePromise = null;
+
       const AudioContextClass =
         window.AudioContext ||
         window.webkitAudioContext;
 
       this.context =
-        new AudioContextClass();
+        new AudioContextClass({
+          latencyHint: 'interactive',
+        });
 
       this.buildMasterChain();
     }
 
     if (
-      this.context.state ===
-      'suspended'
+      this.context.state !==
+      'running'
     ) {
-      this.context.resume();
+      // Calling resume synchronously from the pointer event is important on
+      // iOS. The returned promise is awaited by activate() before a voice is
+      // started, so the first strike is not lost while Safari is waking up.
+      this.resumeContext();
     }
 
+    return this.context;
+  }
+
+  resumeContext() {
+    const context = this.context;
+
+    if (!context) {
+      return Promise.resolve(false);
+    }
+
+    if (context.state === 'running') {
+      return Promise.resolve(true);
+    }
+
+    if (this.contextResumePromise) {
+      return this.contextResumePromise;
+    }
+
+    let resumeRequest;
+
+    try {
+      // Invoke resume immediately while the browser is still handling the
+      // user's pointer event; deferring this call breaks iOS audio permission.
+      resumeRequest = context.resume();
+    } catch (error) {
+      console.warn(
+        'Polymath Musician: piano audio could not resume.',
+        error
+      );
+      return Promise.resolve(false);
+    }
+
+    this.contextResumePromise =
+      Promise.resolve(resumeRequest)
+        .then(async () => {
+          // WebKit can expose an interrupted state briefly after resume().
+          // One short retry is much more reliable than dropping the strike.
+          if (
+            context.state !== 'running' &&
+            context.state !== 'closed'
+          ) {
+            await new Promise((resolve) => {
+              window.setTimeout(resolve, 24);
+            });
+            await context.resume();
+          }
+
+          return context.state === 'running';
+        })
+        .catch((error) => {
+          console.warn(
+            'Polymath Musician: piano audio could not resume.',
+            error
+          );
+          return false;
+        })
+        .finally(() => {
+          this.contextResumePromise = null;
+        });
+
+    return this.contextResumePromise;
+  }
+
+  async activate() {
+    const shouldPrimeOutput =
+      this.context?.state !== 'running';
+
+    if (this.contextSuspendTimer) {
+      window.clearTimeout(
+        this.contextSuspendTimer
+      );
+      this.contextSuspendTimer = null;
+    }
+
+    const context = this.ensure();
+    const running = await this.resumeContext();
+
+    if (running && shouldPrimeOutput) {
+      // A one-frame silent source primes iOS' output route after another
+      // instrument owned it. This produces no audible click.
+      try {
+        const buffer = context.createBuffer(
+          1,
+          1,
+          context.sampleRate
+        );
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(context.destination);
+        source.start();
+        source.disconnect();
+      } catch {
+        // The context is already usable; priming is only defensive.
+      }
+    }
+
+    return running;
+  }
+
+  suspendAfter(delayMs = 90) {
+    if (!this.context) return;
+
+    this.stopAll({
+      releaseSeconds: 0.028,
+    });
+
+    if (this.contextSuspendTimer) {
+      window.clearTimeout(
+        this.contextSuspendTimer
+      );
+    }
+
+    const context = this.context;
+    this.contextSuspendTimer =
+      window.setTimeout(() => {
+        this.contextSuspendTimer = null;
+        if (context.state === 'running') {
+          context.suspend().catch(() => {});
+        }
+      }, Math.max(0, Number(delayMs) || 0));
   }
 
   async prepareKeyboard(onProgress) {
-    this.ensure();
-    if (this.context.state === 'suspended') {
-      await this.context.resume();
+    if (!(await this.activate())) {
+      throw new Error(
+        'The browser did not activate piano audio.'
+      );
     }
     this.resetLoadingMetrics();
     await this.preloadCoreSamples(onProgress);
@@ -1692,7 +1828,8 @@ class PianoAudioEngine {
     startAt = null,
     options = {}
   ) {
-    this.ensure();
+    const activationPromise =
+      this.activate();
 
     let normalizedNote;
     let normalizedMidi;
@@ -1779,9 +1916,18 @@ class PianoAudioEngine {
       voice
     );
 
-    this.loadSamplePlan(
-      normalizedNote
-    )
+    activationPromise
+      .then((running) => {
+        if (!running) {
+          throw new Error(
+            'Piano audio context is not running.'
+          );
+        }
+
+        return this.loadSamplePlan(
+          normalizedNote
+        );
+      })
       .then((samples) => {
         if (
           voice.cancelPending
@@ -1820,6 +1966,11 @@ class PianoAudioEngine {
               voice,
               safeStartAt
             );
+
+            this.finishPendingManualRelease(
+              voice,
+              safeStartAt
+            );
           } else {
             this.removeVoice(
               normalizedNote,
@@ -1837,6 +1988,11 @@ class PianoAudioEngine {
             duration,
             voice,
             samples,
+            safeStartAt
+          );
+
+          this.finishPendingManualRelease(
+            voice,
             safeStartAt
           );
         }
@@ -1894,6 +2050,11 @@ class PianoAudioEngine {
       started: false,
       released: false,
       cancelPending: false,
+
+      releaseRequested: false,
+      releaseRequestOptions: null,
+      pendingManualReleaseTimerId:
+        null,
 
       releaseTimerId: null,
       releaseCleanupTimerId:
@@ -1965,6 +2126,16 @@ class PianoAudioEngine {
     }
 
     voice.cleanedUp = true;
+
+    if (
+      voice.pendingManualReleaseTimerId
+    ) {
+      window.clearTimeout(
+        voice.pendingManualReleaseTimerId
+      );
+      voice.pendingManualReleaseTimerId =
+        null;
+    }
 
     this.clearVoiceReleaseTimer(
       voice
@@ -3225,6 +3396,54 @@ class PianoAudioEngine {
     );
   }
 
+  finishPendingManualRelease(
+    voice,
+    startAt = this.context.currentTime
+  ) {
+    if (
+      !voice?.releaseRequested ||
+      voice.released ||
+      voice.cancelPending
+    ) {
+      return;
+    }
+
+    const options = {
+      ...voice.releaseRequestOptions,
+    };
+
+    voice.releaseRequested = false;
+    voice.releaseRequestOptions = null;
+
+    const releaseAt =
+      Math.max(
+        this.context.currentTime,
+        Number(startAt) +
+          MIN_AUDIBLE_MANUAL_STRIKE_SECONDS
+      );
+
+    const delayMs =
+      Math.max(
+        0,
+        (
+          releaseAt -
+          this.context.currentTime
+        ) * 1000
+      );
+
+    voice.pendingManualReleaseTimerId =
+      window.setTimeout(() => {
+        voice.pendingManualReleaseTimerId =
+          null;
+
+        this.releaseVoice(
+          voice,
+          this.context.currentTime,
+          options
+        );
+      }, delayMs);
+  }
+
   releaseVoice(
     voice,
 
@@ -3237,6 +3456,20 @@ class PianoAudioEngine {
       !voice ||
       voice.released
     ) {
+      return;
+    }
+
+    // A fast phone tap can end while its cached sample is still resolving.
+    // Preserve the release request and let the strike sound for a minimum
+    // attack window instead of silently deleting the pending voice.
+    if (
+      !voice.started &&
+      !options.cancelPending
+    ) {
+      voice.releaseRequested = true;
+      voice.releaseRequestOptions = {
+        ...options,
+      };
       return;
     }
 

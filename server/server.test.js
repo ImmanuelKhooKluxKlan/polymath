@@ -22,7 +22,22 @@ process.env.RUNPOD_S3_SECRET_ACCESS_KEY = '';
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 
-const { app } = require('./server');
+const { app, selectMuscriptorExecution } = require('./server');
+
+test('RunPod Serverless takes priority over the temporary SSH worker', () => {
+  assert.equal(selectMuscriptorExecution({
+    serverlessConfigured: true,
+    remoteUrl: 'http://127.0.0.1:11111',
+  }), 'runpod-serverless');
+  assert.equal(selectMuscriptorExecution({
+    serverlessConfigured: false,
+    remoteUrl: 'http://127.0.0.1:11111',
+  }), 'remote-gpu');
+  assert.equal(selectMuscriptorExecution({
+    serverlessConfigured: false,
+    remoteUrl: '',
+  }), 'local');
+});
 
 test('MuScriptor piano cleanup removes duplicate strikes and impossible overlaps', () => {
   const sourceEnvelope = {

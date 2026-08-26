@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../services/api.js';
+import ModelLabPage from './ModelLabPage.jsx';
 
 const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
+  ['piano-lab', 'Piano model lab', 'Private 88-key transcription testing'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
   ['promotions', 'Discounts', 'Create and pause percentage codes'],
   ['policies', 'Rules & policies', 'Signup and spending minimums'],
@@ -267,6 +269,11 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             <div><p className='eyebrow'>Data persistence</p><h2>{database.configuration.persistence || 'Atomic JSON file'}</h2></div>
             <p>User profiles, salted password hashes, purchases, policies, promotions, and login records are stored in <code>server/{database.configuration.databasePath || 'data/database.json'}</code>. New session credentials are stored as hashes, not as the browser's raw token.</p>
           </article>
+        </section>
+      )}
+      {activeSection === 'piano-lab' && (
+        <section className='admin-workspace admin-piano-lab'>
+          <ModelLabPage onNavigate={onNavigate} embedded />
         </section>
       )}
       {activeSection === 'devices' && (

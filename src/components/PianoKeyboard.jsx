@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BLACK_KEY_WIDTH_RATIO } from '../engine/grandPianoLayout.js';
 import { noteToDisplayName } from '../engine/noteMath.js';
 
@@ -8,25 +9,52 @@ const keyboardMap = {
   z: 'C2', x: 'D2', c: 'E2', v: 'F2', b: 'G2', n: 'A2', m: 'B2', ',': 'C3', '.': 'D3', '/': 'E3',
 };
 
+const activePointers = new Map();
+
 function labelFor(note) {
   const found = Object.entries(keyboardMap).find(([, value]) => value === note);
   return found ? found[0].toUpperCase() : '';
 }
 
 function pointerHandlers(note, onPress, onRelease) {
+  function releasePointer(event) {
+    const pointerId = event.pointerId;
+    if (activePointers.get(pointerId) !== note) return;
+
+    activePointers.delete(pointerId);
+    event.preventDefault();
+    try {
+      if (event.currentTarget.hasPointerCapture?.(pointerId)) {
+        event.currentTarget.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Capture may already have been released by the browser.
+    }
+
+    onRelease(note, {
+      pointerId,
+      pointerType: event.pointerType,
+    });
+  }
+
   return {
     onPointerDown: (event) => {
+      event.preventDefault();
+      if (activePointers.has(event.pointerId)) return;
+
+      activePointers.set(event.pointerId, note);
       event.currentTarget.setPointerCapture?.(event.pointerId);
-      onPress(note);
+      onPress(note, {
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        pressure: event.pressure,
+      });
     },
-    onPointerUp: (event) => {
-      event.currentTarget.releasePointerCapture?.(event.pointerId);
-      onRelease(note);
-    },
-    onPointerCancel: () => onRelease(note),
-    onPointerLeave: (event) => {
-      if (event.buttons) onRelease(note);
-    },
+    onPointerUp: releasePointer,
+    onPointerCancel: releasePointer,
+    onLostPointerCapture: releasePointer,
+    onContextMenu: (event) => event.preventDefault(),
+    onDragStart: (event) => event.preventDefault(),
   };
 }
 
@@ -98,6 +126,10 @@ export default function PianoKeyboard({
   performanceTier = 'full',
   onPrepare,
 }) {
+  useEffect(() => () => {
+    activePointers.clear();
+  }, []);
+
   const disabled = preparationStatus !== 'ready';
   const isPreparing = preparationStatus === 'loading' || preparationStatus === 'calibrating';
   return (

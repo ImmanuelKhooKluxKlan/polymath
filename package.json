@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+    "align:notes": "node scripts/alignment/noteCoordinateAligner.mjs",
     "acquire:iowa-mf": "node scripts/acquireIowaMf.js --range=A0-C8",
     "acquire:iowa-88": "node scripts/acquireIowaMf.js --range=A0-C8",
     "acquire:iowa-song-range": "node scripts/acquireIowaMf.js --range=A1-C7",

@@ -14,6 +14,8 @@ const { StateConflictError, createStateStore } = require('./stateStore');
 const { createArtifactStore } = require('./artifactStore');
 const { createDirectUploadService } = require('./directUpload');
 const { createJobQueue } = require('./jobQueue');
+const { createModelLab } = require('./modelLab');
+const { createRunpodServerlessClient } = require('./runpodServerless');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -27,6 +29,12 @@ const CLIENT_ORIGINS = new Set(
     .filter(Boolean),
 );
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+if (!IS_PRODUCTION) {
+  CLIENT_ORIGINS.add('http://localhost:5173');
+  CLIENT_ORIGINS.add('http://127.0.0.1:5173');
+  CLIENT_ORIGINS.add('http://localhost:5174');
+  CLIENT_ORIGINS.add('http://127.0.0.1:5174');
+}
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
 const PROCESS_INSTANCE_ID = crypto.randomUUID();
 const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
@@ -130,6 +138,23 @@ const MEDIA_EXTENSIONS = new Set([
   '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac',
   '.mp4', '.mov', '.webm', '.mkv', '.avi', '.mpeg', '.mpg',
 ]);
+
+// Permanent primary GPU path; the SSH-forwarded HTTP worker is only a fallback.
+const RUNPOD_SERVERLESS = createRunpodServerlessClient({
+  endpointId: process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || process.env.RUNPOD_ENDPOINT_ID,
+  apiKey: process.env.RUNPOD_API_KEY,
+  volumeId: process.env.RUNPOD_NETWORK_VOLUME_ID,
+  region: process.env.RUNPOD_S3_REGION,
+  s3Endpoint: process.env.RUNPOD_S3_ENDPOINT,
+  s3AccessKeyId: process.env.RUNPOD_S3_ACCESS_KEY_ID,
+  s3SecretAccessKey: process.env.RUNPOD_S3_SECRET_ACCESS_KEY,
+  timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
+  pollIntervalMs: 2_000,
+});
+
+const MODEL_LAB = createModelLab(process.env, {
+  dataRoot: path.join(DATA_DIR, 'model-lab'),
+});
 
 function artifactKey(group, filename) {
   const name = path.basename(String(filename || 'artifact'));
@@ -1522,15 +1547,28 @@ const mediaUpload = multer({
       callback(null, `media-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extension}`);
     },
   }),
-  limits: { files: 1, fields: 4 },
+  // The multipart piano transcription form sends instrument, title,
+  // playbackMode, rightsConfirmed, and paymentMethod alongside one media file.
+  limits: { files: 1, fields: 5 },
   fileFilter(req, file, callback) {
     const extension = path.extname(file.originalname || '').toLowerCase();
     callback(null, MEDIA_EXTENSIONS.has(extension));
   },
 });
 
+function selectMuscriptorExecution({ serverlessConfigured, remoteUrl }) {
+  if (serverlessConfigured) return 'runpod-serverless';
+  if (String(remoteUrl || '').trim()) return 'remote-gpu';
+  return 'local';
+}
+
 function muscriptorAvailability() {
+  const serverlessConfigured = RUNPOD_SERVERLESS.configured;
   const remoteConfigured = Boolean(MUSCRIPTOR_REMOTE_URL);
+  const execution = selectMuscriptorExecution({
+    serverlessConfigured,
+    remoteUrl: MUSCRIPTOR_REMOTE_URL,
+  });
   const pythonExists = path.isAbsolute(MUSCRIPTOR_PYTHON)
     ? fs.existsSync(MUSCRIPTOR_PYTHON)
     : true;
@@ -1539,19 +1577,21 @@ function muscriptorAvailability() {
   let reason = '';
   if (!MUSCRIPTOR_ENABLED) {
     reason = 'MuScriptor is disabled. Enable it only for use permitted by the model license.';
-  } else if (!remoteConfigured && !pythonExists) {
+  } else if (!serverlessConfigured && !remoteConfigured && !pythonExists) {
     reason = 'The MuScriptor Python environment was not found.';
-  } else if (!remoteConfigured && !workerExists) {
+  } else if (!serverlessConfigured && !remoteConfigured && !workerExists) {
     reason = 'The Polymath MuScriptor worker was not found.';
   } else if (!ffmpegExists) {
     reason = 'FFmpeg is unavailable for audio and video preparation.';
   }
   return {
-    enabled: MUSCRIPTOR_ENABLED && ffmpegExists && (remoteConfigured || (pythonExists && workerExists)),
+    enabled: MUSCRIPTOR_ENABLED
+      && ffmpegExists
+      && (serverlessConfigured || remoteConfigured || (pythonExists && workerExists)),
     configured: MUSCRIPTOR_ENABLED,
     adminOnly: MUSCRIPTOR_ADMIN_ONLY,
     model: MUSCRIPTOR_MODEL,
-    execution: remoteConfigured ? 'remote-gpu' : 'local',
+    execution,
     maxBytes: null,
     maxDurationSeconds: MAX_MEDIA_SECONDS,
     timeoutMinutes: Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000),
@@ -1809,6 +1849,48 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
   return payload;
 }
 
+async function runServerlessMuscriptor(job, preparedPath, outputPath, constraints) {
+  const raw = await RUNPOD_SERVERLESS.transcribe({
+    job,
+    preparedPath,
+    constraints,
+    onProgress(remote) {
+      const state = String(remote.state || '').trim().toUpperCase();
+      if (state === 'IN_QUEUE') {
+        queueMediaTranscriptionUpdate(job.id, {
+          stage: 'Waiting for a RunPod Serverless GPU worker',
+          progress: 22,
+        });
+      } else if (state === 'IN_PROGRESS') {
+        queueMediaTranscriptionUpdate(job.id, {
+          stage: String(remote.progress || 'MuScriptor is detecting notes and instruments'),
+          progress: 55,
+        });
+      }
+    },
+  });
+  const payload = {
+    ...raw,
+    title: raw.title || job.title || 'Uploaded recording',
+    composer: raw.composer || 'MuScriptor transcription',
+    instrument: raw.instrument || job.instrument || 'band',
+    bpm: Number(raw.bpm) || 120,
+    notes: Array.isArray(raw.notes) ? raw.notes : [],
+    instrumentGroups: Array.isArray(raw.instrumentGroups)
+      ? raw.instrumentGroups
+      : [...new Set((raw.notes || []).map((note) => note.instrument).filter(Boolean))].sort(),
+    sourceType: raw.sourceType || 'muscriptor-audio-transcription',
+    readyToPlayFormat: raw.readyToPlayFormat || 'polymath-musician-json-v1',
+    transcriptionProvider: raw.transcriptionProvider || `MuScriptor ${MUSCRIPTOR_MODEL} on RunPod Serverless`,
+    modelLicense: raw.modelLicense || 'CC-BY-NC-4.0',
+  };
+  if (!payload.notes.length) {
+    throw new Error('RunPod Serverless completed without playable MuScriptor notes.');
+  }
+  fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
+  return payload;
+}
+
 async function processMediaTranscriptionJob(jobId) {
   let job = await claimBackgroundJob('mediaTranscriptionJobs', jobId);
   if (!job) return;
@@ -1834,14 +1916,22 @@ async function processMediaTranscriptionJob(jobId) {
       preparedPath,
     ], { timeoutMs: 10 * 60 * 1000 });
 
+    const execution = selectMuscriptorExecution({
+      serverlessConfigured: RUNPOD_SERVERLESS.configured,
+      remoteUrl: MUSCRIPTOR_REMOTE_URL,
+    });
     await updateMediaTranscriptionJob(jobId, {
-      stage: MUSCRIPTOR_REMOTE_URL
-        ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
-        : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
+      stage: execution === 'runpod-serverless'
+        ? `Submitting MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} to RunPod Serverless`
+        : execution === 'remote-gpu'
+          ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
+          : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
       progress: 20,
     });
     const constraints = muscriptorConstraints(job.instrument, job.playbackMode);
-    if (MUSCRIPTOR_REMOTE_URL) {
+    if (execution === 'runpod-serverless') {
+      await runServerlessMuscriptor(job, preparedPath, outputPath, constraints);
+    } else if (execution === 'remote-gpu') {
       await runRemoteMuscriptor(job, preparedPath, outputPath, constraints);
     } else {
       const args = [
@@ -1983,6 +2073,7 @@ app.use(cors({
   credentials: false,
 }));
 app.use(express.json({ limit: '18mb' }));
+app.use('/api/model-lab', requireAuth, requireAdmin, MODEL_LAB.router);
 
 app.get('/', async (req, res, next) => {
   if (IS_PRODUCTION) return next();
@@ -4645,7 +4736,10 @@ app.get('/api/media-transcriptions', requireAuth, async (req, res) => {
 app.post('/api/media-transcriptions', requireAuth, async (req, res, next) => {
   return mediaUpload.single('media')(req, res, async (uploadError) => {
     if (uploadError) {
-      const message = uploadError.message || 'The audio or video upload failed.';
+      if (req.file?.path) safeRemoveUpload(req.file.path);
+      const message = uploadError.code === 'LIMIT_FIELD_COUNT'
+        ? 'The transcription form contained more fields than the server accepts. Refresh the page and try again.'
+        : uploadError.message || 'The audio or video upload failed.';
       return res.status(400).json({ error: message });
     }
     if (!req.file) {
@@ -5010,6 +5104,7 @@ module.exports = {
   readDb,
   writeDb,
   startServer,
+  selectMuscriptorExecution,
   subscriptionRules: {
     products: PRODUCTS,
     activeSubscriptionTier,

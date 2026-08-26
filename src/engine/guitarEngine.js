@@ -3,6 +3,7 @@ import { publicAssetUrl, relativeAssetUrl } from '../services/assetUrls.js';
 const OPEN_STRING_MIDI = [40, 45, 50, 55, 59, 64];
 const MIN_GAIN = 0.0001;
 const MAX_GUITAR_VOICES = 30;
+const MAX_SAMPLE_LOAD_CONCURRENCY = 4;
 const ACOUSTIC_SAMPLE_MANIFEST = publicAssetUrl('samples/acoustic-guitar/manifest.json');
 
 export const GUITAR_TONE_LABELS = {
@@ -165,6 +166,8 @@ function holdParamAtTime(param, time) {
 class GuitarEngine {
   constructor() {
     this.context = null;
+    this.contextResumePromise = null;
+    this.contextSuspendTimer = null;
     this.toneMode = 'lounge';
     this.capoFret = 0;
     this.input = null;
@@ -183,6 +186,10 @@ class GuitarEngine {
     this.activeVoices = new Set();
     this.activeByString = new Map();
     this.bufferCache = new Map();
+    this.maximumGeneratedBuffers = (
+      typeof window !== 'undefined'
+      && window.matchMedia?.('(pointer: coarse)').matches
+    ) ? 24 : 72;
     this.variantCounter = 0;
     this.userVolume = 0.82;
     this.sampleManifest = null;
@@ -192,17 +199,86 @@ class GuitarEngine {
   }
 
   ensure() {
-    if (!this.context) {
+    if (!this.context || this.context.state === 'closed') {
+      if (this.context?.state === 'closed') {
+        this.activeVoices.clear();
+        this.activeByString.clear();
+        this.bufferCache.clear();
+        this.sampleBuffers.clear();
+        this.sampleManifest = null;
+        this.sampleLoadState = 'idle';
+        this.sampleLoadPromise = null;
+      }
+
+      this.contextResumePromise = null;
+
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.context = new AudioContextClass({ latencyHint: 'interactive' });
       this.buildAudioGraph();
     }
 
-    if (this.context.state === 'suspended') {
-      this.context.resume();
+    if (this.context.state !== 'running') {
+      this.resumeContext();
     }
 
     return this.context;
+  }
+
+  resumeContext() {
+    const context = this.context;
+    if (!context) return Promise.resolve(false);
+    if (context.state === 'running') return Promise.resolve(true);
+    if (this.contextResumePromise) return this.contextResumePromise;
+
+    let resumeRequest;
+    try {
+      resumeRequest = context.resume();
+    } catch (error) {
+      console.warn('Guitar audio could not resume.', error);
+      return Promise.resolve(false);
+    }
+
+    this.contextResumePromise = Promise.resolve(resumeRequest)
+      .then(async () => {
+        if (context.state !== 'running' && context.state !== 'closed') {
+          await new Promise((resolve) => window.setTimeout(resolve, 24));
+          await context.resume();
+        }
+        return context.state === 'running';
+      })
+      .catch((error) => {
+        console.warn('Guitar audio could not resume.', error);
+        return false;
+      })
+      .finally(() => {
+        this.contextResumePromise = null;
+      });
+
+    return this.contextResumePromise;
+  }
+
+  async activate() {
+    if (this.contextSuspendTimer) {
+      window.clearTimeout(this.contextSuspendTimer);
+      this.contextSuspendTimer = null;
+    }
+    this.ensure();
+    return this.resumeContext();
+  }
+
+  suspendAfter(delayMs = 90) {
+    if (!this.context) return;
+    this.stopAll(0.028);
+    if (this.contextSuspendTimer) {
+      window.clearTimeout(this.contextSuspendTimer);
+    }
+    const context = this.context;
+    this.contextSuspendTimer = window.setTimeout(() => {
+      this.contextSuspendTimer = null;
+      if (context.state === 'running') {
+        context.suspend().catch(() => {});
+      }
+    }, Math.max(0, Number(delayMs) || 0));
   }
 
   getCurrentTime() {
@@ -219,12 +295,34 @@ class GuitarEngine {
         return response.json();
       })
       .then(async (manifest) => {
-        const decoded = await Promise.all(manifest.zones.map(async (zone) => {
-          const response = await fetch(relativeAssetUrl(ACOUSTIC_SAMPLE_MANIFEST, zone.file), { cache: 'force-cache' });
-          if (!response.ok) throw new Error(`Guitar sample failed (${response.status}): ${zone.file}`);
-          const buffer = await this.context.decodeAudioData(await response.arrayBuffer());
-          return [zone.file, buffer];
-        }));
+        const zones = Array.isArray(manifest.zones) ? manifest.zones : [];
+        const decoded = new Array(zones.length);
+        let nextIndex = 0;
+
+        const worker = async () => {
+          while (nextIndex < zones.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            const zone = zones[index];
+            const response = await fetch(
+              relativeAssetUrl(ACOUSTIC_SAMPLE_MANIFEST, zone.file),
+              { cache: 'force-cache' }
+            );
+            if (!response.ok) {
+              throw new Error(`Guitar sample failed (${response.status}): ${zone.file}`);
+            }
+            const buffer = await this.context.decodeAudioData(await response.arrayBuffer());
+            decoded[index] = [zone.file, buffer];
+          }
+        };
+
+        const concurrency = Math.min(
+          MAX_SAMPLE_LOAD_CONCURRENCY,
+          zones.length
+        );
+        await Promise.all(
+          Array.from({ length: concurrency }, () => worker())
+        );
         this.sampleManifest = manifest;
         this.sampleBuffers = new Map(decoded);
         this.sampleLoadState = 'ready';
@@ -236,6 +334,14 @@ class GuitarEngine {
         return false;
       });
     return this.sampleLoadPromise;
+  }
+
+  async prepareForPlayback() {
+    if (!(await this.activate())) return false;
+    // Recorded samples improve realism, but the physical string model remains
+    // a valid fallback if a sample request fails.
+    await this.preloadSamples();
+    return true;
   }
 
   setToneMode(mode = 'lounge') {
@@ -396,7 +502,13 @@ class GuitarEngine {
       variant,
     ].join(':');
 
-    if (this.bufferCache.has(key)) return this.bufferCache.get(key);
+    if (this.bufferCache.has(key)) {
+      const cached = this.bufferCache.get(key);
+      // Refresh insertion order so the Map also acts as a small LRU cache.
+      this.bufferCache.delete(key);
+      this.bufferCache.set(key, cached);
+      return cached;
+    }
 
     const sampleRate = context.sampleRate;
     const totalSamples = Math.floor(sampleRate * (roundedDuration + 0.25));
@@ -436,6 +548,14 @@ class GuitarEngine {
     }
 
     this.bufferCache.set(key, buffer);
+    while (
+      this.bufferCache.size >
+      this.maximumGeneratedBuffers
+    ) {
+      const oldestKey =
+        this.bufferCache.keys().next().value;
+      this.bufferCache.delete(oldestKey);
+    }
     return buffer;
   }
 
@@ -922,6 +1042,7 @@ class GuitarEngine {
       contextState: this.context?.state || 'not-created',
       acousticSamples: this.sampleLoadState,
       loadedAcousticZones: this.sampleBuffers.size,
+      maximumGeneratedBuffers: this.maximumGeneratedBuffers,
     };
   }
 }
