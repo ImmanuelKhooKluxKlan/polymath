@@ -279,6 +279,19 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   const adminToken = adminRegistration.data.token;
   const adminFriendId = adminRegistration.data.user.friend_id;
 
+  const localUploadIntent = await api('/api/artifact-upload-intents', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      purpose: 'score-translation',
+      filename: 'test-score.pdf',
+      contentType: 'application/pdf',
+      size: 100,
+    },
+  });
+  assert.equal(localUploadIntent.status, 200);
+  assert.deepEqual(localUploadIntent.data, { direct: false });
+
   const userRegistration = await register('/api/auth/register', {
     method: 'POST',
     body: {

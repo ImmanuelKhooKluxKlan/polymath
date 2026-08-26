@@ -5,7 +5,10 @@ const {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  HeadObjectCommand,
+  CopyObjectCommand,
 } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 function safeKey(value) {
   const normalized = String(value || '').replace(/^\/+/, '').replace(/\\/g, '/');
@@ -27,6 +30,8 @@ class ArtifactStore {
       region: String(region || 'auto'),
       endpoint: String(endpoint || '').trim() || undefined,
       forcePathStyle: Boolean(endpoint),
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
       credentials: accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined,
     }) : null;
   }
@@ -78,6 +83,58 @@ class ArtifactStore {
       ServerSideEncryption: String(process.env.ARTIFACT_S3_SSE || '').trim() || undefined,
     }));
     return normalized;
+  }
+
+  async createPresignedPut(key, contentType, expiresInSeconds = 900) {
+    if (!this.remote) return null;
+    const normalized = safeKey(key);
+    return getSignedUrl(this.client, new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: normalized,
+      ContentType: contentType || 'application/octet-stream',
+      ServerSideEncryption: String(process.env.ARTIFACT_S3_SSE || '').trim() || undefined,
+    }), {
+      expiresIn: Math.max(60, Math.min(3600, Number(expiresInSeconds) || 900)),
+    });
+  }
+
+  async stat(key) {
+    const normalized = safeKey(key);
+    if (!this.remote) {
+      const details = fs.statSync(this.localPath(normalized));
+      return { size: details.size, contentType: 'application/octet-stream', etag: '' };
+    }
+    const response = await this.client.send(new HeadObjectCommand({
+      Bucket: this.bucket,
+      Key: normalized,
+    }));
+    return {
+      size: Number(response.ContentLength || 0),
+      contentType: String(response.ContentType || 'application/octet-stream'),
+      etag: String(response.ETag || '').replace(/^"|"$/g, ''),
+    };
+  }
+
+  async promote(sourceKey, targetKey) {
+    const source = safeKey(sourceKey);
+    const target = safeKey(targetKey);
+    if (!this.remote) {
+      const sourcePath = this.localPath(source);
+      const targetPath = this.localPath(target);
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.renameSync(sourcePath, targetPath);
+      return target;
+    }
+    const encodedSource = source.split('/').map(encodeURIComponent).join('/');
+    await this.client.send(new CopyObjectCommand({
+      Bucket: this.bucket,
+      Key: target,
+      CopySource: `${encodeURIComponent(this.bucket)}/${encodedSource}`,
+      MetadataDirective: 'COPY',
+      ServerSideEncryption: String(process.env.ARTIFACT_S3_SSE || '').trim() || undefined,
+    }));
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: source }));
+    return target;
   }
 
   async materialize(key, targetPath) {

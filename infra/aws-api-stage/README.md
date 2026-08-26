@@ -27,3 +27,21 @@ record before those controls are active.
 
 Never put passwords in Terraform variables. Runtime values belong in the
 polymath/api-runtime AWS Secrets Manager secret; RDS manages its own password.
+
+## Direct private uploads
+
+When `DIRECT_UPLOAD_SIGNING_SECRET` is present, signed upload tickets let the
+browser upload MP3/video/PDF sources straight to the private R2 artifacts
+bucket. The API verifies size and ownership, promotes the temporary object to
+an immutable job key, and removes source objects after processing. Without the
+secret, clients automatically use the legacy API upload path.
+
+Do not enable the secret until the R2 bucket has:
+
+- a CORS rule allowing `PUT` and the `Content-Type` header from
+  `https://polymathmusician67.com` (plus explicit local development origins);
+- a lifecycle rule expiring objects under `pending/` after two days.
+
+Changing those bucket settings requires a Cloudflare API token with
+`Workers R2 Storage Write`; an object-only S3 token is intentionally
+insufficient.

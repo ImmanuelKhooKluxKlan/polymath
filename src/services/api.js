@@ -63,6 +63,39 @@ export async function downloadProtectedFile(path, fallbackName = 'download') {
   URL.revokeObjectURL(url);
 }
 
+export async function uploadProtectedArtifact(file, purpose, { onProgress } = {}) {
+  const intent = await apiRequest('/api/artifact-upload-intents', {
+    method: 'POST',
+    body: JSON.stringify({
+      purpose,
+      filename: file.name,
+      contentType: file.type || 'application/octet-stream',
+      size: file.size,
+    }),
+  });
+  if (!intent.direct) return null;
+
+  await new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('PUT', intent.uploadUrl, true);
+    request.setRequestHeader('Content-Type', intent.contentType);
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onProgress?.(Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100))));
+    };
+    request.onerror = () => reject(new Error('The direct file upload could not reach secure storage. Try again.'));
+    request.onabort = () => reject(new Error('The direct file upload was cancelled.'));
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) resolve();
+      else reject(new Error(`Secure storage rejected the upload (${request.status}). Try again.`));
+    };
+    request.send(file);
+  });
+
+  onProgress?.(100);
+  return intent;
+}
+
 export function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "test": "node --test server.test.js registrationOtp.test.js subscriptionRules.test.js runpodServerless.test.js adminBootstrap.test.js bandCollaboration.test.js stateStore.test.js artifactStore.test.js awsRuntime.test.js",
+    "test": "node --test server.test.js registrationOtp.test.js subscriptionRules.test.js runpodServerless.test.js adminBootstrap.test.js bandCollaboration.test.js stateStore.test.js artifactStore.test.js directUpload.test.js awsRuntime.test.js",
     "bootstrap:muscriptor": "node bootstrapRunpodModel.js",
     "upload:muscriptor": "node uploadMuscriptorModels.js",
     "r2:sync-instruments": "node syncR2Assets.js",
@@ -21,6 +21,7 @@
     "@aws-sdk/client-sesv2": "^3.1116.0",
     "@aws-sdk/client-sns": "^3.1116.0",
     "@aws-sdk/client-sqs": "^3.1117.0",
+    "@aws-sdk/s3-request-presigner": "^3.1118.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

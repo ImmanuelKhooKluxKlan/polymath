@@ -28,3 +28,17 @@ test('local artifact store blocks traversal outside its root', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('local artifact store promotes a temporary object to an immutable job key', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'polymath-artifacts-'));
+  const store = createArtifactStore({ localRoot: root });
+  try {
+    await store.putBuffer('pending/user/upload.pdf', Buffer.from('%PDF-test'), 'application/pdf');
+    const key = await store.promote('pending/user/upload.pdf', 'score-sources/job.pdf');
+    assert.equal(key, 'score-sources/job.pdf');
+    assert.equal(fs.existsSync(path.join(root, 'pending', 'user', 'upload.pdf')), false);
+    assert.equal(fs.readFileSync(path.join(root, 'score-sources', 'job.pdf'), 'utf8'), '%PDF-test');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

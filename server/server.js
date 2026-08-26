@@ -12,6 +12,7 @@ const { createMuscriptorEventCollector } = require('./muscriptorEvents');
 const { RegistrationOtpError, createRegistrationOtpService } = require('./registrationOtp');
 const { StateConflictError, createStateStore } = require('./stateStore');
 const { createArtifactStore } = require('./artifactStore');
+const { createDirectUploadService } = require('./directUpload');
 const { createJobQueue } = require('./jobQueue');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
@@ -50,6 +51,12 @@ const ARTIFACT_STORE = createArtifactStore({
   secretAccessKey: process.env.ARTIFACT_S3_SECRET_ACCESS_KEY,
 });
 
+const DIRECT_UPLOADS = createDirectUploadService({
+  artifactStore: ARTIFACT_STORE,
+  signingSecret: process.env.DIRECT_UPLOAD_SIGNING_SECRET,
+  ttlSeconds: process.env.DIRECT_UPLOAD_TTL_SECONDS,
+});
+
 const STATE_STORE = createStateStore({
   databaseUrl: process.env.DATABASE_URL,
   databaseHost: process.env.PGHOST,
@@ -79,6 +86,13 @@ const SUBSCRIBER_TRANSLATION_MCOIN_COST = 0.5;
 const TRANSLATION_INITIAL_ESTIMATE_MS = 20 * 60 * 1000;
 const TRANSLATION_EXTENSION_MS = 5 * 60 * 1000;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
+const DIRECT_UPLOAD_MAX_BYTES = Math.max(
+  MAX_PDF_BYTES,
+  Math.min(
+    5 * 1024 * 1024 * 1024,
+    Number(process.env.DIRECT_UPLOAD_MAX_BYTES) || 5 * 1024 * 1024 * 1024,
+  ),
+);
 const MAX_MEDIA_SECONDS = 10 * 60;
 const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS || 0)));
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
@@ -120,6 +134,14 @@ const MEDIA_EXTENSIONS = new Set([
 function artifactKey(group, filename) {
   const name = path.basename(String(filename || 'artifact'));
   return ARTIFACT_STORE.remote ? `${group}/${name}` : name;
+}
+
+function uploadContentType(filename, suppliedType = '') {
+  const extension = path.extname(String(filename || '')).toLowerCase();
+  if (extension === '.pdf') return 'application/pdf';
+  const normalized = String(suppliedType || '').trim().toLowerCase();
+  if (/^(audio|video)\/[a-z0-9.+-]+$/.test(normalized)) return normalized;
+  return 'application/octet-stream';
 }
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
@@ -1612,6 +1634,15 @@ function safeRemoveUpload(filePath) {
   }
 }
 
+async function safeRemoveArtifact(key) {
+  if (!key) return;
+  try {
+    await ARTIFACT_STORE.remove(key);
+  } catch (error) {
+    console.warn(`Artifact cleanup failed for ${key}: ${error.message}`);
+  }
+}
+
 function runChild(command, args, { timeoutMs, timeoutMessage, onLine } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -1784,12 +1815,13 @@ async function processMediaTranscriptionJob(jobId) {
   let db;
 
   const sourceWorkPath = path.join(UPLOAD_DIR, `${job.id}-source${path.extname(job.filename || '')}`);
-  const sourcePath = await ARTIFACT_STORE.materialize(job.sourcePath, sourceWorkPath);
+  let sourcePath = '';
   const preparedPath = path.join(UPLOAD_DIR, `${job.id}-prepared.wav`);
   const outputPath = path.join(UPLOAD_DIR, `${job.id}-ready-to-play.json`);
   const arrangedPath = path.join(UPLOAD_DIR, `${job.id}-piano-arranged.json`);
 
   try {
+    sourcePath = await ARTIFACT_STORE.materialize(job.sourcePath, sourceWorkPath);
     await updateMediaTranscriptionJob(jobId, {
       stage: 'Preparing audio from your upload',
       progress: 12,
@@ -1906,6 +1938,8 @@ async function processMediaTranscriptionJob(jobId) {
     safeRemoveUpload(preparedPath);
     safeRemoveUpload(outputPath);
     safeRemoveUpload(arrangedPath);
+  } finally {
+    await safeRemoveArtifact(job?.sourcePath);
   }
 }
 
@@ -4357,14 +4391,18 @@ async function processTranslationJob(jobId) {
   let job = await claimBackgroundJob('scoreTranslationJobs', jobId);
   if (!job) return;
   let db;
+  let sourcePath = '';
 
   try {
+    db = await readDb();
+    job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
+    if (!job || job.status !== 'processing') return;
     job.stage = 'Reading music notation with OpenAI';
     job.progress = 18;
     await writeDb(db);
 
     const sourceWorkPath = path.join(UPLOAD_DIR, `${job.id}-source.pdf`);
-    const sourcePath = await ARTIFACT_STORE.materialize(job.sourcePath, sourceWorkPath);
+    sourcePath = await ARTIFACT_STORE.materialize(job.sourcePath, sourceWorkPath);
     const bytes = fs.readFileSync(sourcePath);
 
     db = await readDb();
@@ -4423,7 +4461,176 @@ async function processTranslationJob(jobId) {
     if (!job || job.status !== 'processing') return;
     refundTranslationJob(db, job, error.message);
     await writeDb(db);
+  } finally {
+    safeRemoveUpload(sourcePath);
+    await safeRemoveArtifact(job?.sourcePath);
   }
+}
+
+app.post('/api/artifact-upload-intents', requireAuth, async (req, res) => {
+  if (!DIRECT_UPLOADS.enabled) return res.json({ direct: false });
+
+  const purpose = String(req.body.purpose || '').trim().toLowerCase();
+  const filename = sanitizeFilename(String(req.body.filename || 'upload'));
+  const extension = path.extname(filename).toLowerCase();
+  const size = Math.floor(Number(req.body.size));
+  if (!Number.isSafeInteger(size) || size <= 0 || size > DIRECT_UPLOAD_MAX_BYTES) {
+    return res.status(400).json({ error: 'The selected file size is invalid or exceeds the 5 GB object-storage limit.' });
+  }
+
+  if (purpose === 'score-translation') {
+    if (!String(process.env.OPENAI_API_KEY || '').trim()) {
+      return res.status(503).json({ error: 'PDF translation is temporarily unavailable. Nothing was charged.' });
+    }
+    if (extension !== '.pdf' || size > MAX_PDF_BYTES) {
+      return res.status(400).json({ error: 'PDF music sheets must be valid PDF files smaller than 10 MB.' });
+    }
+  } else if (purpose === 'media-transcription') {
+    const capability = muscriptorAvailability();
+    if (!capability.enabled) return res.status(503).json({ error: capability.reason, capability });
+    if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
+      return res.status(403).json({
+        error: 'MuScriptor is currently available only to administrators for model testing.',
+        capability,
+      });
+    }
+    if (!MEDIA_EXTENSIONS.has(extension)) {
+      return res.status(400).json({ error: 'Use MP3, WAV, FLAC, M4A, MP4, MOV, WebM, MKV, or AVI.' });
+    }
+  } else {
+    return res.status(400).json({ error: 'Choose a supported upload purpose.' });
+  }
+
+  const userSegment = String(req.user.id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  const key = `pending/${purpose}/${userSegment}/${crypto.randomUUID()}-${filename}`;
+  const intent = await DIRECT_UPLOADS.create({
+    userId: req.user.id,
+    purpose,
+    key,
+    filename,
+    contentType: uploadContentType(filename, req.body.contentType),
+    size,
+  });
+  return res.status(201).json(intent);
+});
+
+async function submitMediaTranscription(req, res, {
+  fields,
+  originalName,
+  mimeType,
+  sourceKey = '',
+  persistSource,
+  cleanup,
+}) {
+  const capability = muscriptorAvailability();
+  const cleanupAndReject = async (status, message, details = {}) => {
+    await cleanup?.();
+    return res.status(status).json({ error: message, ...details });
+  };
+  if (!capability.enabled) {
+    return cleanupAndReject(503, capability.reason, { capability });
+  }
+  if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
+    return cleanupAndReject(403, 'MuScriptor is currently available only to administrators for model testing.', { capability });
+  }
+
+  const extension = path.extname(originalName || '').toLowerCase();
+  if (!MEDIA_EXTENSIONS.has(extension)) {
+    return cleanupAndReject(400, 'Use MP3, WAV, FLAC, M4A, MP4, MOV, WebM, MKV, or AVI.');
+  }
+  const instrument = String(fields.instrument || '').trim().toLowerCase();
+  if (instrument !== 'band' && !validBandInstrument(instrument)) {
+    return cleanupAndReject(400, 'Choose a supported instrument or band transcription.');
+  }
+  if (String(fields.rightsConfirmed || '').toLowerCase() !== 'true') {
+    return cleanupAndReject(400, 'Confirm that you have permission to transcribe this recording.');
+  }
+  const playbackMode = String(fields.playbackMode || 'instrumental').trim().toLowerCase();
+  if (!['full', 'instrumental'].includes(playbackMode)) {
+    return cleanupAndReject(400, 'Choose full song or pure instrumental playback.');
+  }
+
+  if (sourceKey) {
+    const duplicate = req.db.mediaTranscriptionJobs.find((job) => (
+      job.userId === req.user.id && job.sourcePath === sourceKey
+    ));
+    if (duplicate) {
+      return res.json({
+        job: publicMediaTranscriptionJob(duplicate),
+        capability,
+        user: safeUser(req.user),
+        duplicate: true,
+      });
+    }
+  }
+
+  const administratorAccess = isAdministrator(req.user);
+  const requestedPaymentMethod = String(fields.paymentMethod || '').trim().toLowerCase();
+  const paymentMethod = administratorAccess ? 'admin' : requestedPaymentMethod;
+  const mcoinCost = translationMcoinCost(req.user);
+  if (!administratorAccess && !['allowance', 'mcoins'].includes(paymentMethod)) {
+    return cleanupAndReject(400, `Choose an included translation or ${mcoinCost}-Mcoin payment.`);
+  }
+  let allowanceBucket = null;
+  if (paymentMethod === 'allowance') {
+    allowanceBucket = deductTranslationAllowance(req.user);
+    if (!allowanceBucket) {
+      return cleanupAndReject(402, `No included translations remain. Pay ${mcoinCost} Mcoins to continue.`);
+    }
+  } else if (paymentMethod === 'mcoins') {
+    if (req.user.mcoins < mcoinCost) {
+      return cleanupAndReject(402, `You need ${mcoinCost} Mcoins for this translation.`);
+    }
+    req.user.mcoins -= mcoinCost;
+  }
+
+  const filename = sanitizeFilename(originalName || `recording${extension}`);
+  const title = String(fields.title || path.basename(filename, extension) || 'Uploaded recording')
+    .trim()
+    .slice(0, 120);
+  const jobId = id('media_tx');
+  const persistedSourceKey = sourceKey
+    ? await ARTIFACT_STORE.promote(sourceKey, `media/${jobId}-${filename}`)
+    : await persistSource({ filename, mimeType });
+  const job = {
+    id: jobId,
+    userId: req.user.id,
+    filename,
+    title,
+    instrument,
+    playbackMode,
+    paymentMethod,
+    allowanceBucket,
+    costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
+    model: `muscriptor-${MUSCRIPTOR_MODEL}`,
+    modelLicense: 'CC-BY-NC-4.0',
+    sourcePath: persistedSourceKey,
+    status: 'processing',
+    stage: 'Queued for MuScriptor',
+    progress: 5,
+    startedAt: new Date().toISOString(),
+  };
+  req.db.mediaTranscriptionJobs.push(job);
+  if (paymentMethod === 'mcoins') {
+    addLedger(req.db, req.user.id, -mcoinCost, 'audio_translation', filename);
+  } else if (paymentMethod === 'allowance') {
+    addLedger(req.db, req.user.id, 0, 'translation_allowance_used', `${filename} (${allowanceBucket})`);
+  } else {
+    addLedger(req.db, req.user.id, 0, 'admin_audio_translation', `${filename} (unlimited administrator access)`);
+  }
+  try {
+    await writeDb(req.db);
+  } catch (error) {
+    await safeRemoveArtifact(persistedSourceKey);
+    throw error;
+  }
+  await dispatchBackgroundJob('media-transcription', job.id);
+  return res.status(202).json({
+    job: publicMediaTranscriptionJob(job),
+    capability,
+    user: safeUser(req.user),
+    translationMcoinCost: mcoinCost,
+  });
 }
 
 app.get('/api/media-transcriptions', requireAuth, async (req, res) => {
@@ -4435,18 +4642,7 @@ app.get('/api/media-transcriptions', requireAuth, async (req, res) => {
   res.json({ jobs, capability: muscriptorAvailability(), user: safeUser(req.user) });
 });
 
-app.post('/api/media-transcriptions', requireAuth, async (req, res) => {
-  const capability = muscriptorAvailability();
-  if (!capability.enabled) {
-    return res.status(503).json({ error: capability.reason, capability });
-  }
-  if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
-    return res.status(403).json({
-      error: 'MuScriptor is currently available only to administrators for model testing.',
-      capability,
-    });
-  }
-
+app.post('/api/media-transcriptions', requireAuth, async (req, res, next) => {
   return mediaUpload.single('media')(req, res, async (uploadError) => {
     if (uploadError) {
       const message = uploadError.message || 'The audio or video upload failed.';
@@ -4456,88 +4652,37 @@ app.post('/api/media-transcriptions', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Choose an MP3, audio file, or music video.' });
     }
 
-    const cleanupAndReject = (status, message) => {
+    try {
+      return await submitMediaTranscription(req, res, {
+        fields: req.body,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        cleanup: async () => safeRemoveUpload(req.file.path),
+        persistSource: async () => {
+          const key = artifactKey('media', path.basename(req.file.path));
+          await ARTIFACT_STORE.putFile(key, req.file.path, req.file.mimetype);
+          if (ARTIFACT_STORE.remote) safeRemoveUpload(req.file.path);
+          return key;
+        },
+      });
+    } catch (error) {
       safeRemoveUpload(req.file.path);
-      return res.status(status).json({ error: message });
-    };
-    const extension = path.extname(req.file.originalname || '').toLowerCase();
-    if (!MEDIA_EXTENSIONS.has(extension)) {
-      return cleanupAndReject(400, 'Use MP3, WAV, FLAC, M4A, MP4, MOV, WebM, MKV, or AVI.');
+      return next(error);
     }
-    const instrument = String(req.body.instrument || '').trim().toLowerCase();
-    if (instrument !== 'band' && !validBandInstrument(instrument)) {
-      return cleanupAndReject(400, 'Choose a supported instrument or band transcription.');
-    }
-    if (String(req.body.rightsConfirmed || '').toLowerCase() !== 'true') {
-      return cleanupAndReject(400, 'Confirm that you have permission to transcribe this recording.');
-    }
-    const playbackMode = String(req.body.playbackMode || 'instrumental').trim().toLowerCase();
-    if (!['full', 'instrumental'].includes(playbackMode)) {
-      return cleanupAndReject(400, 'Choose full song or pure instrumental playback.');
-    }
+  });
+});
 
-    const administratorAccess = isAdministrator(req.user);
-    const requestedPaymentMethod = String(req.body.paymentMethod || '').trim().toLowerCase();
-    const paymentMethod = administratorAccess ? 'admin' : requestedPaymentMethod;
-    const mcoinCost = translationMcoinCost(req.user);
-    if (!administratorAccess && !['allowance', 'mcoins'].includes(paymentMethod)) {
-      return cleanupAndReject(400, `Choose an included translation or ${mcoinCost}-Mcoin payment.`);
-    }
-    let allowanceBucket = null;
-    if (paymentMethod === 'allowance') {
-      allowanceBucket = deductTranslationAllowance(req.user);
-      if (!allowanceBucket) {
-        return cleanupAndReject(402, `No included translations remain. Pay ${mcoinCost} Mcoins to continue.`);
-      }
-    } else if (paymentMethod === 'mcoins') {
-      if (req.user.mcoins < mcoinCost) {
-        return cleanupAndReject(402, `You need ${mcoinCost} Mcoins for this translation.`);
-      }
-      req.user.mcoins -= mcoinCost;
-    }
-
-    const filename = sanitizeFilename(req.file.originalname || `recording${extension}`);
-    const title = String(req.body.title || path.basename(filename, extension) || 'Uploaded recording')
-      .trim()
-      .slice(0, 120);
-    const now = new Date().toISOString();
-    const sourceKey = artifactKey('media', path.basename(req.file.path));
-    await ARTIFACT_STORE.putFile(sourceKey, req.file.path, req.file.mimetype);
-    if (ARTIFACT_STORE.remote) safeRemoveUpload(req.file.path);
-    const job = {
-      id: id('media_tx'),
-      userId: req.user.id,
-      filename,
-      title,
-      instrument,
-      playbackMode,
-      paymentMethod,
-      allowanceBucket,
-      costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
-      model: `muscriptor-${MUSCRIPTOR_MODEL}`,
-      modelLicense: 'CC-BY-NC-4.0',
-      sourcePath: sourceKey,
-      status: 'processing',
-      stage: 'Queued for MuScriptor',
-      progress: 5,
-      startedAt: now,
-    };
-    req.db.mediaTranscriptionJobs.push(job);
-    if (paymentMethod === 'mcoins') {
-      addLedger(req.db, req.user.id, -mcoinCost, 'audio_translation', filename);
-    } else if (paymentMethod === 'allowance') {
-      addLedger(req.db, req.user.id, 0, 'translation_allowance_used', `${filename} (${allowanceBucket})`);
-    } else {
-      addLedger(req.db, req.user.id, 0, 'admin_audio_translation', `${filename} (unlimited administrator access)`);
-    }
-    await writeDb(req.db);
-    await dispatchBackgroundJob('media-transcription', job.id);
-    return res.status(202).json({
-      job: publicMediaTranscriptionJob(job),
-      capability,
-      user: safeUser(req.user),
-      translationMcoinCost: mcoinCost,
-    });
+app.post('/api/media-transcriptions/direct', requireAuth, async (req, res) => {
+  const upload = await DIRECT_UPLOADS.inspect(req.body.uploadReceipt, {
+    userId: req.user.id,
+    purpose: 'media-transcription',
+  });
+  return submitMediaTranscription(req, res, {
+    fields: req.body,
+    originalName: upload.filename,
+    mimeType: upload.contentType,
+    sourceKey: upload.key,
+    cleanup: async () => safeRemoveArtifact(upload.key),
   });
 });
 
@@ -4593,15 +4738,34 @@ app.get('/api/score-translations', requireAuth, async (req, res) => {
 });
 
 app.post('/api/score-translations', requireAuth, async (req, res) => {
+  let directUpload = null;
+  if (req.body.uploadReceipt) {
+    directUpload = await DIRECT_UPLOADS.inspect(req.body.uploadReceipt, {
+      userId: req.user.id,
+      purpose: 'score-translation',
+    });
+    const receiptDuplicate = req.db.scoreTranslationJobs.find((job) => (
+      job.userId === req.user.id && job.sourcePath === directUpload.key
+    ));
+    if (receiptDuplicate) {
+      return res.json({
+        job: publicTranslationJob(receiptDuplicate),
+        user: safeUser(req.user),
+        duplicate: true,
+      });
+    }
+  }
+  const cleanupDirectUpload = async () => safeRemoveArtifact(directUpload?.key);
   const openaiApiKey = String(process.env.OPENAI_API_KEY || '').trim();
   if (!openaiApiKey) {
+    await cleanupDirectUpload();
     return res.status(503).json({
       error: 'PDF translation is temporarily unavailable because OpenAI is not configured. Nothing was charged.',
       setup: 'Set OPENAI_API_KEY in server/.env and restart the backend.',
     });
   }
 
-  const filename = sanitizeFilename(String(req.body.filename || 'music-sheet.pdf'));
+  const filename = sanitizeFilename(String(directUpload?.filename || req.body.filename || 'music-sheet.pdf'));
   const instrument = String(req.body.instrument || '').trim().toLowerCase();
   const administratorAccess = isAdministrator(req.user);
   const requestedPaymentMethod = String(req.body.paymentMethod || '').trim().toLowerCase();
@@ -4609,22 +4773,38 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
   const mcoinCost = translationMcoinCost(req.user);
 
   if (!filename.toLowerCase().endsWith('.pdf')) {
+    await cleanupDirectUpload();
     return res.status(400).json({ error: 'Invalid PDF music sheet. Please upload a PDF music sheet.' });
   }
   if (!INSTRUMENTS[instrument]) {
+    await cleanupDirectUpload();
     return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
   }
   if (!administratorAccess && !['allowance', 'mcoins'].includes(paymentMethod)) {
+    await cleanupDirectUpload();
     return res.status(400).json({ error: `Choose an included translation or ${mcoinCost}-Mcoin payment.` });
   }
 
   let bytes;
+  let directWorkPath = '';
   try {
-    bytes = decodePdfBase64(String(req.body.contentBase64 || ''));
+    if (directUpload) {
+      directWorkPath = path.join(UPLOAD_DIR, `direct-${crypto.randomUUID()}.pdf`);
+      await ARTIFACT_STORE.materialize(directUpload.key, directWorkPath);
+      bytes = fs.readFileSync(directWorkPath);
+      if (!bytes.length || bytes.length > MAX_PDF_BYTES || bytes.subarray(0, 5).toString('ascii') !== '%PDF-') {
+        throw new Error('Invalid PDF music sheet. The selected file is not a valid PDF smaller than 10 MB.');
+      }
+    } else {
+      bytes = decodePdfBase64(String(req.body.contentBase64 || ''));
+    }
     rejectClearlyNonMusicPdf(bytes, filename);
   } catch (error) {
+    safeRemoveUpload(directWorkPath);
+    await cleanupDirectUpload();
     return res.status(400).json({ error: error.message });
   }
+  safeRemoveUpload(directWorkPath);
 
   const fileHash = crypto.createHash('sha256').update(bytes).digest('hex');
   const recentDuplicate = req.db.scoreTranslationJobs.find((job) => (
@@ -4634,6 +4814,7 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
     && Date.now() - new Date(job.startedAt).getTime() < 10 * 60 * 1000
   ));
   if (recentDuplicate) {
+    await cleanupDirectUpload();
     extendTranslationEstimate(recentDuplicate);
     await writeDb(req.db);
     return res.json({ job: publicTranslationJob(recentDuplicate), user: safeUser(req.user), duplicate: true });
@@ -4645,12 +4826,14 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
   } else if (paymentMethod === 'allowance') {
     allowanceBucket = deductTranslationAllowance(req.user);
     if (!allowanceBucket) {
+      await cleanupDirectUpload();
       return res.status(402).json({
         error: `No included translations remain. Pay ${mcoinCost} Mcoins to continue.`,
       });
     }
   } else {
     if (req.user.mcoins < mcoinCost) {
+      await cleanupDirectUpload();
       return res.status(402).json({ error: `You need ${mcoinCost} Mcoins for this translation.` });
     }
     req.user.mcoins -= mcoinCost;
@@ -4659,11 +4842,10 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
 
   const jobId = id('translation');
   const sourceName = `${jobId}-${filename}`;
-  const sourceKey = await ARTIFACT_STORE.putBuffer(
-    artifactKey('score-sources', sourceName),
-    bytes,
-    'application/pdf',
-  );
+  const finalSourceKey = artifactKey('score-sources', sourceName);
+  const sourceKey = directUpload
+    ? await ARTIFACT_STORE.promote(directUpload.key, finalSourceKey)
+    : await ARTIFACT_STORE.putBuffer(finalSourceKey, bytes, 'application/pdf');
   const now = Date.now();
   const job = {
     id: jobId,
@@ -4688,7 +4870,12 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
   } else if (paymentMethod === 'admin') {
     addLedger(req.db, req.user.id, 0, 'admin_pdf_translation', `${filename} (unlimited administrator access)`);
   }
-  await writeDb(req.db);
+  try {
+    await writeDb(req.db);
+  } catch (error) {
+    await safeRemoveArtifact(sourceKey);
+    throw error;
+  }
 
   await dispatchBackgroundJob('score-translation', job.id);
 

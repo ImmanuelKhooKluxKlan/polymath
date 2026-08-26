@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest, downloadProtectedFile, fetchProtectedFile, fileToBase64 } from '../services/api.js';
+import {
+  apiRequest,
+  downloadProtectedFile,
+  fetchProtectedFile,
+  fileToBase64,
+  uploadProtectedArtifact,
+} from '../services/api.js';
 import { instrumentLabel } from '../data/instruments.js';
 
 const POLL_INTERVAL_MS = 10000;
@@ -119,7 +125,10 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
     setBusy(true);
     setStatus('Validating and securely creating your translation job…');
     try {
-      const contentBase64 = await fileToBase64(file);
+      const directUpload = await uploadProtectedArtifact(file, 'score-translation', {
+        onProgress: (percent) => setStatus(`Uploading securely… ${percent}%`),
+      });
+      const contentBase64 = directUpload ? '' : await fileToBase64(file);
       const data = await apiRequest('/api/score-translations', {
         method: 'POST',
         body: JSON.stringify({
@@ -127,6 +136,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
           instrument,
           paymentMethod,
           contentBase64,
+          uploadReceipt: directUpload?.receipt || '',
         }),
       });
       setJob(data.job);

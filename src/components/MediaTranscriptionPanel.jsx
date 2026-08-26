@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiRequest, downloadProtectedFile, fetchProtectedFile } from '../services/api.js';
+import {
+  apiRequest,
+  downloadProtectedFile,
+  fetchProtectedFile,
+  uploadProtectedArtifact,
+} from '../services/api.js';
 
 const MEDIA_ACCEPT = 'audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.webm,.mkv,.avi';
 
@@ -87,17 +92,35 @@ export default function MediaTranscriptionPanel({
     setBusy(true);
     setStatus('Uploading securely…');
     try {
-      const form = new FormData();
-      form.append('media', file, file.name);
-      form.append('instrument', instrument || 'band');
-      form.append('title', file.name.replace(/\.[^.]+$/, ''));
-      form.append('playbackMode', playbackMode);
-      form.append('rightsConfirmed', 'true');
-      form.append('paymentMethod', paymentMethod);
-      const data = await apiRequest('/api/media-transcriptions', {
-        method: 'POST',
-        body: form,
+      const directUpload = await uploadProtectedArtifact(file, 'media-transcription', {
+        onProgress: (percent) => setStatus(`Uploading securely… ${percent}%`),
       });
+      let data;
+      if (directUpload) {
+        data = await apiRequest('/api/media-transcriptions/direct', {
+          method: 'POST',
+          body: JSON.stringify({
+            uploadReceipt: directUpload.receipt,
+            instrument: instrument || 'band',
+            title: file.name.replace(/\.[^.]+$/, ''),
+            playbackMode,
+            rightsConfirmed: 'true',
+            paymentMethod,
+          }),
+        });
+      } else {
+        const form = new FormData();
+        form.append('media', file, file.name);
+        form.append('instrument', instrument || 'band');
+        form.append('title', file.name.replace(/\.[^.]+$/, ''));
+        form.append('playbackMode', playbackMode);
+        form.append('rightsConfirmed', 'true');
+        form.append('paymentMethod', paymentMethod);
+        data = await apiRequest('/api/media-transcriptions', {
+          method: 'POST',
+          body: form,
+        });
+      }
       setCapability(data.capability);
       if (data.user && setUser) setUser(data.user);
       setJob(data.job);
