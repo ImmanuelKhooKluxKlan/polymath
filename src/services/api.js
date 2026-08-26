@@ -76,7 +76,7 @@ export async function uploadProtectedArtifact(file, purpose, { onProgress } = {}
   if (!intent.direct) return null;
 
   await new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
+    const request = new window.XMLHttpRequest();
     request.open('PUT', intent.uploadUrl, true);
     request.setRequestHeader('Content-Type', intent.contentType);
     request.upload.onprogress = (event) => {
