@@ -64,7 +64,8 @@ function Invoke-Cloudflare {
   param(
     [Parameter(Mandatory)][ValidateSet('GET', 'POST', 'PUT', 'PATCH')][string]$Method,
     [Parameter(Mandatory)][string]$Path,
-    [object]$Body
+    [object]$Body,
+    [switch]$AllowNotFound
   )
 
   $parameters = @{
@@ -80,6 +81,18 @@ function Invoke-Cloudflare {
   try {
     $response = Invoke-RestMethod @parameters
   } catch {
+    $statusCode = if ($_.Exception.Response) {
+      [int]$_.Exception.Response.StatusCode
+    } else {
+      0
+    }
+    if ($AllowNotFound -and $statusCode -eq 404) {
+      return [pscustomobject]@{
+        success = $true
+        result = [pscustomobject]@{ rules = @() }
+      }
+    }
+
     $message = $_.Exception.Message
     if ($_.ErrorDetails.Message) {
       try {
@@ -122,7 +135,6 @@ function Get-OrCreateMonitor {
     description = $description
     method = 'GET'
     path = '/api/health'
-    port = 443
     expected_codes = '2xx'
     follow_redirects = $true
     allow_insecure = $false
@@ -179,7 +191,7 @@ $null = Invoke-Cloudflare -Method GET -Path '/user/tokens/verify'
 
 Write-Host '[2/5] Applying direct-upload CORS without deleting unrelated rules'
 $corsPath = "/accounts/$AccountId/r2/buckets/$bucketName/cors"
-$corsCurrent = Invoke-Cloudflare -Method GET -Path $corsPath
+$corsCurrent = Invoke-Cloudflare -Method GET -Path $corsPath -AllowNotFound
 $corsRule = @{
   id = 'polymath-direct-uploads'
   allowed = @{
@@ -197,12 +209,12 @@ $corsRule = @{
   exposeHeaders = @('ETag')
   maxAgeSeconds = 3600
 }
-$corsRules = Set-RuleById -Rules @($corsCurrent.result.rules) -Id $corsRule.id -Replacement $corsRule
+$corsRules = @(Set-RuleById -Rules @($corsCurrent.result.rules) -Id $corsRule.id -Replacement $corsRule)
 $null = Invoke-Cloudflare -Method PUT -Path $corsPath -Body @{ rules = $corsRules }
 
 Write-Host '[3/5] Applying two-day cleanup for abandoned pending uploads'
 $lifecyclePath = "/accounts/$AccountId/r2/buckets/$bucketName/lifecycle"
-$lifecycleCurrent = Invoke-Cloudflare -Method GET -Path $lifecyclePath
+$lifecycleCurrent = Invoke-Cloudflare -Method GET -Path $lifecyclePath -AllowNotFound
 $lifecycleRule = @{
   id = 'polymath-expire-pending-uploads'
   enabled = $true
@@ -211,7 +223,7 @@ $lifecycleRule = @{
     condition = @{ type = 'Age'; maxAge = 172800 }
   }
 }
-$lifecycleRules = Set-RuleById -Rules @($lifecycleCurrent.result.rules) -Id $lifecycleRule.id -Replacement $lifecycleRule
+$lifecycleRules = @(Set-RuleById -Rules @($lifecycleCurrent.result.rules) -Id $lifecycleRule.id -Replacement $lifecycleRule)
 $null = Invoke-Cloudflare -Method PUT -Path $lifecyclePath -Body @{ rules = $lifecycleRules }
 
 Write-Host '[4/5] Creating or updating health monitor and regional pools'
