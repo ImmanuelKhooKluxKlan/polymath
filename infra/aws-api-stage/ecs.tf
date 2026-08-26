@@ -187,7 +187,9 @@ resource "aws_ecs_service" "ohio" {
   }
 
   lifecycle {
-    ignore_changes = [desired_count]
+    # Application releases are promoted by GitHub Actions. Terraform owns the
+    # service infrastructure, but must not roll a deployed task revision back.
+    ignore_changes = [desired_count, task_definition]
   }
   depends_on = [aws_lb_listener.ohio, aws_iam_role_policy_attachment.ecs_execution]
   tags       = local.tags
@@ -224,7 +226,9 @@ resource "aws_ecs_service" "singapore" {
   }
 
   lifecycle {
-    ignore_changes = [desired_count]
+    # Application releases are promoted by GitHub Actions. Terraform owns the
+    # service infrastructure, but must not roll a deployed task revision back.
+    ignore_changes = [desired_count, task_definition]
   }
   depends_on = [aws_lb_listener.singapore, aws_iam_role_policy_attachment.ecs_execution]
   tags       = local.tags

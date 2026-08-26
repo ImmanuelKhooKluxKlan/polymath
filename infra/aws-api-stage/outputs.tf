@@ -15,6 +15,21 @@ output "singapore_load_balancer" {
   value = aws_lb.singapore.dns_name
 }
 
+output "origin_certificate_validation" {
+  value = {
+    ohio = [for option in aws_acm_certificate.ohio_origin.domain_validation_options : {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }]
+    singapore = [for option in aws_acm_certificate.singapore_origin.domain_validation_options : {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }]
+  }
+}
+
 output "ohio_cluster" {
   value = aws_ecs_cluster.ohio.name
 }

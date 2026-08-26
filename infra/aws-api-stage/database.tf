@@ -21,7 +21,7 @@ resource "aws_db_instance" "primary" {
   db_subnet_group_name         = aws_db_subnet_group.primary.name
   vpc_security_group_ids       = [aws_security_group.database.id]
   publicly_accessible          = false
-  multi_az                     = false
+  multi_az                     = true
   backup_retention_period      = 7
   backup_window                = "08:00-09:00"
   maintenance_window           = "sun:09:30-sun:10:30"
