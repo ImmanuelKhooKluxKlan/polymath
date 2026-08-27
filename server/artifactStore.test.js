@@ -42,3 +42,19 @@ test('local artifact store promotes a temporary object to an immutable job key',
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('local artifact store lists only keys under the requested prefix', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'polymath-artifacts-'));
+  const store = createArtifactStore({ localRoot: root });
+  try {
+    await store.putBuffer('model-lab/a/manifest.json', Buffer.from('{}'));
+    await store.putBuffer('model-lab/a/analysis.json', Buffer.from('{}'));
+    await store.putBuffer('scores/unrelated.json', Buffer.from('{}'));
+    assert.deepEqual(await store.list('model-lab'), [
+      'model-lab/a/analysis.json',
+      'model-lab/a/manifest.json',
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

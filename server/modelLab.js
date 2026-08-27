@@ -22,6 +22,7 @@ const ALIGNMENT_MODULE_URL = pathToFileURL(path.join(
   'alignment',
   'noteCoordinateAligner.mjs',
 )).href;
+const REMOTE_HISTORY_PREFIX = 'private/model-lab-history';
 
 function isLoopback(request) {
   const addresses = [request.ip, request.socket?.remoteAddress]
@@ -228,6 +229,79 @@ function listRawTestArchives(archiveRoot, limit = 100) {
     .slice(0, Math.max(1, Math.min(500, Number(limit) || 100)));
 }
 
+async function mirrorArchiveDirectory(artifactStore, remotePrefix, directory) {
+  if (!artifactStore?.remote) return false;
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const contentType = entry.name.endsWith('.json') ? 'application/json' : 'application/octet-stream';
+    await artifactStore.putFile(`${remotePrefix}/${entry.name}`, path.join(directory, entry.name), contentType);
+  }
+  return true;
+}
+
+async function readRemoteJson(artifactStore, key, cacheRoot) {
+  const target = path.join(cacheRoot, ...key.split('/'));
+  await artifactStore.materialize(key, target);
+  return readJsonFile(target);
+}
+
+async function listRemoteHistory(artifactStore, cacheRoot, limit = 100) {
+  if (!artifactStore?.remote) return { rawTests: [], alignments: [] };
+  const keys = await artifactStore.list(REMOTE_HISTORY_PREFIX);
+  const manifestKeys = keys.filter((key) => key.endsWith('/manifest.json'));
+  const rawTests = [];
+  const alignments = [];
+  for (const key of manifestKeys) {
+    try {
+      const manifest = await readRemoteJson(artifactStore, key, cacheRoot);
+      if (manifest.schema === 'polymath-model-test-archive-v1') {
+        rawTests.push({ ...manifest, rawOutput: undefined, analysis: undefined });
+      } else if (manifest.schema === 'polymath-supervision-archive-v1') {
+        const analysisKey = `${key.slice(0, -'manifest.json'.length)}analysis.json`;
+        const analysis = await readRemoteJson(artifactStore, analysisKey, cacheRoot);
+        alignments.push(alignmentArchiveSummary({ manifest, analysis }));
+      }
+    } catch {
+      // A partial/corrupt remote record is omitted instead of poisoning history.
+    }
+  }
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+  return {
+    rawTests: rawTests
+      .sort((left, right) => String(right.completedAt).localeCompare(String(left.completedAt)))
+      .slice(0, safeLimit),
+    alignments: alignments
+      .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))
+      .slice(0, safeLimit),
+  };
+}
+
+async function restoreRemoteArchive(artifactStore, cacheRoot, archiveRoot, kind, recordId) {
+  if (!artifactStore?.remote || !safeArchiveDirectory(archiveRoot, recordId)) return false;
+  const remoteDirectory = `${REMOTE_HISTORY_PREFIX}/${kind}/${recordId}`;
+  let manifest;
+  try {
+    manifest = await readRemoteJson(artifactStore, `${remoteDirectory}/manifest.json`, cacheRoot);
+  } catch {
+    return false;
+  }
+  const expectedSchema = kind === 'raw-tests'
+    ? 'polymath-model-test-archive-v1'
+    : 'polymath-supervision-archive-v1';
+  if (manifest?.schema !== expectedSchema || manifest.id !== recordId) return false;
+  const destination = safeArchiveDirectory(archiveRoot, recordId);
+  fs.mkdirSync(destination, { recursive: true });
+  const filenames = kind === 'raw-tests'
+    ? ['manifest.json', manifest.rawOutput?.filename, manifest.analysis?.filename]
+    : ['manifest.json', manifest.analysisFilename, manifest.reference?.archivedFilename, manifest.observed?.archivedFilename];
+  for (const supplied of filenames) {
+    const filename = path.basename(String(supplied || ''));
+    if (!filename) return false;
+    await artifactStore.materialize(`${remoteDirectory}/${filename}`, path.join(destination, filename));
+  }
+  return true;
+}
+
 function archiveAlignmentSnapshot({ archiveRoot, record, referenceFile, observedFile, analysis }) {
   const directory = path.join(path.resolve(archiveRoot), record.id);
   fs.mkdirSync(directory, { recursive: true });
@@ -305,6 +379,8 @@ function createModelLab(environment = process.env, options = {}) {
   const ffmpegPath = String(environment.FFMPEG_PATH || '').trim() || bundledFfmpegPath;
   const maximumSeconds = Math.max(10, Math.min(3600, Number(environment.MODEL_LAB_MAX_SECONDS) || 600));
   fs.mkdirSync(dataRoot, { recursive: true });
+  const artifactStore = options.artifactStore || null;
+  const remoteHistoryCacheRoot = path.join(dataRoot, 'remote-history-cache');
 
   const runpod = createRunpodServerlessClient({
     endpointId: environment.RUNPOD_SERVERLESS_ENDPOINT_ID || environment.RUNPOD_ENDPOINT_ID,
@@ -389,6 +465,7 @@ function createModelLab(environment = process.env, options = {}) {
         manualAnchors: true,
         fiveSecondQualityWindows: true,
         sourceTimelineBound: true,
+        historyStorage: artifactStore?.remote ? 'private-s3-compatible' : 'private-local-disk',
       },
     };
   }
@@ -449,7 +526,22 @@ function createModelLab(environment = process.env, options = {}) {
       job.checkpoint = capability().checkpoint;
       try {
         archiveRawTestSnapshot({ archiveRoot: rawTestArchiveRoot, job });
-        job.archive = { saved: true, private: true, sourceMediaRetained: false };
+        try {
+          const remoteSaved = await mirrorArchiveDirectory(
+            artifactStore,
+            `${REMOTE_HISTORY_PREFIX}/raw-tests/${job.id}`,
+            path.join(rawTestArchiveRoot, job.id),
+          );
+          job.archive = { saved: true, remoteSaved, private: true, sourceMediaRetained: false };
+        } catch (remoteError) {
+          job.archive = {
+            saved: true,
+            remoteSaved: false,
+            remoteError: remoteError.message || String(remoteError),
+            private: true,
+            sourceMediaRetained: false,
+          };
+        }
       } catch (archiveError) {
         job.archive = { saved: false, error: archiveError.message || String(archiveError) };
       }
@@ -504,21 +596,47 @@ function createModelLab(environment = process.env, options = {}) {
     return response.json({ job: publicJob(job), capability: capability() });
   });
 
-  router.get('/history', (request, response) => {
+  router.get('/history', async (request, response, next) => {
     const requestedLimit = Number(request.query.limit) || 100;
-    return response.json({
-      rawTests: listRawTestArchives(rawTestArchiveRoot, requestedLimit),
-      alignments: listAlignmentArchives(alignmentArchiveRoot, requestedLimit),
-      storage: {
-        private: true,
-        persistent: production,
-        sourceMediaRetained: false,
-      },
-    });
+    const safeLimit = Math.max(1, Math.min(500, requestedLimit));
+    try {
+      let remote = { rawTests: [], alignments: [] };
+      let remoteWarning = '';
+      try {
+        remote = await listRemoteHistory(artifactStore, remoteHistoryCacheRoot, safeLimit);
+      } catch (remoteError) {
+        remoteWarning = remoteError.message || String(remoteError);
+      }
+      const merge = (local, remoteRecords, dateField) => [...new Map(
+        [...remoteRecords, ...local]
+          .sort((left, right) => String(right[dateField]).localeCompare(String(left[dateField])))
+          .map((record) => [record.id, record]),
+      ).values()].slice(0, safeLimit);
+      return response.json({
+        rawTests: merge(listRawTestArchives(rawTestArchiveRoot, safeLimit), remote.rawTests, 'completedAt'),
+        alignments: merge(listAlignmentArchives(alignmentArchiveRoot, safeLimit), remote.alignments, 'updatedAt'),
+        storage: {
+          private: true,
+          persistent: Boolean(artifactStore?.remote || !production),
+          provider: artifactStore?.remote ? 's3-compatible' : 'local-disk',
+          sourceMediaRetained: false,
+          warning: remoteWarning,
+        },
+      });
+    } catch (error) {
+      return next(error);
+    }
   });
 
-  router.get('/history/raw/:jobId', (request, response) => {
-    const archive = loadRawTestArchive(rawTestArchiveRoot, request.params.jobId);
+  router.get('/history/raw/:jobId', async (request, response, next) => {
+    let archive = loadRawTestArchive(rawTestArchiveRoot, request.params.jobId);
+    try {
+      if (!archive && await restoreRemoteArchive(
+        artifactStore, remoteHistoryCacheRoot, rawTestArchiveRoot, 'raw-tests', request.params.jobId,
+      )) archive = loadRawTestArchive(rawTestArchiveRoot, request.params.jobId);
+    } catch (error) {
+      return next(error);
+    }
     if (!archive) return response.status(404).json({ error: 'Archived model test not found.' });
     return response.json({
       job: {
@@ -596,7 +714,7 @@ function createModelLab(environment = process.env, options = {}) {
     };
   }
 
-  function persistAlignment(record, files = {}) {
+  async function persistAlignment(record, files = {}) {
     record.archive = archiveAlignmentSnapshot({
       archiveRoot: alignmentArchiveRoot,
       record,
@@ -604,6 +722,16 @@ function createModelLab(environment = process.env, options = {}) {
       observedFile: files.observedFile,
       analysis: publicAlignment(record),
     });
+    try {
+      record.archive.remoteSaved = await mirrorArchiveDirectory(
+        artifactStore,
+        `${REMOTE_HISTORY_PREFIX}/supervision/${record.id}`,
+        record.archive.directory,
+      );
+    } catch (remoteError) {
+      record.archive.remoteSaved = false;
+      record.archive.remoteError = remoteError.message || String(remoteError);
+    }
   }
 
   async function calculateAlignment(record, settings = {}) {
@@ -677,7 +805,7 @@ function createModelLab(environment = process.env, options = {}) {
           ? metadata.reviewDecisions
           : {},
       });
-      persistAlignment(record, { referenceFile, observedFile });
+      await persistAlignment(record, { referenceFile, observedFile });
       alignments.set(id, record);
       while (alignments.size > 50) alignments.delete(alignments.keys().next().value);
       return response.status(201).json({ alignment: publicAlignment(record) });
@@ -696,10 +824,17 @@ function createModelLab(environment = process.env, options = {}) {
     return response.json({ alignments: listAlignmentArchives(alignmentArchiveRoot, request.query.limit) });
   });
 
-  router.get('/alignments/:alignmentId', (request, response) => {
+  router.get('/alignments/:alignmentId', async (request, response, next) => {
     const record = alignments.get(request.params.alignmentId);
     if (record) return response.json({ alignment: publicAlignment(record) });
-    const archive = loadAlignmentArchive(alignmentArchiveRoot, request.params.alignmentId);
+    let archive = loadAlignmentArchive(alignmentArchiveRoot, request.params.alignmentId);
+    try {
+      if (!archive && await restoreRemoteArchive(
+        artifactStore, remoteHistoryCacheRoot, alignmentArchiveRoot, 'supervision', request.params.alignmentId,
+      )) archive = loadAlignmentArchive(alignmentArchiveRoot, request.params.alignmentId);
+    } catch (error) {
+      return next(error);
+    }
     if (!archive) return response.status(404).json({ error: 'Alignment not found in private testing history.' });
     return response.json({ alignment: { ...archive.analysis, archived: true } });
   });
@@ -725,7 +860,7 @@ function createModelLab(environment = process.env, options = {}) {
           ? request.body.reviewDecisions
           : record.settings.reviewDecisions,
       });
-      persistAlignment(record);
+      await persistAlignment(record);
       return response.json({ alignment: publicAlignment(record) });
     } catch (error) {
       return next(error);

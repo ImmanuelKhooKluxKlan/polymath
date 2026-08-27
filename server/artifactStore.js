@@ -7,6 +7,7 @@ const {
   DeleteObjectCommand,
   HeadObjectCommand,
   CopyObjectCommand,
+  ListObjectsV2Command,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
@@ -113,6 +114,38 @@ class ArtifactStore {
       contentType: String(response.ContentType || 'application/octet-stream'),
       etag: String(response.ETag || '').replace(/^"|"$/g, ''),
     };
+  }
+
+  async list(prefix = '') {
+    const normalizedPrefix = prefix ? safeKey(prefix).replace(/\/?$/, '/') : '';
+    if (!this.remote) {
+      const base = normalizedPrefix ? this.localPath(normalizedPrefix) : this.localRoot;
+      if (!fs.existsSync(base)) return [];
+      const keys = [];
+      const visit = (directory) => {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          const filename = path.join(directory, entry.name);
+          if (entry.isDirectory()) visit(filename);
+          else if (entry.isFile()) keys.push(path.relative(this.localRoot, filename).replace(/\\/g, '/'));
+        }
+      };
+      visit(base);
+      return keys.sort();
+    }
+    const keys = [];
+    let continuationToken;
+    do {
+      const response = await this.client.send(new ListObjectsV2Command({
+        Bucket: this.bucket,
+        Prefix: normalizedPrefix,
+        ContinuationToken: continuationToken,
+      }));
+      for (const item of response.Contents || []) {
+        if (item.Key) keys.push(String(item.Key));
+      }
+      continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return keys.sort();
   }
 
   async promote(sourceKey, targetKey) {
