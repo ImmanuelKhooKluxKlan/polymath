@@ -11,6 +11,17 @@ function clean(value) {
   return String(value || '').trim();
 }
 
+function parseReplicas(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 function createRunpodS3Client(configuration) {
   const client = new S3Client({
     ...configuration,
@@ -58,15 +69,33 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
   if (!s3AccessKeyId) missing.push('RUNPOD_S3_ACCESS_KEY_ID');
   if (!s3SecretAccessKey) missing.push('RUNPOD_S3_SECRET_ACCESS_KEY');
 
-  const s3 = dependencies.s3 || (missing.length ? null : createRunpodS3Client({
-    region,
-    endpoint: s3Endpoint,
-    forcePathStyle: true,
-    credentials: {
-      accessKeyId: s3AccessKeyId,
-      secretAccessKey: s3SecretAccessKey,
-    },
-    maxAttempts: 10,
+  const storageTargets = [{ volumeId, region, s3Endpoint }];
+  for (const [index, replica] of parseReplicas(configuration.replicas).entries()) {
+    const target = {
+      volumeId: clean(replica?.volumeId),
+      region: clean(replica?.region),
+      s3Endpoint: clean(replica?.s3Endpoint).replace(/\/+$/, ''),
+    };
+    if (!target.volumeId) missing.push(`RUNPOD_S3_REPLICAS[${index}].volumeId`);
+    if (!target.region) missing.push(`RUNPOD_S3_REPLICAS[${index}].region`);
+    if (!target.s3Endpoint) missing.push(`RUNPOD_S3_REPLICAS[${index}].s3Endpoint`);
+    if (target.volumeId && !storageTargets.some((candidate) => candidate.volumeId === target.volumeId)) {
+      storageTargets.push(target);
+    }
+  }
+
+  const storageClients = missing.length ? [] : storageTargets.map((target, index) => ({
+    ...target,
+    s3: dependencies.s3Clients?.[index] || dependencies.s3 || createRunpodS3Client({
+      region: target.region,
+      endpoint: target.s3Endpoint,
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId: s3AccessKeyId,
+        secretAccessKey: s3SecretAccessKey,
+      },
+      maxAttempts: 10,
+    }),
   }));
 
   async function runpodRequest(pathname, options = {}) {
@@ -93,12 +122,13 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
   }
 
   async function removeAudio(key) {
-    if (!s3) return;
-    try {
-      await s3.send(new DeleteObjectCommand({ Bucket: volumeId, Key: key }));
-    } catch {
-      // The worker normally deletes its own input; this is a crash-recovery cleanup.
-    }
+    await Promise.all(storageClients.map(async ({ s3, volumeId: targetVolumeId }) => {
+      try {
+        await s3.send(new DeleteObjectCommand({ Bucket: targetVolumeId, Key: key }));
+      } catch {
+        // The worker normally deletes its own input; this is a crash-recovery cleanup.
+      }
+    }));
   }
 
   async function transcribe({ job, preparedPath, constraints = [], onProgress = () => {} }) {
@@ -106,12 +136,18 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
       throw new Error(`RunPod Serverless is missing: ${missing.join(', ')}`);
     }
     const key = `jobs/${job.id}.wav`;
-    await s3.send(new PutObjectCommand({
-      Bucket: volumeId,
-      Key: key,
-      Body: fs.createReadStream(preparedPath),
-      ContentType: 'audio/wav',
-    }));
+    const uploads = await Promise.allSettled(storageClients.map(({ s3, volumeId: targetVolumeId }) => s3.send(new PutObjectCommand({
+        Bucket: targetVolumeId,
+        Key: key,
+        Body: fs.createReadStream(preparedPath),
+        ContentType: 'audio/wav',
+      }))));
+    const failedUpload = uploads.find((result) => result.status === 'rejected');
+    if (failedUpload) {
+      await removeAudio(key);
+      const error = failedUpload.reason;
+      throw new Error(`RunPod job replication failed before submission: ${error?.message || error}`);
+    }
 
     let remoteJobId = '';
     const deadline = Date.now() + timeoutMs;
@@ -162,8 +198,9 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
   return {
     configured: missing.length === 0,
     missing,
+    storageTargetCount: storageTargets.length,
     transcribe,
   };
 }
 
-module.exports = { createRunpodServerlessClient };
+module.exports = { createRunpodServerlessClient, parseReplicas };

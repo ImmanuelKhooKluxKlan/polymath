@@ -148,6 +148,7 @@ const RUNPOD_SERVERLESS = createRunpodServerlessClient({
   s3Endpoint: process.env.RUNPOD_S3_ENDPOINT,
   s3AccessKeyId: process.env.RUNPOD_S3_ACCESS_KEY_ID,
   s3SecretAccessKey: process.env.RUNPOD_S3_SECRET_ACCESS_KEY,
+  replicas: process.env.RUNPOD_S3_REPLICAS,
   timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
   pollIntervalMs: 2_000,
 });
@@ -1592,6 +1593,7 @@ function muscriptorAvailability() {
     adminOnly: MUSCRIPTOR_ADMIN_ONLY,
     model: MUSCRIPTOR_MODEL,
     execution,
+    storageTargets: serverlessConfigured ? RUNPOD_SERVERLESS.storageTargetCount : 0,
     maxBytes: null,
     maxDurationSeconds: MAX_MEDIA_SECONDS,
     timeoutMinutes: Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000),

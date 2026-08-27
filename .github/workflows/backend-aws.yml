@@ -68,10 +68,16 @@ jobs:
           ECS_CLUSTER: ${{ matrix.cluster }}
           ECS_SERVICE: ${{ matrix.service }}
           TASK_FAMILY: ${{ matrix.task_family }}
+          RUNPOD_S3_REPLICAS: ${{ vars.RUNPOD_S3_REPLICAS }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition > current-task.json
-          jq --arg image $IMAGE '
+          jq --arg image $IMAGE --arg runpodReplicas "$RUNPOD_S3_REPLICAS" '
             .containerDefinitions[0].image = $image
+            | .containerDefinitions[0].environment = (
+                (.containerDefinitions[0].environment // [])
+                | map(select(.name != "RUNPOD_S3_REPLICAS"))
+                + [{ name: "RUNPOD_S3_REPLICAS", value: $runpodReplicas }]
+              )
             | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
           ' current-task.json > next-task.json
           TASK_ARN=$(aws ecs register-task-definition --cli-input-json file://next-task.json --query 'taskDefinition.taskDefinitionArn' --output text)

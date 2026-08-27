@@ -77,6 +77,7 @@ function createModelLab(environment = process.env, options = {}) {
     s3Endpoint: environment.RUNPOD_S3_ENDPOINT,
     s3AccessKeyId: environment.RUNPOD_S3_ACCESS_KEY_ID,
     s3SecretAccessKey: environment.RUNPOD_S3_SECRET_ACCESS_KEY,
+    replicas: environment.RUNPOD_S3_REPLICAS,
     timeoutMs: Math.max(10 * 60 * 1000, Number(environment.MODEL_LAB_TIMEOUT_MS) || 2 * 60 * 60 * 1000),
     pollIntervalMs: 2_000,
   }, options.dependencies);
@@ -109,6 +110,7 @@ function createModelLab(environment = process.env, options = {}) {
       rawModelOutput: true,
       model: 'MuScriptor Large',
       checkpoint: String(environment.MODEL_LAB_MODEL_VERSION || 'muscriptor-tester/v001'),
+      storageTargets: runpod.storageTargetCount,
       maximumSeconds,
       missing,
       limitations: {

@@ -1,7 +1,8 @@
 # Polymath note-coordinate alignment prototype
 
-This research tool compares a desired MIDI performance with note events produced
-by MuScriptor. It estimates a global start/average-speed line, rejects unrelated
+This research tool compares an ideal performance with notes produced by
+Polymath/MuScriptor. Either side can be a MIDI file or a note JSON file. It
+estimates a global start/average-speed line, rejects unrelated
 notes, constructs a local nonlinear timeline, and writes an SVG coordinate plot.
 
 It deliberately does not trust the first note. A candidate timeline must be
@@ -14,6 +15,10 @@ reduced weight, while exact pitches receive more weight.
 ```powershell
 npm run align:notes -- --muscriptor "C:\path\transcription.json" --midi "C:\path\desired.mid" --out "C:\path\alignment-output"
 ```
+
+For new comparisons, use `--reference` for the ideal file and `--observed` for
+the model file. Both inputs accept `.mid`, `.midi`, or `.json`. The older
+`--midi` and `--muscriptor` names remain available for existing commands.
 
 Outputs:
 

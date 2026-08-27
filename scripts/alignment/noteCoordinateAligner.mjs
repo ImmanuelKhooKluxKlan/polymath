@@ -538,14 +538,32 @@ async function loadMidiNotes(filename) {
   });
 }
 
+async function loadNoteFile(filename) {
+  const resolved = path.resolve(filename);
+  const extension = path.extname(resolved).toLowerCase();
+  if (extension === '.mid' || extension === '.midi') {
+    return loadMidiNotes(resolved);
+  }
+  if (extension === '.json') {
+    const payload = JSON.parse(await fs.readFile(resolved, 'utf8'));
+    const notes = extractJsonNotes(payload);
+    if (!notes.length) throw new Error(`No note array was found in ${path.basename(resolved)}.`);
+    return notes;
+  }
+  throw new Error(`Unsupported note file: ${path.basename(resolved)}. Use MIDI or JSON.`);
+}
+
 async function runCli() {
   const args = parseArguments(process.argv.slice(2));
-  if (!args.muscriptor || !args.midi) {
-    throw new Error('Usage: npm run align:notes -- --muscriptor transcription.json --midi desired.mid [--out alignment-output]');
+  const referenceFile = args.reference || args.midi;
+  const observedFile = args.observed || args.muscriptor;
+  if (!referenceFile || !observedFile) {
+    throw new Error('Usage: npm run align:notes -- --reference ideal.mid-or-json --observed model.mid-or-json [--out alignment-output]');
   }
-  const observedPayload = JSON.parse(await fs.readFile(path.resolve(args.muscriptor), 'utf8'));
-  const observedNotes = extractJsonNotes(observedPayload);
-  const referenceNotes = await loadMidiNotes(path.resolve(args.midi));
+  const [referenceNotes, observedNotes] = await Promise.all([
+    loadNoteFile(referenceFile),
+    loadNoteFile(observedFile),
+  ]);
   const result = alignNoteCoordinates(referenceNotes, observedNotes);
   const outputDirectory = path.resolve(args.out || 'alignment-output');
   await fs.mkdir(outputDirectory, { recursive: true });
@@ -571,7 +589,12 @@ async function runCli() {
     ),
     fs.writeFile(path.join(outputDirectory, 'alignment-plot.svg'), createAlignmentSvg(result)),
   ]);
-  process.stdout.write(`${JSON.stringify({ outputDirectory, ...result.metrics }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({
+    referenceFile: path.resolve(referenceFile),
+    observedFile: path.resolve(observedFile),
+    outputDirectory,
+    ...result.metrics,
+  }, null, 2)}\n`);
 }
 
 const isDirectRun = process.argv[1]
