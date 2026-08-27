@@ -28,12 +28,13 @@ HARMONY_MAX_MIDI = 76
 
 MIN_NOTE_SECONDS = 0.05
 MAX_NOTE_SECONDS = 6.0
-MIN_RETRIGGER_SECONDS = 0.085
+MIN_RETRIGGER_SECONDS = 0.10
 SAME_KEY_RELEASE_GAP_SECONDS = 0.018
 MAX_ONSET_CLUSTER = 6
 MAX_ARRANGED_NOTES_PER_SECOND = 12
 MAX_DIRECT_PIANO_NOTES_PER_SECOND = 12
 MAX_HARMONY_PITCH_CLASSES = 4
+MAX_DIRECT_CLEANUP_PRESSURE = 0.18
 
 PIANO_INSTRUMENTS = {"acoustic_piano", "electric_piano"}
 PERCUSSION_INSTRUMENTS = {"drums", "timpani"}
@@ -133,19 +134,30 @@ def maximum_onset_cluster(notes: Iterable[dict[str, Any]], window: float = 0.04)
     return max(buckets.values(), default=0)
 
 
-def source_profile(notes: list[dict[str, Any]]) -> dict[str, Any]:
+def source_profile(
+    notes: list[dict[str, Any]],
+    cleanup: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     counts = Counter(note["instrument"] for note in notes)
     total = max(1, len(notes))
     acoustic_ratio = counts["acoustic_piano"] / total
     piano_ratio = sum(counts[name] for name in PIANO_INSTRUMENTS) / total
     density = notes_per_second(notes)
     onset_cluster = maximum_onset_cluster(notes)
+    cleanup = cleanup or {}
+    cleanup_input = max(1, int(safe_number(cleanup.get("inputNotes"), len(notes)) or len(notes)))
+    cleanup_artifacts = sum(
+        int(safe_number(cleanup.get(field), 0) or 0)
+        for field in ("removedDuplicateNotes", "shortenedSameKeyOverlaps")
+    )
+    cleanup_pressure = cleanup_artifacts / cleanup_input
     direct_acoustic_piano = (
         counts["acoustic_piano"] >= 24
         and acoustic_ratio >= 0.70
         and piano_ratio >= 0.90
         and density <= MAX_DIRECT_PIANO_NOTES_PER_SECOND
         and onset_cluster <= 8
+        and cleanup_pressure <= MAX_DIRECT_CLEANUP_PRESSURE
     )
     return {
         "instrumentCounts": dict(sorted(counts.items())),
@@ -153,6 +165,9 @@ def source_profile(notes: list[dict[str, Any]]) -> dict[str, Any]:
         "pianoRatio": round_number(piano_ratio, 3),
         "sourceNotesPerSecond": round_number(density, 3),
         "sourceMaximumOnsetCluster": onset_cluster,
+        "cleanupArtifactPressure": round_number(cleanup_pressure, 3),
+        "cleanupArtifactsDetected": cleanup_artifacts,
+        "maximumDirectCleanupPressure": MAX_DIRECT_CLEANUP_PRESSURE,
         "detectedAcousticPianoPerformance": direct_acoustic_piano,
     }
 
@@ -443,7 +458,7 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
     if not source_notes:
         raise ValueError("No notes inside the real 88-key piano range were available to arrange.")
 
-    profile = source_profile(source_notes)
+    profile = source_profile(source_notes, payload.get("transcriptionCleanup"))
     percussion_removed = sum(
         1 for note in source_notes if note["instrument"] in PERCUSSION_INSTRUMENTS
     )
@@ -485,8 +500,15 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
                 and note["instrument"] not in VOICE_INSTRUMENTS
                 and note["midi"] >= 60
             ]
+            source_duration = max(
+                (note["time"] + note["duration"] for note in working),
+                default=0,
+            )
+            minimum_explicit_leads = max(16, math.ceil(source_duration * 0.20))
             role_notes["melody"] = select_lead(
-                explicit_leads or fallback_leads,
+                explicit_leads
+                if len(explicit_leads) >= minimum_explicit_leads
+                else fallback_leads,
                 window_seconds=0.16,
             )
 
@@ -580,9 +602,9 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
         "arrangerProfile": arranger_profile,
         "arrangedNotesPerSecond": round_number(notes_per_second(arranged_notes), 3),
     }
-    output['performance']['profile'] = 'polymath-piano-arranger-v2'
+    output['performance']['profile'] = 'polymath-piano-arranger-v3'
     output['performance']['defaultAutoplayReleaseSeconds'] = 0.62
-    output['pianoArrangement']['version'] = 2
+    output['pianoArrangement']['version'] = 3
     output['pianoArrangement']['maximumHarmonyPitchClasses'] = (
         MAX_HARMONY_PITCH_CLASSES
     )
@@ -599,7 +621,7 @@ def merge_phrase_retriggers(
         by_pitch[note['midi']].append(note)
     output: list[dict[str, Any]] = []
     removed = 0
-    continuation_gaps = {'melody': 0.14, 'bass': 0.16, 'harmony': 0.18}
+    continuation_gaps = {'melody': 0.18, 'bass': 0.20, 'harmony': 0.20}
     for pitch_notes in by_pitch.values():
         pitch_notes.sort(
             key=lambda note: (
@@ -618,10 +640,17 @@ def merge_phrase_retriggers(
             note_end = note['time'] + note['duration']
             same_role = note['arrangementRole'] == previous['arrangementRole']
             continuation_gap = continuation_gaps.get(note['arrangementRole'], -1.0)
+            role_collision = (
+                not same_role
+                and onset_gap < 0.20
+            )
             continues_phrase = (
-                same_role
-                and continuation_gap >= 0
-                and onset_gap < continuation_gap
+                (
+                    same_role
+                    and continuation_gap >= 0
+                    and onset_gap < continuation_gap
+                )
+                or role_collision
             )
             if onset_gap >= MIN_RETRIGGER_SECONDS and not continues_phrase:
                 merged.append(note)

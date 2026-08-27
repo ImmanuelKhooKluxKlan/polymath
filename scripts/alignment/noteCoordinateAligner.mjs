@@ -220,7 +220,9 @@ function collectMatches(reference, observed, line, options) {
 
   for (let referenceIndex = 0; referenceIndex < reference.length; referenceIndex += 1) {
     const target = reference[referenceIndex];
-    const expectedTime = target.time * line.scale + line.offset;
+    const expectedTime = Array.isArray(line.anchors) && line.anchors.length >= 2
+      ? mapReferenceTime(target.time, line.anchors)
+      : target.time * line.scale + line.offset;
     const pool = byPitchClass[target.pitchClass];
     let best = null;
     for (const candidate of pool) {
@@ -247,6 +249,118 @@ function collectMatches(reference, observed, line, options) {
     });
   }
   return matches;
+}
+
+function estimateLocalOffsetPath(reference, observed, line, options) {
+  const stepSeconds = Math.max(2, Number(options.anchorBinSeconds) || 4);
+  const radiusSeconds = Math.max(stepSeconds * 0.8, Number(options.localSearchRadiusSeconds) || 3.2);
+  const searchSeconds = Math.max(1, Number(options.localOffsetSearchSeconds) || 6);
+  const searchStep = Math.max(0.05, Number(options.localOffsetStepSeconds) || 0.15);
+  const tolerance = Math.max(0.08, Number(options.localSearchToleranceSeconds) || 0.28);
+  const observedByPitchClass = indexByPitchClass(observed);
+  const maximumReferenceTime = reference.at(-1)?.time ?? 0;
+  const bins = [];
+
+  for (let centre = stepSeconds / 2; centre <= maximumReferenceTime; centre += stepSeconds) {
+    const localReference = sampleEvenly(reference.filter((note) => (
+      note.time >= centre - radiusSeconds && note.time <= centre + radiusSeconds
+    )), 36);
+    if (localReference.length < 4) continue;
+    const candidates = [];
+    for (let delta = -searchSeconds; delta <= searchSeconds + EPSILON; delta += searchStep) {
+      const result = scoreLine(
+        localReference,
+        observedByPitchClass,
+        line.scale,
+        line.offset + delta,
+        tolerance,
+      );
+      candidates.push({
+        delta,
+        emission: result.score + result.coverage * 2.5 - result.medianResidual * 1.5,
+        ...result,
+      });
+    }
+    bins.push({ centre, localReferenceCount: localReference.length, candidates });
+  }
+  if (bins.length < 2) return [];
+
+  let previous = bins[0].candidates.map((candidate) => ({
+    score: candidate.emission - Math.abs(candidate.delta) * 0.06,
+    previousIndex: -1,
+  }));
+  const backPointers = [previous];
+  for (let binIndex = 1; binIndex < bins.length; binIndex += 1) {
+    const current = bins[binIndex].candidates.map((candidate) => {
+      let best = { score: -Infinity, previousIndex: -1 };
+      bins[binIndex - 1].candidates.forEach((priorCandidate, priorIndex) => {
+        const change = Math.abs(candidate.delta - priorCandidate.delta);
+        const transitionPenalty = change * (Number(options.localOffsetSmoothnessPenalty) || 0.72)
+          + Math.max(0, change - 1.5) * 0.35;
+        const score = previous[priorIndex].score + candidate.emission - transitionPenalty;
+        if (score > best.score) best = { score, previousIndex: priorIndex };
+      });
+      return best;
+    });
+    previous = current;
+    backPointers.push(current);
+  }
+
+  let candidateIndex = previous.reduce((bestIndex, state, index) => (
+    state.score > previous[bestIndex].score ? index : bestIndex
+  ), 0);
+  const path = [];
+  for (let binIndex = bins.length - 1; binIndex >= 0; binIndex -= 1) {
+    const bin = bins[binIndex];
+    const candidate = bin.candidates[candidateIndex];
+    path.push({ bin, candidate });
+    candidateIndex = backPointers[binIndex][candidateIndex].previousIndex;
+    if (candidateIndex < 0 && binIndex > 0) candidateIndex = 0;
+  }
+  path.reverse();
+
+  const anchors = path
+    .filter(({ bin, candidate }) => (
+      candidate.supported >= Math.max(3, Math.ceil(bin.localReferenceCount * 0.18))
+      && candidate.coverage >= 0.18
+    ))
+    .map(({ bin, candidate }) => ({
+      referenceTime: bin.centre,
+      observedTime: bin.centre * line.scale + line.offset + candidate.delta,
+      support: candidate.supported,
+      exactPitchShare: null,
+      medianLineResidualMs: Number((candidate.medianResidual * 1000).toFixed(2)),
+      localOffsetSeconds: Number(candidate.delta.toFixed(4)),
+      kind: 'automatic-local-search',
+    }));
+  const monotonic = [];
+  for (const anchor of anchors) {
+    if (!monotonic.length || anchor.observedTime > monotonic.at(-1).observedTime + 0.02) {
+      monotonic.push(anchor);
+    }
+  }
+  return monotonic;
+}
+
+function mergeAutomaticAnchors(matchAnchors, localAnchors, options) {
+  if (localAnchors.length < 2) return matchAnchors;
+  const radius = Math.max(0.5, (Number(options.anchorBinSeconds) || 4) * 0.45);
+  const combined = [
+    ...matchAnchors.filter((matchAnchor) => !localAnchors.some((localAnchor) => (
+      Math.abs(localAnchor.referenceTime - matchAnchor.referenceTime) <= radius
+    ))),
+    ...localAnchors,
+  ].sort((a, b) => a.referenceTime - b.referenceTime || b.support - a.support);
+  const monotonic = [];
+  for (const anchor of combined) {
+    const previous = monotonic.at(-1);
+    if (!previous) monotonic.push(anchor);
+    else if (
+      anchor.referenceTime > previous.referenceTime + 0.02
+      && anchor.observedTime > previous.observedTime + 0.02
+    ) monotonic.push(anchor);
+  }
+  return monotonic.length >= 2 ? monotonic : matchAnchors;
 }
 
 function robustLinearFit(matches, fallback) {
@@ -309,6 +423,9 @@ function buildWarpAnchors(matches, line, options) {
     observedTime: median(entries.map((match) => match.observed.time)),
     support: entries.length,
     exactPitchShare: entries.filter((match) => match.exactPitch).length / entries.length,
+    medianLineResidualMs: Number((median(entries.map((match) => (
+      Math.abs(match.observed.time - (line.scale * match.reference.time + line.offset))
+    ))) * 1000).toFixed(2)),
     kind: 'automatic',
   })).sort((a, b) => a.referenceTime - b.referenceTime);
 
@@ -320,6 +437,95 @@ function buildWarpAnchors(matches, line, options) {
     if (!previous || anchor.observedTime > previous.observedTime + 0.01) monotonic.push(anchor);
   }
   return monotonic.length >= 2 ? monotonic : buildWarpAnchors([], line, options);
+}
+
+function normalizeManualAnchors(input, maximumReferenceTime, sourceDurationSeconds) {
+  const anchors = (Array.isArray(input) ? input : [])
+    .map((anchor, index) => ({
+      referenceTime: Number(anchor?.referenceTime ?? anchor?.reference ?? anchor?.midiTime),
+      observedTime: Number(anchor?.observedTime ?? anchor?.observed ?? anchor?.sourceTime),
+      support: Number.MAX_SAFE_INTEGER,
+      exactPitchShare: 1,
+      medianLineResidualMs: 0,
+      kind: 'manual',
+      manualIndex: index,
+    }))
+    .filter((anchor) => Number.isFinite(anchor.referenceTime) && Number.isFinite(anchor.observedTime))
+    .filter((anchor) => anchor.referenceTime >= 0 && anchor.referenceTime <= maximumReferenceTime + 1)
+    .filter((anchor) => anchor.observedTime >= 0 && (
+      !Number.isFinite(sourceDurationSeconds) || anchor.observedTime <= sourceDurationSeconds + 0.05
+    ))
+    .sort((a, b) => a.referenceTime - b.referenceTime || a.observedTime - b.observedTime);
+
+  for (let index = 1; index < anchors.length; index += 1) {
+    if (anchors[index].referenceTime <= anchors[index - 1].referenceTime + EPSILON) {
+      throw new Error('Manual MIDI/reference anchor times must increase without duplicates.');
+    }
+    if (anchors[index].observedTime <= anchors[index - 1].observedTime + EPSILON) {
+      throw new Error('Manual source/video anchor times must increase. A timeline cannot move backwards.');
+    }
+  }
+  return anchors;
+}
+
+function mergeWarpAnchors(automaticAnchors, manualAnchors, line, maximumReferenceTime, options) {
+  if (!manualAnchors.length) return automaticAnchors;
+  const radius = Math.max(0.1, Number(options.manualAnchorRadiusSeconds) || 2.5);
+  const candidates = [
+    ...automaticAnchors.filter((automatic) => !manualAnchors.some((manual) => (
+      Math.abs(manual.referenceTime - automatic.referenceTime) <= radius
+    ))),
+    ...manualAnchors,
+  ].sort((a, b) => a.referenceTime - b.referenceTime || (
+    a.kind === 'manual' ? -1 : 1
+  ));
+
+  const monotonic = [];
+  for (const anchor of candidates) {
+    const previous = monotonic.at(-1);
+    if (!previous) {
+      monotonic.push(anchor);
+      continue;
+    }
+    if (
+      anchor.referenceTime > previous.referenceTime + EPSILON
+      && anchor.observedTime > previous.observedTime + 0.005
+    ) {
+      monotonic.push(anchor);
+      continue;
+    }
+    if (anchor.kind !== 'manual') continue;
+    while (
+      monotonic.length
+      && monotonic.at(-1).kind !== 'manual'
+      && (
+        anchor.referenceTime <= monotonic.at(-1).referenceTime + EPSILON
+        || anchor.observedTime <= monotonic.at(-1).observedTime + 0.005
+      )
+    ) monotonic.pop();
+    const last = monotonic.at(-1);
+    if (
+      last
+      && (
+        anchor.referenceTime <= last.referenceTime + EPSILON
+        || anchor.observedTime <= last.observedTime + 0.005
+      )
+    ) {
+      throw new Error('Manual anchors conflict with each other after automatic outliers are removed.');
+    }
+    monotonic.push(anchor);
+  }
+
+  if (monotonic.length >= 2) return monotonic;
+  return [
+    { referenceTime: 0, observedTime: line.offset, support: 0, kind: 'linear-fallback' },
+    {
+      referenceTime: Math.max(1, maximumReferenceTime),
+      observedTime: Math.max(1, maximumReferenceTime) * line.scale + line.offset,
+      support: 0,
+      kind: 'linear-fallback',
+    },
+  ];
 }
 
 export function mapReferenceTime(referenceTime, anchors) {
@@ -342,6 +548,142 @@ export function mapReferenceTime(referenceTime, anchors) {
   const scale = (right.observedTime - left.observedTime)
     / Math.max(EPSILON, right.referenceTime - left.referenceTime);
   return left.observedTime + (referenceTime - left.referenceTime) * scale;
+}
+
+function referenceRangeExcluded(start, end, ranges) {
+  return (Array.isArray(ranges) ? ranges : []).some((range) => {
+    const rangeStart = Number(range?.start ?? range?.referenceStart);
+    const rangeEnd = Number(range?.end ?? range?.referenceEnd);
+    return Number.isFinite(rangeStart) && Number.isFinite(rangeEnd)
+      && Math.max(start, Math.min(rangeStart, rangeEnd)) < Math.min(end, Math.max(rangeStart, rangeEnd));
+  });
+}
+
+function decisionForWindow(windowId, decisions) {
+  if (Array.isArray(decisions)) {
+    return String(decisions.find((item) => item?.windowId === windowId)?.decision || 'auto');
+  }
+  if (decisions && typeof decisions === 'object') return String(decisions[windowId] || 'auto');
+  return 'auto';
+}
+
+function slopeBetween(start, end, anchors) {
+  return (mapReferenceTime(end, anchors) - mapReferenceTime(start, anchors))
+    / Math.max(EPSILON, end - start);
+}
+
+function buildQualityWindows(reference, matches, anchors, coarseLine, options) {
+  const windowSeconds = Math.max(2, Number(options.qualityWindowSeconds) || 5);
+  const maximumReferenceTime = Math.max(...reference.map((note) => note.time + note.duration), 0);
+  const sourceDuration = options.sourceDurationSeconds == null || options.sourceDurationSeconds === ''
+    ? Number.NaN
+    : Number(options.sourceDurationSeconds);
+  const matchesByReference = new Map(matches.map((match) => [match.referenceIndex, match]));
+  const windows = [];
+  for (let start = 0, index = 0; start < maximumReferenceTime + EPSILON; start += windowSeconds, index += 1) {
+    const end = Math.min(maximumReferenceTime, start + windowSeconds);
+    if (end <= start + EPSILON) break;
+    const entries = reference
+      .map((note, referenceIndex) => ({ note, referenceIndex }))
+      .filter(({ note }) => note.time >= start && note.time < end);
+    const windowMatches = entries.map(({ referenceIndex }) => matchesByReference.get(referenceIndex)).filter(Boolean);
+    const residuals = windowMatches.map((match) => Math.abs(
+      match.observed.time - mapReferenceTime(match.reference.time, anchors)
+    ));
+    const exact = windowMatches.filter((match) => match.exactPitch).length;
+    const localScale = slopeBetween(start, end, anchors);
+    const matchPercent = entries.length ? windowMatches.length / entries.length : 0;
+    const exactPercent = windowMatches.length ? exact / windowMatches.length : 0;
+    const medianResidual = median(residuals) ?? Infinity;
+    const p95Residual = quantile(residuals, 0.95) ?? Infinity;
+    const flags = [];
+    if (entries.length === 0) flags.push('reference-silence');
+    if (entries.length > 0 && matchPercent < 0.55) flags.push('weak-note-support');
+    if (windowMatches.length > 0 && exactPercent < 0.35) flags.push('octave-or-pitch-disagreement');
+    if (medianResidual > 0.25) flags.push('timing-residual');
+    if (localScale < 0.72 || localScale > 1.38) flags.push('strong-local-tempo-change-or-pause');
+    else if (Math.abs(localScale - coarseLine.scale) > 0.12) flags.push('local-tempo-drift');
+    const automaticStatus = entries.length === 0
+      ? 'neutral'
+      : matchPercent >= 0.72 && medianResidual <= 0.18 && localScale >= 0.72 && localScale <= 1.38
+        ? 'trusted'
+        : matchPercent >= 0.45 && medianResidual <= 0.45 && localScale >= 0.5 && localScale <= 1.8
+          ? 'review'
+          : 'unsafe';
+    const windowId = `w${String(index + 1).padStart(4, '0')}`;
+    const decision = referenceRangeExcluded(start, end, options.excludedRanges)
+      ? 'reject'
+      : decisionForWindow(windowId, options.reviewDecisions);
+    const status = decision === 'accept'
+      ? 'accepted-manually'
+      : decision === 'reject'
+        ? 'rejected'
+        : automaticStatus;
+    const mappedStart = Math.max(0, mapReferenceTime(start, anchors));
+    const mappedEndRaw = Math.max(mappedStart, mapReferenceTime(end, anchors));
+    const mappedEnd = Number.isFinite(sourceDuration)
+      ? Math.min(sourceDuration, mappedEndRaw)
+      : mappedEndRaw;
+    windows.push({
+      id: windowId,
+      referenceStart: Number(start.toFixed(4)),
+      referenceEnd: Number(end.toFixed(4)),
+      sourceStart: Number(mappedStart.toFixed(4)),
+      sourceEnd: Number(mappedEnd.toFixed(4)),
+      referenceNotes: entries.length,
+      matchedNotes: windowMatches.length,
+      matchedPercent: Number((matchPercent * 100).toFixed(1)),
+      exactPitchPercent: Number((exactPercent * 100).toFixed(1)),
+      medianResidualMs: Number.isFinite(medianResidual) ? Number((medianResidual * 1000).toFixed(1)) : null,
+      p95ResidualMs: Number.isFinite(p95Residual) ? Number((p95Residual * 1000).toFixed(1)) : null,
+      localScale: Number(localScale.toFixed(5)),
+      localTempoDifferencePercent: Number(((localScale - 1) * 100).toFixed(2)),
+      automaticStatus,
+      decision,
+      status,
+      trainingEligible: status === 'trusted' || status === 'accepted-manually',
+      flags,
+    });
+  }
+  return windows;
+}
+
+function buildTempoSegments(anchors, matches, coarseLine) {
+  return anchors.slice(1).map((right, index) => {
+    const left = anchors[index];
+    const referenceSeconds = right.referenceTime - left.referenceTime;
+    const sourceSeconds = right.observedTime - left.observedTime;
+    const localScale = sourceSeconds / Math.max(EPSILON, referenceSeconds);
+    const segmentMatches = matches.filter((match) => (
+      match.reference.time >= left.referenceTime && match.reference.time <= right.referenceTime
+    ));
+    const residuals = segmentMatches.map((match) => Math.abs(
+      match.observed.time - mapReferenceTime(match.reference.time, [left, right])
+    ));
+    const flags = [];
+    if (localScale < 0.72 || localScale > 1.38) flags.push('pause-cut-or-strong-tempo-change');
+    else if (Math.abs(localScale - coarseLine.scale) > 0.12) flags.push('tempo-drift');
+    if (segmentMatches.length < 3) flags.push('low-support');
+    return {
+      id: `s${String(index + 1).padStart(4, '0')}`,
+      referenceStart: Number(left.referenceTime.toFixed(4)),
+      referenceEnd: Number(right.referenceTime.toFixed(4)),
+      sourceStart: Number(left.observedTime.toFixed(4)),
+      sourceEnd: Number(right.observedTime.toFixed(4)),
+      referenceSeconds: Number(referenceSeconds.toFixed(4)),
+      sourceSeconds: Number(sourceSeconds.toFixed(4)),
+      localScale: Number(localScale.toFixed(5)),
+      localTempoDifferencePercent: Number(((localScale - 1) * 100).toFixed(2)),
+      extraOrMissingSecondsVsCoarse: Number((sourceSeconds - referenceSeconds * coarseLine.scale).toFixed(4)),
+      matchedNotes: segmentMatches.length,
+      exactPitchPercent: Number((segmentMatches.filter((match) => match.exactPitch).length
+        / Math.max(1, segmentMatches.length) * 100).toFixed(1)),
+      medianResidualMs: Number(((median(residuals) ?? 0) * 1000).toFixed(1)),
+      leftKind: left.kind,
+      rightKind: right.kind,
+      flags,
+    };
+  });
 }
 
 function calculateMetrics(reference, observed, matches, anchors, coarseLine) {
@@ -407,6 +749,17 @@ const DEFAULT_OPTIONS = {
   chordToleranceSeconds: 0.08,
   localAnchorTolerance: 1.35,
   anchorBinSeconds: 4,
+  localSearchRadiusSeconds: 3.2,
+  localOffsetSearchSeconds: 6,
+  localOffsetStepSeconds: 0.15,
+  localSearchToleranceSeconds: 0.28,
+  localOffsetSmoothnessPenalty: 0.72,
+  manualAnchorRadiusSeconds: 2.5,
+  qualityWindowSeconds: 5,
+  sourceDurationSeconds: null,
+  manualAnchors: [],
+  excludedRanges: [],
+  reviewDecisions: {},
 };
 
 export function alignNoteCoordinates(referenceInput, observedInput, overrides = {}) {
@@ -424,18 +777,129 @@ export function alignNoteCoordinates(referenceInput, observedInput, overrides = 
     line = { ...line, ...robustLinearFit(matches, line) };
   }
   matches = collectMatches(reference, observed, line, options);
-  const anchors = buildWarpAnchors(matches, line, options);
-  const metrics = calculateMetrics(reference, observed, matches, anchors, line);
-  const alignedReference = reference.map((note) => ({
-    ...note,
-    originalTime: note.time,
-    time: Number(mapReferenceTime(note.time, anchors).toFixed(6)),
-    duration: Number(Math.max(
-      0.01,
-      mapReferenceTime(note.time + note.duration, anchors) - mapReferenceTime(note.time, anchors),
-    ).toFixed(6)),
-  }));
-  return { reference, observed, coarse: line, matches, anchors, metrics, alignedReference };
+  const maximumReferenceTime = Math.max(...reference.map((note) => note.time + note.duration), 1);
+  const sourceDurationSeconds = options.sourceDurationSeconds == null || options.sourceDurationSeconds === ''
+    ? Number.NaN
+    : Number(options.sourceDurationSeconds);
+  const manualAnchors = normalizeManualAnchors(
+    options.manualAnchors,
+    maximumReferenceTime,
+    sourceDurationSeconds,
+  );
+  const localSearchAnchors = estimateLocalOffsetPath(reference, observed, line, options);
+  const initialAutomaticAnchors = mergeAutomaticAnchors(
+    buildWarpAnchors(matches, line, options),
+    localSearchAnchors,
+    options,
+  );
+  const preliminaryAnchors = mergeWarpAnchors(
+    initialAutomaticAnchors,
+    manualAnchors,
+    line,
+    maximumReferenceTime,
+    options,
+  );
+  matches = collectMatches(reference, observed, { ...line, anchors: preliminaryAnchors }, options);
+  const automaticAnchors = mergeAutomaticAnchors(
+    buildWarpAnchors(matches, line, options),
+    localSearchAnchors,
+    options,
+  );
+  const anchors = mergeWarpAnchors(
+    automaticAnchors,
+    manualAnchors,
+    line,
+    maximumReferenceTime,
+    options,
+  ).filter((anchor) => (
+    !Number.isFinite(sourceDurationSeconds) || anchor.observedTime <= sourceDurationSeconds + 0.05
+  ));
+  if (anchors.length < 2) throw new Error('Not enough forward-moving anchors remain inside the source timeline.');
+  matches = collectMatches(reference, observed, { ...line, anchors }, options);
+  const qualityWindows = buildQualityWindows(reference, matches, anchors, line, options);
+  const tempoSegments = buildTempoSegments(anchors, matches, line);
+  const windowByReferenceTime = (time) => qualityWindows.find((window) => (
+    time >= window.referenceStart && time < window.referenceEnd + EPSILON
+  ));
+  const alignedReference = reference.map((note) => {
+    const mappedStartRaw = mapReferenceTime(note.time, anchors);
+    const mappedEndRaw = mapReferenceTime(note.time + note.duration, anchors);
+    const mappedStart = Math.max(0, mappedStartRaw);
+    const mappedEnd = Number.isFinite(sourceDurationSeconds)
+      ? Math.min(sourceDurationSeconds, Math.max(mappedStart, mappedEndRaw))
+      : Math.max(mappedStart, mappedEndRaw);
+    if (Number.isFinite(sourceDurationSeconds) && mappedStart >= sourceDurationSeconds - 0.005) return null;
+    const quality = windowByReferenceTime(note.time);
+    return {
+      ...note,
+      originalTime: note.time,
+      time: Number(mappedStart.toFixed(6)),
+      duration: Number(Math.max(0.01, mappedEnd - mappedStart).toFixed(6)),
+      qualityWindowId: quality?.id || null,
+      qualityStatus: quality?.status || 'unsafe',
+      trainingEligible: Boolean(quality?.trainingEligible),
+    };
+  }).filter(Boolean);
+  const baseMetrics = calculateMetrics(reference, observed, matches, anchors, line);
+  const eligibleNotes = alignedReference.filter((note) => note.trainingEligible).length;
+  const metrics = {
+    ...baseMetrics,
+    manualAnchorCount: manualAnchors.length,
+    automaticAnchorCount: anchors.filter((anchor) => String(anchor.kind).startsWith('automatic')).length,
+    qualityWindowCount: qualityWindows.length,
+    trustedWindowCount: qualityWindows.filter((window) => window.status === 'trusted').length,
+    manualAcceptedWindowCount: qualityWindows.filter((window) => window.status === 'accepted-manually').length,
+    reviewWindowCount: qualityWindows.filter((window) => window.status === 'review').length,
+    unsafeWindowCount: qualityWindows.filter((window) => window.status === 'unsafe').length,
+    rejectedWindowCount: qualityWindows.filter((window) => window.status === 'rejected').length,
+    unsafeOrRejectedWindowCount: qualityWindows.filter((window) => (
+      window.status === 'unsafe' || window.status === 'rejected'
+    )).length,
+    trainingEligibleNotes: eligibleNotes,
+    trainingEligiblePercent: Number((eligibleNotes / Math.max(1, alignedReference.length) * 100).toFixed(2)),
+    sourceDurationSeconds: Number.isFinite(sourceDurationSeconds)
+      ? Number(sourceDurationSeconds.toFixed(4))
+      : null,
+  };
+  const supervisionPackage = {
+    schema: 'polymath-supervision-package-v1',
+    generatedAt: new Date().toISOString(),
+    timeline: {
+      sourceDurationSeconds: metrics.sourceDurationSeconds,
+      referenceDurationSeconds: Number(maximumReferenceTime.toFixed(4)),
+      rule: 'Reference MIDI notes are warped onto the source audio/video timeline; the source duration is never stretched to the MIDI duration.',
+    },
+    alignment: {
+      metrics,
+      coarse: line,
+      anchors,
+      manualAnchors,
+      tempoSegments,
+      qualityWindows,
+    },
+    review: {
+      decisions: options.reviewDecisions || {},
+      excludedRanges: options.excludedRanges || [],
+      readyForTraining: metrics.unsafeWindowCount === 0
+        && metrics.reviewWindowCount === 0
+        && metrics.trainingEligibleNotes >= 8,
+    },
+    notes: alignedReference,
+  };
+  return {
+    reference,
+    observed,
+    coarse: line,
+    matches,
+    automaticAnchors,
+    manualAnchors,
+    anchors,
+    tempoSegments,
+    qualityWindows,
+    metrics,
+    alignedReference,
+    supervisionPackage,
+  };
 }
 
 function escapeXml(value) {
@@ -538,7 +1002,7 @@ async function loadMidiNotes(filename) {
   });
 }
 
-async function loadNoteFile(filename) {
+export async function loadNoteFile(filename) {
   const resolved = path.resolve(filename);
   const extension = path.extname(resolved).toLowerCase();
   if (extension === '.mid' || extension === '.midi') {
@@ -564,7 +1028,9 @@ async function runCli() {
     loadNoteFile(referenceFile),
     loadNoteFile(observedFile),
   ]);
-  const result = alignNoteCoordinates(referenceNotes, observedNotes);
+  const result = alignNoteCoordinates(referenceNotes, observedNotes, {
+    sourceDurationSeconds: args['source-duration'] || null,
+  });
   const outputDirectory = path.resolve(args.out || 'alignment-output');
   await fs.mkdir(outputDirectory, { recursive: true });
   await Promise.all([
@@ -585,7 +1051,7 @@ async function runCli() {
     ),
     fs.writeFile(
       path.join(outputDirectory, 'aligned-training-labels.json'),
-      `${JSON.stringify({ notes: result.alignedReference, alignment: result.metrics }, null, 2)}\n`,
+      `${JSON.stringify(result.supervisionPackage, null, 2)}\n`,
     ),
     fs.writeFile(path.join(outputDirectory, 'alignment-plot.svg'), createAlignmentSvg(result)),
   ]);

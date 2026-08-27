@@ -3,6 +3,7 @@ import { apiRequest } from '../services/api.js';
 import { downloadSongMidi } from '../utils/exporters.js';
 import ModelLabPlaybackMixer from '../components/ModelLabPlaybackMixer.jsx';
 import PianoDetailsTester from '../components/PianoDetailsTester.jsx';
+import SupervisedTrainingWorkbench from '../components/SupervisedTrainingWorkbench.jsx';
 
 const MEDIA_ACCEPT = 'audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.webm,.mkv,.avi';
 
@@ -46,6 +47,9 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [instrumentFilter, setInstrumentFilter] = useState('all');
+  const [history, setHistory] = useState({ rawTests: [], alignments: [] });
+  const [historyStatus, setHistoryStatus] = useState('');
+  const [archivedAlignment, setArchivedAlignment] = useState(null);
   const pollTimer = useRef(null);
 
   function clearPolling() {
@@ -57,8 +61,45 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
     apiRequest('/api/model-lab/capabilities')
       .then(setCapability)
       .catch((error) => setStatus(error.message));
+    apiRequest('/api/model-lab/history')
+      .then(setHistory)
+      .catch((error) => setHistoryStatus(error.message));
     return clearPolling;
   }, []);
+
+  async function refreshHistory() {
+    try {
+      setHistory(await apiRequest('/api/model-lab/history'));
+      setHistoryStatus('');
+    } catch (error) {
+      setHistoryStatus(error.message);
+    }
+  }
+
+  async function openRawTest(recordId) {
+    setHistoryStatus('Loading archived test…');
+    try {
+      const data = await apiRequest(`/api/model-lab/history/raw/${recordId}`);
+      setCapability(data.capability);
+      setFile(null);
+      setJob(data.job);
+      setInstrumentFilter('all');
+      setHistoryStatus('Archived raw test loaded.');
+    } catch (error) {
+      setHistoryStatus(error.message);
+    }
+  }
+
+  async function openAlignment(recordId) {
+    setHistoryStatus('Loading archived supervision analysis…');
+    try {
+      const data = await apiRequest(`/api/model-lab/alignments/${recordId}`);
+      setArchivedAlignment(data.alignment);
+      setHistoryStatus('Archived supervision analysis loaded.');
+    } catch (error) {
+      setHistoryStatus(error.message);
+    }
+  }
 
   async function poll(jobId) {
     try {
@@ -73,6 +114,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
       } else {
         setStatus('Raw model analysis is ready.');
         setBusy(false);
+        refreshHistory();
       }
     } catch (error) {
       setStatus(error.message);
@@ -162,6 +204,48 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
         )}
         {status && <p className="form-status">{status}</p>}
       </section>
+
+      <details className="model-lab-panel model-lab-history">
+        <summary>
+          <span><strong>ML testing history</strong><small>{history.rawTests.length} model tests · {history.alignments.length} supervision comparisons</small></span>
+          <b>Open history</b>
+        </summary>
+        {historyStatus && <p className="form-status">{historyStatus}</p>}
+        <div className="model-lab-history-columns">
+          <section>
+            <div className="supervision-subheading"><div><p className="eyebrow">Model input history</p><h3>Raw song tests</h3></div></div>
+            <div className="model-lab-history-list">
+              {history.rawTests.map((record) => (
+                <button type="button" key={record.id} onClick={() => openRawTest(record.id)}>
+                  <span><strong>{record.title}</strong><small>{new Date(record.completedAt).toLocaleString()}</small></span>
+                  <span><b>{record.noteCount} notes</b><small>{record.instrumentCount} instruments · {record.rapidRepeats75ms} rapid repeats</small></span>
+                </button>
+              ))}
+              {!history.rawTests.length && <p className="muted">New raw tests will be preserved here automatically.</p>}
+            </div>
+          </section>
+          <section>
+            <div className="supervision-subheading"><div><p className="eyebrow">Desired versus model</p><h3>Supervision comparisons</h3></div></div>
+            <div className="model-lab-history-list">
+              {history.alignments.map((record) => (
+                <button type="button" key={record.id} onClick={() => openAlignment(record.id)}>
+                  <span><strong>{record.title}</strong><small>{new Date(record.updatedAt).toLocaleString()}</small></span>
+                  <span><b>{record.matchedPercent ?? 0}% matched</b><small>{record.exactPitchPercent ?? 0}% exact · {record.trainingEligiblePercent ?? 0}% eligible</small></span>
+                </button>
+              ))}
+              {!history.alignments.length && <p className="muted">Desired/model comparisons will appear here after analysis.</p>}
+            </div>
+          </section>
+        </div>
+        <p className="privacy-note">Private administrator history. Note events, analytics, hashes, and review decisions are retained; the uploaded source song/video is deleted after transcription.</p>
+      </details>
+
+      <SupervisedTrainingWorkbench
+        job={job}
+        raw={raw}
+        initialAlignment={archivedAlignment}
+        onAlignmentSaved={refreshHistory}
+      />
 
       {analysis && raw && (
         <>

@@ -1867,24 +1867,19 @@ class PianoAudioEngine {
         velocity
       );
 
-    if (
+    const retriggerVoices =
       options.retriggerSameNote
-    ) {
-      this.release(
-        normalizedNote,
-        {
-          releaseSeconds:
-            options
-              .retriggerReleaseSeconds ??
-            preset
-              .retriggerReleaseSeconds,
-
-          keepPending: false,
-          ignorePedal: true,
-          strictRelease: true,
-        }
-      );
-    }
+        ? [
+            ...(
+              this.active.get(
+                normalizedNote
+              ) || []
+            ),
+          ].filter(
+            (candidate) =>
+              !candidate.released
+          )
+        : [];
 
     const voiceSource =
       options.source ||
@@ -1910,6 +1905,15 @@ class PianoAudioEngine {
 
     voice.requestedStartAt =
       startAt;
+
+    voice.retriggerVoices =
+      retriggerVoices;
+
+    voice.retriggerReleaseSeconds =
+      options
+        .retriggerReleaseSeconds ??
+      preset
+        .retriggerReleaseSeconds;
 
     this.trackVoice(
       normalizedNote,
@@ -2244,6 +2248,12 @@ class PianoAudioEngine {
       readPreset(
         this.toneMode
       );
+
+    this.releaseRetriggerVoices(
+      voice,
+      startAt,
+      preset
+    );
 
     const requestedMidi =
       samples[0]
@@ -2587,6 +2597,51 @@ class PianoAudioEngine {
     }
   }
 
+  releaseRetriggerVoices(
+    voice,
+    startAt,
+    preset = readPreset(this.toneMode)
+  ) {
+    const previousVoices =
+      voice?.retriggerVoices || [];
+
+    voice.retriggerVoices = [];
+
+    if (!previousVoices.length) {
+      return;
+    }
+
+    const releaseAt =
+      Math.max(
+        this.context.currentTime,
+        Number(startAt) - 0.012
+      );
+
+    previousVoices.forEach(
+      (candidate) => {
+        if (
+          !candidate ||
+          candidate === voice ||
+          candidate.released
+        ) {
+          return;
+        }
+
+        this.releaseVoice(
+          candidate,
+          releaseAt,
+          {
+            ignorePedal: true,
+            strictRelease: true,
+            releaseSeconds:
+              voice.retriggerReleaseSeconds ??
+              preset.retriggerReleaseSeconds,
+          }
+        );
+      }
+    );
+  }
+
   playFallbackSynth(
     note,
     velocity = 0.8,
@@ -2612,6 +2667,11 @@ class PianoAudioEngine {
 
     voice.startedAt =
       startAt;
+
+    this.releaseRetriggerVoices(
+      voice,
+      startAt
+    );
 
     const voiceGain =
       this.context
@@ -3412,12 +3472,20 @@ class PianoAudioEngine {
       ...voice.releaseRequestOptions,
     };
 
+    const requestedReleaseAt =
+      Number(options.releaseAt);
+
+    delete options.releaseAt;
+
     voice.releaseRequested = false;
     voice.releaseRequestOptions = null;
 
     const releaseAt =
       Math.max(
         this.context.currentTime,
+        Number.isFinite(requestedReleaseAt)
+          ? requestedReleaseAt
+          : 0,
         Number(startAt) +
           MIN_AUDIBLE_MANUAL_STRIKE_SECONDS
       );
@@ -3469,6 +3537,7 @@ class PianoAudioEngine {
       voice.releaseRequested = true;
       voice.releaseRequestOptions = {
         ...options,
+        releaseAt: now,
       };
       return;
     }
@@ -3612,6 +3681,14 @@ class PianoAudioEngine {
         }
       );
 
+      const cleanupDelaySeconds =
+        Math.max(
+          0,
+          now - this.context.currentTime
+        ) +
+        releaseSeconds +
+        0.3;
+
       voice.releaseCleanupTimerId =
         window.setTimeout(
           () => {
@@ -3621,10 +3698,7 @@ class PianoAudioEngine {
             );
           },
 
-          (
-            releaseSeconds +
-            0.3
-          ) * 1000
+          cleanupDelaySeconds * 1000
         );
     } catch {
       // Voice may already be disconnected.

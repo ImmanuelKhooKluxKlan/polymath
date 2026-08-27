@@ -34,7 +34,7 @@ class PianoLegatoTests(unittest.TestCase):
             if arranged['arrangementRole'] == 'harmony'
         ]
 
-        self.assertEqual(result['pianoArrangement']['version'], 2)
+        self.assertEqual(result['pianoArrangement']['version'], 3)
         self.assertGreater(result['pianoArrangement']['legatoExtendedNotes'], 0)
         self.assertEqual(result['performance']['defaultAutoplayReleaseSeconds'], 0.62)
         self.assertTrue(any(arranged['duration'] >= 0.4 for arranged in harmony))
@@ -64,6 +64,38 @@ class PianoArrangerTests(unittest.TestCase):
                 PIANO_MIN_MIDI <= arranged["midi"] <= PIANO_MAX_MIDI
                 for arranged in result["notes"]
             )
+        )
+
+    def test_mislabeled_full_mix_uses_cleanup_pressure_instead_of_trusting_piano_tag(self):
+        notes = [
+            note(38 + index % 34, index * 0.12, "acoustic_piano", duration=1.1)
+            for index in range(180)
+        ]
+        payload = {
+            "title": "Mislabeled full mix",
+            "notes": notes,
+            "transcriptionCleanup": {
+                "inputNotes": 230,
+                "removedDuplicateNotes": 28,
+                "shortenedSameKeyOverlaps": 48,
+            },
+        }
+
+        result = arrange_payload(payload, "instrumental")
+
+        self.assertEqual(
+            result["pianoArrangement"]["profile"],
+            "full-mix-piano-reduction",
+        )
+        self.assertFalse(
+            result["pianoArrangement"]["detectedAcousticPianoPerformance"]
+        )
+        self.assertGreater(
+            result["pianoArrangement"]["cleanupArtifactPressure"],
+            result["pianoArrangement"]["maximumDirectCleanupPressure"],
+        )
+        self.assertTrue(
+            any(item["arrangementRole"] == "melody" for item in result["notes"])
         )
 
     def test_full_mix_removes_drums_and_prioritizes_vocal_melody(self):
@@ -150,6 +182,31 @@ class PianoArrangerTests(unittest.TestCase):
         self.assertGreater(
             result["pianoArrangement"]["removedRapidRetriggers"],
             0,
+        )
+
+    def test_full_mix_merges_cross_role_same_key_collisions(self):
+        notes = []
+        for index in range(36):
+            onset = index * 0.24
+            notes.extend(
+                [
+                    note(48, onset, "electric_bass", duration=0.5),
+                    note(60, onset, "voice", duration=0.35),
+                    note(60, onset + 0.12, "clean_electric_guitar", duration=0.5),
+                    note(64, onset + 0.12, "clean_electric_guitar", duration=0.5),
+                ]
+            )
+
+        result = arrange_payload({"title": "Role collision", "notes": notes}, "full")
+        c4_onsets = sorted(
+            item["time"] for item in result["notes"] if item["midi"] == 60
+        )
+
+        self.assertTrue(
+            all(
+                current - previous >= 0.18
+                for previous, current in zip(c4_onsets, c4_onsets[1:])
+            )
         )
 
 

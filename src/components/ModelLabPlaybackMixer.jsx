@@ -199,7 +199,7 @@ export default function ModelLabPlaybackMixer({ raw, instrumentStats = [] }) {
         note.velocity,
         note.duration,
         pianoAudio.getCurrentTime() + delay,
-        { source: 'autoplay', retriggerSameNote: false },
+        { source: 'autoplay', retriggerSameNote: true },
       );
       return true;
     }

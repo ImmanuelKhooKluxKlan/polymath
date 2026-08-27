@@ -4,7 +4,7 @@ import ModelLabPage from './ModelLabPage.jsx';
 
 const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
-  ['piano-lab', 'Piano model lab', 'Private 88-key transcription testing'],
+  ['piano-lab', 'ML testing', 'Piano transcription, supervision, and test history'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
   ['promotions', 'Discounts', 'Create and pause percentage codes'],
   ['policies', 'Rules & policies', 'Signup and spending minimums'],

@@ -1,0 +1,14 @@
+{
+  "schema": "polymath-training-index-v1",
+  "songs": [
+    {
+      "songId": "replace-with-stable-song-id",
+      "sourceMedia": "C:/path/to/original-source-video.mp4",
+      "supervisionPackage": "C:/path/to/song-supervision-package.json",
+      "rights": {
+        "allowedForTraining": false,
+        "note": "Replace with proof of ownership, licence, consent, or other documented training right."
+      }
+    }
+  ]
+}

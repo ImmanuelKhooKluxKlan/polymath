@@ -1,0 +1,44 @@
+{
+  "schema": "polymath-piano-training-config-v1",
+  "experiment": "piano-v001",
+  "status": "training-adapter-ready-no-approved-dataset-no-weight-update",
+  "baseCheckpoint": {
+    "family": "MuScriptor Large compatible",
+    "revision": "8809fdfbed2affa7ade94a7059e746e3880720e7",
+    "sha256": "AC4EB6EA87DFC26B6CA6B954C6B967AB87AD4C7D08E078B25214F13ED051F397",
+    "license": "CC-BY-NC-4.0",
+    "commercialUseAllowed": false
+  },
+  "input": {
+    "sampleRate": 16000,
+    "channels": 1,
+    "segmentSeconds": 5.0,
+    "instrumentFocus": "piano"
+  },
+  "dataset": {
+    "groupSplit": "songId",
+    "trainShare": 0.8,
+    "validationShare": 0.1,
+    "testShare": 0.1,
+    "minimumEligibleNotesPerClip": 1,
+    "unsafeRegionsAllowed": false,
+    "reviewRegionsAllowed": false
+  },
+  "candidateTraining": {
+    "methodToEvaluateFirst": "final-block partial fine-tune with teacher forcing",
+    "precision": "bf16 when supported",
+    "learningRate": 0.000002,
+    "epochs": 3,
+    "gradientAccumulationSteps": 8,
+    "gradientClipNorm": 1.0,
+    "earlyStoppingMetric": "validation_note_f1",
+    "note": "These optimizer values are starting hypotheses, not production truth. The compatibility adapter follows the released MT3 event layout and causal loss, defaults to audit-only, requires at least 20 approved training songs, and must still pass a GPU overfit smoke test before a real run."
+  },
+  "promotionGates": {
+    "minimumTestNoteF1": 0.9,
+    "maximumRegressionVsBaselineF1": 0.0,
+    "maximumMedianOnsetErrorMs": 50,
+    "manualListeningRequired": true,
+    "commercialLicenseRequiredForPaidUse": true
+  }
+}
