@@ -120,6 +120,20 @@ def bootstrap_model_copies(job: dict[str, Any], job_input: dict[str, Any]) -> di
         str(original / weights.name): copy_checkpoint_file(weights, original / weights.name),
         str(original / config.name): copy_checkpoint_file(config, original / config.name),
     }
+    runpod.serverless.progress_update(job, f'Creating tester checkpoint {version}')
+    results.update({
+        str(tester / weights.name): copy_checkpoint_file(original / weights.name, tester / weights.name),
+        str(tester / config.name): copy_checkpoint_file(original / config.name, tester / config.name),
+    })
+    return {
+        'action': 'bootstrap-model-copies',
+        'model': BOOTSTRAP_REPO,
+        'revision': BOOTSTRAP_REVISION,
+        'version': version,
+        'weightsBytes': weights.stat().st_size,
+        'files': results,
+        'testerWeightsPath': str(tester / weights.name),
+    }
 
 
 def safe_training_file(dataset_id: str, filename: str) -> Path:
@@ -207,19 +221,41 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
         'commercialUseAllowed': False,
         'metadata': metadata,
     }
-    runpod.serverless.progress_update(job, f'Creating tester checkpoint {version}')
-    results.update({
-        str(tester / weights.name): copy_checkpoint_file(original / weights.name, tester / weights.name),
-        str(tester / config.name): copy_checkpoint_file(original / config.name, tester / config.name),
-    })
+
+
+def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dict[str, Any]:
+    from ml.training.evaluate_checkpoint import compare_checkpoints, save_comparison
+
+    dataset_id = str(job_input.get('dataset_id') or '').strip().lower()
+    version = str(job_input.get('version') or '').strip().lower()
+    if not re.fullmatch(r'phase\d+-v\d{3,}', version):
+        raise ValueError('Evaluation version must look like phase1-v001')
+    validation_manifest = safe_training_file(dataset_id, 'prepared-validation.jsonl')
+    base = ORIGINAL_MODEL_ROOT / 'model.safetensors'
+    candidate_root = (TEST_MODEL_ROOT / version).resolve()
+    candidate = candidate_root / 'model.safetensors'
+    if not candidate_root.is_relative_to(TEST_MODEL_ROOT):
+        raise ValueError('Candidate path escaped the tester model directory')
+    if not base.is_file() or not candidate.is_file():
+        raise FileNotFoundError('Original or candidate checkpoint is missing')
+
+    global MODEL
+    MODEL = None
+    gc.collect()
+    result = compare_checkpoints(
+        base,
+        candidate,
+        validation_manifest,
+        progress_callback=lambda message: runpod.serverless.progress_update(job, message),
+    )
+    destination = candidate_root / f'evaluation-{dataset_id}.json'
+    save_comparison(result, destination)
     return {
-        'action': 'bootstrap-model-copies',
-        'model': BOOTSTRAP_REPO,
-        'revision': BOOTSTRAP_REVISION,
+        'action': 'evaluate-piano-candidate',
+        'datasetId': dataset_id,
         'version': version,
-        'weightsBytes': weights.stat().st_size,
-        'files': results,
-        'testerWeightsPath': str(tester / weights.name),
+        'evaluationPath': str(destination),
+        **result,
     }
 
 
@@ -325,6 +361,8 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         return bootstrap_model_copies(job, job_input)
     if job_input.get('action') == 'train_piano_candidate':
         return train_piano_candidate(job, job_input)
+    if job_input.get('action') == 'evaluate_piano_candidate':
+        return evaluate_piano_candidate(job, job_input)
     encoded = str(job_input.get('audio_base64') or '').strip()
     delete_audio = bool(job_input.get('delete_audio', True))
     if encoded:

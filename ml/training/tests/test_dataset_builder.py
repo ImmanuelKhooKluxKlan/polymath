@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ml.training.dataset_builder import DatasetError, build_dataset, deterministic_split
 from ml.training.evaluate_predictions import evaluate
+from ml.training.evaluate_checkpoint import aggregate_clip_scores
 
 
 class DatasetBuilderTests(unittest.TestCase):
@@ -74,6 +75,25 @@ class DatasetBuilderTests(unittest.TestCase):
         self.assertEqual(result["falsePositiveNotes"], 1)
         self.assertEqual(result["falseNegativeNotes"], 1)
         self.assertAlmostEqual(result["f1"], 0.5)
+
+    def test_checkpoint_scores_are_aggregated_without_crossing_clip_edges(self):
+        references = [
+            [{"midi": 60, "time": 4.99, "duration": 0.1}],
+            [{"midi": 60, "time": 0.01, "duration": 0.1}],
+        ]
+        predictions = [
+            [],
+            [
+                {"midi": 60, "time": 0.01, "duration": 0.1},
+                {"midi": 67, "time": 1.0, "duration": 0.1},
+            ],
+        ]
+        result = aggregate_clip_scores(references, predictions, tolerances=(0.05,))
+        score = result["50ms"]
+        self.assertEqual(score["referenceNotes"], 2)
+        self.assertEqual(score["predictedNotes"], 2)
+        self.assertEqual(score["matchedNotes"], 1)
+        self.assertAlmostEqual(score["microF1"], 0.5)
 
 
 if __name__ == "__main__":
