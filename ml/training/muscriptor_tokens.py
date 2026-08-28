@@ -140,9 +140,13 @@ def encode_piano_clip(
     return tokens
 
 
-def teacher_forcing_pair(tokens: list[int]) -> tuple[list[int], list[int]]:
+def teacher_forcing_pair(
+    tokens: list[int],
+    initial_token_id: int = INITIAL_TOKEN_ID,
+) -> tuple[list[int], list[int]]:
     """Return causal inputs and next-token labels for cross-entropy training."""
     if not tokens or tokens[-1] != EOS_ID:
         raise TokenEncodingError("Teacher-forcing targets must end with EOS")
-    return [INITIAL_TOKEN_ID, *tokens[:-1]], list(tokens)
-
+    if initial_token_id < VOCAB_SIZE:
+        raise TokenEncodingError("Initial token must sit outside the event vocabulary")
+    return [initial_token_id, *tokens[:-1]], list(tokens)

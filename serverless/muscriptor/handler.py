@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import gc
 import json
 import os
 import re
@@ -23,6 +24,9 @@ MODEL_SOURCE_VALUE = (
 VOLUME_JOB_ROOT = Path(
     os.environ.get('MUSCRIPTOR_JOB_ROOT', '/runpod-volume/jobs')
 ).resolve()
+TRAINING_ROOT = Path('/runpod-volume/training').resolve()
+ORIGINAL_MODEL_ROOT = Path('/runpod-volume/models/original').resolve()
+TEST_MODEL_ROOT = Path('/runpod-volume/models/muscriptor-tester').resolve()
 NOTE_NAMES = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
 VALID_MODELS = {'small', 'medium', 'large'}
 BOOTSTRAP_REPO = 'MuScriptor/muscriptor-large'
@@ -115,6 +119,93 @@ def bootstrap_model_copies(job: dict[str, Any], job_input: dict[str, Any]) -> di
     results = {
         str(original / weights.name): copy_checkpoint_file(weights, original / weights.name),
         str(original / config.name): copy_checkpoint_file(config, original / config.name),
+    }
+
+
+def safe_training_file(dataset_id: str, filename: str) -> Path:
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,50}', dataset_id):
+        raise ValueError('Training dataset id contains unsupported characters')
+    candidate = (TRAINING_ROOT / dataset_id / filename).resolve()
+    if not candidate.is_relative_to(TRAINING_ROOT) or not candidate.is_file():
+        raise FileNotFoundError(f'Training file was not found: {filename}')
+    return candidate
+
+
+def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dict[str, Any]:
+    from argparse import Namespace
+
+    import torch
+
+    from ml.training.train_muscriptor_piano import (
+        RIGHTS_ACKNOWLEDGEMENT,
+        train,
+    )
+
+    dataset_id = str(job_input.get('dataset_id') or '').strip().lower()
+    version = str(job_input.get('version') or '').strip().lower()
+    if not re.fullmatch(r'phase\d+-v\d{3,}', version):
+        raise ValueError('Training version must look like phase1-v001')
+    if str(job_input.get('rights_acknowledgement') or '') != RIGHTS_ACKNOWLEDGEMENT:
+        raise ValueError('The explicit private-training rights acknowledgement is missing')
+
+    epochs = int(job_input.get('epochs') or 1)
+    train_last_layers = int(job_input.get('train_last_layers') or 1)
+    learning_rate = float(job_input.get('learning_rate') or 2e-6)
+    if epochs < 1 or epochs > 3:
+        raise ValueError('Experimental training accepts between one and three epochs')
+    if train_last_layers < 1 or train_last_layers > 2:
+        raise ValueError('Experimental training accepts one or two final layers')
+    if learning_rate <= 0 or learning_rate > 1e-5:
+        raise ValueError('Experimental learning rate must be above zero and at most 1e-5')
+
+    train_manifest = safe_training_file(dataset_id, 'prepared-train.jsonl')
+    validation_manifest = safe_training_file(dataset_id, 'prepared-validation.jsonl')
+    base = ORIGINAL_MODEL_ROOT / 'model.safetensors'
+    config = ORIGINAL_MODEL_ROOT / 'config.json'
+    if not base.is_file() or not config.is_file():
+        raise FileNotFoundError('The immutable original checkpoint is incomplete')
+    output = (TEST_MODEL_ROOT / version).resolve()
+    if not output.is_relative_to(TEST_MODEL_ROOT):
+        raise ValueError('Candidate output escaped the tester model directory')
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(f'Candidate version already exists: {version}')
+
+    global MODEL
+    MODEL = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    runpod.serverless.progress_update(job, 'Auditing clips and loading immutable base weights')
+
+    args = Namespace(
+        train_manifest=train_manifest,
+        validation_manifest=validation_manifest,
+        base=base,
+        out=output,
+        execute=True,
+        rights_acknowledgement=RIGHTS_ACKNOWLEDGEMENT,
+        minimum_train_songs=2,
+        train_last_layers=train_last_layers,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        weight_decay=0.01,
+        gradient_accumulation=8,
+        gradient_clip_norm=1.0,
+        precision='bf16',
+        seed=f'polymath-{version}',
+    )
+    metadata = train(
+        args,
+        progress_callback=lambda message: runpod.serverless.progress_update(job, message),
+    )
+    runpod.serverless.progress_update(job, f'Candidate {version} saved; original remains unchanged')
+    return {
+        'action': 'train-piano-candidate',
+        'datasetId': dataset_id,
+        'version': version,
+        'candidatePath': str(output),
+        'commercialUseAllowed': False,
+        'metadata': metadata,
     }
     runpod.serverless.progress_update(job, f'Creating tester checkpoint {version}')
     results.update({
@@ -232,6 +323,8 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
     job_input = job.get('input') or {}
     if job_input.get('action') == 'bootstrap_model_copies':
         return bootstrap_model_copies(job, job_input)
+    if job_input.get('action') == 'train_piano_candidate':
+        return train_piano_candidate(job, job_input)
     encoded = str(job_input.get('audio_base64') or '').strip()
     delete_audio = bool(job_input.get('delete_audio', True))
     if encoded:

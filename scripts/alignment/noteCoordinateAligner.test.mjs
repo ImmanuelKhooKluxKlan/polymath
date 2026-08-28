@@ -114,3 +114,34 @@ test('manual anchors and review decisions create auditable training eligibility'
   assert.ok(result.alignedReference.some((note) => note.qualityWindowId === 'w0002' && note.trainingEligible));
   assert.deepEqual(result.supervisionPackage.alignment.manualAnchors.map((anchor) => anchor.kind), ['manual', 'manual', 'manual']);
 });
+
+test('chroma path aligns a differently voiced piano arrangement without trusting the first note', () => {
+  const reference = desiredPerformance();
+  const observed = reference.flatMap((note, index) => {
+    const time = 4.25 + note.time * 0.965 + Math.sin(note.time / 22) * 0.12;
+    const melody = {
+      ...note,
+      midi: index % 3 === 0 ? note.midi - 12 : note.midi,
+      time,
+    };
+    const harmony = index % 2 === 0 ? [{
+      ...note,
+      midi: Math.max(24, note.midi - 24),
+      time: time + 0.015,
+      velocity: 0.5,
+    }] : [];
+    return [melody, ...harmony];
+  });
+  observed.unshift(
+    { midi: 42, time: 0.1, duration: 0.03, instrument: 'noise' },
+    { midi: 91, time: 1.2, duration: 0.02, instrument: 'noise' },
+  );
+
+  const result = alignNoteCoordinates(reference, observed, { sourceDurationSeconds: 110 });
+  const chromaAnchors = result.anchors.filter((anchor) => anchor.kind === 'automatic-chroma');
+
+  assert.ok(chromaAnchors.length >= 10, JSON.stringify(result.metrics));
+  assert.ok(chromaAnchors.every((anchor) => anchor.structuralSimilarity >= 0.24));
+  assert.ok(Math.abs(mapReferenceTime(60, result.anchors) - (4.25 + 60 * 0.965 + Math.sin(60 / 22) * 0.12)) < 0.45);
+  assert.ok(result.qualityWindows.filter((window) => window.status === 'trusted').length >= 12);
+});

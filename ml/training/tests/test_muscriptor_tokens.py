@@ -60,7 +60,11 @@ class MuScriptorTokenTests(unittest.TestCase):
         self.assertEqual(VOCAB_SIZE, 1393)
         self.assertEqual(MODEL_CARDINALITY, 1395)
 
+    def test_teacher_forcing_accepts_checkpoint_specific_initial_token(self):
+        inputs, labels = teacher_forcing_pair([TIE_ID, EOS_ID], initial_token_id=1393)
+        self.assertEqual(inputs, [1393, TIE_ID])
+        self.assertEqual(labels, [TIE_ID, EOS_ID])
+
 
 if __name__ == "__main__":
     unittest.main()
-

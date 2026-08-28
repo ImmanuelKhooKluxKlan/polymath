@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import shutil
 from pathlib import Path
 from typing import Any
@@ -123,7 +124,10 @@ def clip_loss(transcription, record: dict[str, Any], device: str):
 
     duration = float(record["durationSeconds"])
     tokens = encode_piano_clip(record["notes"], duration_seconds=duration)
-    inputs, targets = teacher_forcing_pair(tokens)
+    inputs, targets = teacher_forcing_pair(
+        tokens,
+        initial_token_id=int(transcription._model.initial_token_id),
+    )
     input_tensor = torch.tensor([inputs], dtype=torch.long, device=device)
     target_tensor = torch.tensor([targets], dtype=torch.long, device=device)
     wav = load_audio_clip(Path(record["audioClip"]), device)
@@ -170,7 +174,7 @@ def save_checkpoint(transcription, base: Path, output: Path, metadata: dict[str,
     )
 
 
-def train(args: argparse.Namespace) -> dict[str, Any]:
+def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     import torch
     from muscriptor import TranscriptionModel
 
@@ -206,6 +210,10 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     optimizer = torch.optim.AdamW(parameters, lr=args.learning_rate, weight_decay=args.weight_decay)
     dtype = torch.bfloat16 if args.precision == "bf16" else torch.float16
     baseline_validation_loss = evaluate_loss(transcription, validation_records, device, args.precision)
+    if progress_callback:
+        progress_callback(
+            f"Baseline validation loss: {baseline_validation_loss:.6f}",
+        )
     best_validation_loss = baseline_validation_loss
     best_state = None
     step = 0
@@ -213,7 +221,9 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     optimizer.zero_grad(set_to_none=True)
     for epoch in range(args.epochs):
         transcription._model.train()
-        for record in train_records:
+        epoch_records = list(train_records)
+        random.Random(f"{args.seed}:{epoch}").shuffle(epoch_records)
+        for record in epoch_records:
             with torch.autocast(device_type="cuda", dtype=dtype):
                 loss = clip_loss(transcription, record, device) / args.gradient_accumulation
             loss.backward()
@@ -231,6 +241,10 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             accumulated = 0
         validation_loss = evaluate_loss(transcription, validation_records, device, args.precision)
         print(json.dumps({"epoch": epoch + 1, "validationLoss": validation_loss}), flush=True)
+        if progress_callback:
+            progress_callback(
+                f"Epoch {epoch + 1}/{args.epochs}; validation loss {validation_loss:.6f}",
+            )
         if validation_loss < best_validation_loss:
             best_validation_loss = validation_loss
             best_state = {
@@ -252,6 +266,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "trainLastLayers": args.train_last_layers,
         "learningRate": args.learning_rate,
         "epochs": args.epochs,
+        "seed": args.seed,
         "baselineValidationLoss": baseline_validation_loss,
         "bestValidationLoss": best_validation_loss,
         "commercialUseAllowed": False,
@@ -277,6 +292,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--gradient-clip-norm", type=float, default=1.0)
     parser.add_argument("--precision", choices=("bf16", "fp16"), default="bf16")
+    parser.add_argument("--seed", default="polymath-piano-phase1-v001")
     return parser.parse_args()
 
 

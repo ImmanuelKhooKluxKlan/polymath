@@ -17,5 +17,6 @@ COPY serverless/muscriptor/requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r /app/requirements.txt
 
+COPY ml /app/ml
 COPY serverless/muscriptor/handler.py /app/handler.py
 CMD python -u /app/handler.py

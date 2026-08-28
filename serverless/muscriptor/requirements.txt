@@ -1,2 +1,4 @@
 muscriptor==0.2.2
 runpod>=1.8.1,<2
+soundfile>=0.14,<1
+safetensors>=0.4,<1

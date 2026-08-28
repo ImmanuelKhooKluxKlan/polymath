@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'serverless/muscriptor/**'
+      - 'ml/training/**'
+      - 'ml/__init__.py'
       - '.github/workflows/runpod-worker.yml'
   workflow_dispatch:
 
@@ -33,5 +35,5 @@ jobs:
         run: |
           OWNER=$(echo $GITHUB_REPOSITORY_OWNER | tr '[:upper:]' '[:lower:]')
           IMAGE=ghcr.io/$OWNER/polymath-muscriptor
-          docker buildx build --file serverless/muscriptor/Dockerfile --tag $IMAGE:$GITHUB_SHA --tag $IMAGE:main --push serverless/muscriptor
+          docker buildx build --file serverless/muscriptor/Dockerfile --tag $IMAGE:$GITHUB_SHA --tag $IMAGE:main --push .
           echo Published $IMAGE:$GITHUB_SHA

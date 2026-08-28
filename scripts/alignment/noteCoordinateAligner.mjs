@@ -251,6 +251,161 @@ function collectMatches(reference, observed, line, options) {
   return matches;
 }
 
+function cosineSimilarity(left, right) {
+  let dot = 0;
+  let leftEnergy = 0;
+  let rightEnergy = 0;
+  for (let index = 0; index < 12; index += 1) {
+    dot += left[index] * right[index];
+    leftEnergy += left[index] ** 2;
+    rightEnergy += right[index] ** 2;
+  }
+  if (leftEnergy <= EPSILON || rightEnergy <= EPSILON) return null;
+  return dot / Math.sqrt(leftEnergy * rightEnergy);
+}
+
+function buildChromaFrames(notes, frameSeconds) {
+  const maximumTime = Math.max(...notes.map((note) => note.time + note.duration), 0);
+  const frames = Array.from(
+    { length: Math.ceil(maximumTime / frameSeconds) + 2 },
+    () => new Float64Array(12),
+  );
+  for (const note of notes) {
+    const start = Math.max(0, Math.floor(note.time / frameSeconds));
+    const limitedEnd = Math.min(note.time + note.duration, note.time + 2.5);
+    const end = Math.min(frames.length - 1, Math.floor(limitedEnd / frameSeconds));
+    const strength = 0.35 + note.velocity * 0.65;
+    for (let frameIndex = start; frameIndex <= end; frameIndex += 1) {
+      const onsetWeight = frameIndex === start ? 1 : 0.28;
+      frames[frameIndex][note.pitchClass] += strength * onsetWeight;
+    }
+  }
+  return frames.map((frame, index) => {
+    const smoothed = new Float64Array(12);
+    for (let pitch = 0; pitch < 12; pitch += 1) {
+      smoothed[pitch] = frame[pitch] * 0.6
+        + (frames[index - 1]?.[pitch] || 0) * 0.2
+        + (frames[index + 1]?.[pitch] || 0) * 0.2;
+    }
+    return smoothed;
+  });
+}
+
+function structuralWindowSimilarity(
+  referenceFrames,
+  observedFrames,
+  referenceCentre,
+  observedCentre,
+  scale,
+  options,
+) {
+  const frameSeconds = Number(options.chromaFrameSeconds) || 0.25;
+  const radius = Number(options.chromaWindowRadiusSeconds) || 3.5;
+  const steps = Math.max(2, Math.round(radius / frameSeconds));
+  const similarities = [];
+  for (let step = -steps; step <= steps; step += 1) {
+    const referenceTime = referenceCentre + step * frameSeconds;
+    const observedTime = observedCentre + step * frameSeconds * scale;
+    if (referenceTime < 0 || observedTime < 0) continue;
+    const referenceFrame = referenceFrames[Math.round(referenceTime / frameSeconds)];
+    const observedFrame = observedFrames[Math.round(observedTime / frameSeconds)];
+    if (!referenceFrame || !observedFrame) continue;
+    const similarity = cosineSimilarity(referenceFrame, observedFrame);
+    if (similarity != null) similarities.push(similarity);
+  }
+  if (!similarities.length) return { similarity: 0, support: 0 };
+  return {
+    similarity: similarities.reduce((sum, value) => sum + value, 0) / similarities.length,
+    support: similarities.length,
+  };
+}
+
+function estimateStructuralOffsetPath(reference, observed, line, options) {
+  const frameSeconds = Number(options.chromaFrameSeconds) || 0.25;
+  const stepSeconds = Math.max(2, Number(options.anchorBinSeconds) || 4);
+  const searchSeconds = Math.max(2, Number(options.chromaSearchSeconds) || 8);
+  const searchStep = Math.max(frameSeconds, Number(options.chromaSearchStepSeconds) || 0.25);
+  const referenceFrames = buildChromaFrames(reference, frameSeconds);
+  const observedFrames = buildChromaFrames(observed, frameSeconds);
+  const maximumReferenceTime = reference.at(-1)?.time ?? 0;
+  const bins = [];
+
+  for (let centre = stepSeconds / 2; centre <= maximumReferenceTime; centre += stepSeconds) {
+    const candidates = [];
+    for (let delta = -searchSeconds; delta <= searchSeconds + EPSILON; delta += searchStep) {
+      const observedCentre = centre * line.scale + line.offset + delta;
+      const result = structuralWindowSimilarity(
+        referenceFrames,
+        observedFrames,
+        centre,
+        observedCentre,
+        line.scale,
+        options,
+      );
+      candidates.push({
+        delta,
+        emission: result.similarity * 5 + Math.min(1, result.support / 12),
+        ...result,
+      });
+    }
+    bins.push({ centre, candidates });
+  }
+  if (bins.length < 2) return [];
+
+  let previous = bins[0].candidates.map((candidate) => ({
+    score: candidate.emission - Math.abs(candidate.delta) * 0.04,
+    previousIndex: -1,
+  }));
+  const backPointers = [previous];
+  for (let binIndex = 1; binIndex < bins.length; binIndex += 1) {
+    const current = bins[binIndex].candidates.map((candidate) => {
+      let best = { score: -Infinity, previousIndex: -1 };
+      bins[binIndex - 1].candidates.forEach((priorCandidate, priorIndex) => {
+        const change = Math.abs(candidate.delta - priorCandidate.delta);
+        const transitionPenalty = change * (Number(options.chromaSmoothnessPenalty) || 0.42)
+          + Math.max(0, change - 1.5) * 0.55;
+        const score = previous[priorIndex].score + candidate.emission - transitionPenalty;
+        if (score > best.score) best = { score, previousIndex: priorIndex };
+      });
+      return best;
+    });
+    previous = current;
+    backPointers.push(current);
+  }
+
+  let candidateIndex = previous.reduce((bestIndex, state, index) => (
+    state.score > previous[bestIndex].score ? index : bestIndex
+  ), 0);
+  const path = [];
+  for (let binIndex = bins.length - 1; binIndex >= 0; binIndex -= 1) {
+    const bin = bins[binIndex];
+    const candidate = bin.candidates[candidateIndex];
+    path.push({ bin, candidate });
+    candidateIndex = backPointers[binIndex][candidateIndex].previousIndex;
+    if (candidateIndex < 0 && binIndex > 0) candidateIndex = 0;
+  }
+  path.reverse();
+
+  const anchors = path
+    .filter(({ candidate }) => candidate.support >= 6 && candidate.similarity >= 0.24)
+    .map(({ bin, candidate }) => ({
+      referenceTime: bin.centre,
+      observedTime: bin.centre * line.scale + line.offset + candidate.delta,
+      support: candidate.support,
+      exactPitchShare: null,
+      structuralSimilarity: Number(candidate.similarity.toFixed(4)),
+      localOffsetSeconds: Number(candidate.delta.toFixed(4)),
+      kind: 'automatic-chroma',
+    }));
+  const monotonic = [];
+  for (const anchor of anchors) {
+    if (!monotonic.length || anchor.observedTime > monotonic.at(-1).observedTime + 0.02) {
+      monotonic.push(anchor);
+    }
+  }
+  return monotonic;
+}
+
 function estimateLocalOffsetPath(reference, observed, line, options) {
   const stepSeconds = Math.max(2, Number(options.anchorBinSeconds) || 4);
   const radiusSeconds = Math.max(stepSeconds * 0.8, Number(options.localSearchRadiusSeconds) || 3.2);
@@ -596,18 +751,40 @@ function buildQualityWindows(reference, matches, anchors, coarseLine, options) {
     const exactPercent = windowMatches.length ? exact / windowMatches.length : 0;
     const medianResidual = median(residuals) ?? Infinity;
     const p95Residual = quantile(residuals, 0.95) ?? Infinity;
+    const structuralSimilarity = median(anchors
+      .filter((anchor) => (
+        Number.isFinite(anchor.structuralSimilarity)
+        && anchor.referenceTime >= start - 2.5
+        && anchor.referenceTime <= end + 2.5
+      ))
+      .map((anchor) => anchor.structuralSimilarity));
     const flags = [];
     if (entries.length === 0) flags.push('reference-silence');
     if (entries.length > 0 && matchPercent < 0.55) flags.push('weak-note-support');
     if (windowMatches.length > 0 && exactPercent < 0.35) flags.push('octave-or-pitch-disagreement');
     if (medianResidual > 0.25) flags.push('timing-residual');
+    if (structuralSimilarity != null && structuralSimilarity < 0.42) {
+      flags.push('weak-harmonic-structure');
+    }
     if (localScale < 0.72 || localScale > 1.38) flags.push('strong-local-tempo-change-or-pause');
     else if (Math.abs(localScale - coarseLine.scale) > 0.12) flags.push('local-tempo-drift');
+    const structurallyTrusted = structuralSimilarity != null
+      && structuralSimilarity >= 0.62
+      && matchPercent >= 0.22
+      && localScale >= 0.72
+      && localScale <= 1.38;
+    const structurallyReviewable = structuralSimilarity != null
+      && structuralSimilarity >= 0.42
+      && matchPercent >= 0.15
+      && localScale >= 0.5
+      && localScale <= 1.8;
     const automaticStatus = entries.length === 0
       ? 'neutral'
-      : matchPercent >= 0.72 && medianResidual <= 0.18 && localScale >= 0.72 && localScale <= 1.38
+      : (matchPercent >= 0.72 && medianResidual <= 0.18 && localScale >= 0.72 && localScale <= 1.38)
+        || structurallyTrusted
         ? 'trusted'
-        : matchPercent >= 0.45 && medianResidual <= 0.45 && localScale >= 0.5 && localScale <= 1.8
+        : (matchPercent >= 0.45 && medianResidual <= 0.45 && localScale >= 0.5 && localScale <= 1.8)
+          || structurallyReviewable
           ? 'review'
           : 'unsafe';
     const windowId = `w${String(index + 1).padStart(4, '0')}`;
@@ -636,6 +813,9 @@ function buildQualityWindows(reference, matches, anchors, coarseLine, options) {
       exactPitchPercent: Number((exactPercent * 100).toFixed(1)),
       medianResidualMs: Number.isFinite(medianResidual) ? Number((medianResidual * 1000).toFixed(1)) : null,
       p95ResidualMs: Number.isFinite(p95Residual) ? Number((p95Residual * 1000).toFixed(1)) : null,
+      structuralSimilarity: structuralSimilarity == null
+        ? null
+        : Number(structuralSimilarity.toFixed(4)),
       localScale: Number(localScale.toFixed(5)),
       localTempoDifferencePercent: Number(((localScale - 1) * 100).toFixed(2)),
       automaticStatus,
@@ -754,6 +934,11 @@ const DEFAULT_OPTIONS = {
   localOffsetStepSeconds: 0.15,
   localSearchToleranceSeconds: 0.28,
   localOffsetSmoothnessPenalty: 0.72,
+  chromaFrameSeconds: 0.25,
+  chromaWindowRadiusSeconds: 3.5,
+  chromaSearchSeconds: 8,
+  chromaSearchStepSeconds: 0.25,
+  chromaSmoothnessPenalty: 0.42,
   manualAnchorRadiusSeconds: 2.5,
   qualityWindowSeconds: 5,
   sourceDurationSeconds: null,
@@ -787,9 +972,13 @@ export function alignNoteCoordinates(referenceInput, observedInput, overrides = 
     sourceDurationSeconds,
   );
   const localSearchAnchors = estimateLocalOffsetPath(reference, observed, line, options);
+  const structuralAnchors = estimateStructuralOffsetPath(reference, observed, line, options);
+  const searchAnchors = structuralAnchors.length >= 2
+    ? structuralAnchors
+    : localSearchAnchors;
   const initialAutomaticAnchors = mergeAutomaticAnchors(
     buildWarpAnchors(matches, line, options),
-    localSearchAnchors,
+    searchAnchors,
     options,
   );
   const preliminaryAnchors = mergeWarpAnchors(
@@ -802,7 +991,7 @@ export function alignNoteCoordinates(referenceInput, observedInput, overrides = 
   matches = collectMatches(reference, observed, { ...line, anchors: preliminaryAnchors }, options);
   const automaticAnchors = mergeAutomaticAnchors(
     buildWarpAnchors(matches, line, options),
-    localSearchAnchors,
+    searchAnchors,
     options,
   );
   const anchors = mergeWarpAnchors(
