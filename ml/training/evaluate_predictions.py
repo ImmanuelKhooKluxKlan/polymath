@@ -252,6 +252,37 @@ def _rapid_retrigger_indices(notes: list[dict[str, Any]], seconds: float = 0.075
     return result
 
 
+def _same_key_gap_profile(
+    reference: list[dict[str, Any]],
+    predicted: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    def count(notes: list[dict[str, Any]], threshold: float) -> int:
+        groups: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+        for note in notes:
+            groups[(note["instrument"], note["midi"])].append(note)
+        total = 0
+        for group in groups.values():
+            ordered = sorted(group, key=lambda item: item["time"])
+            total += sum(
+                current["time"] - previous["time"] <= threshold
+                for previous, current in zip(ordered, ordered[1:])
+            )
+        return total
+
+    result = []
+    for milliseconds in (75, 100, 125, 150, 200, 250):
+        threshold = milliseconds / 1000
+        target = count(reference, threshold)
+        candidate = count(predicted, threshold)
+        result.append({
+            "maximumGapMs": milliseconds,
+            "referenceRepeats": target,
+            "predictedRepeats": candidate,
+            "excessPredictedRepeats": candidate - target,
+        })
+    return result
+
+
 def _diagnose_substitutions(
     false_negatives: list[dict[str, Any]],
     false_positives: list[dict[str, Any]],
@@ -452,6 +483,7 @@ def analyze_errors(
         ),
         "patternRecognition": {
             "chords": _chord_analysis(reference, matched_reference),
+            "sameKeyRepeatProfile": _same_key_gap_profile(reference, predicted),
             "pitchBands": pitch_bands,
             "worstFiveSecondWindows": hotspots[:10],
         },

@@ -42,17 +42,18 @@ function normalizeNote(note) {
 }
 
 function collapseDuplicateOnsets(notes) {
-  const byPitch = new Map();
+  const byInstrumentAndPitch = new Map();
   notes.forEach((note) => {
-    const entries = byPitch.get(note.midi) || [];
+    const key = `${note.instrument}:${note.midi}`;
+    const entries = byInstrumentAndPitch.get(key) || [];
     entries.push(note);
-    byPitch.set(note.midi, entries);
+    byInstrumentAndPitch.set(key, entries);
   });
 
   const collapsed = [];
   let removed = 0;
 
-  byPitch.forEach((pitchNotes) => {
+  byInstrumentAndPitch.forEach((pitchNotes) => {
     pitchNotes.sort((a, b) => (
       a.time - b.time
       || instrumentPriority(a.instrument) - instrumentPriority(b.instrument)
@@ -97,17 +98,18 @@ function collapseDuplicateOnsets(notes) {
 }
 
 function resolveSameKeyOverlaps(notes) {
-  const byPitch = new Map();
+  const byInstrumentAndPitch = new Map();
   notes.forEach((note) => {
-    const entries = byPitch.get(note.midi) || [];
+    const key = `${note.instrument}:${note.midi}`;
+    const entries = byInstrumentAndPitch.get(key) || [];
     entries.push(note);
-    byPitch.set(note.midi, entries);
+    byInstrumentAndPitch.set(key, entries);
   });
 
   let shortened = 0;
   let capped = 0;
 
-  byPitch.forEach((pitchNotes) => {
+  byInstrumentAndPitch.forEach((pitchNotes) => {
     pitchNotes.sort((a, b) => a.time - b.time || b.duration - a.duration);
     pitchNotes.forEach((note, index) => {
       let duration = note.duration;
@@ -257,7 +259,7 @@ function postProcessMuscriptorResult(payload, options = {}) {
     instrumentGroups: [...new Set(notes.map((note) => note.instrument))].sort(),
     performance: {
       ...(payload.performance || {}),
-      profile: 'muscriptor-piano-cleanup-v2',
+      profile: 'muscriptor-piano-cleanup-v3',
       preserveScoreDurations: true,
       sameKeyRetriggerGapSeconds: SAME_KEY_RELEASE_GAP_SECONDS,
       defaultAutoplayReleaseSeconds: 0.5,
@@ -265,7 +267,8 @@ function postProcessMuscriptorResult(payload, options = {}) {
       vocalMelodyGain: VOCAL_MELODY_GAIN,
     },
     transcriptionCleanup: {
-      version: 2,
+      version: 3,
+      duplicateScope: 'same-instrument-and-pitch',
       inputNotes: payload.notes.length,
       outputNotes: notes.length,
       removedDuplicateNotes: collapsed.removed,

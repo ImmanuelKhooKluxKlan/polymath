@@ -129,6 +129,8 @@ class DatasetBuilderTests(unittest.TestCase):
         self.assertGreaterEqual(result["rapidRetriggers"], 1)
         self.assertEqual(result["errorCauses"]["octaveSubstitution"], 1)
         self.assertEqual(result["errorCauses"]["wrongInstrument"], 1)
+        repeat_profile = result["patternRecognition"]["sameKeyRepeatProfile"]
+        self.assertEqual(repeat_profile[0]["excessPredictedRepeats"], 1)
 
     def test_stitching_merges_reviewed_sustain_across_clip_boundary(self):
         records = [

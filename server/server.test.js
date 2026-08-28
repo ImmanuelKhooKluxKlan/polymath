@@ -62,19 +62,22 @@ test('MuScriptor piano cleanup removes duplicate strikes and impossible overlaps
   });
 
   const c4Notes = result.notes.filter((note) => note.midi === 60);
-  assert.equal(result.notes.length, 4);
-  assert.equal(c4Notes.length, 2);
+  assert.equal(result.notes.length, 5);
+  assert.equal(c4Notes.length, 3);
   assert.equal(c4Notes[0].instrument, 'acoustic_piano');
-  assert.ok(c4Notes[0].time + c4Notes[0].duration < c4Notes[1].time);
+  assert.equal(c4Notes.some((note) => note.instrument === 'electric_piano'), true);
+  const acousticC4 = c4Notes.filter((note) => note.instrument === 'acoustic_piano');
+  assert.ok(acousticC4[0].time + acousticC4[0].duration < acousticC4[1].time);
   assert.equal(result.notes.find((note) => note.midi === 64).duration, 8);
   assert.ok(result.notes.find((note) => note.midi === 64).velocity
     > result.notes.find((note) => note.midi === 67).velocity);
   assert.deepEqual(result.transcriptionCleanup, {
-    version: 2,
+    version: 3,
+    duplicateScope: 'same-instrument-and-pitch',
     inputNotes: 6,
-    outputNotes: 4,
-    removedDuplicateNotes: 2,
-    removedRapidRetriggers: 2,
+    outputNotes: 5,
+    removedDuplicateNotes: 1,
+    removedRapidRetriggers: 1,
     excludedVocalNotes: 0,
     vocalMelodyNotes: 0,
     vocalMelodyGain: 1.18,
@@ -105,11 +108,12 @@ test('Full song renders the vocal melody on piano while instrumental mode exclud
     playbackMode: 'instrumental',
   });
 
-  assert.equal(full.notes.length, 2);
+  assert.equal(full.notes.length, 3);
   assert.equal(full.notes[0].instrument, 'voice');
   assert.equal(full.transcriptionCleanup.vocalMelodyNotes, 1);
   assert.equal(full.transcriptionCleanup.excludedVocalNotes, 0);
-  assert.ok(full.notes[0].velocity > instrumental.notes[0].velocity);
+  assert.ok(full.notes.find((note) => note.instrument === 'voice').velocity
+    > instrumental.notes.find((note) => note.instrument === 'acoustic_piano').velocity);
   assert.equal(instrumental.notes.length, 2);
   assert.equal(instrumental.notes.some((note) => note.instrument === 'voice'), false);
   assert.equal(instrumental.transcriptionCleanup.excludedVocalNotes, 1);
