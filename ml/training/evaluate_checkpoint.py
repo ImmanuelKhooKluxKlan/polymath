@@ -18,6 +18,7 @@ from ml.training.train_muscriptor_piano import read_jsonl
 
 
 DEFAULT_TOLERANCES = (0.05, 0.10, 0.25)
+PIANO_INSTRUMENTS = ("acoustic_piano",)
 
 
 def decoded_notes(events: Iterable[Any]) -> list[dict[str, Any]]:
@@ -101,6 +102,7 @@ def evaluate_checkpoint(
     checkpoint: Path,
     records: list[dict[str, Any]],
     progress_callback: Callable[[str], None] | None = None,
+    instruments: tuple[str, ...] = PIANO_INSTRUMENTS,
 ) -> dict[str, Any]:
     """Load one checkpoint, decode every frozen clip, and calculate note scores."""
 
@@ -113,7 +115,10 @@ def evaluate_checkpoint(
     for index, record in enumerate(records, 1):
         references.append(list(record["notes"]))
         predictions.append(decoded_notes(
-            transcription.transcribe(str(Path(record["audioClip"])), instruments=None),
+            transcription.transcribe(
+                str(Path(record["audioClip"])),
+                instruments=list(instruments),
+            ),
         ))
         if progress_callback and (index == 1 or index % 5 == 0 or index == len(records)):
             progress_callback(f"Decoded {index}/{len(records)} validation clips")
@@ -146,6 +151,7 @@ def compare_checkpoints(
         "schema": "polymath-checkpoint-comparison-v1",
         "validationManifest": str(validation_manifest),
         "clips": len(records),
+        "instrumentConstraint": list(PIANO_INSTRUMENTS),
         "baseline": baseline,
         "candidate": candidate_metrics,
         "candidateMinusBaselineMicroF1": deltas,
