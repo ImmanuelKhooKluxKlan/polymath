@@ -1,7 +1,7 @@
 # Polymath piano supervised-learning workspace
 
 This directory prepares trustworthy training examples and includes a conservative
-MuScriptor-compatible teacher-forcing adapter. The published package contains
+MuScriptor-compatible individual-instrument teacher-forcing adapter. The published package contains
 inference architecture and decoding, but not its original trainer or production
 data loader, so our adapter is deliberately gated, partial, and candidate-only.
 It must not run until the reviewed dataset is large enough.
@@ -79,6 +79,29 @@ python ml/training/evaluate_predictions.py `
   --onset-tolerance 0.05
 ```
 
+The detailed evaluator now reports each instrument independently and separates:
+
+- ignored notes and spurious notes;
+- wrong-instrument, octave, near-pitch, and near-timing substitutions;
+- repeated-key retriggers within 75 ms;
+- severely cut-off and overlong notes;
+- onset-only, onset+offset, and 20 ms frame scores;
+- complete, partial, and missed chords;
+- low, middle, and high pitch-band accuracy;
+- the worst five-second error windows.
+
+The dataset builder can include explicitly reviewed zero-note windows as weighted
+negative examples. Neutral or rejected windows can never become silence labels.
+Training clips may overlap (for example `--training-hop-seconds 2.5`) so sustained
+notes are seen at more than one artificial boundary, while validation remains on
+the non-overlapping hop. Same-instrument/same-pitch overlaps are normalized using
+MuScriptor's public tokenizer rule: the earlier note ends at the next strike.
+
+The loss keeps the mean weight of every clip stable but gives slightly more
+importance to timing shifts, note-off events, and EOS. This is an experimental
+hypothesis; decoded frozen-song results, not training loss, decide whether a new
+checkpoint survives.
+
 ## Critical rules
 
 - A green window may train automatically.
@@ -97,8 +120,8 @@ python ml/training/evaluate_predictions.py `
 - `dataset_builder.py`: validates supervision/rights, splits by song, and creates
   5-second JSONL clip manifests.
 - `prepare_audio_clips.py`: uses FFmpeg to render mono 16 kHz WAV clips.
-- `evaluate_predictions.py`: pitch+onset precision, recall, F1 and timing errors.
-- `muscriptor_tokens.py`: exact MT3-like piano target tokens and tie boundaries.
+- `evaluate_predictions.py`: instrument-aware pattern/error diagnostics and note metrics.
+- `muscriptor_tokens.py`: MT3-like individual-instrument targets, overlap normalization, and ties.
 - `train_muscriptor_piano.py`: audit-first partial checkpoint fine-tuning adapter.
 - `configs/piano_v001.json`: base revision, data contract and promotion gates.
 - `training-index.example.json`: private dataset index template.

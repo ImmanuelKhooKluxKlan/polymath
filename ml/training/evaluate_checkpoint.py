@@ -13,7 +13,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable
 
-from ml.training.evaluate_predictions import evaluate
+from ml.training.evaluate_predictions import analyze_errors, evaluate, normalize_notes
 from ml.training.train_muscriptor_piano import read_jsonl
 
 
@@ -37,6 +37,7 @@ def decoded_notes(events: Iterable[Any]) -> list[dict[str, Any]]:
                 "midi": int(start.pitch),
                 "time": onset,
                 "duration": ending - onset,
+                "instrument": str(getattr(start, "instrument", "acoustic_piano")),
             })
             starts.pop(int(start.index), None)
 
@@ -47,6 +48,7 @@ def decoded_notes(events: Iterable[Any]) -> list[dict[str, Any]]:
             "midi": int(start.pitch),
             "time": max(0.0, float(start.start_time)),
             "duration": 0.4,
+            "instrument": str(getattr(start, "instrument", "acoustic_piano")),
         })
     notes.sort(key=lambda note: (note["time"], note["midi"]))
     return notes
@@ -60,8 +62,85 @@ def _indexed(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "midi": int(note["midi"]),
             "time": float(note["time"]),
             "duration": max(0.01, float(note.get("duration") or 0.1)),
+            "instrument": str(note.get("instrument") or "acoustic_piano"),
+            "continuedFromPreviousClip": bool(note.get("continuedFromPreviousClip")),
+            "continuesIntoNextClip": bool(note.get("continuesIntoNextClip")),
         })
     return result
+
+
+def stitch_clip_notes(
+    records: list[dict[str, Any]],
+    notes_by_clip: list[list[dict[str, Any]]],
+    *,
+    reference: bool,
+) -> tuple[dict[str, list[dict[str, Any]]], int]:
+    """Rebuild song timelines and remove artificial five-second boundaries."""
+
+    if len(records) != len(notes_by_clip):
+        raise ValueError("Record and decoded clip counts differ")
+    songs: dict[str, list[dict[str, Any]]] = {}
+    active: dict[tuple[str, str, int], dict[str, Any]] = {}
+    boundary_merges = 0
+    ordered = sorted(
+        zip(records, notes_by_clip, strict=True),
+        key=lambda item: (str(item[0].get("songId") or "unknown"), float(item[0].get("sourceStart") or 0)),
+    )
+    for record, clip_notes in ordered:
+        song_id = str(record.get("songId") or "unknown")
+        clip_start = float(record.get("sourceStart") or 0)
+        instrument_focus = str(record.get("instrumentFocus") or "acoustic_piano")
+        destination = songs.setdefault(song_id, [])
+        for local in normalize_notes(clip_notes, instrument_focus):
+            note = dict(local)
+            note["time"] = clip_start + local["time"]
+            key = (song_id, note["instrument"], note["midi"])
+            previous = active.get(key)
+            explicit_continuation = reference and local.get("continuedFromPreviousClip")
+            inferred_continuation = (
+                not reference
+                and local["time"] <= 0.08
+                and previous is not None
+                and previous["time"] + previous["duration"] >= clip_start - 0.12
+            )
+            if previous is not None and (explicit_continuation or inferred_continuation):
+                ending = note["time"] + note["duration"]
+                previous["duration"] = max(previous["duration"], ending - previous["time"])
+                previous["continuesIntoNextClip"] = bool(local.get("continuesIntoNextClip"))
+                boundary_merges += 1
+                if not previous["continuesIntoNextClip"] and reference:
+                    active.pop(key, None)
+                continue
+            destination.append(note)
+            if (reference and local.get("continuesIntoNextClip")) or not reference:
+                active[key] = note
+            elif reference:
+                active.pop(key, None)
+    for notes in songs.values():
+        notes.sort(key=lambda note: (note["time"], note["instrument"], note["midi"]))
+    return songs, boundary_merges
+
+
+def combined_song_diagnostics(
+    references: dict[str, list[dict[str, Any]]],
+    predictions: dict[str, list[dict[str, Any]]],
+    onset_tolerance: float = 0.05,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    per_song: dict[str, Any] = {}
+    combined_reference: list[dict[str, Any]] = []
+    combined_prediction: list[dict[str, Any]] = []
+    cursor = 0.0
+    for song_id in sorted(set(references) | set(predictions)):
+        target = references.get(song_id, [])
+        candidate = predictions.get(song_id, [])
+        per_song[song_id] = analyze_errors(target, candidate, onset_tolerance)
+        duration = max(
+            [note["time"] + note["duration"] for note in [*target, *candidate]] or [0.0]
+        )
+        combined_reference.extend({**note, "time": note["time"] + cursor} for note in target)
+        combined_prediction.extend({**note, "time": note["time"] + cursor} for note in candidate)
+        cursor += duration + 2.0
+    return analyze_errors(combined_reference, combined_prediction, onset_tolerance), per_song
 
 
 def aggregate_clip_scores(
@@ -103,6 +182,7 @@ def evaluate_checkpoint(
     records: list[dict[str, Any]],
     progress_callback: Callable[[str], None] | None = None,
     instruments: tuple[str, ...] = PIANO_INSTRUMENTS,
+    include_raw_predictions: bool = False,
 ) -> dict[str, Any]:
     """Load one checkpoint, decode every frozen clip, and calculate note scores."""
 
@@ -124,6 +204,32 @@ def evaluate_checkpoint(
             progress_callback(f"Decoded {index}/{len(records)} validation clips")
 
     metrics = aggregate_clip_scores(references, predictions)
+    stitched_references, reference_boundary_merges = stitch_clip_notes(
+        records, references, reference=True,
+    )
+    stitched_predictions, prediction_boundary_merges = stitch_clip_notes(
+        records, predictions, reference=False,
+    )
+    diagnostics, per_song = combined_song_diagnostics(
+        stitched_references, stitched_predictions,
+    )
+    metrics["diagnostics50ms"] = diagnostics
+    metrics["perSongDiagnostics50ms"] = per_song
+    metrics["boundaryAccounting"] = {
+        "referenceContinuationMerges": reference_boundary_merges,
+        "predictedBoundaryMerges": prediction_boundary_merges,
+        "note": "Artificial five-second clip boundaries are merged before duration/pattern analysis.",
+    }
+    if include_raw_predictions:
+        metrics["decodedClips"] = [
+            {
+                "clipId": str(record.get("clipId") or index),
+                "songId": str(record.get("songId") or "unknown"),
+                "sourceStart": float(record.get("sourceStart") or 0),
+                "notes": notes,
+            }
+            for index, (record, notes) in enumerate(zip(records, predictions, strict=True))
+        ]
     del transcription
     gc.collect()
     torch.cuda.empty_cache()
@@ -135,23 +241,28 @@ def compare_checkpoints(
     candidate: Path,
     validation_manifest: Path,
     progress_callback: Callable[[str], None] | None = None,
+    instruments: tuple[str, ...] = PIANO_INSTRUMENTS,
 ) -> dict[str, Any]:
     records = read_jsonl(validation_manifest)
     if progress_callback:
         progress_callback("Decoding frozen validation clips with the original checkpoint")
-    baseline = evaluate_checkpoint(base, records, progress_callback)
+    baseline = evaluate_checkpoint(
+        base, records, progress_callback, instruments, include_raw_predictions=True,
+    )
     if progress_callback:
         progress_callback("Decoding the same clips with the Phase candidate")
-    candidate_metrics = evaluate_checkpoint(candidate, records, progress_callback)
+    candidate_metrics = evaluate_checkpoint(
+        candidate, records, progress_callback, instruments, include_raw_predictions=True,
+    )
     deltas = {
-        tolerance: round(candidate_metrics[tolerance]["microF1"] - score["microF1"], 6)
-        for tolerance, score in baseline.items()
+        key: round(candidate_metrics[key]["microF1"] - baseline[key]["microF1"], 6)
+        for key in ("50ms", "100ms", "250ms")
     }
     return {
         "schema": "polymath-checkpoint-comparison-v1",
         "validationManifest": str(validation_manifest),
         "clips": len(records),
-        "instrumentConstraint": list(PIANO_INSTRUMENTS),
+        "instrumentConstraint": list(instruments),
         "baseline": baseline,
         "candidate": candidate_metrics,
         "candidateMinusBaselineMicroF1": deltas,

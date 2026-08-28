@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 from ml.training.dataset_builder import DatasetError, build_dataset, deterministic_split
-from ml.training.evaluate_predictions import evaluate
-from ml.training.evaluate_checkpoint import aggregate_clip_scores
+from ml.training.evaluate_predictions import analyze_errors, evaluate
+from ml.training.evaluate_checkpoint import aggregate_clip_scores, stitch_clip_notes
 
 
 class DatasetBuilderTests(unittest.TestCase):
@@ -61,6 +61,22 @@ class DatasetBuilderTests(unittest.TestCase):
         first = deterministic_split("same-song", "seed", 0.8, 0.1)
         self.assertEqual(first, deterministic_split("same-song", "seed", 0.8, 0.1))
 
+    def test_trusted_silence_becomes_a_weighted_negative_example(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index_path = self.make_files(root)
+            package_path = root / "package.json"
+            package = json.loads(package_path.read_text(encoding="utf-8"))
+            package["notes"] = [package["notes"][1]]
+            package_path.write_text(json.dumps(package), encoding="utf-8")
+            summary = build_dataset(index_path, root / "out")
+            self.assertEqual(summary["songs"][0]["negativeClips"], 1)
+            accepted = json.loads((root / "out" / "train.jsonl").read_text(encoding="utf-8").strip())
+            self.assertTrue(accepted["isNegativeExample"])
+            self.assertEqual(accepted["targetState"], "reviewed-silence")
+            self.assertEqual(accepted["notes"], [])
+            self.assertAlmostEqual(accepted["exampleWeight"], 0.35)
+
     def test_note_evaluation_reports_false_positive_and_false_negative(self):
         reference = [
             {"index": 0, "midi": 60, "time": 1.0, "duration": 0.5},
@@ -94,6 +110,39 @@ class DatasetBuilderTests(unittest.TestCase):
         self.assertEqual(score["predictedNotes"], 2)
         self.assertEqual(score["matchedNotes"], 1)
         self.assertAlmostEqual(score["microF1"], 0.5)
+
+    def test_error_analysis_separates_instrument_octave_retrigger_and_cutoff(self):
+        reference = [
+            {"midi": 60, "time": 1.0, "duration": 1.0, "instrument": "acoustic_piano"},
+            {"midi": 64, "time": 2.0, "duration": 0.5, "instrument": "acoustic_piano"},
+            {"midi": 67, "time": 3.0, "duration": 0.5, "instrument": "acoustic_piano"},
+        ]
+        predicted = [
+            {"midi": 60, "time": 1.01, "duration": 0.2, "instrument": "acoustic_piano"},
+            {"midi": 60, "time": 1.06, "duration": 0.1, "instrument": "acoustic_piano"},
+            {"midi": 76, "time": 2.01, "duration": 0.5, "instrument": "acoustic_piano"},
+            {"midi": 67, "time": 3.01, "duration": 0.5, "instrument": "acoustic_guitar"},
+        ]
+        result = analyze_errors(reference, predicted, onset_tolerance=0.05)
+        self.assertEqual(result["matchedNotes"], 1)
+        self.assertEqual(result["cutOffNotes"], 1)
+        self.assertGreaterEqual(result["rapidRetriggers"], 1)
+        self.assertEqual(result["errorCauses"]["octaveSubstitution"], 1)
+        self.assertEqual(result["errorCauses"]["wrongInstrument"], 1)
+
+    def test_stitching_merges_reviewed_sustain_across_clip_boundary(self):
+        records = [
+            {"clipId": "a", "songId": "song", "sourceStart": 0, "instrumentFocus": "acoustic_piano"},
+            {"clipId": "b", "songId": "song", "sourceStart": 5, "instrumentFocus": "acoustic_piano"},
+        ]
+        notes = [
+            [{"midi": 60, "time": 4.5, "duration": 0.5, "continuesIntoNextClip": True}],
+            [{"midi": 60, "time": 0, "duration": 0.7, "continuedFromPreviousClip": True}],
+        ]
+        songs, merges = stitch_clip_notes(records, notes, reference=True)
+        self.assertEqual(merges, 1)
+        self.assertEqual(len(songs["song"]), 1)
+        self.assertAlmostEqual(songs["song"][0]["duration"], 1.2)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,17 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from ml.training.muscriptor_tokens import encode_piano_clip, teacher_forcing_pair
+from ml.training.muscriptor_tokens import (
+    EOS_ID,
+    PITCH_BASE,
+    SHIFT_BASE,
+    TIE_ID,
+    VELOCITY_BASE,
+    canonical_instrument_name,
+    encode_instrument_clip,
+    instrument_group_id,
+    teacher_forcing_pair,
+)
 
 
 RIGHTS_ACKNOWLEDGEMENT = "I_HAVE_TRAINING_RIGHTS"
@@ -25,6 +35,45 @@ RIGHTS_ACKNOWLEDGEMENT = "I_HAVE_TRAINING_RIGHTS"
 
 class TrainingError(RuntimeError):
     """Raised before any optimizer update when a safety invariant fails."""
+
+
+def target_token_weights(
+    tokens: list[int],
+    timing_weight: float = 1.15,
+    note_off_weight: float = 1.25,
+    eos_weight: float = 1.20,
+) -> list[float]:
+    """Give timing/stopping mistakes more influence without changing clip scale.
+
+    MuScriptor represents both note-on and note-off keys with the same pitch
+    token; the preceding velocity state says which one it is.  Weighting the
+    off-state pitch as well as its velocity token specifically targets chopped
+    or stuck durations.  We normalize to mean 1 so this changes *which* errors
+    matter inside a clip, not the clip's overall learning rate.
+    """
+
+    if min(timing_weight, note_off_weight, eos_weight) <= 0:
+        raise TrainingError("Token-loss weights must be positive")
+    velocity_state: int | None = None
+    weights: list[float] = []
+    for token in tokens:
+        weight = 1.0
+        if token == EOS_ID:
+            weight = eos_weight
+        elif SHIFT_BASE <= token < PITCH_BASE:
+            weight = timing_weight
+        elif token == VELOCITY_BASE:
+            velocity_state = 0
+            weight = note_off_weight
+        elif token == VELOCITY_BASE + 1:
+            velocity_state = 1
+        elif PITCH_BASE <= token < VELOCITY_BASE and velocity_state == 0:
+            weight = note_off_weight
+        elif token == TIE_ID:
+            weight = timing_weight
+        weights.append(weight)
+    average = sum(weights) / max(1, len(weights))
+    return [weight / average for weight in weights]
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -55,8 +104,10 @@ def sha256_file(path: Path, chunk_bytes: int = 8 * 1024 * 1024) -> str:
 
 def audit_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     songs: set[str] = set()
+    instruments: set[str] = set()
     token_counts: list[int] = []
     audio_seconds = 0.0
+    negative_examples = 0
     for index, record in enumerate(records):
         clip_id = str(record.get("clipId") or f"clip-{index}")
         audio = Path(str(record.get("audioClip") or "")).resolve()
@@ -66,17 +117,41 @@ def audit_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         if not 0 < duration <= 5.001:
             raise TrainingError(f"{clip_id}: duration must be at most five seconds")
         notes = record.get("notes")
-        if not isinstance(notes, list) or not notes:
-            raise TrainingError(f"{clip_id}: reviewed piano labels are missing")
-        tokens = encode_piano_clip(notes, duration_seconds=duration)
+        if not isinstance(notes, list):
+            raise TrainingError(f"{clip_id}: reviewed instrument labels are missing")
+        instrument = canonical_instrument_name(
+            record.get("instrumentFocus") or "acoustic_piano"
+        )
+        is_negative = bool(record.get("isNegativeExample"))
+        if not notes and not (
+            is_negative and record.get("targetState") == "reviewed-silence"
+        ):
+            raise TrainingError(
+                f"{clip_id}: an empty target is allowed only for explicitly reviewed silence"
+            )
+        if notes and is_negative:
+            raise TrainingError(f"{clip_id}: a negative example cannot contain notes")
+        weight = float(record.get("exampleWeight", 1.0))
+        if not 0 < weight <= 1:
+            raise TrainingError(f"{clip_id}: exampleWeight must be within (0, 1]")
+        tokens = encode_instrument_clip(
+            notes,
+            duration_seconds=duration,
+            instrument=instrument,
+        )
         if len(tokens) > 2000:
             raise TrainingError(f"{clip_id}: {len(tokens)} tokens exceed MuScriptor's 2000-token segment limit")
         token_counts.append(len(tokens))
         audio_seconds += duration
         songs.add(str(record.get("songId") or "unknown"))
+        instruments.add(instrument)
+        negative_examples += is_negative
     return {
         "clips": len(records),
         "songs": len(songs),
+        "instruments": sorted(instruments),
+        "positiveExamples": len(records) - negative_examples,
+        "negativeExamples": negative_examples,
         "audioSeconds": round(audio_seconds, 3),
         "minimumTokens": min(token_counts),
         "maximumTokens": max(token_counts),
@@ -118,12 +193,27 @@ def configure_trainable_parameters(model, train_last_layers: int) -> list[Any]:
     return [parameter for parameter in model.parameters() if parameter.requires_grad]
 
 
-def clip_loss(transcription, record: dict[str, Any], device: str):
+def clip_loss(
+    transcription,
+    record: dict[str, Any],
+    device: str,
+    apply_example_weight: bool = False,
+    timing_weight: float = 1.15,
+    note_off_weight: float = 1.25,
+    eos_weight: float = 1.20,
+):
     import torch
     import torch.nn.functional as functional
 
     duration = float(record["durationSeconds"])
-    tokens = encode_piano_clip(record["notes"], duration_seconds=duration)
+    instrument = canonical_instrument_name(
+        record.get("instrumentFocus") or "acoustic_piano"
+    )
+    tokens = encode_instrument_clip(
+        record["notes"],
+        duration_seconds=duration,
+        instrument=instrument,
+    )
     inputs, targets = teacher_forcing_pair(
         tokens,
         initial_token_id=int(transcription._model.initial_token_id),
@@ -131,12 +221,25 @@ def clip_loss(transcription, record: dict[str, Any], device: str):
     input_tensor = torch.tensor([inputs], dtype=torch.long, device=device)
     target_tensor = torch.tensor([targets], dtype=torch.long, device=device)
     wav = load_audio_clip(Path(record["audioClip"]), device)
-    conditions = transcription._build_conditions(wav, "0")
+    conditions = transcription._build_conditions(wav, str(instrument_group_id(instrument)))
     provider = transcription._model.condition_provider
     prepared = provider.tokenize(conditions)
     condition_tensors = provider(prepared)
     logits = transcription._model(input_tensor, condition_tensors, first_step=True)
-    return functional.cross_entropy(logits.reshape(-1, logits.shape[-1]), target_tensor.reshape(-1))
+    per_token_loss = functional.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]),
+        target_tensor.reshape(-1),
+        reduction="none",
+    )
+    weights = torch.tensor(
+        target_token_weights(tokens, timing_weight, note_off_weight, eos_weight),
+        dtype=per_token_loss.dtype,
+        device=device,
+    )
+    loss = (per_token_loss * weights).mean()
+    if apply_example_weight:
+        loss = loss * float(record.get("exampleWeight", 1.0))
+    return loss
 
 
 def evaluate_loss(transcription, records: list[dict[str, Any]], device: str, precision: str) -> float:
@@ -194,6 +297,13 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     validation_records = read_jsonl(args.validation_manifest)
     train_audit = audit_records(train_records)
     validation_audit = audit_records(validation_records)
+    if len(train_audit["instruments"]) != 1:
+        raise TrainingError(
+            "One checkpoint run must target exactly one instrument; found "
+            + ", ".join(train_audit["instruments"])
+        )
+    if validation_audit["instruments"] != train_audit["instruments"]:
+        raise TrainingError("Training and validation instrument focus must match")
     if train_audit["songs"] < args.minimum_train_songs:
         raise TrainingError(
             f"Only {train_audit['songs']} training songs; minimum is {args.minimum_train_songs}. "
@@ -225,7 +335,15 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         random.Random(f"{args.seed}:{epoch}").shuffle(epoch_records)
         for record in epoch_records:
             with torch.autocast(device_type="cuda", dtype=dtype):
-                loss = clip_loss(transcription, record, device) / args.gradient_accumulation
+                loss = clip_loss(
+                    transcription,
+                    record,
+                    device,
+                    apply_example_weight=True,
+                    timing_weight=args.timing_token_weight,
+                    note_off_weight=args.note_off_token_weight,
+                    eos_weight=args.eos_token_weight,
+                ) / args.gradient_accumulation
             loss.backward()
             step += 1
             accumulated += 1
@@ -263,8 +381,12 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "validationManifest": str(args.validation_manifest),
         "trainAudit": train_audit,
         "validationAudit": validation_audit,
+        "instrumentFocus": train_audit["instruments"][0],
         "trainLastLayers": args.train_last_layers,
         "learningRate": args.learning_rate,
+        "timingTokenWeight": args.timing_token_weight,
+        "noteOffTokenWeight": args.note_off_token_weight,
+        "eosTokenWeight": args.eos_token_weight,
         "epochs": args.epochs,
         "seed": args.seed,
         "baselineValidationLoss": baseline_validation_loss,
@@ -291,6 +413,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--gradient-clip-norm", type=float, default=1.0)
+    parser.add_argument("--timing-token-weight", type=float, default=1.15)
+    parser.add_argument("--note-off-token-weight", type=float, default=1.25)
+    parser.add_argument("--eos-token-weight", type=float, default=1.20)
     parser.add_argument("--precision", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--seed", default="polymath-piano-phase1-v001")
     return parser.parse_args()

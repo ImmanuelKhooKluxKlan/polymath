@@ -205,6 +205,9 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
         weight_decay=0.01,
         gradient_accumulation=8,
         gradient_clip_norm=1.0,
+        timing_token_weight=float(job_input.get('timing_token_weight') or 1.15),
+        note_off_token_weight=float(job_input.get('note_off_token_weight') or 1.25),
+        eos_token_weight=float(job_input.get('eos_token_weight') or 1.20),
         precision='bf16',
         seed=f'polymath-{version}',
     )
@@ -225,9 +228,13 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
 
 def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dict[str, Any]:
     from ml.training.evaluate_checkpoint import compare_checkpoints, save_comparison
+    from ml.training.muscriptor_tokens import canonical_instrument_name
 
     dataset_id = str(job_input.get('dataset_id') or '').strip().lower()
     version = str(job_input.get('version') or '').strip().lower()
+    instrument = canonical_instrument_name(
+        job_input.get('instrument') or 'acoustic_piano'
+    )
     if not re.fullmatch(r'phase\d+-v\d{3,}', version):
         raise ValueError('Evaluation version must look like phase1-v001')
     validation_manifest = safe_training_file(dataset_id, 'prepared-validation.jsonl')
@@ -247,15 +254,24 @@ def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> 
         candidate,
         validation_manifest,
         progress_callback=lambda message: runpod.serverless.progress_update(job, message),
+        instruments=(instrument,),
     )
     destination = candidate_root / f'evaluation-{dataset_id}.json'
     save_comparison(result, destination)
+    # Full raw per-clip predictions stay on the private network volume for
+    # reproducible pattern analysis. Keep the serverless response compact.
+    response_result = {
+        **result,
+        'baseline': {key: value for key, value in result['baseline'].items() if key != 'decodedClips'},
+        'candidate': {key: value for key, value in result['candidate'].items() if key != 'decodedClips'},
+    }
     return {
         'action': 'evaluate-piano-candidate',
         'datasetId': dataset_id,
         'version': version,
+        'instrument': instrument,
         'evaluationPath': str(destination),
-        **result,
+        **response_result,
     }
 
 

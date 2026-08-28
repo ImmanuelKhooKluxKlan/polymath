@@ -1,4 +1,4 @@
-"""MuScriptor-compatible MT3 token encoding for reviewed piano clips.
+"""MuScriptor-compatible MT3 token encoding for one reviewed instrument.
 
 The released MuScriptor package exposes its inference tokenizer but keeps the
 note-to-token encoder only in its tests. This small, independently testable
@@ -27,17 +27,88 @@ INITIAL_TOKEN_ID = MODEL_CARDINALITY
 FRAME_RATE = 100
 PIANO_PROGRAM = 0
 
+# These IDs and representative programs come from MuScriptor 0.2.2's public
+# MT3_FULL_PLUS vocabulary.  Training one instrument at a time is deliberate:
+# it lets the conditioning signal, target program token, and evaluation filter
+# agree instead of silently mixing several causes of an error.
+INSTRUMENT_GROUPS: dict[str, tuple[int, int]] = {
+    "acoustic_piano": (0, 0),
+    "electric_piano": (1, 2),
+    "chromatic_percussion": (2, 8),
+    "organ": (3, 16),
+    "acoustic_guitar": (4, 24),
+    "clean_electric_guitar": (5, 26),
+    "distorted_electric_guitar": (6, 29),
+    "acoustic_bass": (7, 32),
+    "electric_bass": (8, 33),
+    "violin": (9, 40),
+    "viola": (10, 41),
+    "cello": (11, 42),
+    "contrabass": (12, 43),
+    "orchestral_harp": (13, 46),
+    "timpani": (14, 47),
+    "string_ensemble": (15, 48),
+    "synth_strings": (16, 50),
+    "voice": (17, 52),
+    "orchestra_hit": (18, 55),
+    "trumpet": (19, 56),
+    "trombone": (20, 57),
+    "tuba": (21, 58),
+    "french_horn": (22, 60),
+    "brass_section": (23, 61),
+    "soprano_and_alto_sax": (24, 64),
+    "tenor_sax": (25, 66),
+    "baritone_sax": (26, 67),
+    "oboe": (27, 68),
+    "english_horn": (28, 69),
+    "bassoon": (29, 70),
+    "clarinet": (30, 71),
+    "flutes": (31, 72),
+    "synth_lead": (32, 80),
+    "synth_pad": (33, 88),
+}
+
+INSTRUMENT_ALIASES = {
+    "piano": "acoustic_piano",
+    "acoustic grand piano": "acoustic_piano",
+    "acoustic_grand_piano": "acoustic_piano",
+    "electric guitar": "clean_electric_guitar",
+    "guitar": "acoustic_guitar",
+    "bass": "acoustic_bass",
+    "vocals": "voice",
+    "vocal": "voice",
+}
+
 
 class TokenEncodingError(ValueError):
     """Raised when reviewed labels cannot be represented safely."""
 
 
 @dataclass(frozen=True)
-class PianoEvent:
+class InstrumentEvent:
     time: float
     velocity: int
     pitch: int
-    program: int = PIANO_PROGRAM
+    program: int
+
+
+def canonical_instrument_name(value: Any) -> str:
+    name = str(value or "acoustic_piano").strip().lower().replace("-", "_")
+    name = INSTRUMENT_ALIASES.get(name, name.replace(" ", "_"))
+    if name not in INSTRUMENT_GROUPS:
+        raise TokenEncodingError(
+            f"Unsupported individual instrument {value!r}; expected one of "
+            + ", ".join(INSTRUMENT_GROUPS)
+        )
+    return name
+
+
+def instrument_group_id(value: Any) -> int:
+    return INSTRUMENT_GROUPS[canonical_instrument_name(value)][0]
+
+
+def instrument_program(value: Any) -> int:
+    return INSTRUMENT_GROUPS[canonical_instrument_name(value)][1]
 
 
 def _event_id(kind: str, value: int = 0) -> int:
@@ -56,7 +127,11 @@ def _event_id(kind: str, value: int = 0) -> int:
     raise TokenEncodingError(f"Unsupported MuScriptor event: {kind}={value}")
 
 
-def _validated_notes(notes: Iterable[dict[str, Any]], duration_seconds: float) -> list[dict[str, Any]]:
+def _validated_notes(
+    notes: Iterable[dict[str, Any]],
+    duration_seconds: float,
+    instrument: str,
+) -> list[dict[str, Any]]:
     clean: list[dict[str, Any]] = []
     for index, note in enumerate(notes):
         if not isinstance(note, dict):
@@ -73,6 +148,11 @@ def _validated_notes(notes: Iterable[dict[str, Any]], duration_seconds: float) -
         end = min(duration_seconds, float(onset) + float(duration))
         if end <= float(onset) and not note.get("continuedFromPreviousClip"):
             raise TokenEncodingError(f"Note {index} ends before it begins")
+        note_instrument = canonical_instrument_name(note.get("instrument") or instrument)
+        if note_instrument != instrument:
+            raise TokenEncodingError(
+                f"Note {index} belongs to {note_instrument}, not the clip's {instrument} focus"
+            )
         clean.append({
             "midi": midi,
             "time": float(onset),
@@ -80,15 +160,49 @@ def _validated_notes(notes: Iterable[dict[str, Any]], duration_seconds: float) -
             "continued": bool(note.get("continuedFromPreviousClip")),
             "continues": bool(note.get("continuesIntoNextClip")),
         })
-    return clean
+    return _trim_same_key_overlaps(clean)
 
 
-def encode_piano_clip(
+def _trim_same_key_overlaps(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Match MuScriptor's public tokenizer invariant for repeated keys.
+
+    A MIDI key cannot be independently active twice for the same instrument.
+    Duplicate onsets are collapsed, and an earlier note is stopped at the next
+    strike.  Without this normalization, a later note-off can accidentally
+    terminate the new strike and teach the model the chopped/stuttering pattern
+    we are trying to remove.
+    """
+
+    normalized: list[dict[str, Any]] = []
+    by_pitch: dict[int, list[dict[str, Any]]] = {}
+    for note in notes:
+        by_pitch.setdefault(note["midi"], []).append(dict(note))
+    for pitch_notes in by_pitch.values():
+        ordered = sorted(pitch_notes, key=lambda note: (note["time"], -note["end"]))
+        deduplicated: list[dict[str, Any]] = []
+        for note in ordered:
+            if deduplicated and abs(note["time"] - deduplicated[-1]["time"]) < 1e-7:
+                previous = deduplicated[-1]
+                previous["end"] = max(previous["end"], note["end"])
+                previous["continues"] = previous["continues"] or note["continues"]
+                previous["continued"] = previous["continued"] or note["continued"]
+                continue
+            deduplicated.append(note)
+        for previous, following in zip(deduplicated, deduplicated[1:]):
+            if previous["end"] > following["time"]:
+                previous["end"] = following["time"]
+                previous["continues"] = False
+        normalized.extend(note for note in deduplicated if note["end"] > note["time"])
+    return sorted(normalized, key=lambda note: (note["time"], note["midi"]))
+
+
+def encode_instrument_clip(
     notes: Iterable[dict[str, Any]],
     duration_seconds: float = 5.0,
     include_eos: bool = True,
+    instrument: str = "acoustic_piano",
 ) -> list[int]:
-    """Encode one reviewed clip into the released model's token IDs.
+    """Encode one reviewed individual-instrument clip into model token IDs.
 
     Notes already sounding at the clip boundary become the MT3 tie prologue.
     Notes continuing beyond the right boundary intentionally omit their note-off
@@ -96,23 +210,25 @@ def encode_piano_clip(
     """
     if not 0 < duration_seconds <= 10:
         raise TokenEncodingError("Clip duration must be within (0, 10] seconds")
-    clean = _validated_notes(notes, duration_seconds)
+    instrument = canonical_instrument_name(instrument)
+    program = instrument_program(instrument)
+    clean = _validated_notes(notes, duration_seconds, instrument)
     tied_pitches = sorted({note["midi"] for note in clean if note["continued"]})
     tokens: list[int] = []
     program_state: int | None = None
     for pitch in tied_pitches:
-        if program_state != PIANO_PROGRAM:
-            tokens.append(_event_id("program", PIANO_PROGRAM))
-            program_state = PIANO_PROGRAM
+        if program_state != program:
+            tokens.append(_event_id("program", program))
+            program_state = program
         tokens.append(_event_id("pitch", pitch))
     tokens.append(TIE_ID)
 
-    events: list[PianoEvent] = []
+    events: list[InstrumentEvent] = []
     for note in clean:
         if not note["continued"]:
-            events.append(PianoEvent(note["time"], 1, note["midi"]))
+            events.append(InstrumentEvent(note["time"], 1, note["midi"], program))
         if not note["continues"]:
-            events.append(PianoEvent(note["end"], 0, note["midi"]))
+            events.append(InstrumentEvent(note["end"], 0, note["midi"], program))
     events.sort(key=lambda event: (
         round(event.time * FRAME_RATE), False, event.program, event.velocity, event.pitch,
     ))
@@ -138,6 +254,21 @@ def encode_piano_clip(
     if any(token < 0 or token >= MODEL_CARDINALITY for token in tokens):
         raise TokenEncodingError("Encoded token is outside the model cardinality")
     return tokens
+
+
+def encode_piano_clip(
+    notes: Iterable[dict[str, Any]],
+    duration_seconds: float = 5.0,
+    include_eos: bool = True,
+) -> list[int]:
+    """Backward-compatible acoustic-piano wrapper."""
+
+    return encode_instrument_clip(
+        notes,
+        duration_seconds=duration_seconds,
+        include_eos=include_eos,
+        instrument="acoustic_piano",
+    )
 
 
 def teacher_forcing_pair(

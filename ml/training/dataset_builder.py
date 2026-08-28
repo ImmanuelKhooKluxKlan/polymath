@@ -11,9 +11,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+
+from ml.training.muscriptor_tokens import (
+    TokenEncodingError,
+    canonical_instrument_name,
+)
 
 
 SCHEMA = "polymath-supervision-package-v1"
@@ -31,6 +37,7 @@ class SongEntry:
     supervision_package: Path
     allowed_for_training: bool
     rights_note: str
+    instrument_focus: str = "acoustic_piano"
     forced_split: str | None = None
 
 
@@ -76,12 +83,19 @@ def load_index(path: Path) -> list[SongEntry]:
         source = (base / str(item.get("sourceMedia") or "")).resolve()
         package = (base / str(item.get("supervisionPackage") or "")).resolve()
         rights = item.get("rights") if isinstance(item.get("rights"), dict) else {}
+        try:
+            instrument_focus = canonical_instrument_name(
+                item.get("instrumentFocus") or "acoustic_piano"
+            )
+        except TokenEncodingError as exc:
+            raise DatasetError(f"Song entry {index + 1}: {exc}") from exc
         entries.append(SongEntry(
             song_id=song_id,
             source_media=source,
             supervision_package=package,
             allowed_for_training=bool(rights.get("allowedForTraining", False)),
             rights_note=str(rights.get("note") or "").strip(),
+            instrument_focus=instrument_focus,
             forced_split=str(item.get("split") or "").strip().lower() or None,
         ))
     return entries
@@ -135,6 +149,18 @@ def validate_package(entry: SongEntry, package: dict[str, Any]) -> list[str]:
             errors.append(f"note {note_index} exceeds the source timeline")
         if note.get("trainingEligible") and note.get("qualityStatus") not in {"trusted", "accepted-manually"}:
             errors.append(f"note {note_index} is eligible but its qualityStatus is not trusted/accepted")
+        if note.get("trainingEligible"):
+            try:
+                note_instrument = canonical_instrument_name(
+                    note.get("instrument") or entry.instrument_focus
+                )
+                if note_instrument != entry.instrument_focus:
+                    errors.append(
+                        f"note {note_index} belongs to {note_instrument}, not "
+                        f"the song's {entry.instrument_focus} focus"
+                    )
+            except TokenEncodingError as exc:
+                errors.append(f"note {note_index}: {exc}")
         if len(errors) >= 100:
             errors.append("validation stopped after 100 errors")
             break
@@ -148,7 +174,12 @@ def windows_overlapping(start: float, end: float, windows: Iterable[dict[str, An
     )]
 
 
-def clip_notes(notes: Iterable[dict[str, Any]], start: float, end: float) -> list[dict[str, Any]]:
+def clip_notes(
+    notes: Iterable[dict[str, Any]],
+    start: float,
+    end: float,
+    instrument_focus: str,
+) -> list[dict[str, Any]]:
     clipped: list[dict[str, Any]] = []
     for note in notes:
         note_start = float(note.get("time", 0))
@@ -162,7 +193,7 @@ def clip_notes(notes: Iterable[dict[str, Any]], start: float, end: float) -> lis
             "time": round(local_start, 6),
             "duration": round(max(0.01, local_end - local_start), 6),
             "velocity": round(float(note.get("velocity", 0.75)), 4),
-            "instrument": str(note.get("instrument") or "acoustic_piano"),
+            "instrument": instrument_focus,
             "continuedFromPreviousClip": note_start < start,
             "continuesIntoNextClip": note_end > end,
             "qualityWindowId": note.get("qualityWindowId"),
@@ -177,6 +208,9 @@ def build_song_clips(
     clip_seconds: float,
     hop_seconds: float,
     minimum_notes: int,
+    include_trusted_silence: bool,
+    maximum_negative_ratio: float,
+    negative_example_weight: float,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     duration = float(package["timeline"]["sourceDurationSeconds"])
     windows = package["alignment"]["qualityWindows"]
@@ -189,7 +223,7 @@ def build_song_clips(
         end = min(duration, start + clip_seconds)
         overlap = windows_overlapping(start, end, windows)
         unsafe = [window for window in overlap if window.get("status") not in ALLOWED_WINDOW_STATUS]
-        labels = clip_notes(notes, start, end)
+        labels = clip_notes(notes, start, end, entry.instrument_focus)
         clip_id = f"{entry.song_id}-{index:05d}"
         if unsafe:
             rejected.append({
@@ -198,6 +232,27 @@ def build_song_clips(
                 "sourceEnd": round(end, 6),
                 "reason": "overlaps-unapproved-window",
                 "windowIds": [window.get("id") for window in unsafe],
+            })
+        elif not labels and include_trusted_silence and overlap and all(
+            window.get("status") in {"trusted", "accepted-manually"}
+            for window in overlap
+        ):
+            clips.append({
+                "schema": "polymath-training-clip-v1",
+                "clipId": clip_id,
+                "songId": entry.song_id,
+                "split": split,
+                "sourceMedia": str(entry.source_media),
+                "sourceStart": round(start, 6),
+                "durationSeconds": round(end - start, 6),
+                "sampleRate": 16000,
+                "instrumentFocus": entry.instrument_focus,
+                "notes": [],
+                "targetState": "reviewed-silence",
+                "isNegativeExample": True,
+                "exampleWeight": negative_example_weight,
+                "qualityWindowIds": [window.get("id") for window in overlap],
+                "supervisionPackage": str(entry.supervision_package),
             })
         elif len(labels) < minimum_notes:
             rejected.append({
@@ -217,13 +272,40 @@ def build_song_clips(
                 "sourceStart": round(start, 6),
                 "durationSeconds": round(end - start, 6),
                 "sampleRate": 16000,
-                "instrumentFocus": "piano",
+                "instrumentFocus": entry.instrument_focus,
                 "notes": labels,
+                "targetState": "notes",
+                "isNegativeExample": False,
+                "exampleWeight": 1.0,
                 "qualityWindowIds": [window.get("id") for window in overlap],
                 "supervisionPackage": str(entry.supervision_package),
             })
         index += 1
         start += hop_seconds
+    positives = [clip for clip in clips if not clip.get("isNegativeExample")]
+    negatives = [clip for clip in clips if clip.get("isNegativeExample")]
+    maximum_negatives = max(1, math.ceil(len(positives) * maximum_negative_ratio))
+    if len(negatives) > maximum_negatives:
+        # Spread selected silence across the song instead of taking only its
+        # beginning. This is deterministic and exposes different backgrounds.
+        if maximum_negatives == 1:
+            selected = [negatives[len(negatives) // 2]]
+        else:
+            selected = [
+                negatives[round(index * (len(negatives) - 1) / (maximum_negatives - 1))]
+                for index in range(maximum_negatives)
+            ]
+        selected_ids = {clip["clipId"] for clip in selected}
+        for clip in negatives:
+            if clip["clipId"] not in selected_ids:
+                rejected.append({
+                    "clipId": clip["clipId"],
+                    "sourceStart": clip["sourceStart"],
+                    "sourceEnd": round(clip["sourceStart"] + clip["durationSeconds"], 6),
+                    "reason": "negative-ratio-cap",
+                })
+        clips = [*positives, *selected]
+        clips.sort(key=lambda clip: clip["sourceStart"])
     return clips, rejected
 
 
@@ -242,11 +324,21 @@ def build_dataset(
     seed: str = "polymath-piano-v001",
     train_share: float = 0.8,
     validation_share: float = 0.1,
+    include_trusted_silence: bool = True,
+    maximum_negative_ratio: float = 0.35,
+    negative_example_weight: float = 0.35,
+    training_hop_seconds: float | None = None,
 ) -> dict[str, Any]:
     if clip_seconds <= 0 or hop_seconds <= 0:
         raise DatasetError("clip_seconds and hop_seconds must be positive")
+    if training_hop_seconds is not None and training_hop_seconds <= 0:
+        raise DatasetError("training_hop_seconds must be positive when provided")
     if not 0 < train_share < 1 or not 0 <= validation_share < 1 or train_share + validation_share >= 1:
         raise DatasetError("split shares must leave non-zero train and test ranges")
+    if not 0 <= maximum_negative_ratio <= 1:
+        raise DatasetError("maximum_negative_ratio must be between zero and one")
+    if not 0 < negative_example_weight <= 1:
+        raise DatasetError("negative_example_weight must be within (0, 1]")
     entries = load_index(index_path)
     output_directory.mkdir(parents=True, exist_ok=True)
     records: dict[str, list[dict[str, Any]]] = {"train": [], "validation": [], "test": []}
@@ -267,8 +359,10 @@ def build_dataset(
         if split not in records:
             errors.append(f"{entry.song_id}: split must be train, validation, or test")
             continue
+        split_hop = training_hop_seconds if split == "train" and training_hop_seconds else hop_seconds
         clips, song_rejected = build_song_clips(
-            entry, package, split, clip_seconds, hop_seconds, minimum_notes,
+            entry, package, split, clip_seconds, split_hop, minimum_notes,
+            include_trusted_silence, maximum_negative_ratio, negative_example_weight,
         )
         records[split].extend(clips)
         rejected.extend({"songId": entry.song_id, **item} for item in song_rejected)
@@ -279,7 +373,10 @@ def build_dataset(
             "sourceSha256": sha256_file(entry.source_media),
             "supervisionPackage": str(entry.supervision_package),
             "supervisionSha256": sha256_file(entry.supervision_package),
+            "instrumentFocus": entry.instrument_focus,
             "acceptedClips": len(clips),
+            "positiveClips": sum(not clip.get("isNegativeExample") for clip in clips),
+            "negativeClips": sum(bool(clip.get("isNegativeExample")) for clip in clips),
             "rejectedClips": len(song_rejected),
             "rightsNote": entry.rights_note,
         })
@@ -295,7 +392,11 @@ def build_dataset(
         "seed": seed,
         "clipSeconds": clip_seconds,
         "hopSeconds": hop_seconds,
+        "trainingHopSeconds": training_hop_seconds or hop_seconds,
         "minimumNotes": minimum_notes,
+        "includeTrustedSilence": include_trusted_silence,
+        "maximumNegativeRatio": maximum_negative_ratio,
+        "negativeExampleWeight": negative_example_weight,
         "songs": songs,
         "counts": {split: len(split_records) for split, split_records in records.items()},
         "rejectedClips": len(rejected),
@@ -313,7 +414,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", type=Path, required=True, help="Output dataset-manifest directory")
     parser.add_argument("--clip-seconds", type=float, default=5.0)
     parser.add_argument("--hop-seconds", type=float, default=5.0)
+    parser.add_argument("--training-hop-seconds", type=float)
     parser.add_argument("--minimum-notes", type=int, default=1)
+    parser.add_argument("--no-trusted-silence", action="store_true")
+    parser.add_argument("--maximum-negative-ratio", type=float, default=0.35)
+    parser.add_argument("--negative-example-weight", type=float, default=0.35)
     parser.add_argument("--seed", default="polymath-piano-v001")
     return parser.parse_args()
 
@@ -324,6 +429,10 @@ def main() -> None:
         summary = build_dataset(
             args.index.resolve(), args.out.resolve(), args.clip_seconds,
             args.hop_seconds, args.minimum_notes, args.seed,
+            include_trusted_silence=not args.no_trusted_silence,
+            maximum_negative_ratio=args.maximum_negative_ratio,
+            negative_example_weight=args.negative_example_weight,
+            training_hop_seconds=args.training_hop_seconds,
         )
     except DatasetError as exc:
         raise SystemExit(str(exc)) from exc
