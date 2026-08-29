@@ -290,6 +290,12 @@ function normalizePedalEvents(song) {
 
           controller: 64,
           source,
+          inferred:
+            event?.inferred === true,
+          confidence:
+            Number.isFinite(Number(event?.confidence))
+              ? clamp(Number(event.confidence), 0, 1)
+              : undefined,
         };
       }
     )
@@ -947,6 +953,15 @@ export function normalizeSong(
 
           dynamic:
             note.dynamic,
+
+          articulation:
+            note.articulation,
+
+          voice:
+            note.voice,
+
+          measureBeat:
+            note.measureBeat,
 
           hand:
             note.hand,

@@ -4026,6 +4026,9 @@ function publicTranslationJob(job) {
     engine: job.omrEngine || '',
     confidence: Number(job.confidence || 0),
     warnings: Array.isArray(job.warnings) ? job.warnings.slice(0, 12) : [],
+    pianoPerformance: job.pianoPerformance && typeof job.pianoPerformance === 'object'
+      ? job.pianoPerformance
+      : null,
   };
 }
 
@@ -4235,15 +4238,28 @@ function normalizeReadyToPlaySong(rawResult, selectedInstrument) {
   }
 
   const notes = (Array.isArray(rawResult.notes) ? rawResult.notes : [])
-    .map((note) => ({
-      note: normalizePitchName(note.note),
-      time: clampNumber(note.time, 0, 24 * 60 * 60, 0),
-      duration: clampNumber(note.duration, 0.01, 60 * 60, 0.25),
-      velocity: clampNumber(note.velocity, 0.01, 1, 0.75),
-      hand: ['left', 'right', 'both', ''].includes(note.hand) ? note.hand : '',
-      voice: String(note.voice || '').slice(0, 80),
-      articulation: String(note.articulation || '').slice(0, 80),
-    }))
+    .map((note) => {
+      const duration = clampNumber(note.duration, 0.01, 60 * 60, 0.25);
+      const normalized = {
+        note: normalizePitchName(note.note),
+        time: clampNumber(note.time, 0, 24 * 60 * 60, 0),
+        duration,
+        scoreDuration: clampNumber(note.scoreDuration, 0.01, 60 * 60, duration),
+        visualDuration: clampNumber(note.visualDuration, 0.01, 60 * 60, duration),
+        audioDuration: clampNumber(note.audioDuration, 0.01, 60 * 60, duration),
+        velocity: clampNumber(note.velocity, 0.01, 1, 0.75),
+        hand: ['left', 'right', 'both', ''].includes(note.hand) ? note.hand : '',
+        voice: String(note.voice || '').slice(0, 80),
+        articulation: String(note.articulation || '').slice(0, 80),
+        dynamic: String(note.dynamic || '').slice(0, 24),
+        measure: Math.round(clampNumber(note.measure, 0, 100_000, 0)),
+        measureBeat: clampNumber(note.measureBeat, 0, 128, 0),
+      };
+      if (Number.isFinite(Number(note.releaseSeconds))) {
+        normalized.releaseSeconds = clampNumber(note.releaseSeconds, 0.01, 8, 0.58);
+      }
+      return normalized;
+    })
     .filter((note) => note.note)
     .sort((a, b) => a.time - b.time || a.note.localeCompare(b.note));
 
@@ -4286,6 +4302,11 @@ function normalizeReadyToPlaySong(rawResult, selectedInstrument) {
     .map((pedal) => ({
       time: clampNumber(pedal.time, 0, 24 * 60 * 60, 0),
       down: Boolean(pedal.down),
+      value: pedal.down ? Math.round(clampNumber(pedal.value, 64, 127, 127)) : 0,
+      controller: 64,
+      source: String(pedal.source || '').slice(0, 80),
+      inferred: pedal.inferred === true,
+      confidence: clampNumber(pedal.confidence, 0, 1, pedal.inferred === true ? 0.5 : 1),
     }))
     .sort((a, b) => a.time - b.time);
 
@@ -4325,6 +4346,35 @@ function normalizeReadyToPlaySong(rawResult, selectedInstrument) {
       .filter(Boolean)
       .slice(0, 50),
     confidence: clampNumber(rawResult.confidence, 0, 1, 0.5),
+    performance: rawResult.performance && typeof rawResult.performance === 'object'
+      ? {
+          profile: String(rawResult.performance.profile || '').slice(0, 80),
+          preserveScoreDurations: rawResult.performance.preserveScoreDurations === true,
+          preserveScoreTiming: rawResult.performance.preserveScoreTiming === true,
+          durationFieldPolicy: String(rawResult.performance.durationFieldPolicy || '').slice(0, 80),
+          sameKeyRetriggerGapSeconds: clampNumber(
+            rawResult.performance.sameKeyRetriggerGapSeconds, 0.01, 0.2, 0.038,
+          ),
+          defaultAutoplayReleaseSeconds: clampNumber(
+            rawResult.performance.defaultAutoplayReleaseSeconds, 0.1, 2, 0.58,
+          ),
+        }
+      : undefined,
+    pianoPerformance: rawResult.pianoPerformance && typeof rawResult.pianoPerformance === 'object'
+      ? {
+          voices: Math.round(clampNumber(rawResult.pianoPerformance.voices, 0, 64, 0)),
+          restrikesGivenReleaseGap: Math.round(clampNumber(
+            rawResult.pianoPerformance.restrikesGivenReleaseGap, 0, 1_000_000, 0,
+          )),
+          legatoConnections: Math.round(clampNumber(
+            rawResult.pianoPerformance.legatoConnections, 0, 1_000_000, 0,
+          )),
+          pedalSource: String(rawResult.pianoPerformance.pedalSource || 'none').slice(0, 80),
+          pedalEvents: Math.round(clampNumber(rawResult.pianoPerformance.pedalEvents, 0, 1_000_000, 0)),
+          writtenAndPhysicalDurationsSeparated:
+            rawResult.pianoPerformance.writtenAndPhysicalDurationsSeparated === true,
+        }
+      : undefined,
   };
 }
 
@@ -4375,6 +4425,7 @@ async function processTranslationJob(jobId) {
     job.omrEngine = String(localOmr.summary?.engine || localOmr.result?.omrDiagnostics?.engine || 'polymath-local-omr');
     job.confidence = Number(result.confidence || 0);
     job.warnings = result.warnings;
+    job.pianoPerformance = result.pianoPerformance || null;
     await writeDb(db);
 
     fs.writeFileSync(outputPath, JSON.stringify({
@@ -4964,6 +5015,7 @@ module.exports = {
   writeDb,
   startServer,
   selectMuscriptorExecution,
+  normalizeReadyToPlaySong,
   subscriptionRules: {
     products: PRODUCTS,
     activeSubscriptionTier,

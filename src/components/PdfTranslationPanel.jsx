@@ -294,6 +294,20 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
               <strong>{Math.round(Number(job.confidence || 0) * 100)}% notation confidence</strong>
             </div>
           )}
+          {job.status === 'completed' && job.pianoPerformance && (
+            <div className="job-metrics">
+              <span>Piano interpretation</span>
+              <strong>
+                {job.pianoPerformance.pedalSource === 'printed-score'
+                  || job.pianoPerformance.pedalSource === 'printed-smufl-pedal'
+                  ? 'Printed pedal'
+                  : job.pianoPerformance.pedalSource === 'inferred-score-pedaling'
+                    ? 'Musical pedal inferred'
+                    : 'No pedal'}
+                {' · '}{Number(job.pianoPerformance.restrikesGivenReleaseGap || 0)} clean restrikes
+              </strong>
+            </div>
+          )}
           {job.status === 'completed' && Array.isArray(job.warnings) && job.warnings.length > 0 && (
             <details className="advanced-controls">
               <summary>Review {job.warnings.length} notation warning{job.warnings.length === 1 ? '' : 's'}</summary>

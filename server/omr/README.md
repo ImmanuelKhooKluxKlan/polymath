@@ -22,6 +22,14 @@ The engine chooses the strongest evidence available, in this order:
    lines, detects conservative notehead candidates, maps pitch from staff
    coordinates, and reconstructs quantized measure timing.
 
+For piano, recognition is followed by a separate **pianist interpretation
+layer**. It keeps written duration, physical key-hold duration, and damper
+duration as separate fields; aligns chord columns across both staffs; respects
+ties and articulations; leaves a real release gap before repeated strikes; uses
+printed MusicXML/SMuFL pedal instructions when present; and otherwise adds
+conservative, labelled harmonic re-pedaling. The browser's sample engine then
+performs those pedal and release events instead of hard-stopping audio.
+
 Low-confidence pages fail the job and trigger the existing allowance/Mcoin
 refund. The engine never silently returns an empty or guessed result.
 
@@ -33,6 +41,8 @@ refund. The engine never silently returns an empty or guessed result.
 - `polymath_omr/vision.py`: PDF rendering, SMuFL extraction, staff/symbol
   recognition, pitch/rhythm reconstruction, repeats, diagnostics, confidence.
 - `polymath_omr/music.py`: clef, pitch, key-signature, and tie helpers.
+- `polymath_omr/performance.py`: key-hold, articulation, repeated-key, and
+  printed/inferred damper-pedal performance semantics.
 - `tests/test_omr.py`: symbolic, embedded-source, and raster score tests.
 
 ## Run locally
@@ -73,9 +83,12 @@ deskew angles, repeat expansion, and component confidence.
 
 Embedded MusicXML is the only path treated as near-exact. SMuFL PDFs have exact
 notehead positions and strong pitch evidence, but complex tuplets, ornaments,
-voltas, D.S./D.C./Coda jumps, cross-staff voices, ties, lyrics, dynamics, and
-pedal semantics still need a review layer. Scans have lower confidence and may
-omit unclear marks. These limitations must not be hidden from users.
+voltas, D.S./D.C./Coda jumps, cross-staff ties, lyrics, and unencoded expression
+still need a review layer. Printed semantic dynamics, articulations, and pedal
+marks are used when present. Pedaling inferred in their absence is explicitly
+labelled rather than presented as something printed by the composer. Scans have
+lower confidence and may omit unclear marks. These limitations must not be
+hidden from users.
 
 ## Refinement path
 

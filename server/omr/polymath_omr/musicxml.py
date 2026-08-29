@@ -10,6 +10,14 @@ from xml.etree import ElementTree as ET
 import pypdfium2 as pdfium
 
 from .music import TimeSignature, key_name, merge_tied_notes, midi_to_name, pitch_to_midi
+from .performance import shape_piano_performance
+
+
+DYNAMIC_VELOCITIES = {
+    "ppp": 0.34, "pp": 0.42, "p": 0.52,
+    "mp": 0.64, "mf": 0.76,
+    "f": 0.86, "ff": 0.93, "fff": 0.98,
+}
 
 
 def _strip_namespaces(root: ET.Element) -> ET.Element:
@@ -99,6 +107,10 @@ def parse_musicxml(payload: bytes, instrument: str, source_name: str = "embedded
     note_rows: list[dict] = []
     rest_events: list[dict] = []
     tempo_events: list[tuple[float, float]] = [(0.0, tempo)]
+    pedal_rows: list[dict] = []
+    current_velocity = 0.76
+    current_dynamic_mark = "mf"
+    active_slur_voices: set[tuple[str, int]] = set()
     measure_count = 0
 
     for measure in part.findall("measure"):
@@ -128,6 +140,26 @@ def parse_musicxml(payload: bytes, instrument: str, source_name: str = "embedded
                         tempo_events.append((absolute_beats + measure_cursor, tempo))
                 except (TypeError, ValueError):
                     pass
+                offset = float(_text(child, "offset", "0") or 0) / divisions
+                direction_beat = absolute_beats + max(0.0, measure_cursor + offset)
+                dynamic = child.find("./direction-type/dynamics")
+                if dynamic is not None and list(dynamic):
+                    mark = "".join(node.tag.lower() for node in list(dynamic))
+                    current_velocity = DYNAMIC_VELOCITIES.get(mark, current_velocity)
+                    if mark in DYNAMIC_VELOCITIES:
+                        current_dynamic_mark = mark
+                pedal = child.find("./direction-type/pedal")
+                pedal_type = pedal.attrib.get("type", "") if pedal is not None else ""
+                damper = sound.attrib.get("damper-pedal") if sound is not None else None
+                if pedal_type in {"start", "resume"} or str(damper).lower() in {"yes", "true", "1"}:
+                    pedal_rows.append({"beat": direction_beat, "down": True, "kind": "start"})
+                elif pedal_type in {"stop", "discontinue"} or str(damper).lower() in {"no", "false", "0"}:
+                    pedal_rows.append({"beat": direction_beat, "down": False, "kind": "stop"})
+                elif pedal_type == "change":
+                    pedal_rows.extend([
+                        {"beat": direction_beat, "down": False, "kind": "change-up"},
+                        {"beat": direction_beat, "down": True, "kind": "change-down", "delay": 0.045},
+                    ])
                 continue
             if child.tag in {"backup", "forward"}:
                 amount = float(_text(child, "duration", "0")) / divisions
@@ -155,18 +187,29 @@ def parse_musicxml(payload: bytes, instrument: str, source_name: str = "embedded
                     alter = int(round(float(_text(pitch, "alter", "0"))))
                     midi = pitch_to_midi(step, octave, alter)
                     tie_types = {tie.attrib.get("type", "") for tie in child.findall("tie")}
+                    slur_types = {slur.attrib.get("type", "") for slur in child.findall("./notations/slur")}
+                    legato = voice_key in active_slur_voices or bool(slur_types & {"start", "stop", "continue"})
+                    articulation = _articulation(child)
+                    if legato and "legato" not in articulation:
+                        articulation = f"{articulation} legato slur".strip()
                     note_rows.append({
                         "beat": absolute_beats + onset,
                         "durationBeats": max(duration_beats, 0.0625),
                         "midi": midi,
-                        "velocity": 0.78,
+                        "velocity": current_velocity,
+                        "dynamic": current_dynamic_mark,
                         "hand": "left" if instrument == "piano" and staff > 1 else "right",
                         "voice": f"{part_name} voice {voice}",
                         "staff": staff,
-                        "articulation": _articulation(child),
+                        "measure": measure_count,
+                        "articulation": articulation,
                         "_tie_start": "start" in tie_types,
                         "_tie_stop": "stop" in tie_types,
                     })
+                    if "start" in slur_types:
+                        active_slur_voices.add(voice_key)
+                    if "stop" in slur_types or "discontinue" in slur_types:
+                        active_slur_voices.discard(voice_key)
             if not chord:
                 measure_cursor += duration_beats
         absolute_beats += max(measure_extent, time_signature.measure_quarter_beats)
@@ -201,7 +244,6 @@ def parse_musicxml(payload: bytes, instrument: str, source_name: str = "embedded
 
     notes = merge_tied_notes(notes)
     for note in notes:
-        note.pop("midi", None)
         note.pop("staff", None)
     events = [{
         "type": "rest", "time": round(beat_to_seconds(rest["beat"]), 6),
@@ -210,7 +252,16 @@ def parse_musicxml(payload: bytes, instrument: str, source_name: str = "embedded
     } for rest in rest_events]
     if not notes:
         raise ValueError("The embedded MusicXML part contains no pitched notes.")
-    return {
+    pedals = [{
+        "id": f"musicxml-pedal-{index}",
+        "time": round(beat_to_seconds(row["beat"]) + float(row.get("delay", 0)), 6),
+        "down": bool(row["down"]),
+        "value": 127 if row["down"] else 0,
+        "controller": 64,
+        "source": "embedded-musicxml",
+        "inferred": False,
+    } for index, row in enumerate(pedal_rows)]
+    result = {
         "isInstrumentalMusicSheet": True,
         "rejectionReason": "",
         "title": title,
@@ -222,7 +273,7 @@ def parse_musicxml(payload: bytes, instrument: str, source_name: str = "embedded
         "notes": notes,
         "events": events,
         "tabs": [],
-        "pedals": [],
+        "pedals": pedals,
         "warnings": [],
         "confidence": 0.995,
         "omrDiagnostics": {
@@ -232,12 +283,20 @@ def parse_musicxml(payload: bytes, instrument: str, source_name: str = "embedded
             "measures": measure_count,
             "notes": len(notes),
             "tempoChanges": len(tempo_events),
+            "printedPedalEvents": len(pedals),
         },
     }
+    result = shape_piano_performance(result, infer_pedal=instrument == "piano")
+    result["omrDiagnostics"]["pianoPerformance"] = result.get("pianoPerformance", {})
+    return result
 
 
 def _articulation(note: ET.Element) -> str:
     articulations = note.find("./notations/articulations")
-    if articulations is None or not list(articulations):
-        return ""
-    return list(articulations)[0].tag.replace("-", " ")[:80]
+    names = [
+        node.tag.replace("-", " ")
+        for node in (list(articulations) if articulations is not None else [])
+    ]
+    if note.find("./notations/slur[@type='start']") is not None:
+        names.append("legato slur")
+    return " ".join(names)[:80]

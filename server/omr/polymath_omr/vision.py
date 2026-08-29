@@ -16,6 +16,7 @@ import numpy as np
 import pypdfium2 as pdfium
 
 from .music import TimeSignature, key_name, midi_to_name, staff_step_to_midi
+from .performance import shape_piano_performance
 
 
 @dataclass
@@ -53,6 +54,8 @@ class NoteMark:
     beam_count: int
     dotted: bool
     hand: str
+    articulation: str = ""
+    stem_direction: str = ""
 
 
 @dataclass
@@ -424,6 +427,7 @@ def detect_notes(page: PageAnalysis, staff: Staff, instrument: str) -> tuple[lis
             duration_beats=duration, confidence=round(confidence, 4),
             filled=filled, stem=stem, beam_count=beams, dotted=dotted,
             hand="left" if instrument == "piano" and staff.clef == "bass" else "right",
+            articulation="", stem_direction="up" if stem and stem_x >= cx else ("down" if stem else ""),
         ))
     return sorted(marks, key=lambda item: (item.x, item.midi)), rejected
 
@@ -443,6 +447,21 @@ FLAG_BEAMS = {
     0xE244: 3, 0xE245: 3, 0xE246: 4, 0xE247: 4,
 }
 AUGMENTATION_DOT = 0xE1E7
+ARTICULATION_CODES = {
+    0xE4A0: "accent", 0xE4A1: "accent",
+    0xE4A2: "staccato", 0xE4A3: "staccato",
+    0xE4A4: "tenuto", 0xE4A5: "tenuto",
+    0xE4A6: "staccatissimo", 0xE4A7: "staccatissimo",
+    0xE4AC: "marcato", 0xE4AD: "marcato",
+}
+PEDAL_DOWN_CODES = {0xE650, 0xE651, 0xE656, 0xE65C, 0xE65D}
+PEDAL_UP_CODES = {0xE655, 0xE657}
+DYNAMIC_GLYPHS = {0xE520: "p", 0xE521: "m", 0xE522: "f"}
+DYNAMIC_VELOCITIES = {
+    "ppp": 0.34, "pp": 0.42, "p": 0.52,
+    "mp": 0.64, "mf": 0.76,
+    "f": 0.86, "ff": 0.93, "fff": 0.98,
+}
 
 
 def _scaled_symbols(page: PageAnalysis, accepted_codes: set[int]) -> list[dict]:
@@ -465,7 +484,7 @@ def detect_smufl_notes(
     instrument: str,
 ) -> tuple[list[NoteMark], int, int]:
     """Read semantically encoded music glyphs before considering raster blobs."""
-    accepted = set(NOTEHEAD_DURATIONS) | set(ACCIDENTAL_ALTERS) | set(FLAG_BEAMS) | {
+    accepted = set(NOTEHEAD_DURATIONS) | set(ACCIDENTAL_ALTERS) | set(FLAG_BEAMS) | set(ARTICULATION_CODES) | {
         AUGMENTATION_DOT, 0xE050, 0xE062,
     }
     symbols = _scaled_symbols(page, accepted)
@@ -510,6 +529,7 @@ def detect_smufl_notes(
     inline_accidentals = [symbol for symbol in accidentals if symbol not in signature_symbols]
     flags = [symbol for symbol in relevant if symbol["codepoint"] in FLAG_BEAMS]
     dots = [symbol for symbol in relevant if symbol["codepoint"] == AUGMENTATION_DOT]
+    articulations = [symbol for symbol in relevant if symbol["codepoint"] in ARTICULATION_CODES]
 
     accidental_state: dict[tuple[int, int], tuple[float, int]] = {}
     accidental_rows = []
@@ -559,6 +579,12 @@ def detect_smufl_notes(
             dotted = _is_dotted(page.binary, head["x"], head["y"], spacing)
         if dotted:
             duration *= 1.5
+        nearby_articulation = min((
+            symbol for symbol in articulations
+            if abs(symbol["x"] - head["x"]) <= spacing * 1.25
+            and abs(symbol["y"] - head["y"]) <= spacing * 3.2
+        ), key=lambda symbol: abs(symbol["x"] - head["x"]) + abs(symbol["y"] - head["y"]) * 0.35, default=None)
+        articulation = ARTICULATION_CODES[nearby_articulation["codepoint"]] if nearby_articulation else ""
         rhythm_confidence = 0.98 if head["codepoint"] != 0xE0A4 or beam_count or dotted else 0.82
         confidence = 0.82 * 0.995 + 0.18 * rhythm_confidence
         marks.append(NoteMark(
@@ -568,6 +594,8 @@ def detect_smufl_notes(
             filled=head["codepoint"] == 0xE0A4, stem=stem,
             beam_count=beam_count, dotted=dotted,
             hand="left" if instrument == "piano" and staff.clef == "bass" else "right",
+            articulation=articulation,
+            stem_direction="up" if stem and stem_x >= head["x"] else ("down" if stem else ""),
         ))
     return marks, max(0, len(heads) - len(marks)), key_fifths
 
@@ -636,9 +664,159 @@ def _smufl_time_signature(page_analyses: list[PageAnalysis]) -> TimeSignature | 
     return TimeSignature(numerator, denominator)
 
 
+def _measure_onset_map(
+    all_marks: list[tuple[NoteMark, list[float], int, float]],
+    measure_beats: float,
+) -> dict[int, float]:
+    """Align both piano staffs to shared rhythmic columns inside each measure.
+
+    Engravers offset chord heads slightly so they remain readable. Treating each
+    x coordinate independently turns those offsets into accidental machine-gun
+    attacks. This clusters the grand staff first and quantizes each shared column
+    once, at a resolution supported by the printed note values.
+    """
+
+    grouped: dict[tuple[int, int], list[tuple[NoteMark, float, float, float]]] = {}
+    for mark, boundaries, _, spacing in all_marks:
+        measure_index = max(0, min(
+            len(boundaries) - 2,
+            int(np.searchsorted(boundaries, mark.x, side="right") - 1),
+        ))
+        grouped.setdefault((mark.system, measure_index), []).append((
+            mark, boundaries[measure_index], boundaries[measure_index + 1], spacing,
+        ))
+
+    onset_by_mark: dict[int, float] = {}
+    for entries in grouped.values():
+        left, right = entries[0][1], entries[0][2]
+        spacing = float(np.median([entry[3] for entry in entries]))
+        tolerance = max(1.5, spacing * 0.52)
+        clusters: list[list[tuple[NoteMark, float, float, float]]] = []
+        for entry in sorted(entries, key=lambda item: item[0].x):
+            if not clusters:
+                clusters.append([entry])
+                continue
+            center = float(np.mean([member[0].x for member in clusters[-1]]))
+            if entry[0].x - center <= tolerance:
+                clusters[-1].append(entry)
+            else:
+                clusters.append([entry])
+
+        shortest = min((member[0].duration_beats for cluster in clusters for member in cluster), default=0.25)
+        grid = 0.125 if shortest <= 0.125 else 0.25
+        latest_slot = max(0.0, measure_beats - grid)
+        previous_onset = None
+        for cluster_index, cluster in enumerate(clusters):
+            center = float(np.mean([member[0].x for member in cluster]))
+            raw = min(0.999, max(0.0, (center - left) / max(1.0, right - left))) * measure_beats
+            onset = round(raw / grid) * grid
+            if cluster_index == 0 and raw <= max(0.50, grid * 2):
+                onset = 0.0
+            onset = min(latest_slot, max(0.0, onset))
+            if previous_onset is not None and onset <= previous_onset:
+                onset = min(latest_slot, previous_onset + grid)
+            for mark, *_ in cluster:
+                onset_by_mark[id(mark)] = round(onset, 6)
+            previous_onset = onset
+    return onset_by_mark
+
+
+def _semantic_pedal_events(
+    system_layouts: dict[int, dict],
+    system_offsets: dict[int, float],
+    measure_beats: float,
+    bpm: float,
+) -> list[dict]:
+    candidates = []
+    accepted = PEDAL_DOWN_CODES | PEDAL_UP_CODES
+    for system, layout in system_layouts.items():
+        page = layout["page"]
+        spacing = layout["spacing"]
+        boundaries = layout["boundaries"]
+        symbols = _scaled_symbols(page, accepted)
+        for symbol in symbols:
+            if not boundaries[0] - spacing <= symbol["x"] <= boundaries[-1] + spacing:
+                continue
+            # Printed pedal instructions normally sit underneath the lower
+            # staff. A generous lower band also covers bracket-style exports.
+            if not layout["top"] - spacing <= symbol["y"] <= layout["bottom"] + spacing * 7:
+                continue
+            measure_index = _measure_for_x(boundaries, symbol["x"])
+            left, right = boundaries[measure_index], boundaries[measure_index + 1]
+            normalized = min(0.999, max(0.0, (symbol["x"] - left) / max(1.0, right - left)))
+            onset = round(normalized * measure_beats * 4) / 4
+            beat = system_offsets.get(system, 0.0) + measure_index * measure_beats + onset
+            candidates.append({
+                "beat": beat,
+                "down": symbol["codepoint"] in PEDAL_DOWN_CODES,
+            })
+    seconds_per_beat = 60.0 / bpm
+    candidates.sort(key=lambda item: (item["beat"], item["down"]))
+    events = []
+    state = None
+    for index, candidate in enumerate(candidates):
+        down = candidate["down"]
+        same_beat_has_up = down and any(
+            abs(other["beat"] - candidate["beat"]) < 0.0001 and not other["down"]
+            for other in candidates
+        )
+        event_time = candidate["beat"] * seconds_per_beat + (0.045 if same_beat_has_up else 0.0)
+        if down == state and not same_beat_has_up:
+            continue
+        events.append({
+            "id": f"smufl-pedal-{index}",
+            "time": round(event_time, 6),
+            "down": down,
+            "value": 127 if down else 0,
+            "controller": 64,
+            "source": "printed-smufl-pedal",
+            "inferred": False,
+        })
+        state = down
+    return events
+
+
+def _semantic_dynamic_events(
+    system_layouts: dict[int, dict],
+    system_offsets: dict[int, float],
+    measure_beats: float,
+) -> list[dict]:
+    events = []
+    for system, layout in system_layouts.items():
+        page = layout["page"]
+        spacing = layout["spacing"]
+        boundaries = layout["boundaries"]
+        symbols = [
+            symbol for symbol in _scaled_symbols(page, set(DYNAMIC_GLYPHS))
+            if boundaries[0] - spacing <= symbol["x"] <= boundaries[-1] + spacing
+            and layout["top"] - spacing * 2 <= symbol["y"] <= layout["bottom"] + spacing * 6
+        ]
+        clusters: list[list[dict]] = []
+        for symbol in sorted(symbols, key=lambda item: item["x"]):
+            if not clusters or symbol["x"] - clusters[-1][-1]["x"] > spacing * 1.45:
+                clusters.append([symbol])
+            else:
+                clusters[-1].append(symbol)
+        for cluster in clusters:
+            mark = "".join(DYNAMIC_GLYPHS[symbol["codepoint"]] for symbol in cluster)
+            if mark not in DYNAMIC_VELOCITIES:
+                continue
+            x = float(np.mean([symbol["x"] for symbol in cluster]))
+            measure_index = _measure_for_x(boundaries, x)
+            left, right = boundaries[measure_index], boundaries[measure_index + 1]
+            normalized = min(0.999, max(0.0, (x - left) / max(1.0, right - left)))
+            onset = round(normalized * measure_beats * 4) / 4
+            events.append({
+                "beat": system_offsets.get(system, 0.0) + measure_index * measure_beats + onset,
+                "mark": mark,
+                "velocity": DYNAMIC_VELOCITIES[mark],
+            })
+    return sorted(events, key=lambda item: item["beat"])
+
+
 def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: str) -> dict:
     title, composer, bpm, signature, warnings = _metadata([page.text for page in page_analyses], filename)
-    all_marks: list[tuple[NoteMark, list[float], int]] = []
+    all_marks: list[tuple[NoteMark, list[float], int, float]] = []
     system_measure_counts: dict[tuple[int, int], int] = {}
     rejected = 0
     system_counter = 0
@@ -653,6 +831,7 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
         warnings = [warning for warning in warnings if "time signature" not in warning.lower()]
     detected_key_fifths = []
     repeat_markers: list[tuple[int, int, str]] = []
+    system_layouts: dict[int, dict] = {}
 
     for page in page_analyses:
         page_systems = sorted({staff.system for staff in page.staffs})
@@ -670,6 +849,13 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
                     deduplicated.append(boundary)
             if len(deduplicated) < 2:
                 deduplicated = [common_x1, common_x2]
+            system_layouts[system_counter] = {
+                "page": page,
+                "boundaries": deduplicated,
+                "spacing": spacing,
+                "top": min(staff.top for staff in staffs),
+                "bottom": max(staff.bottom for staff in staffs),
+            }
             if semantic_available:
                 scale_x = page.gray.shape[1] / max(1.0, page.source_width)
                 scale_y = page.gray.shape[0] / max(1.0, page.source_height)
@@ -707,7 +893,7 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
                 })
                 for mark in marks:
                     mark.system = system_counter
-                    all_marks.append((mark, deduplicated, len(deduplicated) - 1))
+                    all_marks.append((mark, deduplicated, len(deduplicated) - 1, spacing))
             system_counter += 1
 
     measure_beats = signature.measure_quarter_beats
@@ -719,23 +905,39 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
         system_offsets[system] = running_beats
         running_beats += count * measure_beats
 
+    printed_pedals = _semantic_pedal_events(
+        system_layouts, system_offsets, measure_beats, bpm,
+    ) if semantic_available and instrument == "piano" else []
+    dynamic_events = _semantic_dynamic_events(
+        system_layouts, system_offsets, measure_beats,
+    ) if semantic_available else []
+
+    onset_by_mark = _measure_onset_map(all_marks, measure_beats)
     notes = []
-    for mark, boundaries, _ in all_marks:
+    for mark, boundaries, _, _ in all_marks:
         measure_index = max(0, min(len(boundaries) - 2, int(np.searchsorted(boundaries, mark.x, side="right") - 1)))
-        left, right = boundaries[measure_index], boundaries[measure_index + 1]
-        normalized_x = min(0.999, max(0.0, (mark.x - left) / max(1.0, right - left)))
-        onset_inside = round(normalized_x * measure_beats * 4) / 4
+        onset_inside = onset_by_mark.get(id(mark), 0.0)
         beat = system_offsets.get(mark.system, 0.0) + measure_index * measure_beats + onset_inside
         duration_beats = min(mark.duration_beats, max(0.0625, measure_beats - onset_inside))
         seconds_per_beat = 60.0 / bpm
+        score_duration = max(0.03, duration_beats * seconds_per_beat)
+        current_dynamic = next((
+            event for event in reversed(dynamic_events) if event["beat"] <= beat + 0.0001
+        ), None)
         notes.append({
             "note": midi_to_name(mark.midi),
+            "midi": mark.midi,
             "time": round(beat * seconds_per_beat, 6),
-            "duration": round(max(0.03, duration_beats * seconds_per_beat), 6),
-            "velocity": round(0.62 + mark.confidence * 0.24, 4),
+            "duration": round(score_duration, 6),
+            "scoreDuration": round(score_duration, 6),
+            "visualDuration": round(score_duration, 6),
+            "velocity": round(current_dynamic["velocity"] if current_dynamic else 0.62 + mark.confidence * 0.24, 4),
+            "dynamic": current_dynamic["mark"] if current_dynamic else "",
             "hand": mark.hand,
-            "voice": f"Staff {mark.staff_index + 1}",
-            "articulation": "",
+            "voice": f"{mark.hand} {mark.stem_direction or 'single'} voice",
+            "measure": int(beat // measure_beats) + 1,
+            "measureBeat": round(beat % measure_beats, 6),
+            "articulation": mark.articulation,
             "_confidence": mark.confidence,
         })
 
@@ -774,7 +976,7 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
     # but preserve real chords and repeated notes at separate quantized onsets.
     unique = {}
     for note in sorted(notes, key=lambda item: (item["time"], item["note"], -item["_confidence"])):
-        key = (note["time"], note["note"], note["hand"])
+        key = (note["time"], note["note"])
         if key not in unique:
             unique[key] = note
     notes = list(unique.values())
@@ -797,22 +999,22 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
     if semantic_available:
         warnings.extend([
             "The PDF's SMuFL noteheads, clefs, and standard accidentals were read directly; beamed-note duration is cross-checked visually.",
-            "Tuplets, ornaments, repeat jumps, ties, lyrics, dynamics, and pedal marks still require review when no embedded MusicXML is present.",
+            "Tuplets, ornaments, repeat jumps, ties, lyrics, and dynamics still require review when no embedded MusicXML is present.",
         ])
     else:
         warnings.extend([
             "Computer-vision mode currently assumes the printed clef is treble, or treble/bass for paired piano staffs.",
-            "Key-signature accidentals, inline accidentals, tuplets, ornaments, repeat jumps, ties, lyrics, dynamics, and pedal marks require review unless embedded MusicXML was available.",
+            "Key-signature accidentals, inline accidentals, tuplets, ornaments, repeat jumps, ties, lyrics, and dynamics require review unless embedded MusicXML was available.",
             "Every accepted note includes geometric evidence; uncertain marks were omitted rather than invented.",
         ])
     if detected_key_fifths:
         key_fifths = max(set(detected_key_fifths), key=detected_key_fifths.count)
     else:
         key_fifths = 0
-    engine = "polymath-smufl-pdf-v1" if semantic_available else "polymath-classical-vision-v1"
+    engine = "polymath-smufl-pdf-v2" if semantic_available else "polymath-classical-vision-v2"
     if repeat_pairs:
         warnings.append(f"Expanded {len(repeat_pairs)} standard repeat section(s) into playback order.")
-    return {
+    result = {
         "isInstrumentalMusicSheet": True,
         "rejectionReason": "",
         "title": title,
@@ -824,7 +1026,7 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
         "notes": sorted(notes, key=lambda item: (item["time"], item["note"])),
         "events": [],
         "tabs": [],
-        "pedals": [],
+        "pedals": printed_pedals,
         "warnings": warnings,
         "confidence": round(confidence, 4),
         "omrDiagnostics": {
@@ -840,6 +1042,8 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
             "limitationsRequireReview": True,
             "semanticGlyphs": semantic_available,
             "repeatSectionsExpanded": len(repeat_pairs),
+            "printedPedalEvents": len(printed_pedals),
+            "dynamicChanges": len(dynamic_events),
             "confidenceComponents": {
                 "noteheadDetection": 0.995 if semantic_available else round(coverage, 4),
                 "pitchMapping": 0.98 if semantic_available else round(float(np.mean(confidences)), 4),
@@ -847,3 +1051,11 @@ def reconstruct(page_analyses: list[PageAnalysis], filename: str, instrument: st
             },
         },
     }
+    result = shape_piano_performance(result, infer_pedal=instrument == "piano")
+    performance = result.get("pianoPerformance", {})
+    result["omrDiagnostics"]["pianoPerformance"] = performance
+    if performance.get("pedalSource") == "inferred-score-pedaling":
+        result["warnings"].append(
+            "No printed damper-pedal instructions were encoded; Polymath added conservative, clearly labelled inferred re-pedaling."
+        )
+    return result

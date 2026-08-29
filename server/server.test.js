@@ -22,7 +22,41 @@ process.env.RUNPOD_S3_SECRET_ACCESS_KEY = '';
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 
-const { app, selectMuscriptorExecution } = require('./server');
+const { app, normalizeReadyToPlaySong, selectMuscriptorExecution } = require('./server');
+
+test('PDF normalization preserves written duration, key hold, release, and pedal provenance', () => {
+  const result = normalizeReadyToPlaySong({
+    isInstrumentalMusicSheet: true,
+    instrument: 'piano',
+    bpm: 100,
+    timeSignature: { numerator: 4, denominator: 4 },
+    notes: [{
+      note: 'C4', time: 0, duration: 1, scoreDuration: 1,
+      visualDuration: 1, audioDuration: 0.52, releaseSeconds: 0.61,
+      velocity: 0.76, hand: 'right', voice: 'right up voice', articulation: 'staccato',
+    }],
+    pedals: [{
+      time: 0.05, down: true, value: 96, source: 'inferred-score-pedaling',
+      inferred: true, confidence: 0.58,
+    }],
+    performance: {
+      profile: 'polymath-score-pianist-v1', preserveScoreDurations: true,
+      preserveScoreTiming: true, durationFieldPolicy: 'written-key-hold-damper-v1',
+    },
+    pianoPerformance: {
+      voices: 4, restrikesGivenReleaseGap: 3, legatoConnections: 2,
+      pedalSource: 'inferred-score-pedaling', pedalEvents: 1,
+      writtenAndPhysicalDurationsSeparated: true,
+    },
+  }, 'piano');
+  assert.equal(result.notes[0].scoreDuration, 1);
+  assert.equal(result.notes[0].audioDuration, 0.52);
+  assert.equal(result.notes[0].releaseSeconds, 0.61);
+  assert.equal(result.pedals[0].source, 'inferred-score-pedaling');
+  assert.equal(result.pedals[0].inferred, true);
+  assert.equal(result.performance.preserveScoreDurations, true);
+  assert.equal(result.pianoPerformance.writtenAndPhysicalDurationsSeparated, true);
+});
 
 test('RunPod Serverless takes priority over the temporary SSH worker', () => {
   assert.equal(selectMuscriptorExecution({

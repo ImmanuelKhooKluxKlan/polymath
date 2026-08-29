@@ -13,6 +13,7 @@ sys.path.insert(0, str(OMR_ROOT))
 
 from polymath_omr.music import staff_step_to_midi  # noqa: E402
 from polymath_omr.musicxml import parse_musicxml  # noqa: E402
+from polymath_omr.performance import shape_piano_performance  # noqa: E402
 from polymath_omr.pipeline import transcribe_pdf  # noqa: E402
 
 
@@ -28,9 +29,11 @@ MUSICXML = b'''<?xml version="1.0" encoding="UTF-8"?>
         <time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves>
       </attributes>
       <direction><sound tempo="90"/></direction>
-      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note>
+      <direction><direction-type><pedal type="start"/></direction-type></direction>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff><notations><articulations><staccato/></articulations></notations></note>
       <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note>
       <note><pitch><step>G</step><octave>3</octave></pitch><duration>8</duration><voice>2</voice><staff>2</staff></note>
+      <direction><direction-type><pedal type="stop"/></direction-type></direction>
     </measure>
   </part>
 </score-partwise>'''
@@ -49,7 +52,29 @@ class MusicHelpersTest(unittest.TestCase):
         self.assertEqual(len(result["notes"]), 3)
         self.assertEqual(result["notes"][0]["time"], result["notes"][1]["time"])
         self.assertEqual({note["hand"] for note in result["notes"]}, {"left", "right"})
+        self.assertEqual(len(result["pedals"]), 2)
+        self.assertEqual(result["pianoPerformance"]["pedalSource"], "printed-score")
+        staccato = next(note for note in result["notes"] if note["note"] == "C4")
+        self.assertLess(staccato["audioDuration"], staccato["scoreDuration"])
         self.assertEqual(result["confidence"], 0.995)
+
+    def test_pianist_layer_separates_written_key_and_pedal_durations(self):
+        payload = {
+            "instrument": "piano", "bpm": 100,
+            "timeSignature": {"numerator": 4, "denominator": 4},
+            "notes": [
+                {"note": "C4", "midi": 60, "time": 0, "duration": 1, "voice": "right up voice", "hand": "right"},
+                {"note": "C4", "midi": 60, "time": 0.6, "duration": 1, "voice": "right down voice", "hand": "right"},
+                {"note": "G3", "midi": 55, "time": 0, "duration": 2, "voice": "left voice", "hand": "left"},
+            ],
+            "pedals": [],
+        }
+        result = shape_piano_performance(payload, infer_pedal=True)
+        first_c = result["notes"][0]
+        self.assertEqual(first_c["scoreDuration"], 1)
+        self.assertLessEqual(first_c["audioDuration"], 0.562)
+        self.assertTrue(result["pedals"])
+        self.assertTrue(all(event["inferred"] for event in result["pedals"]))
 
 
 class PdfPipelineTest(unittest.TestCase):
