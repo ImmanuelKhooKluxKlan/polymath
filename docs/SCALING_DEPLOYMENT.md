@@ -103,8 +103,8 @@ AWS_GITHUB_DEPLOY_ROLE_ARN
 ```
 
 Application runtime secrets belong in AWS Secrets Manager/ECS or the existing
-server `.env`, never GitHub history. These include PayPal, OTP mail, OpenAI,
-RunPod, admin-password bootstrap and database credentials.
+server `.env`, never GitHub history. These include PayPal, OTP mail, RunPod,
+admin-password bootstrap and database credentials. Local PDF OMR needs no API key.
 
 ## Cost posture under USD 800/month
 

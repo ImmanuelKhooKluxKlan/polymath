@@ -4,7 +4,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gosu python3 \
+    && apt-get install -y --no-install-recommends ca-certificates curl gosu python3 python3-pip \
     && curl --fail --silent --show-error \
       --output /app/aws-rds-global-bundle.pem \
       https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
@@ -12,6 +12,9 @@ RUN apt-get update \
 
 COPY server/package.json server/package-lock.json ./server/
 RUN npm ci --omit=dev --prefix server
+
+COPY server/omr/requirements.txt ./server/omr/requirements.txt
+RUN python3 -m pip install --no-cache-dir --break-system-packages -r server/omr/requirements.txt
 
 COPY server ./server
 COPY scripts/alignment ./scripts/alignment

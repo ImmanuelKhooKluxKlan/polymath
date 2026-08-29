@@ -1,0 +1,81 @@
+.country-phone-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+}
+
+.country-phone-field legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--muted);
+  font-size: .9rem;
+  font-weight: 700;
+}
+
+.country-phone-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, .9fr) minmax(190px, 1.1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.country-phone-controls > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.country-phone-controls select,
+.country-phone-controls input {
+  width: 100%;
+  min-width: 0;
+}
+
+.national-phone-input {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.04);
+  overflow: hidden;
+}
+
+.national-phone-input:focus-within {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 14%, transparent);
+}
+
+.national-phone-input b {
+  padding: 0 0 0 12px;
+  color: var(--text);
+  font-size: .86rem;
+  white-space: nowrap;
+}
+
+.national-phone-input input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.country-phone-field > small {
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.4;
+}
+
+.country-phone-field > small strong { color: var(--text); overflow-wrap: anywhere; }
+
+@media (max-width: 560px) {
+  .country-phone-controls { grid-template-columns: 1fr; }
+  .country-phone-controls > label > span { font-size: .68rem; }
+}

@@ -3,7 +3,7 @@
   "version": "3.1.0",
   "private": true,
   "type": "module",
-  "description": "Polymath Musician: unified JSON/MIDI performance engine, studio piano tails, responsive visual instrument teaching, free ready-to-play songs, OpenAI PDF translation, marketplace Mcoins, and PayPal subscriptions.",
+  "description": "Polymath Musician: unified JSON/MIDI performance engine, studio piano tails, responsive visual instrument teaching, local optical music recognition, marketplace Mcoins, and PayPal subscriptions.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,6 +12,8 @@
     "align:notes": "node scripts/alignment/noteCoordinateAligner.mjs",
     "test:alignment": "node --test scripts/alignment/noteCoordinateAligner.test.mjs",
     "test:performance": "node --test scripts/performance/devicePerformance.test.mjs",
+    "test:auth-phone": "node --test scripts/auth/phoneNumbers.test.mjs",
+    "test:omr": "python -m unittest discover -s server/omr/tests -p test_*.py",
     "test:ml": "python -m unittest discover -s ml/training/tests -p test_*.py",
     "test:training": "npm run test:alignment && npm run test:ml",
     "acquire:iowa-mf": "node scripts/acquireIowaMf.js --range=A0-C8",

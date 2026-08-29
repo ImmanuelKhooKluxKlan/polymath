@@ -16,6 +16,7 @@ const { createDirectUploadService } = require('./directUpload');
 const { createJobQueue } = require('./jobQueue');
 const { createModelLab } = require('./modelLab');
 const { createRunpodServerlessClient } = require('./runpodServerless');
+const { localOmrAvailability, runLocalOmr } = require('./localOmr');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -91,7 +92,7 @@ const CHILL_TRANSLATION_LIMIT = 10;
 const MUSICIAN_TRANSLATION_LIMIT = 20;
 const FREE_TRANSLATION_MCOIN_COST = 2;
 const SUBSCRIBER_TRANSLATION_MCOIN_COST = 0.5;
-const TRANSLATION_INITIAL_ESTIMATE_MS = 20 * 60 * 1000;
+const TRANSLATION_INITIAL_ESTIMATE_MS = 5 * 60 * 1000;
 const TRANSLATION_EXTENSION_MS = 5 * 60 * 1000;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
 const DIRECT_UPLOAD_MAX_BYTES = Math.max(
@@ -171,21 +172,6 @@ function uploadContentType(filename, suppliedType = '') {
   return 'application/octet-stream';
 }
 
-const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
-const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-5.6').trim();
-const OPENAI_PDF_DETAIL = ['low', 'high', 'auto'].includes(
-  String(process.env.OPENAI_PDF_DETAIL || 'high').trim().toLowerCase(),
-)
-  ? String(process.env.OPENAI_PDF_DETAIL || 'high').trim().toLowerCase()
-  : 'high';
-const OPENAI_MAX_OUTPUT_TOKENS = Math.min(
-  100000,
-  Math.max(4000, Math.floor(Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 30000))),
-);
-const OPENAI_TIMEOUT_MS = Math.min(
-  30 * 60 * 1000,
-  Math.max(60 * 1000, Math.floor(Number(process.env.OPENAI_TIMEOUT_MS || 20 * 60 * 1000))),
-);
 const ADMIN_EMAILS = new Set(
   String(process.env.ADMIN_EMAILS || '')
     .split(',')
@@ -2092,8 +2078,7 @@ app.get('/api/health', async (req, res) => res.json({
 app.get('/api/test', async (req, res) => res.json({
   message: 'Backend is working',
   environment: PAYPAL_ENV,
-  openaiConfigured: Boolean(String(process.env.OPENAI_API_KEY || '').trim()),
-  openaiModel: OPENAI_MODEL,
+  scoreTranslation: localOmrAvailability(),
 }));
 
 app.get('/api/media-transcriptions/capabilities', async (req, res) => {
@@ -4038,6 +4023,9 @@ function publicTranslationJob(job) {
     failedAt: job.failedAt || null,
     error: job.error || '',
     refunded: Boolean(job.refundedAt),
+    engine: job.omrEngine || '',
+    confidence: Number(job.confidence || 0),
+    warnings: Array.isArray(job.warnings) ? job.warnings.slice(0, 12) : [],
   };
 }
 
@@ -4236,7 +4224,7 @@ function normalizePitchName(value) {
 
 function normalizeReadyToPlaySong(rawResult, selectedInstrument) {
   if (!rawResult || typeof rawResult !== 'object') {
-    throw new Error('OpenAI did not return a readable music-sheet result.');
+    throw new Error('The local music reader did not return a readable music-sheet result.');
   }
 
   if (rawResult.isInstrumentalMusicSheet !== true) {
@@ -4340,158 +4328,18 @@ function normalizeReadyToPlaySong(rawResult, selectedInstrument) {
   };
 }
 
-function buildMusicTranslationPrompt(instrument) {
-  const instrumentLabel = INSTRUMENTS[instrument]?.label || instrument;
-
-  return [
-    'You are an expert optical-music-recognition editor and professional music engraver.',
-    `Analyze the attached PDF visually and translate the ${instrumentLabel} part into Polymath Musician ready-to-play data.`,
-    '',
-    'Critical transcription rules:',
-    '1. Transcribe the printed score accurately. Do not invent notes, rhythms, chords, tablature, pedal markings, or repeats.',
-    '2. If the PDF is not a readable instrumental music sheet, set isInstrumentalMusicSheet to false, explain why in rejectionReason, and return empty playable arrays.',
-    `3. Focus on the selected instrument: ${instrumentLabel}. If that part is absent or unreadable, reject the sheet.`,
-    '4. Convert musical timing to seconds beginning at time 0. Use the printed tempo. When no metronome BPM is printed, infer a conservative BPM from the tempo marking and mention that in warnings.',
-    '5. Use scientific pitch notation: C4 is middle C; accidentals look like F#4 or Bb3.',
-    '6. Preserve simultaneous notes by giving them the same start time. Preserve rests, ties, note lengths, voices, hands/staves, articulations, and chords when visible.',
-    '7. Expand clearly marked repeats into playback order. Do not guess ambiguous jumps, codas, or endings; report ambiguity in warnings.',
-    '8. For guitar, banjo, mandolin, or dobro tablature, include stringNumber and fret in tabs whenever visible, while also including sounding pitch when reliably determined.',
-    '9. For piano or synth keyboard, include exact pitches and simultaneous notes. For piano, include left/right hand and printed sustain-pedal changes. Do not invent pedal markings.',
-    '10. For drum-set notation, convert strikes to these Polymath Musician trigger notes: kick C2, snare D2, closed hi-hat F#2, low/floor tom G2, mid tom A2, high tom C3, crash C#3, and ride D#3. Preserve simultaneous strikes and do not interpret these triggers as pitched melody.',
-    '11. For chord-only lead sheets, use chord events at the correct musical times. Do not fabricate individual voicings unless the notation prints them.',
-    '12. Process all readable pages and all measures belonging to the selected part.',
-    '13. Return only data conforming to the required JSON schema.',
-  ].join('\n');
-}
-
-function extractOpenAIOutputText(data) {
-  if (typeof data?.output_text === 'string' && data.output_text.trim()) {
-    return data.output_text.trim();
-  }
-
-  const refusals = [];
-  const textParts = [];
-
-  (Array.isArray(data?.output) ? data.output : []).forEach((item) => {
-    (Array.isArray(item?.content) ? item.content : []).forEach((content) => {
-      if (content?.type === 'output_text' && typeof content.text === 'string') {
-        textParts.push(content.text);
-      }
-      if (content?.type === 'refusal' && typeof content.refusal === 'string') {
-        refusals.push(content.refusal);
-      }
-    });
-  });
-
-  if (refusals.length > 0) {
-    throw new Error(`OpenAI could not process this sheet: ${refusals.join(' ')}`);
-  }
-
-  const combined = textParts.join('\n').trim();
-  if (!combined) {
-    throw new Error('OpenAI returned no ready-to-play sheet data.');
-  }
-  return combined;
-}
-
-async function translatePdfWithOpenAI(bytes, filename, instrument) {
-  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured on the server.');
-  }
-
-  const response = await fetch(OPENAI_RESPONSES_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      store: false,
-      max_output_tokens: OPENAI_MAX_OUTPUT_TOKENS,
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_file',
-              filename,
-              file_data: `data:application/pdf;base64,${bytes.toString('base64')}`,
-              detail: OPENAI_PDF_DETAIL,
-            },
-            {
-              type: 'input_text',
-              text: buildMusicTranslationPrompt(instrument),
-            },
-          ],
-        },
-      ],
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'polymath_ready_to_play_sheet',
-          strict: true,
-          schema: READY_TO_PLAY_SHEET_SCHEMA,
-        },
-      },
-    }),
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    const providerMessage = String(
-      data?.error?.message
-      || data?.error
-      || `OpenAI request failed with HTTP ${response.status}.`,
-    );
-
-    if (response.status === 401) {
-      throw new Error('OpenAI rejected OPENAI_API_KEY. Check the key in server/.env.');
-    }
-    if (response.status === 429) {
-      throw new Error(`OpenAI rate limit or billing limit reached. ${providerMessage}`);
-    }
-    throw new Error(providerMessage);
-  }
-
-  if (data.status === 'incomplete') {
-    const reason = data.incomplete_details?.reason || 'unknown reason';
-    throw new Error(
-      `OpenAI could not finish the full sheet (${reason}). Increase OPENAI_MAX_OUTPUT_TOKENS or use a shorter PDF.`,
-    );
-  }
-
-  const outputText = extractOpenAIOutputText(data);
-
-  let parsed;
-  try {
-    parsed = JSON.parse(outputText);
-  } catch {
-    throw new Error('OpenAI returned a response that was not valid ready-to-play JSON.');
-  }
-
-  return {
-    song: normalizeReadyToPlaySong(parsed, instrument),
-    openaiResponseId: String(data.id || ''),
-    model: String(data.model || OPENAI_MODEL),
-  };
-}
-
 async function processTranslationJob(jobId) {
   let job = await claimBackgroundJob('scoreTranslationJobs', jobId);
   if (!job) return;
   let db;
   let sourcePath = '';
+  let outputPath = '';
 
   try {
     db = await readDb();
     job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
-    job.stage = 'Reading music notation with OpenAI';
+    job.stage = 'Rendering PDF pages locally';
     job.progress = 18;
     await writeDb(db);
 
@@ -4502,32 +4350,40 @@ async function processTranslationJob(jobId) {
     db = await readDb();
     job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
-    job.stage = 'Translating notes and timing';
+    job.stage = 'Detecting staffs, symbols, pitch, and rhythm';
     job.progress = 42;
     await writeDb(db);
 
-    const openaiResult = await translatePdfWithOpenAI(
-      bytes,
-      job.filename,
-      job.instrument,
-    );
-    const result = openaiResult.song;
+    // The bytes read above prove that the materialized artifact is present and
+    // non-empty before Python begins a potentially expensive page render.
+    if (!bytes.length) throw new Error('The stored PDF is empty.');
+    const outputName = `${job.id}-${sanitizeFilename(job.filename.replace(/\.pdf$/i, '') || 'ready-to-play-sheet')}.json`;
+    outputPath = path.join(UPLOAD_DIR, outputName);
+    const localOmr = await runLocalOmr({
+      sourcePath,
+      outputPath,
+      filename: job.filename,
+      instrument: job.instrument,
+    });
+    const result = normalizeReadyToPlaySong(localOmr.result, job.instrument);
 
     db = await readDb();
     job = db.scoreTranslationJobs.find((candidate) => candidate.id === jobId);
     if (!job || job.status !== 'processing') return;
-    job.stage = 'Checking ready-to-play sheet';
+    job.stage = 'Validating local notation evidence';
     job.progress = 82;
-    job.openaiResponseId = openaiResult.openaiResponseId;
-    job.openaiModel = openaiResult.model;
+    job.omrEngine = String(localOmr.summary?.engine || localOmr.result?.omrDiagnostics?.engine || 'polymath-local-omr');
+    job.confidence = Number(result.confidence || 0);
+    job.warnings = result.warnings;
     await writeDb(db);
 
-    const outputName = `${job.id}-${sanitizeFilename(job.filename.replace(/\.pdf$/i, '') || 'ready-to-play-sheet')}.json`;
-    fs.writeFileSync(path.join(UPLOAD_DIR, outputName), JSON.stringify({
+    fs.writeFileSync(outputPath, JSON.stringify({
       ...result,
       sourcePdf: job.filename,
       readyToPlayFormat: 'polymath-musician-json-v1',
-      translationProvider: 'OpenAI',
+      translationProvider: 'Polymath Local OMR',
+      omrEngine: job.omrEngine,
+      omrDiagnostics: localOmr.result?.omrDiagnostics || {},
       translatedAt: new Date().toISOString(),
     }, null, 2));
 
@@ -4536,7 +4392,7 @@ async function processTranslationJob(jobId) {
     if (!job || job.status !== 'processing') return;
     job.outputPath = await ARTIFACT_STORE.putFile(
       artifactKey('score-translations', outputName),
-      path.join(UPLOAD_DIR, outputName),
+      outputPath,
       'application/json',
     );
     job.outputFilename = `${sanitizeFilename(job.filename.replace(/\.pdf$/i, '') || 'ready-to-play-sheet')}.json`;
@@ -4547,7 +4403,7 @@ async function processTranslationJob(jobId) {
     await writeDb(db);
     if (ARTIFACT_STORE.remote) {
       safeRemoveUpload(sourcePath);
-      safeRemoveUpload(path.join(UPLOAD_DIR, outputName));
+      safeRemoveUpload(outputPath);
     }
   } catch (error) {
     db = await readDb();
@@ -4557,6 +4413,7 @@ async function processTranslationJob(jobId) {
     await writeDb(db);
   } finally {
     safeRemoveUpload(sourcePath);
+    if (ARTIFACT_STORE.remote) safeRemoveUpload(outputPath);
     await safeRemoveArtifact(job?.sourcePath);
   }
 }
@@ -4573,8 +4430,8 @@ app.post('/api/artifact-upload-intents', requireAuth, async (req, res) => {
   }
 
   if (purpose === 'score-translation') {
-    if (!String(process.env.OPENAI_API_KEY || '').trim()) {
-      return res.status(503).json({ error: 'PDF translation is temporarily unavailable. Nothing was charged.' });
+    if (!localOmrAvailability().enabled) {
+      return res.status(503).json({ error: 'The local PDF music reader is disabled. Nothing was charged.' });
     }
     if (extension !== '.pdf' || size > MAX_PDF_BYTES) {
       return res.status(400).json({ error: 'PDF music sheets must be valid PDF files smaller than 10 MB.' });
@@ -4853,12 +4710,11 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
     }
   }
   const cleanupDirectUpload = async () => safeRemoveArtifact(directUpload?.key);
-  const openaiApiKey = String(process.env.OPENAI_API_KEY || '').trim();
-  if (!openaiApiKey) {
+  if (!localOmrAvailability().enabled) {
     await cleanupDirectUpload();
     return res.status(503).json({
-      error: 'PDF translation is temporarily unavailable because OpenAI is not configured. Nothing was charged.',
-      setup: 'Set OPENAI_API_KEY in server/.env and restart the backend.',
+      error: 'PDF translation is temporarily unavailable because the local reader is disabled. Nothing was charged.',
+      setup: 'Set OMR_ENABLED=true and install server/omr/requirements.txt on the backend.',
     });
   }
 
@@ -5059,7 +4915,7 @@ app.use((error, req, res, next) => {
 });
 
 async function resumePendingTranslationJobs() {
-  if (!String(process.env.OPENAI_API_KEY || '').trim()) return;
+  if (!localOmrAvailability().enabled) return;
   const db = await readDb();
   for (const job of db.scoreTranslationJobs.filter((candidate) => candidate.status === 'processing')) {
     await dispatchBackgroundJob('score-translation', job.id);

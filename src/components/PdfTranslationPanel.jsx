@@ -141,7 +141,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       });
       setJob(data.job);
       setUser(data.user);
-      setStatus('Translation started. The initial estimated time is approximately 20 minutes.');
+      setStatus('Local music reading started. The initial estimate is approximately 5 minutes.');
       clearPolling();
       pollTimer.current = window.setTimeout(() => refreshJob(data.job.id), POLL_INTERVAL_MS);
     } catch (error) {
@@ -207,13 +207,13 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       </div>
 
       <p className="muted">
-        Upload a readable {instrumentLabel(instrument)} PDF music sheet. Non-music documents, corrupted PDFs, and unsupported sheets are rejected without charging you.
+        Upload a readable {instrumentLabel(instrument)} PDF music sheet. Polymath reads it locally without a paid translation API. Unreadable sheets are rejected instead of guessing.
       </p>
 
       <label className="upload-box compact translation-file-picker">
         <input type="file" accept="application/pdf,.pdf" onChange={choosePdf} disabled={busy || Boolean(job && job.status === 'processing')} />
         <span>{file ? file.name : 'Choose PDF music sheet'}</span>
-        <small>PDF only · maximum 10 MB</small>
+        <small>PDF only · maximum 10 MB and 20 pages</small>
       </label>
 
       <div className="allowance-summary">
@@ -288,6 +288,18 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
             <span>Estimated time remaining</span>
             <strong>{job.status === 'processing' ? formatRemaining(job.estimatedRemainingSeconds) : job.status === 'completed' ? 'Ready' : 'Stopped'}</strong>
           </div>
+          {job.status === 'completed' && (
+            <div className="job-metrics">
+              <span>{job.engine || 'Polymath Local OMR'}</span>
+              <strong>{Math.round(Number(job.confidence || 0) * 100)}% notation confidence</strong>
+            </div>
+          )}
+          {job.status === 'completed' && Array.isArray(job.warnings) && job.warnings.length > 0 && (
+            <details className="advanced-controls">
+              <summary>Review {job.warnings.length} notation warning{job.warnings.length === 1 ? '' : 's'}</summary>
+              {job.warnings.map((warning) => <p className="muted" key={warning}>{warning}</p>)}
+            </details>
+          )}
           {Number(job.estimateExtensionCount || 0) > 0 && job.status === 'processing' && (
             <p className="estimate-note">Processing is taking longer than expected. The estimate has been extended by {Number(job.estimateExtensionCount) * 5} minutes.</p>
           )}
@@ -300,7 +312,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       )}
 
       <p className="form-status">{status}</p>
-      <p className="translation-footnote">The estimate begins at about 20 minutes. If needed, it automatically extends in five-minute blocks until the job completes or fails.</p>
+      <p className="translation-footnote">The estimate begins at about 5 minutes. Large or scanned scores can extend in five-minute blocks until the job completes or fails.</p>
     </div>
   );
 }

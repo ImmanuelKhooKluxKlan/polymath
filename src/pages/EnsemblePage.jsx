@@ -461,7 +461,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
         <div className="teacher-trust-card">
           <strong>Visual-first learning</strong>
           <span>Play • watch • copy • repeat</span>
-          <small>Ready-to-play JSON/MIDI and OpenAI PDF translation supported.</small>
+          <small>Ready-to-play JSON/MIDI and local PDF music reading supported.</small>
         </div>
       </div>
 

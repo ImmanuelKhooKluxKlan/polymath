@@ -1,9 +1,31 @@
 import { useEffect, useState } from 'react';
+import CountryPhoneField from '../components/CountryPhoneField.jsx';
+import { suggestedCountryIso } from '../data/countryCallingCodes.js';
 import { apiRequest, setAuthToken } from '../services/api.js';
+import { internationalPhone } from '../utils/phoneNumbers.js';
+
+function initialCountryIso() {
+  return suggestedCountryIso(typeof navigator === 'undefined' ? '' : navigator.language);
+}
 
 export default function AccountPage({ user, setUser, onNavigate, returnPage, returnProductId }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', identifier: '', contactMethod: 'email', email: '', phone: '', luckyCode: '', password: '', verificationCode: '', birthDate: '', termsAccepted: false });
+  const [form, setForm] = useState(() => ({
+    name: '',
+    identifier: '',
+    loginMethod: 'email',
+    loginCountryIso: initialCountryIso(),
+    loginPhone: '',
+    contactMethod: 'email',
+    registerCountryIso: initialCountryIso(),
+    email: '',
+    phone: '',
+    luckyCode: '',
+    password: '',
+    verificationCode: '',
+    birthDate: '',
+    termsAccepted: false,
+  }));
   const [verification, setVerification] = useState(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -34,6 +56,18 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
     setBusy(true);
     setStatus('Working...');
     try {
+      const registrationPhone = form.contactMethod === 'phone'
+        ? internationalPhone(form.registerCountryIso, form.phone)
+        : '';
+      const loginPhone = form.loginMethod === 'phone'
+        ? internationalPhone(form.loginCountryIso, form.loginPhone)
+        : '';
+      if (mode === 'register' && form.contactMethod === 'phone' && !registrationPhone) {
+        throw new Error('Enter a valid phone number for the selected country.');
+      }
+      if (mode === 'login' && form.loginMethod === 'phone' && !loginPhone) {
+        throw new Error('Enter a valid phone number for the selected country.');
+      }
       if (mode === 'register' && !verification) {
         const channel = form.contactMethod;
         const data = await apiRequest('/api/auth/register/otp', {
@@ -41,7 +75,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
           body: JSON.stringify({
             channel,
             email: channel === 'email' ? form.email : '',
-            phone: channel === 'phone' ? form.phone : '',
+            phone: channel === 'phone' ? registrationPhone : '',
           }),
         });
         setVerification(data);
@@ -56,10 +90,13 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
           ? {
             ...form,
             email: form.contactMethod === 'email' ? form.email : '',
-            phone: form.contactMethod === 'phone' ? form.phone : '',
+            phone: form.contactMethod === 'phone' ? registrationPhone : '',
             challengeId: verification?.challengeId,
           }
-          : { identifier: form.identifier, password: form.password }),
+          : {
+            identifier: form.loginMethod === 'phone' ? loginPhone : form.identifier,
+            password: form.password,
+          }),
       });
       setAuthToken(data.token);
       setUser(data.user);
@@ -176,13 +213,39 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
               {form.contactMethod === 'email' ? (
                 <label className="field">Email address<input type="email" autoComplete="email" disabled={Boolean(verification)} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required /></label>
               ) : (
-                <label className="field">Phone number<input type="tel" autoComplete="tel" disabled={Boolean(verification)} placeholder="+65 8123 4567" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required /></label>
+                <CountryPhoneField
+                  idPrefix="register-phone"
+                  countryIso={form.registerCountryIso}
+                  nationalNumber={form.phone}
+                  disabled={Boolean(verification)}
+                  onCountryChange={(registerCountryIso) => setForm({ ...form, registerCountryIso, phone: '' })}
+                  onNumberChange={(phone) => setForm({ ...form, phone })}
+                />
               )}
               <label className='field'>Lucky code<input type='text' autoComplete='off' maxLength={64} disabled={Boolean(verification)} value={form.luckyCode} onChange={(event) => setForm({ ...form, luckyCode: event.target.value })} /></label>
             </>
           )}
           {mode !== 'register' && (
-            <label className="field">Email or phone number<input type="text" autoComplete="username" placeholder="Email or phone number" value={form.identifier} onChange={(event) => setForm({ ...form, identifier: event.target.value })} required /></label>
+            <>
+              <div className="field">
+                <span>Sign in using</span>
+                <div className="segmented-control registration-contact-control" role="group" aria-label="Sign-in contact method">
+                  <button type="button" className={form.loginMethod === 'email' ? 'active' : ''} onClick={() => setForm({ ...form, loginMethod: 'email' })}>Email</button>
+                  <button type="button" className={form.loginMethod === 'phone' ? 'active' : ''} onClick={() => setForm({ ...form, loginMethod: 'phone' })}>Phone</button>
+                </div>
+              </div>
+              {form.loginMethod === 'email' ? (
+                <label className="field">Email address<input type="email" autoComplete="username" placeholder="you@example.com" value={form.identifier} onChange={(event) => setForm({ ...form, identifier: event.target.value })} required /></label>
+              ) : (
+                <CountryPhoneField
+                  idPrefix="login-phone"
+                  countryIso={form.loginCountryIso}
+                  nationalNumber={form.loginPhone}
+                  onCountryChange={(loginCountryIso) => setForm({ ...form, loginCountryIso, loginPhone: '' })}
+                  onNumberChange={(loginPhone) => setForm({ ...form, loginPhone })}
+                />
+              )}
+            </>
           )}
           <label className='field'>Password<input type='password' autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? policies.minimumPasswordLength : 8} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
           {mode === 'register' && verification && (

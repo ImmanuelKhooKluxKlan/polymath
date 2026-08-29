@@ -8,7 +8,7 @@ React/Vite single-page application with route state managed in `src/App.jsx`.
 - `pages/GuitarPage.jsx`: guitar tablature/chord playback, fretboard interaction, timeline scrubbing, and ready-to-play imports.
 - `pages/EnsemblePage.jsx`: visual teaching, playback, slowing, scrubbing, and ready-to-play lessons for fiddle, banjo, mandolin, dobro, upright bass, ukulele, electric guitar, drum set, and synth keyboard.
 - `components/InstrumentTeacherSurface.jsx`: responsive physical-instrument SVG teachers with live press/fret/slide/strike targets.
-- `components/MusicUploadPanel.jsx`: three minimal entry points for JSON/MIDI upload, OpenAI PDF translation, and MuScriptor audio/video transcription.
+- `components/MusicUploadPanel.jsx`: three minimal entry points for JSON/MIDI upload, local PDF optical music recognition, and MuScriptor audio/video transcription.
 - `components/PdfTranslationPanel.jsx`: allowance/Mcoin choice, progress polling, ETA display, refund/failure messaging, and output download.
 - `components/MediaTranscriptionPanel.jsx`: multipart media upload, rights confirmation, native MuScriptor progress polling, protected result download, and direct studio loading.
 - `pages/MarketplacePage.jsx`: minimalist Composers catalogue, seller publishing, purchases, permanent verified reviews, follower controls, profiles, and downloads.
@@ -32,7 +32,8 @@ React/Vite single-page application with route state managed in `src/App.jsx`.
 - Mcoin wallets and account-wide cash-out records with a 25% fee and manual payout review;
 - Composers publishing, server-side file validation, exact 25% fee allocation, purchases, permanent reviews, follows, profiles, and protected downloads;
 - YouTube search proxy;
-- authenticated OpenAI PDF translation jobs, monthly allowance accounting, Mcoin charging, duplicate-job protection, five-minute ETA extensions, strict structured-output validation, and automatic restoration after failure.
+- authenticated provider-free PDF music-reading jobs, monthly allowance accounting, Mcoin charging, duplicate-job protection, ETA extensions, strict ready-to-play validation, confidence/diagnostics, and automatic restoration after failure;
+- a three-level local OMR ladder: exact embedded MusicXML, semantic SMuFL/vector PDF reading, then conservative high-resolution computer vision for scans;
 - authenticated disk-streamed audio/video jobs, bundled FFmpeg preparation, sequential MuScriptor execution, instrument constraints, native chunk progress, restart recovery, source cleanup, and protected ready-to-play results;
 - backend-enforced signup/spending policies, percentage-only promotion codes, reusable short Friend IDs, redemption limits, administrator password-reset audits, and hashed 30-day sessions.
 
