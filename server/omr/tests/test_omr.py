@@ -15,6 +15,7 @@ from polymath_omr.music import staff_step_to_midi  # noqa: E402
 from polymath_omr.musicxml import parse_musicxml  # noqa: E402
 from polymath_omr.performance import shape_piano_performance  # noqa: E402
 from polymath_omr.pipeline import transcribe_pdf  # noqa: E402
+from polymath_omr.vision import _merge_visual_ties, _playback_measure_order  # noqa: E402
 
 
 MUSICXML = b'''<?xml version="1.0" encoding="UTF-8"?>
@@ -75,6 +76,46 @@ class MusicHelpersTest(unittest.TestCase):
         self.assertLessEqual(first_c["audioDuration"], 0.562)
         self.assertTrue(result["pedals"])
         self.assertTrue(all(event["inferred"] for event in result["pedals"]))
+
+    def test_playback_graph_honours_repeats_endings_and_ds_al_coda(self):
+        never_order, never_diagnostics = _playback_measure_order(47, [(6, 24)], {
+            "segnoMeasure": 14,
+            "toCodaMeasure": 20,
+            "codaMeasure": 36,
+            "dsTriggerExclusive": 36,
+            "firstEndingMeasures": [22],
+            "secondEndingMeasures": [24],
+        })
+        self.assertEqual(len(never_order), 69)
+        self.assertEqual(never_order[:24], list(range(24)))
+        self.assertEqual(never_order[24:40], list(range(6, 22)))
+        self.assertTrue(never_diagnostics["dsAlCodaExpanded"])
+
+        twenty_two_order, _ = _playback_measure_order(55, [(10, 38)], {
+            "segnoMeasure": 18,
+            "toCodaMeasure": None,
+            "codaMeasure": 49,
+            "dsTriggerExclusive": 54,
+            "firstEndingMeasures": [30],
+            "secondEndingMeasures": [38],
+        })
+        self.assertEqual(len(twenty_two_order), 103)
+        # The D.S. pass takes the second ending instead of replaying 31-38.
+        self.assertNotIn(30, twenty_two_order[74:])
+        self.assertIn(38, twenty_two_order[74:])
+
+    def test_vector_tie_merge_creates_one_sustained_attack(self):
+        notes = [
+            {"note": "C4", "time": 0.0, "duration": 1.0, "_markId": 1},
+            {"note": "C4", "time": 1.0, "duration": 1.5, "_markId": 2},
+            {"note": "E4", "time": 1.0, "duration": 0.5, "_markId": 3},
+        ]
+        merged, accepted = _merge_visual_ties(notes, [(1, 2)], 60)
+        self.assertEqual(accepted, 1)
+        self.assertEqual(len(merged), 2)
+        tied = next(note for note in merged if note["note"] == "C4")
+        self.assertEqual(tied["duration"], 2.5)
+        self.assertEqual(tied["tiedSegments"], 2)
 
 
 class PdfPipelineTest(unittest.TestCase):

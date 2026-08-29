@@ -35,9 +35,13 @@ def transcribe_pdf(
             rendered = render_pages(source, dpi=dpi, max_pages=max_pages)
             pages = [
                 analyze_page(
-                    gray, text, index + 1, instrument, symbols, source_width, source_height,
+                    gray, text, index + 1, instrument, symbols,
+                    text_characters, vector_curves, source_width, source_height,
                 )
-                for index, (gray, text, symbols, source_width, source_height) in enumerate(rendered)
+                for index, (
+                    gray, text, symbols, text_characters, vector_curves,
+                    source_width, source_height,
+                ) in enumerate(rendered)
             ]
             result = reconstruct(pages, display_name, instrument)
     except (OSError, ValueError) as error:
