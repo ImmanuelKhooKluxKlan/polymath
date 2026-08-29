@@ -193,6 +193,64 @@ def configure_trainable_parameters(model, train_last_layers: int) -> list[Any]:
     return [parameter for parameter in model.parameters() if parameter.requires_grad]
 
 
+def summarize_weight_delta(
+    model,
+    baseline: dict[str, Any],
+    trainable_names: set[str],
+) -> dict[str, Any]:
+    """Measure exactly how far every trainable tensor moved from the base.
+
+    Only trainable tensors are cloned before optimization. This keeps the audit
+    detailed without duplicating the full 5.47 GB checkpoint in CPU memory.
+    """
+
+    import torch
+
+    tensors: list[dict[str, Any]] = []
+    total_parameters = 0
+    total_changed = 0
+    total_squared_delta = 0.0
+    maximum_absolute_delta = 0.0
+    current_state = model.state_dict()
+    for name in sorted(trainable_names):
+        before = baseline[name].float()
+        after = current_state[name].detach().float().cpu()
+        delta = after - before
+        absolute = delta.abs()
+        parameters = delta.numel()
+        changed = int(torch.count_nonzero(delta).item())
+        squared_sum = float(torch.sum(delta * delta).item())
+        base_squared_sum = float(torch.sum(before * before).item())
+        rms = (squared_sum / max(1, parameters)) ** 0.5
+        base_rms = (base_squared_sum / max(1, parameters)) ** 0.5
+        max_abs = float(absolute.max().item()) if parameters else 0.0
+        tensors.append({
+            "name": name,
+            "parameters": parameters,
+            "changedParameters": changed,
+            "changedPercent": round(changed / max(1, parameters) * 100, 6),
+            "meanAbsoluteDelta": float(absolute.mean().item()) if parameters else 0.0,
+            "rmsDelta": rms,
+            "relativeRmsDeltaPercent": rms / max(base_rms, 1e-12) * 100,
+            "maximumAbsoluteDelta": max_abs,
+        })
+        total_parameters += parameters
+        total_changed += changed
+        total_squared_delta += squared_sum
+        maximum_absolute_delta = max(maximum_absolute_delta, max_abs)
+    tensors.sort(key=lambda item: item["rmsDelta"], reverse=True)
+    return {
+        "schema": "polymath-weight-delta-v1",
+        "trainableTensorCount": len(tensors),
+        "trainableParameters": total_parameters,
+        "changedParameters": total_changed,
+        "changedPercent": round(total_changed / max(1, total_parameters) * 100, 6),
+        "overallRmsDelta": (total_squared_delta / max(1, total_parameters)) ** 0.5,
+        "maximumAbsoluteDelta": maximum_absolute_delta,
+        "tensors": tensors,
+    }
+
+
 def clip_loss(
     transcription,
     record: dict[str, Any],
@@ -317,6 +375,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         name for name, parameter in transcription._model.named_parameters()
         if parameter.requires_grad
     }
+    baseline_trainable_state = {
+        name: parameter.detach().float().cpu().clone()
+        for name, parameter in transcription._model.state_dict().items()
+        if name in trainable_names
+    }
     optimizer = torch.optim.AdamW(parameters, lr=args.learning_rate, weight_decay=args.weight_decay)
     dtype = torch.bfloat16 if args.precision == "bf16" else torch.float16
     baseline_validation_loss = evaluate_loss(transcription, validation_records, device, args.precision)
@@ -373,6 +436,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     if best_state is None:
         raise TrainingError("Validation loss never improved; no candidate checkpoint was written")
     transcription._model.load_state_dict(best_state, strict=False)
+    weight_delta = summarize_weight_delta(
+        transcription._model,
+        baseline_trainable_state,
+        trainable_names,
+    )
     metadata = {
         "schema": "polymath-muscriptor-training-run-v1",
         "baseCheckpoint": str(args.base),
@@ -391,6 +459,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "seed": args.seed,
         "baselineValidationLoss": baseline_validation_loss,
         "bestValidationLoss": best_validation_loss,
+        "weightDelta": weight_delta,
         "commercialUseAllowed": False,
         "note": "Candidate only. Promotion requires frozen note-F1 tests and manual listening.",
     }

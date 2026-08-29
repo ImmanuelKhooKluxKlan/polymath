@@ -8,6 +8,7 @@ const express = require('express');
 const multer = require('multer');
 const bundledFfmpegPath = require('ffmpeg-static');
 const { analyzeTranscription } = require('./modelLabAnalysis');
+const { createMlOperations } = require('./mlOperations');
 const { createRunpodServerlessClient } = require('./runpodServerless');
 
 const MEDIA_EXTENSIONS = new Set([
@@ -407,6 +408,11 @@ function createModelLab(environment = process.env, options = {}) {
   fs.mkdirSync(alignmentArchiveRoot, { recursive: true });
   const rawTestArchiveRoot = path.join(alignmentArchiveRoot, 'raw-tests');
   fs.mkdirSync(rawTestArchiveRoot, { recursive: true });
+  const mlOperations = createMlOperations({
+    dataRoot: path.join(dataRoot, 'ml-operations'),
+    artifactStore,
+    runpod,
+  });
   const router = express.Router();
   const upload = multer({
     storage: multer.diskStorage({
@@ -479,6 +485,101 @@ function createModelLab(environment = process.env, options = {}) {
 
   router.get('/capabilities', (request, response) => {
     response.json(capability());
+  });
+
+  function adminActor(request) {
+    return String(request.user?.email || request.user?.id || 'administrator').slice(0, 120);
+  }
+
+  router.get('/ml/overview', async (request, response, next) => {
+    try {
+      const experiments = await mlOperations.list();
+      const localRawTests = listRawTestArchives(rawTestArchiveRoot, 500);
+      const localAlignments = listAlignmentArchives(alignmentArchiveRoot, 500);
+      let remoteHistory = { rawTests: [], alignments: [] };
+      let historyWarning = '';
+      try {
+        remoteHistory = await listRemoteHistory(artifactStore, remoteHistoryCacheRoot, 500);
+      } catch (error) {
+        historyWarning = error.message || String(error);
+      }
+      const mergeById = (local, remote) => [...new Map(
+        [...remote, ...local].map((record) => [record.id, record]),
+      ).values()];
+      const rawTests = mergeById(localRawTests, remoteHistory.rawTests);
+      const supervisionAlignments = mergeById(localAlignments, remoteHistory.alignments);
+      return response.json({
+        overview: mlOperations.systemOverview({
+          evidence: {
+            rawModelTests: rawTests.length,
+            supervisionAlignments: supervisionAlignments.length,
+            trainingReadyAlignments: supervisionAlignments.filter((item) => item.readyForTraining).length,
+          },
+          storage: {
+            provider: artifactStore?.remote ? 'private-s3-compatible' : 'private-local-disk',
+            persistent: Boolean(artifactStore?.remote || !production),
+            warning: [experiments.storageWarning, historyWarning].filter(Boolean).join(' · '),
+          },
+        }),
+        experiments: experiments.records,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.post('/ml/experiments', async (request, response) => {
+    try {
+      const experiment = await mlOperations.createDraft(request.body, adminActor(request));
+      return response.status(201).json({ experiment });
+    } catch (error) {
+      return response.status(400).json({ error: error.message || String(error) });
+    }
+  });
+
+  router.get('/ml/experiments/:experimentId', async (request, response) => {
+    try {
+      const experiment = await mlOperations.refresh(request.params.experimentId);
+      return response.json({ experiment });
+    } catch (error) {
+      const message = error.message || String(error);
+      return response.status(message.includes('not found') ? 404 : 502).json({ error: message });
+    }
+  });
+
+  router.post('/ml/experiments/:experimentId/train', async (request, response) => {
+    try {
+      const experiment = await mlOperations.startTraining(
+        request.params.experimentId,
+        request.body,
+        adminActor(request),
+      );
+      return response.status(202).json({ experiment });
+    } catch (error) {
+      const message = error.message || String(error);
+      const external = message.includes('RunPod Serverless returned') || message.includes('RunPod Serverless is missing');
+      return response.status(external ? 502 : 400).json({ error: message });
+    }
+  });
+
+  router.post('/ml/experiments/:experimentId/evaluate', async (request, response) => {
+    try {
+      const experiment = await mlOperations.startEvaluation(request.params.experimentId, adminActor(request));
+      return response.status(202).json({ experiment });
+    } catch (error) {
+      const message = error.message || String(error);
+      const external = message.includes('RunPod Serverless returned') || message.includes('RunPod Serverless is missing');
+      return response.status(external ? 502 : 400).json({ error: message });
+    }
+  });
+
+  router.post('/ml/experiments/:experimentId/cancel', async (request, response) => {
+    try {
+      const experiment = await mlOperations.cancel(request.params.experimentId, adminActor(request));
+      return response.json({ experiment });
+    } catch (error) {
+      return response.status(400).json({ error: error.message || String(error) });
+    }
   });
 
   async function processJob(job) {
@@ -867,7 +968,7 @@ function createModelLab(environment = process.env, options = {}) {
     }
   });
 
-  return { alignments, capability, enabled, jobs, router };
+  return { alignments, capability, enabled, jobs, mlOperations, router };
 }
 
 module.exports = {

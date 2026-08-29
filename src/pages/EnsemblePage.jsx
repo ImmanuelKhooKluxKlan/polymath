@@ -213,7 +213,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
   }, [volume]);
 
   useEffect(() => {
-    ensembleAudio.preloadInstrument(instrument);
+    ensembleAudio.preloadInstrument(instrument, { exclusive: true });
   }, [instrument]);
 
   useEffect(() => {

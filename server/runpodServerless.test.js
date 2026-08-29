@@ -59,6 +59,36 @@ test('reports missing configuration without exposing secret values', () => {
   assert.ok(client.missing.includes('RUNPOD_API_KEY'));
 });
 
+test('submits, inspects, and cancels guarded ML operations without returning credentials', async () => {
+  const requests = [];
+  const replies = [
+    { id: 'training-job-1', status: 'IN_QUEUE' },
+    { id: 'training-job-1', status: 'IN_PROGRESS', progress: 'Epoch 1' },
+    { id: 'training-job-1', status: 'CANCELLED' },
+  ];
+  const client = createRunpodServerlessClient({
+    endpointId: 'endpoint-ml', apiKey: 'top-secret', volumeId: 'volume-ml',
+    region: 'US-KS-2', s3Endpoint: 'https://s3.example.test',
+    s3AccessKeyId: 'storage-user', s3SecretAccessKey: 'storage-secret',
+  }, {
+    s3: { async send() {} },
+    async fetchImpl(url, options) {
+      requests.push({ url, options });
+      return { ok: true, status: 200, async text() { return JSON.stringify(replies.shift()); } };
+    },
+  });
+  const submitted = await client.submitAction({ action: 'train_piano_candidate' }, { executionTimeout: 120000 });
+  assert.equal(submitted.id, 'training-job-1');
+  const status = await client.getJobStatus(submitted.id);
+  assert.equal(status.status, 'IN_PROGRESS');
+  const cancelled = await client.cancelJob(submitted.id);
+  assert.equal(cancelled.status, 'CANCELLED');
+  assert.match(requests[0].url, /endpoint-ml\/run$/);
+  assert.match(requests[1].url, /status\/training-job-1$/);
+  assert.match(requests[2].url, /cancel\/training-job-1$/);
+  assert.equal(JSON.stringify({ submitted, status, cancelled }).includes('top-secret'), false);
+});
+
 test('replicates each job to every configured volume before submission and cleans every copy', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'runpod-serverless-replica-test-'));
   const audioPath = path.join(directory, 'prepared.wav');

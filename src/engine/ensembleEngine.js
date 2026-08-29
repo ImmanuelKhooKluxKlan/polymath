@@ -1,8 +1,26 @@
 import { parseNote } from './noteMath.js';
+import { detectDeviceClass } from './devicePerformance.js';
 import { publicAssetUrl, relativeAssetUrl } from '../services/assetUrls.js';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+async function mapWithConcurrency(items, limit, task) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await task(items[index], index);
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, limit), items.length) },
+    () => worker(),
+  ));
+  return results;
 }
 
 function noteFrequency(note) {
@@ -237,6 +255,8 @@ class EnsembleAudioEngine {
     this.noiseCounter = 0;
     this.samplePacks = new Map();
     this.sampleLoadPromises = new Map();
+    this.sampleLoadControllers = new Map();
+    this.samplePackGenerations = new Map();
     this.modelBufferCache = new Map();
   }
 
@@ -327,62 +347,123 @@ class EnsembleAudioEngine {
     return this.ensure().currentTime;
   }
 
-  preloadInstrument(instrument) {
-    if (instrument === 'drums') return this.preloadDrums();
+  releaseSamplePacksExcept(keepPack) {
+    [...this.samplePacks.keys()].forEach((pack) => {
+      if (pack === keepPack) return;
+      this.sampleLoadControllers.get(pack)?.abort();
+      this.sampleLoadControllers.delete(pack);
+      this.sampleLoadPromises.delete(pack);
+      this.samplePacks.delete(pack);
+      this.samplePackGenerations.set(pack, (this.samplePackGenerations.get(pack) || 0) + 1);
+    });
+  }
+
+  releaseModelBuffersExcept(instrument) {
+    [...this.modelBufferCache.keys()].forEach((key) => {
+      if (!key.startsWith(`${instrument}:`)) this.modelBufferCache.delete(key);
+    });
+  }
+
+  preloadInstrument(instrument, options = {}) {
+    if (instrument === 'drums') return this.preloadDrums(options);
     const pack = SAMPLE_PACKS[instrument];
+    if (options.exclusive) {
+      this.releaseSamplePacksExcept(pack || null);
+      this.releaseModelBuffersExcept(instrument);
+    }
     if (!pack) return Promise.resolve(false);
     if (this.samplePacks.get(pack)?.state === 'ready') return Promise.resolve(true);
     if (this.sampleLoadPromises.has(pack)) return this.sampleLoadPromises.get(pack);
     this.ensure();
+    const generation = (this.samplePackGenerations.get(pack) || 0) + 1;
+    this.samplePackGenerations.set(pack, generation);
+    const controller = new window.AbortController();
+    this.sampleLoadControllers.set(pack, controller);
     this.samplePacks.set(pack, { state: 'loading', manifest: null, buffers: new Map() });
     const manifestUrl = sampleManifestUrl(pack);
-    const promise = fetch(manifestUrl)
+    const promise = fetch(manifestUrl, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`${pack} manifest failed (${response.status})`);
         return response.json();
       })
       .then(async (manifest) => {
-        const decoded = await Promise.all(manifest.zones.map(async (zone) => {
-          const response = await fetch(relativeAssetUrl(manifestUrl, zone.file), { cache: 'force-cache' });
+        const concurrency = detectDeviceClass() === 'desktop' ? 4 : 1;
+        const decoded = await mapWithConcurrency(manifest.zones, concurrency, async (zone) => {
+          const response = await fetch(relativeAssetUrl(manifestUrl, zone.file), {
+            cache: 'force-cache',
+            signal: controller.signal,
+          });
           if (!response.ok) throw new Error(`${pack} sample failed (${response.status}): ${zone.file}`);
           return [zone.file, await this.context.decodeAudioData(await response.arrayBuffer())];
-        }));
+        });
+        if (this.samplePackGenerations.get(pack) !== generation) return false;
         this.samplePacks.set(pack, { state: 'ready', manifest, buffers: new Map(decoded) });
         return true;
       })
       .catch((error) => {
+        if (error?.name === 'AbortError' || this.samplePackGenerations.get(pack) !== generation) {
+          return false;
+        }
         console.warn(`${instrument} recordings unavailable; synthesis fallback remains active.`, error);
         this.samplePacks.set(pack, { state: 'fallback', manifest: null, buffers: new Map() });
         return false;
+      })
+      .finally(() => {
+        if (this.samplePackGenerations.get(pack) === generation) {
+          this.sampleLoadPromises.delete(pack);
+          this.sampleLoadControllers.delete(pack);
+        }
       });
     this.sampleLoadPromises.set(pack, promise);
     return promise;
   }
 
-  preloadDrums() {
+  preloadDrums(options = {}) {
+    if (options.exclusive) {
+      this.releaseSamplePacksExcept(DRUM_PACK);
+      this.modelBufferCache.clear();
+    }
     if (this.samplePacks.get(DRUM_PACK)?.state === 'ready') return Promise.resolve(true);
     if (this.sampleLoadPromises.has(DRUM_PACK)) return this.sampleLoadPromises.get(DRUM_PACK);
     this.ensure();
+    const generation = (this.samplePackGenerations.get(DRUM_PACK) || 0) + 1;
+    this.samplePackGenerations.set(DRUM_PACK, generation);
+    const controller = new window.AbortController();
+    this.sampleLoadControllers.set(DRUM_PACK, controller);
     this.samplePacks.set(DRUM_PACK, { state: 'loading', manifest: null, buffers: new Map() });
     const manifestUrl = sampleManifestUrl(DRUM_PACK);
-    const promise = fetch(manifestUrl)
+    const promise = fetch(manifestUrl, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`drum manifest failed (${response.status})`);
         return response.json();
       })
       .then(async (manifest) => {
-        const decoded = await Promise.all(manifest.zones.map(async (zone) => {
-          const response = await fetch(relativeAssetUrl(manifestUrl, `samples/${zone.file}`), { cache: 'force-cache' });
+        const concurrency = detectDeviceClass() === 'desktop' ? 4 : 1;
+        const decoded = await mapWithConcurrency(manifest.zones, concurrency, async (zone) => {
+          const response = await fetch(relativeAssetUrl(manifestUrl, `samples/${zone.file}`), {
+            cache: 'force-cache',
+            signal: controller.signal,
+          });
           if (!response.ok) throw new Error(`drum sample failed (${response.status}): ${zone.file}`);
           return [zone.file, await this.context.decodeAudioData(await response.arrayBuffer())];
-        }));
+        });
+        if (this.samplePackGenerations.get(DRUM_PACK) !== generation) return false;
         this.samplePacks.set(DRUM_PACK, { state: 'ready', manifest, buffers: new Map(decoded) });
         return true;
       })
       .catch((error) => {
+        if (error?.name === 'AbortError' || this.samplePackGenerations.get(DRUM_PACK) !== generation) {
+          return false;
+        }
         console.warn('Drum recordings unavailable; synthesis fallback remains active.', error);
         this.samplePacks.set(DRUM_PACK, { state: 'fallback', manifest: null, buffers: new Map() });
         return false;
+      })
+      .finally(() => {
+        if (this.samplePackGenerations.get(DRUM_PACK) === generation) {
+          this.sampleLoadPromises.delete(DRUM_PACK);
+          this.sampleLoadControllers.delete(DRUM_PACK);
+        }
       });
     this.sampleLoadPromises.set(DRUM_PACK, promise);
     return promise;

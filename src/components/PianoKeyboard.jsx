@@ -124,6 +124,7 @@ export default function PianoKeyboard({
   preparationProgress = 0,
   preparationStage = 'Tap once to prepare',
   performanceTier = 'full',
+  deviceClass = 'desktop',
   onPrepare,
 }) {
   useEffect(() => () => {
@@ -132,6 +133,12 @@ export default function PianoKeyboard({
 
   const disabled = preparationStatus !== 'ready';
   const isPreparing = preparationStatus === 'loading' || preparationStatus === 'calibrating';
+  const deviceLabel = deviceClass === 'phone'
+    ? 'Phone'
+    : deviceClass === 'tablet'
+      ? 'Tablet'
+      : 'Computer';
+  const liteWarning = performanceTier === 'lite';
   return (
     <section
       className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
@@ -139,7 +146,7 @@ export default function PianoKeyboard({
     >
       <div className="piano-mode-label">
         <span>{layout.isTwoStorey ? 'Two-storey A0-C8 grand piano' : 'Polymath Musician A1-C7 row'} • Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
-        <small className="performance-tier-badge">Auto · {performanceTier}</small>
+        <small className="performance-tier-badge">{deviceLabel} · {performanceTier}</small>
       </div>
       <div className="piano-glow" />
       <div className="piano-rows">
@@ -156,6 +163,11 @@ export default function PianoKeyboard({
           />
         ))}
       </div>
+      {!disabled && liteWarning && (
+        <small className="device-performance-notice" role="status">
+          Lite mode: reduced effects for smoother playback on this device.
+        </small>
+      )}
       {disabled && (
         <div className="piano-preparation" aria-live="polite">
           {isPreparing ? (
@@ -169,7 +181,11 @@ export default function PianoKeyboard({
               <button type="button" className="primary" onClick={onPrepare}>
                 {preparationStatus === 'error' ? 'Try keyboard again' : 'Unlock keyboard'}
               </button>
-              <small>Tap once to load the piano sounds.</small>
+              <small>
+                {deviceClass === 'desktop'
+                  ? 'Loads this instrument only.'
+                  : `Loads a smaller ${deviceLabel.toLowerCase()} piano first. Weaker devices may use Lite mode.`}
+              </small>
             </>
           )}
         </div>

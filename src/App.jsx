@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import AppNav from './components/AppNav.jsx';
 import HeaderActions from './components/HeaderActions.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
@@ -7,24 +7,17 @@ import PianoKeyboard, { keyboardMap } from './components/PianoKeyboard.jsx';
 import SongUploader from './components/SongUploader.jsx';
 import TransportDock from './components/TransportDock.jsx';
 import LearnModePanel from './components/LearnModePanel.jsx';
-import AccountPage from './pages/AccountPage.jsx';
-import GuitarPage from './pages/GuitarPage.jsx';
-import EnsemblePage from './pages/EnsemblePage.jsx';
-import MarketplacePage from './pages/MarketplacePage.jsx';
-import MessagesPage from './pages/MessagesPage.jsx';
-import PaymentPage from './pages/PaymentPage.jsx';
-import BandPage from './pages/BandPage.jsx';
-import YourSongsPage from './pages/YourSongsPage.jsx';
-import AdminDatabasePage from './pages/AdminDatabasePage.jsx';
-import ModelLabPage from './pages/ModelLabPage.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import {
+  capTierForDevice,
   calibrateDevice,
+  detectDeviceClass,
   getInitialPerformanceTier,
   lowerPerformanceTier,
   normalizePerformanceTier,
   raisePerformanceTier,
+  readSavedPerformanceProfile,
   refineTierFromLoading,
   savePerformanceProfile,
   visualFrameInterval,
@@ -42,6 +35,17 @@ import { analyzeLearningSections } from './utils/learningSections.js';
 
 const AUDIO_LOOKAHEAD_SECONDS = 0.18;
 const AUDIO_SCHEDULER_INTERVAL_MS = 25;
+
+const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
+const GuitarPage = lazy(() => import('./pages/GuitarPage.jsx'));
+const EnsemblePage = lazy(() => import('./pages/EnsemblePage.jsx'));
+const MarketplacePage = lazy(() => import('./pages/MarketplacePage.jsx'));
+const MessagesPage = lazy(() => import('./pages/MessagesPage.jsx'));
+const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
+const BandPage = lazy(() => import('./pages/BandPage.jsx'));
+const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
+const AdminDatabasePage = lazy(() => import('./pages/AdminDatabasePage.jsx'));
+const ModelLabPage = lazy(() => import('./pages/ModelLabPage.jsx'));
 
 function readRoute() {
   const redirectParams = new URLSearchParams(window.location.search);
@@ -112,6 +116,7 @@ export default function App() {
   const [keyboardPreparationProgress, setKeyboardPreparationProgress] = useState(0);
   const [keyboardPreparationStage, setKeyboardPreparationStage] = useState('Tap once to prepare');
   const [performanceTier, setPerformanceTier] = useState(getInitialPerformanceTier);
+  const [deviceClass, setDeviceClass] = useState(detectDeviceClass);
 
   const nextEventIndex = useRef(0);
   const nextPedalIndex = useRef(0);
@@ -311,7 +316,10 @@ export default function App() {
   }
 
   function applyPerformanceTier(nextTier, measurements = {}, preserveSampleSet = keyboardReadyRef.current) {
-    const normalized = normalizePerformanceTier(nextTier, performanceTierRef.current);
+    const normalized = capTierForDevice(
+      normalizePerformanceTier(nextTier, performanceTierRef.current),
+      deviceClass,
+    );
     performanceTierRef.current = normalized;
     setPerformanceTier(normalized);
     pianoAudio.setPerformanceTier(normalized, { preserveSampleSet });
@@ -331,17 +339,31 @@ export default function App() {
     // Create/resume Web Audio directly inside the tap event so iOS grants audio access.
     pianoAudio.ensure();
     setKeyboardPreparationStatus('calibrating');
-    setKeyboardPreparationStage('Running 3-second device check');
+    const savedProfile = readSavedPerformanceProfile();
+    setKeyboardPreparationStage(savedProfile
+      ? `Using saved ${savedProfile.deviceClass || deviceClass} settings`
+      : `Checking this ${deviceClass} for 3 seconds`);
     setKeyboardPreparationProgress(0);
 
-    const task = calibrateDevice({
-      durationMs: 3000,
-      onProgress: (progress) => {
-        setKeyboardPreparationProgress(Math.round(Math.max(0, Math.min(1, progress)) * 20));
-      },
-    })
+    const calibrationTask = savedProfile
+      ? Promise.resolve({
+        ...(savedProfile.measurements?.calibration || {}),
+        tier: savedProfile.tier,
+        deviceClass: savedProfile.deviceClass || deviceClass,
+        skipped: true,
+        reason: 'saved-profile',
+      })
+      : calibrateDevice({
+        durationMs: 3000,
+        onProgress: (progress) => {
+          setKeyboardPreparationProgress(Math.round(Math.max(0, Math.min(1, progress)) * 20));
+        },
+      });
+
+    const task = calibrationTask
       .then(async (calibration) => {
         calibrationRef.current = calibration;
+        setDeviceClass(calibration.deviceClass || deviceClass);
         const calibratedTier = applyPerformanceTier(calibration.tier, { calibration }, false);
         setKeyboardPreparationStatus('loading');
         setKeyboardPreparationStage('Loading ' + calibratedTier + ' piano');
@@ -446,7 +468,7 @@ export default function App() {
     const requestedRunId = playbackRunId.current + 1;
     playbackRunId.current = requestedRunId;
     pianoAudio.setToneMode(toneMode);
-    await pianoAudio.preloadSongNotes(song);
+    await pianoAudio.preloadSongNotes(song, { startTime: target });
     if (playbackRunId.current !== requestedRunId) return;
 
     pauseOffset.current = target;
@@ -924,6 +946,7 @@ export default function App() {
                 preparationProgress={keyboardPreparationProgress}
                 preparationStage={keyboardPreparationStage}
                 performanceTier={performanceTier}
+                deviceClass={deviceClass}
                 onPrepare={prepareKeyboard}
               />
             </div>
@@ -996,7 +1019,11 @@ export default function App() {
         <AppNav route={route.page} onNavigate={navigate} user={user} />
         <HeaderActions user={user} onNavigate={navigate} route={route.page} />
       </div>
-      <main className="app-shell">{content}</main>
+      <main className="app-shell">
+        <Suspense fallback={<div className="route-loading" role="status">Opening this section…</div>}>
+          {content}
+        </Suspense>
+      </main>
     </div>
   );
 }

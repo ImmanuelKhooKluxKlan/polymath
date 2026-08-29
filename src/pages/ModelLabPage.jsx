@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
 import { downloadSongMidi } from '../utils/exporters.js';
 import ModelLabPlaybackMixer from '../components/ModelLabPlaybackMixer.jsx';
+import MlOperationsConsole from '../components/MlOperationsConsole.jsx';
 import PianoDetailsTester from '../components/PianoDetailsTester.jsx';
 import SupervisedTrainingWorkbench from '../components/SupervisedTrainingWorkbench.jsx';
 
@@ -164,6 +165,8 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
         </div>
         {!embedded && <button type="button" className="ghost" onClick={() => onNavigate('admin-database')}>Back to admin console</button>}
       </header>
+
+      <MlOperationsConsole />
 
       <section className="model-lab-upload-card">
         <div className="model-lab-checkpoint">

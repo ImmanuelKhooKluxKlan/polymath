@@ -9,6 +9,12 @@ export const PERFORMANCE_TIERS = Object.freeze({
 
 const TIER_ORDER = ['lite', 'balanced', 'full'];
 
+export const DEVICE_CLASSES = Object.freeze({
+  phone: Object.freeze({ label: 'Phone', maximumTier: 'balanced' }),
+  tablet: Object.freeze({ label: 'Tablet', maximumTier: 'balanced' }),
+  desktop: Object.freeze({ label: 'Computer', maximumTier: 'full' }),
+});
+
 export function normalizePerformanceTier(value, fallback = 'balanced') {
   return Object.prototype.hasOwnProperty.call(PERFORMANCE_TIERS, value) ? value : fallback;
 }
@@ -26,6 +32,32 @@ export function raisePerformanceTier(value) {
 export function isCoarsePointerDevice() {
   return typeof window !== 'undefined'
     && window.matchMedia('(pointer: coarse)').matches;
+}
+
+export function detectDeviceClass() {
+  if (typeof window === 'undefined') return 'desktop';
+  const coarsePointer = isCoarsePointerDevice();
+  const shortestSide = Math.min(
+    Number(window.screen?.width) || Number(window.innerWidth) || 0,
+    Number(window.screen?.height) || Number(window.innerHeight) || 0,
+  );
+  const longestSide = Math.max(
+    Number(window.screen?.width) || Number(window.innerWidth) || 0,
+    Number(window.screen?.height) || Number(window.innerHeight) || 0,
+  );
+  if (coarsePointer && shortestSide > 0 && shortestSide <= 520) return 'phone';
+  if (coarsePointer || (shortestSide > 0 && shortestSide <= 1024 && longestSide <= 1440)) {
+    return 'tablet';
+  }
+  return 'desktop';
+}
+
+export function capTierForDevice(tier, deviceClass = detectDeviceClass()) {
+  const normalized = normalizePerformanceTier(tier);
+  const maximumTier = DEVICE_CLASSES[deviceClass]?.maximumTier || 'balanced';
+  return TIER_ORDER.indexOf(normalized) > TIER_ORDER.indexOf(maximumTier)
+    ? maximumTier
+    : normalized;
 }
 
 function deviceSignature() {
@@ -47,7 +79,12 @@ export function readSavedPerformanceProfile() {
     const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
     if (!saved || saved.signature !== deviceSignature()) return null;
     if (Date.now() - Number(saved.updatedAt || 0) > PROFILE_MAX_AGE_MS) return null;
-    return { ...saved, tier: normalizePerformanceTier(saved.tier) };
+    const deviceClass = detectDeviceClass();
+    return {
+      ...saved,
+      deviceClass,
+      tier: capTierForDevice(saved.tier, deviceClass),
+    };
   } catch {
     return null;
   }
@@ -56,14 +93,18 @@ export function readSavedPerformanceProfile() {
 export function getInitialPerformanceTier() {
   const saved = readSavedPerformanceProfile();
   if (saved?.tier) return saved.tier;
-  return isCoarsePointerDevice() ? 'balanced' : 'full';
+  const deviceClass = detectDeviceClass();
+  if (deviceClass === 'phone') return 'lite';
+  if (deviceClass === 'tablet') return 'balanced';
+  return 'full';
 }
 
 export function savePerformanceProfile(tier, measurements = {}) {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      tier: normalizePerformanceTier(tier),
+      tier: capTierForDevice(tier),
+      deviceClass: detectDeviceClass(),
       signature: deviceSignature(),
       updatedAt: Date.now(),
       measurements,
@@ -91,7 +132,14 @@ function measureCpuWork() {
 
 export async function calibrateDevice({ durationMs = 3000, onProgress } = {}) {
   if (typeof window === 'undefined' || document.visibilityState === 'hidden') {
-    return { tier: getInitialPerformanceTier(), skipped: true, reason: 'page-hidden' };
+    const deviceClass = detectDeviceClass();
+    return {
+      tier: getInitialPerformanceTier(),
+      deviceClass,
+      deviceLabel: DEVICE_CLASSES[deviceClass].label,
+      skipped: true,
+      reason: 'page-hidden',
+    };
   }
 
   measureCpuWork();
@@ -127,8 +175,13 @@ export async function calibrateDevice({ durationMs = 3000, onProgress } = {}) {
   const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
   const effectiveConnection = connection?.effectiveType || null;
   const coarsePointer = isCoarsePointerDevice();
+  const deviceClass = detectDeviceClass();
 
-  let tier = coarsePointer ? 'balanced' : 'full';
+  let tier = deviceClass === 'phone'
+    ? 'lite'
+    : deviceClass === 'tablet'
+      ? 'balanced'
+      : 'full';
   const clearlyStruggling = averageFps < 38
     || p95FrameMs > 42
     || cpu.milliseconds > 22
@@ -139,10 +192,11 @@ export async function calibrateDevice({ durationMs = 3000, onProgress } = {}) {
     && (memoryGb === null || memoryGb >= 6);
 
   if (clearlyStruggling) tier = 'lite';
-  else if (clearlyStrong) tier = 'full';
+  else if (clearlyStrong) tier = deviceClass === 'desktop' ? 'full' : 'balanced';
   if (effectiveConnection === 'slow-2g' || effectiveConnection === '2g') {
     tier = lowerPerformanceTier(tier);
   }
+  tier = capTierForDevice(tier, deviceClass);
 
   return {
     tier,
@@ -155,6 +209,8 @@ export async function calibrateDevice({ durationMs = 3000, onProgress } = {}) {
     memoryGb,
     effectiveConnection,
     coarsePointer,
+    deviceClass,
+    deviceLabel: DEVICE_CLASSES[deviceClass].label,
   };
 }
 

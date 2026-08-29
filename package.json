@@ -11,6 +11,7 @@
     "lint": "eslint src --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "align:notes": "node scripts/alignment/noteCoordinateAligner.mjs",
     "test:alignment": "node --test scripts/alignment/noteCoordinateAligner.test.mjs",
+    "test:performance": "node --test scripts/performance/devicePerformance.test.mjs",
     "test:ml": "python -m unittest discover -s ml/training/tests -p test_*.py",
     "test:training": "npm run test:alignment && npm run test:ml",
     "acquire:iowa-mf": "node scripts/acquireIowaMf.js --range=A0-C8",

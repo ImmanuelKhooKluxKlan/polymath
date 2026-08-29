@@ -25,6 +25,7 @@ COPY server/package.json server/package-lock.json ./server/
 RUN npm ci --omit=dev --prefix server
 
 COPY server ./server
+COPY scripts/alignment ./scripts/alignment
 COPY --from=frontend-build /app/dist ./dist
 
 RUN mkdir -p /app/server/data/uploads \

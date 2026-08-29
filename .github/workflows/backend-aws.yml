@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'server/**'
+      - 'scripts/alignment/**'
       - 'Dockerfile.api'
       - '.github/workflows/backend-aws.yml'
   workflow_dispatch:

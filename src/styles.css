@@ -493,6 +493,22 @@ select {
   letter-spacing: 0.04em;
   text-transform: capitalize;
 }
+.device-performance-notice {
+  position: relative;
+  z-index: 8;
+  display: block;
+  width: fit-content;
+  max-width: min(520px, 88%);
+  margin: 8px auto 0;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 210, 92, 0.34);
+  border-radius: 999px;
+  color: #ffe28a;
+  background: rgba(33, 24, 57, 0.88);
+  font-size: 0.66rem;
+  line-height: 1.25;
+  text-align: center;
+}
 .piano-glow { position: absolute; inset: auto 10% 0; height: 80px; background: radial-gradient(ellipse, rgba(88,240,255,0.22), transparent 66%); }
 .piano-rows { position: relative; z-index: 2; display: grid; gap: 16px; }
 .piano-row-shell {
@@ -3756,7 +3772,7 @@ details[open] > summary {
     transform: none;
   }
 
-  .app-shell {
+.app-shell {
     width: 100%;
     max-width: 1780px;
     padding: 22px clamp(22px, 3vw, 48px) 38px;
@@ -5085,6 +5101,13 @@ details[open] > summary {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 9px;
+}
+.route-loading {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-weight: 850;
 }
 
 .model-lab-history {

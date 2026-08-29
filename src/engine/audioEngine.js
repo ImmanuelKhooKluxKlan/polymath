@@ -330,6 +330,17 @@ function sampleMidisForTier(tier) {
   ));
 }
 
+const STARTUP_SAMPLE_ANCHORS = Object.freeze([
+  33, 40, 48, 55, 60, 67, 76, 84, 91, 96,
+]);
+
+function startupSampleMidisForTier(tier, targetMidis = sampleMidisForTier(tier)) {
+  return [...new Set(STARTUP_SAMPLE_ANCHORS
+    .map((midi) => chooseSampleMidi(midi, targetMidis))
+    .filter((midi) => midi !== null))]
+    .sort((a, b) => a - b);
+}
+
 function chooseSampleMidi(
   requestedMidi,
   candidateMidis = AVAILABLE_SAMPLE_MIDIS
@@ -653,8 +664,13 @@ class PianoAudioEngine {
     this.mobilePerformanceMode =
       this.performanceTier !== 'full';
 
-    this.sampleMidis =
+    this.targetSampleMidis =
       sampleMidisForTier(this.performanceTier);
+
+    // Unlock with a small, evenly spaced playable piano. Exact zones needed by
+    // the selected song are added gradually after the instrument is usable.
+    this.sampleMidis =
+      startupSampleMidisForTier(this.performanceTier, this.targetSampleMidis);
 
     this.maxPolyphony =
       this.performanceTier === 'lite'
@@ -684,6 +700,8 @@ class PianoAudioEngine {
     this.preloadProgressListener =
       null;
 
+    this.backgroundPreloadGeneration = 0;
+
     this.loadingMetrics = {
       startedAt: 0,
       wallMs: 0,
@@ -704,10 +722,27 @@ class PianoAudioEngine {
         ? BALANCED_MAX_POLYPHONY
         : MAX_POLYPHONY;
 
+    this.targetSampleMidis = sampleMidisForTier(nextTier);
+    const startupMidis = startupSampleMidisForTier(nextTier, this.targetSampleMidis);
     if (!preserveSampleSet) {
-      this.sampleMidis = sampleMidisForTier(nextTier);
+      this.sampleMidis = startupMidis;
+      this.preloadPromise = null;
+    } else {
+      this.sampleMidis = [...new Set([
+        ...startupMidis,
+        ...this.sampleMidis.filter((midi) => this.targetSampleMidis.includes(midi)),
+      ])].sort((a, b) => a - b);
     }
+    this.backgroundPreloadGeneration += 1;
     return nextTier;
+  }
+
+  activateSampleZone(info) {
+    const midi = Number(info?.sampleMidi);
+    if (!Number.isFinite(midi) || !this.targetSampleMidis.includes(midi)) return;
+    if (!this.sampleMidis.includes(midi)) {
+      this.sampleMidis = [...this.sampleMidis, midi].sort((a, b) => a - b);
+    }
   }
 
   resetLoadingMetrics() {
@@ -1412,7 +1447,9 @@ class PianoAudioEngine {
       }
     };
 
-    const concurrency = Math.min(4, samples.length);
+    const concurrency = this.mobilePerformanceMode
+      ? Math.min(1, samples.length)
+      : Math.min(4, samples.length);
     this.preloadPromise = Promise
       .all(Array.from({ length: concurrency }, () => worker()))
       .then(() => undefined);
@@ -1420,11 +1457,12 @@ class PianoAudioEngine {
     return this.preloadPromise;
   }
 
-  async preloadSongNotes(song) {
+  async preloadSongNotes(song, options = {}) {
     this.ensure();
 
-    const uniqueMidis =
-      new Set();
+    const startTime = Math.max(0, Number(options.startTime) || 0);
+    const priorityEnd = startTime + Math.max(4, Number(options.prioritySeconds) || 12);
+    const plans = new Map();
 
     for (
       const event of
@@ -1445,37 +1483,77 @@ class PianoAudioEngine {
           midi <=
             GRAND_END_MIDI
         ) {
-          uniqueMidis.add(
-            midi
-          );
+          const info = buildSamplePlan(midi, this.targetSampleMidis);
+          if (info) {
+            const eventTime = Math.max(0, Number(event.time) || 0);
+            const existing = plans.get(info.cacheKey);
+            if (!existing || eventTime < existing.firstTime) {
+              plans.set(info.cacheKey, { info, firstTime: eventTime });
+            }
+          }
         }
       } catch {
         // Ignore invalid song notes.
       }
     }
 
-    const requests = [
-      ...uniqueMidis,
-    ].map((midi) => {
-      const info =
-        buildSamplePlan(midi, this.sampleMidis);
+    const ordered = [...plans.values()].sort((a, b) => a.firstTime - b.firstTime);
+    const priorityLimit = this.mobilePerformanceMode ? 4 : 12;
+    const priority = ordered
+      .filter(({ firstTime }) => firstTime >= startTime - 0.2 && firstTime <= priorityEnd)
+      .filter(({ info }) => !this.sampleMidis.includes(info.sampleMidi))
+      .slice(0, priorityLimit);
 
-      return info
-        ? this
-            .loadSampleByInfo(
-              info
-            )
-            .catch(
-              () => undefined
-            )
-        : Promise.resolve(
-            undefined
-          );
-    });
+    const loadPriority = async ({ info }) => {
+      try {
+        const loaded = await this.loadSampleByInfo(info);
+        if (loaded) this.activateSampleZone(info);
+      } catch {
+        // The evenly spaced startup piano remains available as a fallback.
+      }
+    };
+    if (this.mobilePerformanceMode) {
+      for (const item of priority) await loadPriority(item);
+    } else {
+      await Promise.all(priority.map(loadPriority));
+    }
 
-    return Promise.all(
-      requests
-    );
+    const priorityKeys = new Set(priority.map(({ info }) => info.cacheKey));
+    this.queueSampleExpansion(ordered
+      .filter(({ info }) => !priorityKeys.has(info.cacheKey))
+      .map(({ info }) => info));
+    return true;
+  }
+
+  queueSampleExpansion(infos) {
+    const generation = ++this.backgroundPreloadGeneration;
+    const queue = [...new Map(infos.map((info) => [info.cacheKey, info])).values()]
+      .filter((info) => !this.sampleMidis.includes(info.sampleMidi));
+    let index = 0;
+
+    const schedule = () => {
+      if (generation !== this.backgroundPreloadGeneration || index >= queue.length) return;
+      const run = async () => {
+        if (generation !== this.backgroundPreloadGeneration || index >= queue.length) return;
+        const info = queue[index];
+        index += 1;
+        try {
+          const loaded = await this.loadSampleByInfo(info);
+          if (loaded && generation === this.backgroundPreloadGeneration) {
+            this.activateSampleZone(info);
+          }
+        } catch {
+          // Keep the nearest already-loaded zone.
+        }
+        schedule();
+      };
+      if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(run, { timeout: 1800 });
+      } else {
+        window.setTimeout(run, this.mobilePerformanceMode ? 350 : 120);
+      }
+    };
+    schedule();
   }
 
   createDeterministicImpulse(
@@ -3776,6 +3854,7 @@ class PianoAudioEngine {
       mobilePerformanceMode: this.mobilePerformanceMode,
       performanceTier: this.performanceTier,
       availableSampleZones: this.sampleMidis.length,
+      targetSampleZones: this.targetSampleMidis.length,
       loadingMetrics: this.getLoadingMetrics(),
     };
   }

@@ -131,10 +131,45 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
     }));
   }
 
-  async function transcribe({ job, preparedPath, constraints = [], onProgress = () => {} }) {
+  function assertConfigured() {
     if (missing.length) {
       throw new Error(`RunPod Serverless is missing: ${missing.join(', ')}`);
     }
+  }
+
+  async function submitAction(input, policy = {}) {
+    assertConfigured();
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error('RunPod action input must be an object.');
+    }
+    return runpodRequest('/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        input,
+        policy: {
+          executionTimeout: Math.max(60_000, Number(policy.executionTimeout) || timeoutMs),
+          ttl: Math.max(60_000, Number(policy.ttl) || Math.min(7 * 24 * 60 * 60 * 1000, timeoutMs * 2)),
+        },
+      }),
+    });
+  }
+
+  async function getJobStatus(jobId) {
+    assertConfigured();
+    const id = clean(jobId);
+    if (!id) throw new Error('RunPod job ID is required.');
+    return runpodRequest(`/status/${encodeURIComponent(id)}`);
+  }
+
+  async function cancelJob(jobId) {
+    assertConfigured();
+    const id = clean(jobId);
+    if (!id) throw new Error('RunPod job ID is required.');
+    return runpodRequest(`/cancel/${encodeURIComponent(id)}`, { method: 'POST' });
+  }
+
+  async function transcribe({ job, preparedPath, constraints = [], onProgress = () => {} }) {
+    assertConfigured();
     const key = `jobs/${job.id}.wav`;
     const uploads = await Promise.allSettled(storageClients.map(({ s3, volumeId: targetVolumeId }) => s3.send(new PutObjectCommand({
         Bucket: targetVolumeId,
@@ -197,8 +232,11 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
 
   return {
     configured: missing.length === 0,
+    cancelJob,
+    getJobStatus,
     missing,
     storageTargetCount: storageTargets.length,
+    submitAction,
     transcribe,
   };
 }
