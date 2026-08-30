@@ -32,7 +32,7 @@ function required(name) {
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   if (!args.dataset || !args.version) {
-    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--result result.json]');
+    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--base-version original] [--result result.json]');
   }
   await loadEnvironment(path.resolve('server/.env'));
   const endpoint = required('RUNPOD_SERVERLESS_ENDPOINT_ID');
@@ -59,6 +59,7 @@ async function main() {
         action: 'train_piano_candidate',
         dataset_id: args.dataset,
         version: args.version,
+        base_version: args['base-version'] || 'original',
         epochs: Number(args.epochs || 1),
         train_last_layers: Number(args.layers || 1),
         learning_rate: Number(args['learning-rate'] || 0.000002),

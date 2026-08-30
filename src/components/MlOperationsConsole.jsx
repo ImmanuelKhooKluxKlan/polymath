@@ -13,6 +13,7 @@ const INITIAL_DRAFT = {
   name: 'Piano Phase 2 candidate',
   datasetId: 'phase-2-v001',
   version: 'phase2-v001',
+  baseVersion: 'phase1-v002',
   epochs: 1,
   trainLastLayers: 1,
   learningRate: 0.000002,
@@ -406,6 +407,7 @@ export default function MlOperationsConsole() {
               <label>Experiment name<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label>
               <label>Prepared dataset ID<input value={draft.datasetId} onChange={(event) => setDraft({ ...draft, datasetId: event.target.value })} pattern="[a-z0-9][a-z0-9-]{2,50}" required /></label>
               <label>New candidate version<input value={draft.version} onChange={(event) => setDraft({ ...draft, version: event.target.value })} pattern="phase[0-9]+-v[0-9]{3,}" required /></label>
+              <label>Continue from checkpoint<input value={draft.baseVersion} onChange={(event) => setDraft({ ...draft, baseVersion: event.target.value })} pattern="original|phase[0-9]+-v[0-9]{3,}" required /><small>Use the current incumbent so a new phase does not forget earlier gains.</small></label>
               <label>Epochs<select value={draft.epochs} onChange={(event) => setDraft({ ...draft, epochs: Number(event.target.value) })}><option value="1">1 — safest trial</option><option value="2">2</option><option value="3">3 — maximum</option></select></label>
               <label>Final transformer blocks<select value={draft.trainLastLayers} onChange={(event) => setDraft({ ...draft, trainLastLayers: Number(event.target.value) })}><option value="1">1 — conservative</option><option value="2">2 — broader change</option></select></label>
               <label>Learning rate<input type="number" min="0.0000001" max="0.00001" step="0.0000001" value={draft.learningRate} onChange={(event) => setDraft({ ...draft, learningRate: Number(event.target.value) })} required /></label>
@@ -419,7 +421,7 @@ export default function MlOperationsConsole() {
           {created && (
             <section className="mlops-train-gate">
               <div className="mlops-section-heading"><div><p className="eyebrow">Step 3 · guarded GPU action</p><h3>Train {created.version}</h3></div><StatusPill value={created.status} /></div>
-              <p>The worker will first validate the dataset and original files. It writes a new tester checkpoint only if validation loss improves; it cannot overwrite <code>models/original</code>.</p>
+              <p>The worker validates the dataset and <code>{created.configuration?.baseVersion || 'original'}</code> first. It writes a new tester checkpoint only if validation loss improves; it never overwrites its base.</p>
               <label className="mlops-check"><input type="checkbox" checked={rightsAcknowledged} onChange={(event) => setRightsAcknowledged(event.target.checked)} /><span>I confirm that Polymath has permission to use every source and label in this prepared dataset for model training.</span></label>
               <label>Type <strong>{created.version}</strong> to confirm<input value={confirmVersion} onChange={(event) => setConfirmVersion(event.target.value)} autoComplete="off" /></label>
               <button type="button" className="primary" disabled={busy || !overview?.runpod?.configured || !rightsAcknowledged || confirmVersion !== created.version || created.status !== 'draft'} onClick={startTraining}>Start candidate training on RunPod</button>

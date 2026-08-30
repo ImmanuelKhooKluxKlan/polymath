@@ -48,6 +48,7 @@ async function main() {
         action: 'evaluate_piano_candidate',
         dataset_id: args.dataset,
         version: args.version,
+        baseline_version: args['baseline-version'] || 'original',
       },
       policy: { executionTimeout: 60 * 60 * 1000, ttl: 2 * 60 * 60 * 1000 },
     }),

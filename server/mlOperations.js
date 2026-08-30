@@ -125,12 +125,17 @@ function atomicJson(filename, value) {
 function parseConfiguration(body = {}) {
   const datasetId = clean(body.datasetId).toLowerCase();
   const version = clean(body.version).toLowerCase();
+  const baseVersion = clean(body.baseVersion || 'original').toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{2,50}$/.test(datasetId)) {
     throw new Error('Dataset ID must use 3–51 lowercase letters, numbers, or hyphens.');
   }
   if (!/^phase\d+-v\d{3,}$/.test(version)) {
     throw new Error('Candidate version must look like phase2-v001.');
   }
+  if (baseVersion !== 'original' && !/^phase\d+-v\d{3,}$/.test(baseVersion)) {
+    throw new Error('Base version must be original or look like phase1-v002.');
+  }
+  if (baseVersion === version) throw new Error('Base and candidate versions must differ.');
   const epochs = Number(body.epochs);
   const trainLastLayers = Number(body.trainLastLayers);
   const learningRate = Number(body.learningRate);
@@ -145,6 +150,7 @@ function parseConfiguration(body = {}) {
   return {
     datasetId,
     version,
+    baseVersion,
     name: clean(body.name).slice(0, 100) || version,
     instrument: 'acoustic_piano',
     epochs,
@@ -299,7 +305,12 @@ function createMlOperations({ dataRoot, artifactStore = null, runpod }) {
       readOnly: false,
       createdAt: now,
       updatedAt: now,
-      baseCheckpoint: { label: 'models/original', immutable: true },
+      baseCheckpoint: {
+        label: configuration.baseVersion === 'original'
+          ? 'models/original'
+          : `models/muscriptor-tester/${configuration.baseVersion}`,
+        immutable: true,
+      },
       candidateCheckpoint: { label: `models/muscriptor-tester/${configuration.version}`, promoted: false },
       configuration,
       weightScope: {
@@ -327,6 +338,7 @@ function createMlOperations({ dataRoot, artifactStore = null, runpod }) {
       action: 'train_piano_candidate',
       dataset_id: record.datasetId,
       version: record.version,
+      base_version: record.configuration.baseVersion || 'original',
       epochs: record.configuration.epochs,
       train_last_layers: record.configuration.trainLastLayers,
       learning_rate: record.configuration.learningRate,
@@ -407,6 +419,7 @@ function createMlOperations({ dataRoot, artifactStore = null, runpod }) {
       action: 'evaluate_piano_candidate',
       dataset_id: record.datasetId,
       version: record.version,
+      baseline_version: record.configuration.baseVersion || 'original',
       instrument: record.instrument,
     }, { executionTimeout: 60 * 60 * 1000, ttl: 2 * 60 * 60 * 1000 });
     if (!clean(submitted.id)) throw new Error('RunPod did not return an evaluation job ID.');

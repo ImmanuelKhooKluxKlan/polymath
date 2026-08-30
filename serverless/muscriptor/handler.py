@@ -145,6 +145,34 @@ def safe_training_file(dataset_id: str, filename: str) -> Path:
     return candidate
 
 
+def resolve_training_base(version: Any) -> tuple[Path, Path, str]:
+    """Resolve an immutable original or an append-only tester checkpoint.
+
+    Continuing experiments from the current incumbent is essential: restarting
+    every phase from the public MuScriptor checkpoint discards improvements made
+    by earlier phases.  Only version-shaped directories below TEST_MODEL_ROOT
+    are accepted, so a job cannot use an arbitrary filesystem path.
+    """
+
+    requested = str(version or 'original').strip().lower()
+    if requested in {'', 'original'}:
+        root = ORIGINAL_MODEL_ROOT.resolve()
+        label = 'original'
+    else:
+        if not re.fullmatch(r'phase\d+-v\d{3,}', requested):
+            raise ValueError('Base version must be original or look like phase1-v001')
+        root = (TEST_MODEL_ROOT / requested).resolve()
+        if not root.is_relative_to(TEST_MODEL_ROOT):
+            raise ValueError('Base checkpoint escaped the tester model directory')
+        label = requested
+
+    weights = root / 'model.safetensors'
+    config = root / 'config.json'
+    if not weights.is_file() or not config.is_file():
+        raise FileNotFoundError(f'Base checkpoint is incomplete: {label}')
+    return weights, config, label
+
+
 def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dict[str, Any]:
     from argparse import Namespace
 
@@ -174,10 +202,7 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
 
     train_manifest = safe_training_file(dataset_id, 'prepared-train.jsonl')
     validation_manifest = safe_training_file(dataset_id, 'prepared-validation.jsonl')
-    base = ORIGINAL_MODEL_ROOT / 'model.safetensors'
-    config = ORIGINAL_MODEL_ROOT / 'config.json'
-    if not base.is_file() or not config.is_file():
-        raise FileNotFoundError('The immutable original checkpoint is incomplete')
+    base, config, base_version = resolve_training_base(job_input.get('base_version'))
     output = (TEST_MODEL_ROOT / version).resolve()
     if not output.is_relative_to(TEST_MODEL_ROOT):
         raise ValueError('Candidate output escaped the tester model directory')
@@ -189,7 +214,10 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    runpod.serverless.progress_update(job, 'Auditing clips and loading immutable base weights')
+    runpod.serverless.progress_update(
+        job,
+        f'Auditing clips and loading append-only base checkpoint {base_version}',
+    )
 
     args = Namespace(
         train_manifest=train_manifest,
@@ -220,6 +248,7 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
         'action': 'train-piano-candidate',
         'datasetId': dataset_id,
         'version': version,
+        'baseVersion': base_version,
         'candidatePath': str(output),
         'commercialUseAllowed': False,
         'metadata': metadata,
@@ -238,7 +267,9 @@ def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> 
     if not re.fullmatch(r'phase\d+-v\d{3,}', version):
         raise ValueError('Evaluation version must look like phase1-v001')
     validation_manifest = safe_training_file(dataset_id, 'prepared-validation.jsonl')
-    base = ORIGINAL_MODEL_ROOT / 'model.safetensors'
+    base, _config, baseline_version = resolve_training_base(
+        job_input.get('baseline_version')
+    )
     candidate_root = (TEST_MODEL_ROOT / version).resolve()
     candidate = candidate_root / 'model.safetensors'
     if not candidate_root.is_relative_to(TEST_MODEL_ROOT):
@@ -269,6 +300,7 @@ def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> 
         'action': 'evaluate-piano-candidate',
         'datasetId': dataset_id,
         'version': version,
+        'baselineVersion': baseline_version,
         'instrument': instrument,
         'evaluationPath': str(destination),
         **response_result,
