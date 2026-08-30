@@ -7,6 +7,9 @@ const DUPLICATE_ONSET_SECONDS = 0.075;
 const SAME_KEY_RELEASE_GAP_SECONDS = 0.018;
 const MIN_NOTE_SECONDS = 0.035;
 const MAX_PIANO_HOLD_SECONDS = 8;
+const MAX_GUITAR_HOLD_SECONDS = 6;
+const MAX_GUITAR_ONSET_NOTES = 6;
+const GUITAR_CLUSTER_SECONDS = 0.045;
 const VOCAL_MELODY_GAIN = 1.18;
 
 function clamp(value, minimum, maximum) {
@@ -97,7 +100,7 @@ function collapseDuplicateOnsets(notes) {
   return { notes: collapsed, removed };
 }
 
-function resolveSameKeyOverlaps(notes) {
+function resolveSameKeyOverlaps(notes, maximumHoldSeconds = MAX_PIANO_HOLD_SECONDS) {
   const byInstrumentAndPitch = new Map();
   notes.forEach((note) => {
     const key = `${note.instrument}:${note.midi}`;
@@ -113,8 +116,8 @@ function resolveSameKeyOverlaps(notes) {
     pitchNotes.sort((a, b) => a.time - b.time || b.duration - a.duration);
     pitchNotes.forEach((note, index) => {
       let duration = note.duration;
-      if (duration > MAX_PIANO_HOLD_SECONDS) {
-        duration = MAX_PIANO_HOLD_SECONDS;
+      if (duration > maximumHoldSeconds) {
+        duration = maximumHoldSeconds;
         capped += 1;
       }
 
@@ -131,6 +134,108 @@ function resolveSameKeyOverlaps(notes) {
   });
 
   return { notes, shortened, capped };
+}
+
+function foldIntoRange(midi, minimum, maximum) {
+  let pitch = midi;
+  while (pitch < minimum) pitch += 12;
+  while (pitch > maximum) pitch -= 12;
+  return clamp(pitch, minimum, maximum);
+}
+
+function selectEvenlySpacedPitches(notes, limit) {
+  if (notes.length <= limit) return notes;
+  const sorted = [...notes].sort((a, b) => a.midi - b.midi || b.velocity - a.velocity);
+  const selected = new Map();
+  for (let index = 0; index < limit; index += 1) {
+    const position = Math.round((index / Math.max(1, limit - 1)) * (sorted.length - 1));
+    const candidate = sorted[position];
+    const existing = selected.get(candidate.midi);
+    if (!existing || candidate.velocity * candidate.duration > existing.velocity * existing.duration) {
+      selected.set(candidate.midi, candidate);
+    }
+  }
+  if (selected.size < limit) {
+    for (const candidate of [...sorted].sort((a, b) => b.velocity - a.velocity || b.duration - a.duration)) {
+      if (!selected.has(candidate.midi)) selected.set(candidate.midi, candidate);
+      if (selected.size >= limit) break;
+    }
+  }
+  return [...selected.values()].sort((a, b) => a.midi - b.midi);
+}
+
+function shapeGuitarArrangement(payload, options) {
+  const targetInstrument = options.instrument === 'electric-guitar'
+    ? 'clean_electric_guitar'
+    : 'acoustic_guitar';
+  const excludeVocals = options.playbackMode === 'instrumental';
+  const normalized = payload.notes
+    .filter((note) => !excludeVocals || String(note?.instrument || '').toLowerCase() !== 'voice')
+    .map(normalizeNote)
+    .filter(Boolean)
+    .map((note) => ({
+      ...note,
+      midi: foldIntoRange(note.midi, 40, 88),
+      instrument: targetInstrument,
+    }));
+  const collapsed = collapseDuplicateOnsets(normalized);
+  const sorted = collapsed.notes.sort((a, b) => a.time - b.time || a.midi - b.midi);
+  const clusters = [];
+  for (const note of sorted) {
+    const cluster = clusters.at(-1);
+    if (!cluster || note.time - cluster.start > GUITAR_CLUSTER_SECONDS) {
+      clusters.push({ start: note.time, notes: [note] });
+    } else {
+      cluster.notes.push(note);
+    }
+  }
+  let removedUnplayableChordNotes = 0;
+  const voiced = clusters.flatMap((cluster) => {
+    const byPitch = new Map();
+    for (const note of cluster.notes) {
+      const existing = byPitch.get(note.midi);
+      if (!existing || note.velocity * note.duration > existing.velocity * existing.duration) {
+        byPitch.set(note.midi, note);
+      }
+    }
+    const unique = [...byPitch.values()];
+    const selected = selectEvenlySpacedPitches(unique, MAX_GUITAR_ONSET_NOTES);
+    removedUnplayableChordNotes += cluster.notes.length - selected.length;
+    return selected.map((note) => ({ ...note, time: round(cluster.start) }));
+  });
+  const resolved = resolveSameKeyOverlaps(voiced, MAX_GUITAR_HOLD_SECONDS);
+  const envelope = options.sourceEnvelope || readWavRmsEnvelope(options.preparedPath);
+  const sourceDynamicsApplied = applySourceDynamics(resolved.notes, envelope);
+  const notes = resolved.notes.sort((a, b) => a.time - b.time || a.midi - b.midi);
+  return {
+    ...payload,
+    instrument: options.instrument,
+    notes,
+    instrumentGroups: [targetInstrument],
+    performance: {
+      ...(payload.performance || {}),
+      profile: 'selected-guitar-midi-phrasing-v1',
+      preserveScoreDurations: true,
+      sameKeyRetriggerGapSeconds: SAME_KEY_RELEASE_GAP_SECONDS,
+      defaultAutoplayReleaseSeconds: 0.42,
+      targetRange: [40, 88],
+      maximumSimultaneousStrings: MAX_GUITAR_ONSET_NOTES,
+    },
+    instrumentArrangement: {
+      version: 1,
+      selectedInstrument: options.instrument,
+      renderedInstrument: targetInstrument,
+      sourceNoteCount: payload.notes.length,
+      outputNoteCount: notes.length,
+      removedDuplicateNotes: collapsed.removed,
+      removedUnplayableChordNotes,
+      shortenedSameKeyOverlaps: resolved.shortened,
+      cappedImpossibleDurations: resolved.capped,
+      sourceDynamicsApplied,
+      timingPolicy: 'preserve-model-midi-coordinates',
+      pitchPolicy: 'octave-fold-to-standard-guitar-range',
+    },
+  };
 }
 
 function readWavRmsEnvelope(filePath) {
@@ -232,7 +337,11 @@ function applySourceDynamics(notes, envelope) {
 }
 
 function postProcessMuscriptorResult(payload, options = {}) {
-  if (!payload || !Array.isArray(payload.notes) || options.instrument !== 'piano') return payload;
+  if (!payload || !Array.isArray(payload.notes)) return payload;
+  if (options.instrument === 'guitar' || options.instrument === 'electric-guitar') {
+    return shapeGuitarArrangement(payload, options);
+  }
+  if (options.instrument !== 'piano') return payload;
   const excludeVocals = options.playbackMode === 'instrumental';
   const eligibleNotes = payload.notes.filter((note) => (
     !excludeVocals || String(note?.instrument || '').toLowerCase() !== 'voice'

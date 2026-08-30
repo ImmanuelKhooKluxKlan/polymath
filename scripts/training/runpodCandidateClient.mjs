@@ -62,6 +62,9 @@ async function main() {
         epochs: Number(args.epochs || 1),
         train_last_layers: Number(args.layers || 1),
         learning_rate: Number(args['learning-rate'] || 0.000002),
+        timing_token_weight: Number(args['timing-token-weight'] || 1.15),
+        note_off_token_weight: Number(args['note-off-token-weight'] || 1.25),
+        eos_token_weight: Number(args['eos-token-weight'] || 1.20),
         rights_acknowledgement: 'I_HAVE_TRAINING_RIGHTS',
       },
       policy: {

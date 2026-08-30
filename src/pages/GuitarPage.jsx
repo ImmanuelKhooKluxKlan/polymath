@@ -4,7 +4,7 @@ import GuitarTransport from '../components/GuitarTransport.jsx';
 import MusicUploadPanel from '../components/MusicUploadPanel.jsx';
 import LearnModePanel from '../components/LearnModePanel.jsx';
 import { GUITAR_TONE_LABELS, guitarAudio } from '../engine/guitarEngine.js';
-import { parseNote } from '../engine/noteMath.js';
+import { assignNotesToStrings } from '../engine/guitarVoicing.js';
 import { parseUploadedSongFile } from '../utils/songParser.js';
 import { apiRequest, fetchProtectedFile } from '../services/api.js';
 import { analyzeLearningSections } from '../utils/learningSections.js';
@@ -144,41 +144,6 @@ function fileExtension(filename) {
   return String(filename || '').split('.').pop()?.toLowerCase() || '';
 }
 
-
-function guitarCandidatesForMidi(midi) {
-  return [40, 45, 50, 55, 59, 64]
-    .map((openMidi, stringIndex) => ({ stringIndex, fret: midi - openMidi }))
-    .filter(({ fret }) => Number.isInteger(fret) && fret >= 0 && fret <= 24)
-    .sort((a, b) => a.fret - b.fret || b.stringIndex - a.stringIndex);
-}
-
-function assignNotesToStrings(notes) {
-  const prepared = notes
-    .map((note) => {
-      try {
-        const midi = Number.isFinite(Number(note.midi))
-          ? Math.round(Number(note.midi))
-          : parseNote(note.note).midi;
-        return { note, midi, candidates: guitarCandidatesForMidi(midi) };
-      } catch {
-        return null;
-      }
-    })
-    .filter((item) => item?.candidates.length)
-    .sort((a, b) => a.candidates.length - b.candidates.length || a.midi - b.midi);
-
-  const usedStrings = new Set();
-  const assignments = [];
-
-  prepared.forEach((item) => {
-    const candidate = item.candidates.find(({ stringIndex }) => !usedStrings.has(stringIndex));
-    if (!candidate) return;
-    usedStrings.add(candidate.stringIndex);
-    assignments.push({ ...candidate, note: item.note, midi: item.midi });
-  });
-
-  return assignments;
-}
 
 function songToGuitarLesson(song, metadata = {}) {
   const notes = Array.isArray(song?.notes) ? song.notes : [];

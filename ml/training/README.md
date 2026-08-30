@@ -31,9 +31,22 @@ dataset.
 4. Add manual coordinate anchors around real matching moments when the automatic
    map is wrong. Accept or reject every uncertain block.
 5. Download the full `polymath-supervision-package-v1` JSON.
-6. Create a private training index from `training-index.example.json`. Record
+6. Before building a dataset, create a new reviewed copy with the deterministic
+   local quality gate. The command never overwrites the alignment source:
+
+```powershell
+npm run review:alignment -- `
+  --input "C:\private-training\aligned-training-labels.json" `
+  --output "C:\private-training\reviewed-labels.json"
+```
+
+The gate checks local note support, exact pitch, median and tail timing error,
+tempo warp, and structural similarity. Manual accept/reject decisions remain
+authoritative and are recorded in the output package. A globally plausible
+alignment is not enough: only locally accepted windows can reach gradients.
+7. Create a private training index from `training-index.example.json`. Record
    actual rights/provenance; `allowedForTraining` must be true.
-7. Build manifests:
+8. Build manifests:
 
 ```powershell
 python ml/training/dataset_builder.py `
@@ -41,21 +54,24 @@ python ml/training/dataset_builder.py `
   --out "C:\private-training\dataset-v001"
 ```
 
-8. Locate bundled FFmpeg and render the exact 5-second, mono 16 kHz audio:
+9. Locate bundled FFmpeg and render the exact 5-second, mono 16 kHz audio. When
+   the files will be uploaded to RunPod, write Linux volume paths into the
+   manifests at preparation time:
 
 ```powershell
 $trainingFfmpeg = node -e "process.stdout.write(require('./server/node_modules/ffmpeg-static'))"
 python ml/training/prepare_audio_clips.py `
   --manifest "C:\private-training\dataset-v001\train.jsonl" `
   --out "C:\private-training\dataset-v001" `
-  --ffmpeg $trainingFfmpeg
+  --ffmpeg $trainingFfmpeg `
+  --manifest-audio-root "/runpod-volume/training/phase-2-v001"
 ```
 
 Repeat the clip-preparation command for validation and test manifests.
 
-9. Freeze the test split before model tuning. A song belongs to only one split;
+10. Freeze the test split before model tuning. A song belongs to only one split;
    clips from the same song never leak across train/validation/test.
-10. Audit the prepared manifests without touching weights:
+11. Audit the prepared manifests without touching weights:
 
 ```powershell
 python -m ml.training.train_muscriptor_piano `
@@ -65,12 +81,12 @@ python -m ml.training.train_muscriptor_piano `
   --out "C:\models\muscriptor-tester\v002"
 ```
 
-11. Only on RunPod, after rights and review gates pass, add `--execute` and
+12. Only on RunPod, after rights and review gates pass, add `--execute` and
     `--rights-acknowledgement I_HAVE_TRAINING_RIGHTS`. The trainer refuses fewer
     than 20 training songs by default, updates only the final transformer block
     plus output head, validates after every epoch, and never overwrites a nonempty
     output directory. Do not overwrite `original/`.
-12. Evaluate every candidate against the frozen baseline:
+13. Evaluate every candidate against the frozen baseline:
 
 ```powershell
 python ml/training/evaluate_predictions.py `

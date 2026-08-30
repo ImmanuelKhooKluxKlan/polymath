@@ -22,7 +22,12 @@ process.env.RUNPOD_S3_SECRET_ACCESS_KEY = '';
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 
-const { app, normalizeReadyToPlaySong, selectMuscriptorExecution } = require('./server');
+const {
+  app,
+  muscriptorConstraints,
+  normalizeReadyToPlaySong,
+  selectMuscriptorExecution,
+} = require('./server');
 
 test('PDF normalization preserves written duration, key hold, release, and pedal provenance', () => {
   const result = normalizeReadyToPlaySong({
@@ -204,6 +209,56 @@ test('MuScriptor piano cleanup preserves non-overlapping rapid repeated notes', 
 
   assert.equal(result.notes.length, 2);
   assert.equal(result.transcriptionCleanup.removedRapidRetriggers, 0);
+});
+
+test('selected piano and guitar receive the complete score before revoicing', () => {
+  assert.deepEqual(muscriptorConstraints('piano', 'full'), []);
+  assert.deepEqual(muscriptorConstraints('piano', 'instrumental'), []);
+  assert.deepEqual(muscriptorConstraints('guitar', 'full'), []);
+  assert.deepEqual(muscriptorConstraints('guitar', 'instrumental'), []);
+  assert.deepEqual(muscriptorConstraints('electric-guitar', 'full'), []);
+  assert.deepEqual(muscriptorConstraints('violin', 'instrumental'), ['violin']);
+});
+
+test('selected acoustic guitar keeps MIDI timing while enforcing a playable six-string score', () => {
+  const payload = {
+    title: 'Guitar arrangement fixture',
+    notes: [
+      { midi: 28, time: 1, duration: 0.8, velocity: 0.7, instrument: 'acoustic_bass' },
+      { midi: 40, time: 1.01, duration: 0.9, velocity: 0.7, instrument: 'acoustic_guitar' },
+      { midi: 52, time: 1.012, duration: 0.7, velocity: 0.8, instrument: 'acoustic_guitar' },
+      { midi: 55, time: 1.014, duration: 0.7, velocity: 0.8, instrument: 'voice' },
+      { midi: 59, time: 1.016, duration: 0.7, velocity: 0.8, instrument: 'acoustic_piano' },
+      { midi: 64, time: 1.018, duration: 0.7, velocity: 0.8, instrument: 'acoustic_piano' },
+      { midi: 67, time: 1.02, duration: 0.7, velocity: 0.8, instrument: 'acoustic_piano' },
+      { midi: 76, time: 1.022, duration: 20, velocity: 0.8, instrument: 'flutes' },
+      { midi: 52, time: 1.04, duration: 0.2, velocity: 0.8, instrument: 'acoustic_guitar' },
+    ],
+  };
+  const result = postProcessMuscriptorResult(payload, {
+    instrument: 'guitar',
+    playbackMode: 'full',
+  });
+
+  assert.equal(result.instrumentGroups[0], 'acoustic_guitar');
+  assert.equal(result.performance.profile, 'selected-guitar-midi-phrasing-v1');
+  assert.ok(result.notes.length <= 6);
+  assert.ok(result.notes.every((note) => note.midi >= 40 && note.midi <= 88));
+  assert.ok(result.notes.every((note) => note.instrument === 'acoustic_guitar'));
+  assert.ok(result.notes.every((note) => note.duration <= 6));
+  assert.ok(result.notes.every((note) => note.time === 1));
+  assert.ok(result.instrumentArrangement.removedDuplicateNotes >= 1);
+  assert.ok(result.instrumentArrangement.removedUnplayableChordNotes >= 1);
+});
+
+test('instrumental guitar excludes voice before revoicing the selected instrument', () => {
+  const result = postProcessMuscriptorResult({
+    notes: [
+      { midi: 69, time: 0, duration: 0.5, velocity: 0.8, instrument: 'voice' },
+      { midi: 52, time: 0.5, duration: 0.5, velocity: 0.8, instrument: 'acoustic_guitar' },
+    ],
+  }, { instrument: 'guitar', playbackMode: 'instrumental' });
+  assert.deepEqual(result.notes.map((note) => note.midi), [52]);
 });
 
 test('admin policies, vouchers, password reset, and hashed sessions persist', async (context) => {

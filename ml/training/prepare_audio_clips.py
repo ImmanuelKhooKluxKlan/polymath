@@ -6,7 +6,7 @@ import argparse
 import json
 import shutil
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 
@@ -75,7 +75,13 @@ def write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
             handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
-def prepare_manifest(manifest: Path, output_directory: Path, ffmpeg: Path, overwrite: bool = False) -> dict[str, Any]:
+def prepare_manifest(
+    manifest: Path,
+    output_directory: Path,
+    ffmpeg: Path,
+    overwrite: bool = False,
+    manifest_audio_root: str | None = None,
+) -> dict[str, Any]:
     records = load_jsonl(manifest)
     split = manifest.stem
     prepared: list[dict[str, Any]] = []
@@ -84,7 +90,12 @@ def prepare_manifest(manifest: Path, output_directory: Path, ffmpeg: Path, overw
         destination = output_directory / "audio" / split / f"{clip_id}.wav"
         if overwrite or not destination.is_file() or destination.stat().st_size <= 44:
             render_clip(ffmpeg, record, destination)
-        prepared.append({**record, "audioClip": str(destination.resolve())})
+        manifest_audio_path = (
+            str(PurePosixPath(manifest_audio_root) / "audio" / split / destination.name)
+            if manifest_audio_root
+            else str(destination.resolve())
+        )
+        prepared.append({**record, "audioClip": manifest_audio_path})
         print(f"[{index}/{len(records)}] {clip_id}")
     prepared_manifest = output_directory / f"prepared-{split}.jsonl"
     write_jsonl(prepared_manifest, prepared)
@@ -104,10 +115,18 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ffmpeg", type=Path)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--manifest-audio-root",
+        help=(
+            "Write audioClip paths relative to this runtime root, while still rendering files "
+            "under --out. Example: /runpod-volume/training/phase-2-v001"
+        ),
+    )
     args = parser.parse_args()
     try:
         summary = prepare_manifest(
-            args.manifest.resolve(), args.out.resolve(), resolve_ffmpeg(args.ffmpeg), args.overwrite,
+            args.manifest.resolve(), args.out.resolve(), resolve_ffmpeg(args.ffmpeg),
+            args.overwrite, args.manifest_audio_root,
         )
     except ClipPreparationError as exc:
         raise SystemExit(str(exc)) from exc

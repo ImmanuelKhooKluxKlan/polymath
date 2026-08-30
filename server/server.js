@@ -1717,7 +1717,14 @@ function runChild(command, args, { timeoutMs, timeoutMessage, onLine } = {}) {
 
 function muscriptorConstraints(instrument, playbackMode = 'instrumental') {
   if (instrument === 'band') return [];
-  if (instrument === 'piano' && ['full', 'instrumental'].includes(playbackMode)) return [];
+  // Score-arranged instruments deliberately transcribe the complete song
+  // before revoicing it. Full mode keeps the singer melody; instrumental mode
+  // removes voice during post-processing. Constraining the model to guitar or
+  // piano here would discard musical parts before the arranger can hear them.
+  if (
+    ['piano', 'guitar', 'electric-guitar'].includes(instrument)
+    && ['full', 'instrumental'].includes(playbackMode)
+  ) return [];
   return MUSCRIPTOR_INSTRUMENTS[instrument] || [];
 }
 
@@ -1967,6 +1974,12 @@ async function processMediaTranscriptionJob(jobId) {
     });
     result.playbackMode = job.playbackMode || 'instrumental';
     result.vocalMelodyIncluded = job.playbackMode === 'full';
+    result.selectedInstrument = job.instrument;
+    result.arrangementProfile = job.instrument === 'piano'
+      ? 'piano-reduction-with-midi-phrasing-v3'
+      : ['guitar', 'electric-guitar'].includes(job.instrument)
+        ? 'selected-guitar-midi-phrasing-v1'
+        : 'detected-instrument-performance-v1';
     fs.writeFileSync(outputPath, JSON.stringify(result, null, 2), 'utf8');
     if (job.instrument === 'piano') {
       await updateMediaTranscriptionJob(jobId, {
@@ -5015,6 +5028,7 @@ module.exports = {
   writeDb,
   startServer,
   selectMuscriptorExecution,
+  muscriptorConstraints,
   normalizeReadyToPlaySong,
   subscriptionRules: {
     products: PRODUCTS,
