@@ -20,3 +20,4 @@ yarn-error.log*
 crash.log
 server/server-live.stdout.log
 server/server-live.stderr.log
+alignment-output/

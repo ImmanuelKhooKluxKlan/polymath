@@ -45,6 +45,12 @@ function render(markdown) {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    if (line.trim() === '[[PAGEBREAK]]') {
+      flushParagraph();
+      flushList();
+      output.push('<div class="page-break" aria-hidden="true"></div>');
+      continue;
+    }
     if (line.startsWith('```')) {
       flushParagraph();
       flushList();
@@ -79,6 +85,13 @@ function render(markdown) {
       flushList();
       const level = heading[1].length;
       output.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      continue;
+    }
+    const quote = line.match(/^>\s*(.*)$/);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      output.push(`<aside>${inline(quote[1])}</aside>`);
       continue;
     }
     const unordered = line.match(/^\s*-\s+(.+)$/);
@@ -122,6 +135,7 @@ body { max-width: 900px; margin: 0 auto; line-height: 1.65; letter-spacing: .012
 h1 { color: #4b3dbb; font-size: 2.25rem; line-height: 1.15; margin: 0 0 1.2rem; padding: 1rem 0 1.2rem; border-bottom: 5px solid #d8d4ff; }
 h2 { color: #5142c3; font-size: 1.55rem; line-height: 1.25; margin: 2.2rem 0 .75rem; break-after: avoid; }
 h3 { color: #674bc7; font-size: 1.18rem; margin: 1.5rem 0 .55rem; break-after: avoid; }
+h4 { color: #7a356b; font-size: 1.02rem; margin: 1.2rem 0 .45rem; break-after: avoid; }
 p, li { max-width: 75ch; }
 p { margin: .6rem 0 1rem; }
 li { margin: .35rem 0; padding-left: .25rem; }
@@ -130,6 +144,8 @@ strong { color: #352990; }
 code { font-family: Consolas, monospace; color: #9b245f; background: #f4f1ff; border-radius: 4px; padding: .1rem .3rem; overflow-wrap: anywhere; }
 pre { background: #171a31; color: #f3f1ff; border-left: 6px solid #7b68ee; padding: 1rem; border-radius: 8px; overflow-wrap: anywhere; white-space: pre-wrap; break-inside: avoid; }
 pre code { color: inherit; background: transparent; padding: 0; }
+aside { max-width: 75ch; margin: .8rem 0 1.1rem; padding: .75rem 1rem; border-left: 6px solid #ef6aa8; border-radius: 6px; background: #fff0f7; color: #422745; font-weight: 600; }
+.page-break { break-before: page; page-break-before: always; height: 0; }
 table { width: 100%; border-collapse: collapse; margin: .8rem 0 1.4rem; font-size: .9rem; break-inside: avoid; }
 th { color: #fff; background: #5545be; text-align: left; }
 th, td { border: 1px solid #d8d4ed; padding: .55rem .6rem; vertical-align: top; }

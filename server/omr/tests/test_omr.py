@@ -15,7 +15,12 @@ from polymath_omr.music import staff_step_to_midi  # noqa: E402
 from polymath_omr.musicxml import parse_musicxml  # noqa: E402
 from polymath_omr.performance import shape_piano_performance  # noqa: E402
 from polymath_omr.pipeline import transcribe_pdf  # noqa: E402
-from polymath_omr.vision import _merge_visual_ties, _playback_measure_order  # noqa: E402
+from polymath_omr.vision import (  # noqa: E402
+    NoteMark,
+    _merge_visual_ties,
+    _playback_measure_order,
+    _semantic_measure_rhythm,
+)
 
 
 MUSICXML = b'''<?xml version="1.0" encoding="UTF-8"?>
@@ -116,6 +121,35 @@ class MusicHelpersTest(unittest.TestCase):
         tied = next(note for note in merged if note["note"] == "C4")
         self.assertEqual(tied["duration"], 2.5)
         self.assertEqual(tied["tiedSegments"], 2)
+
+    def test_measure_solver_keeps_held_and_moving_voices_parallel(self):
+        def mark(x, midi, duration, source):
+            return NoteMark(
+                page=0, staff_index=0, system=0, x=x, y=50,
+                midi=midi, duration_beats=duration, confidence=0.99,
+                filled=duration < 2, stem=True, beam_count=0,
+                dotted=False, hand="right", duration_source=source,
+            )
+
+        notes = [
+            mark(10, 67, 2.0, "explicit-note-value"),
+            mark(10, 74, 0.25, "vector-beam"),
+            mark(20, 71, 0.75, "augmentation-dot"),
+            mark(30, 69, 0.25, "vector-beam"),
+            mark(40, 71, 0.75, "augmentation-dot"),
+            mark(50, 67, 2.0, "explicit-note-value"),
+            mark(50, 59, 0.5, "vector-beam"),
+            mark(60, 55, 0.25, "vector-beam"),
+            mark(70, 59, 0.5, "vector-beam"),
+            mark(80, 59, 0.75, "augmentation-dot"),
+        ]
+        marks = [(note, [0, 100], 0, 5.0) for note in notes]
+        onsets, diagnostics = _semantic_measure_rhythm(marks, [], 4.0)
+
+        self.assertEqual(diagnostics["polyphonicMeasures"], 1)
+        self.assertEqual(diagnostics["parallelVoiceAnchors"], 2)
+        expected = [0, 0, 0.25, 1.0, 1.25, 2.0, 2.0, 2.5, 2.75, 3.25]
+        self.assertEqual([onsets[id(note)] for note in notes], expected)
 
 
 class PdfPipelineTest(unittest.TestCase):

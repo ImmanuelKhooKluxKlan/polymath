@@ -138,8 +138,6 @@ def _pdfium_page_evidence(page: pdfium.PdfPage) -> tuple[str, list[dict], list[d
             )
             for index in range(segment_count)
         ]
-        if pdfium_raw.FPDF_SEGMENT_BEZIERTO not in segment_types:
-            continue
         left, bottom, right, top = page_object.get_bounds()
         vector_curves.append({
             "bbox": (
@@ -147,6 +145,7 @@ def _pdfium_page_evidence(page: pdfium.PdfPage) -> tuple[str, list[dict], list[d
                 float(right), float(page_height - bottom),
             ),
             "bezierSegments": segment_types.count(pdfium_raw.FPDF_SEGMENT_BEZIERTO),
+            "segmentCount": segment_count,
         })
     return text, symbols, text_characters, vector_curves
 
@@ -600,6 +599,113 @@ def _scaled_curves(page: PageAnalysis) -> list[dict]:
     return curves
 
 
+def _vector_beam_count(
+    page: PageAnalysis,
+    x: float,
+    y: float,
+    stem_x: int | None,
+    spacing: float,
+) -> int:
+    """Count exact straight beam paths attached to one engraved stem.
+
+    Music-font PDFs commonly encode noteheads as SMuFL text but stems and beams
+    as separate vector paths.  Keeping only Bezier paths preserved ties while
+    silently throwing these beams away, turning printed eighth/sixteenth notes
+    into quarter-note guesses.  A beam is a compact four-segment horizontal or
+    gently slanted quadrilateral crossing the detected stem. Staff/ledger lines
+    are two-segment paths and are therefore excluded structurally.
+    """
+    # A SMuFL notehead's text origin is commonly the left edge of an up-stem
+    # head, while the attached stem is about 1.2 staff spaces to its right.
+    # Seconds can displace one head to the other side of a shared stem. Raster
+    # stem morphology therefore misses legitimate stems by a few pixels. Test
+    # the observed stem plus both standard semantic anchor positions.
+    semantic_stems = {int(round(x)), int(round(x + spacing * 1.20))}
+    exact_stems: list[tuple[int, float, float]] = []
+    for path in _scaled_curves(page):
+        if int(path.get("segmentCount") or 0) != 2 or int(path.get("bezierSegments") or 0):
+            continue
+        left, top, right, bottom = path["bbox"]
+        width, height = right - left, bottom - top
+        center_x = int(round((left + right) / 2))
+        if not spacing * 0.04 <= width <= spacing * 0.34:
+            continue
+        if not spacing * 1.45 <= height <= spacing * 10.0:
+            continue
+        if min(abs(center_x - anchor) for anchor in semantic_stems) > spacing * 0.18:
+            continue
+        if not top - spacing * 0.85 <= y <= bottom + spacing * 0.85:
+            continue
+        exact_stems.append((center_x, top, bottom))
+    if exact_stems:
+        # Once the PDF gives us the actual vector stem, do not also test the
+        # displaced notehead origin. A partial second beam may pass above that
+        # origin while ending before the real stem, which changes a dotted
+        # eighth into a dotted sixteenth.
+        candidate_stems = {stem[0] for stem in exact_stems}
+    else:
+        candidate_stems = set(semantic_stems)
+        if stem_x is not None:
+            candidate_stems.add(int(stem_x))
+    def staff_owner(vertical: float) -> int | None:
+        if not page.staffs:
+            return None
+        owner = min(page.staffs, key=lambda staff: (
+            0.0 if staff.top <= vertical <= staff.bottom
+            else min(abs(vertical - staff.top), abs(vertical - staff.bottom)),
+            abs(vertical - (staff.top + staff.bottom) / 2),
+        ))
+        return owner.index
+
+    head_staff = staff_owner(y)
+    centers = []
+    for path in _scaled_curves(page):
+        if int(path.get("segmentCount") or 0) != 4 or int(path.get("bezierSegments") or 0):
+            continue
+        left, top, right, bottom = path["bbox"]
+        width, height = right - left, bottom - top
+        # A single primary beam may join four or more eighth notes across most
+        # of a measure. Exact vector-stem intersection, rather than a short
+        # arbitrary width cap, is the reliable ownership test.
+        if not spacing * 0.85 <= width <= spacing * 20.0:
+            continue
+        # A strongly slanted beam can have a one-space axis-aligned bounding
+        # box even though its real perpendicular thickness is much smaller.
+        if not spacing * 0.12 <= height <= spacing * 2.2:
+            continue
+        if not any(
+            left - spacing * 0.05 <= candidate <= right + spacing * 0.05
+            for candidate in candidate_stems
+        ):
+            continue
+        center_y = (top + bottom) / 2
+        if head_staff is not None and staff_owner(center_y) != head_staff:
+            continue
+        distance = abs(center_y - y)
+        if not spacing * 0.72 <= distance <= spacing * 10.0:
+            continue
+        if distance > spacing * 4.8 and not any(
+            left - spacing * 0.08 <= stem_x_value <= right + spacing * 0.08
+            and stem_top - spacing * 0.35 <= center_y <= stem_bottom + spacing * 0.35
+            for stem_x_value, stem_top, stem_bottom in exact_stems
+        ):
+            continue
+        centers.append(center_y)
+    side_counts = []
+    for side in (
+        [center for center in centers if center < y],
+        [center for center in centers if center > y],
+    ):
+        distinct = []
+        for center in sorted(side):
+            if not distinct or center - distinct[-1] > spacing * 0.34:
+                distinct.append(center)
+        side_counts.append(len(distinct))
+    # Opposite-stem voices can place an unrelated beam above and below the
+    # same head x. A single note belongs to one side, never both.
+    return min(4, max(side_counts, default=0))
+
+
 def _vector_tie_pairs(
     page_analyses: list[PageAnalysis],
     all_marks: list[tuple[NoteMark, list[float], int, float]],
@@ -614,8 +720,12 @@ def _vector_tie_pairs(
     marks_by_page_system: dict[tuple[int, int], list[NoteMark]] = {}
     for mark, *_ in all_marks:
         marks_by_page_system.setdefault((mark.page, mark.system), []).append(mark)
+    marks_by_system: dict[int, list[NoteMark]] = {}
+    for mark, *_ in all_marks:
+        marks_by_system.setdefault(mark.system, []).append(mark)
     pairs = []
     considered = 0
+    cross_system_pairs = 0
     for page in page_analyses:
         for system, layout in system_layouts.items():
             if layout["page"] is not page:
@@ -625,6 +735,8 @@ def _vector_tie_pairs(
                 continue
             spacing = float(layout["spacing"])
             for curve in _scaled_curves(page):
+                if int(curve.get("bezierSegments") or 0) <= 0:
+                    continue
                 left, top, right, bottom = curve["bbox"]
                 width, height = right - left, bottom - top
                 if not spacing * 0.65 <= width <= spacing * 13:
@@ -658,9 +770,73 @@ def _vector_tie_pairs(
                 if options:
                     _, first, second = min(options, key=lambda item: item[0])
                     pairs.append((id(first), id(second)))
+
+    # Engravers split a tie at a line/page break: one Bezier half runs from the
+    # final note to the right margin and a matching half runs from the next
+    # system's left margin to the continuation note. Neither half has two local
+    # noteheads, so the complete-curve loop above cannot associate it. Require
+    # both printed halves and equal MIDI before joining the attacks.
+    ordered_systems = sorted(system_layouts)
+    for previous_system, next_system in zip(ordered_systems, ordered_systems[1:]):
+        previous_layout = system_layouts[previous_system]
+        next_layout = system_layouts[next_system]
+        previous_spacing = float(previous_layout["spacing"])
+        next_spacing = float(next_layout["spacing"])
+        previous_boundary = float(previous_layout["boundaries"][-1])
+        next_boundary = float(next_layout["boundaries"][0])
+        previous_curves = [
+            curve for curve in _scaled_curves(previous_layout["page"])
+            if int(curve.get("bezierSegments") or 0) > 0
+        ]
+        next_curves = [
+            curve for curve in _scaled_curves(next_layout["page"])
+            if int(curve.get("bezierSegments") or 0) > 0
+        ]
+
+        def has_end_half(mark: NoteMark) -> bool:
+            for curve in previous_curves:
+                left, top, right, bottom = curve["bbox"]
+                if right < previous_boundary - previous_spacing * 2.6:
+                    continue
+                if not previous_spacing * 0.55 <= right - left <= previous_spacing * 13:
+                    continue
+                if abs(mark.x - left) > previous_spacing * 2.5:
+                    continue
+                if top - previous_spacing * 2.5 <= mark.y <= bottom + previous_spacing * 2.5:
+                    return True
+            return False
+
+        def has_start_half(mark: NoteMark) -> bool:
+            for curve in next_curves:
+                left, top, right, bottom = curve["bbox"]
+                if left > next_boundary + next_spacing * 2.6:
+                    continue
+                if not next_spacing * 0.55 <= right - left <= next_spacing * 13:
+                    continue
+                if abs(mark.x - right) > next_spacing * 2.5:
+                    continue
+                if top - next_spacing * 2.5 <= mark.y <= bottom + next_spacing * 2.5:
+                    return True
+            return False
+
+        ending = [mark for mark in marks_by_system.get(previous_system, []) if has_end_half(mark)]
+        starting = [mark for mark in marks_by_system.get(next_system, []) if has_start_half(mark)]
+        used_starts = set()
+        for first in sorted(ending, key=lambda mark: (mark.midi, mark.y)):
+            options = [
+                second for second in starting
+                if id(second) not in used_starts and second.midi == first.midi
+            ]
+            if not options:
+                continue
+            second = min(options, key=lambda mark: abs(mark.y - first.y))
+            pairs.append((id(first), id(second)))
+            used_starts.add(id(second))
+            cross_system_pairs += 1
     return sorted(set(pairs)), {
         "vectorCurvesConsidered": considered,
         "tieConnections": len(set(pairs)),
+        "crossSystemTieConnections": cross_system_pairs,
     }
 
 
@@ -792,9 +968,16 @@ def detect_smufl_notes(
             continue
         base_duration = NOTEHEAD_DURATIONS[head["codepoint"]]
         stem, stem_x, _ = _vertical_strength(page.binary, head["x"], head["y"], spacing)
+        vector_beams = _vector_beam_count(
+            page, head["x"], head["y"], stem_x if stem else None, spacing,
+        )
+        vector_path_beams_available = any(
+            int(path.get("segmentCount") or 0) == 4 and not int(path.get("bezierSegments") or 0)
+            for path in page.vector_curves
+        )
         raster_beams = _beam_count(
             page.binary, head["x"], head["y"], stem_x, spacing, staff.lines,
-        ) if stem else 0
+        ) if stem and not vector_path_beams_available else 0
         nearby_flags = [
             FLAG_BEAMS[flag["codepoint"]] for flag in flags
             # Flag glyphs are anchored to the chord's rhythmic x position.
@@ -806,7 +989,7 @@ def detect_smufl_notes(
         # A semantic flag is authoritative. Raster geometry remains necessary
         # for beamed groups, but must never override an embedded one-beam flag
         # merely because nearby staff ink looked like a second beam.
-        beam_count = max(nearby_flags) if nearby_flags else raster_beams
+        beam_count = max(nearby_flags) if nearby_flags else (vector_beams or raster_beams)
         duration = base_duration
         if head["codepoint"] == 0xE0A4 and beam_count:
             duration = 1.0 / (2 ** beam_count)
@@ -815,8 +998,10 @@ def detect_smufl_notes(
             and abs(dot["y"] - head["y"]) <= 0.7 * spacing
             for dot in dots
         )
-        if not dotted:
-            dotted = _is_dotted(page.binary, head["x"], head["y"], spacing)
+        # On a semantic/vector page augmentation dots are explicit SMuFL
+        # glyphs. Raster fallback here confused ledger-line fragments and beam
+        # ends for dots, especially in the low bass. Scanned pages still use
+        # `_is_dotted` through `detect_notes`.
         if dotted:
             duration *= 1.5
         nearby_articulation = min((
@@ -840,6 +1025,7 @@ def detect_smufl_notes(
                 "semantic-flag" if nearby_flags else
                 "explicit-note-value" if head["codepoint"] != 0xE0A4 else
                 "augmentation-dot" if dotted else
+                "vector-beam" if vector_beams else
                 "beam-geometry" if raster_beams else
                 "black-note"
             ),
@@ -1066,6 +1252,8 @@ def _semantic_measure_rhythm(
     exact_measures = 0
     rest_anchors = 0
     corrected_durations = 0
+    polyphonic_measures = 0
+    parallel_voice_anchors = 0
 
     for bucket in grouped.values():
         spacing = float(bucket["spacing"])
@@ -1097,7 +1285,9 @@ def _semantic_measure_rhythm(
             center = float(np.mean([event["x"] for event in column]))
             authoritative = [
                 note.duration_beats for note in notes
-                if note.duration_source in {"semantic-flag", "explicit-note-value", "augmentation-dot"}
+                if note.duration_source in {
+                    "semantic-flag", "explicit-note-value", "augmentation-dot", "vector-beam",
+                }
             ]
             rest_values = [rest.duration_beats for rest in rests]
             visual_values = [note.duration_beats for note in notes]
@@ -1158,47 +1348,14 @@ def _semantic_measure_rhythm(
         left, right = float(bucket["left"]), float(bucket["right"])
         usable_width = max(spacing * 4, right - left - spacing * 2.0)
         pixels_per_beat = usable_width / max(0.25, measure_beats)
-        candidate_rows = []
-        strict_candidate_rows = []
-        for index, descriptor in enumerate(descriptors):
-            preferred_ticks = max(1, int(round(descriptor["preferred"] * ticks_per_beat)))
-            if descriptor["evidence"] == "rest":
-                candidates = [preferred_ticks]
-            else:
-                candidates = [tick for tick in legal_ticks if tick <= measure_ticks]
-                if preferred_ticks not in candidates:
-                    candidates.append(preferred_ticks)
-            next_x = descriptors[index + 1]["x"] if index + 1 < len(descriptors) else right - spacing
-            geometry_beats = max(0.04, (next_x - descriptor["x"]) / max(1.0, pixels_per_beat))
-            row = []
-            for ticks in sorted(set(candidates)):
-                beats = ticks / ticks_per_beat
-                ratio_cost = abs(math.log(max(beats, 1 / 48) / max(descriptor["preferred"], 1 / 48)))
-                evidence_weight = {
-                    "semantic": 1.8,
-                    "black": 4.0,
-                    "beam": 1.7,
-                    "beam-propagated": 2.0,
-                }.get(descriptor["evidence"], 0.42)
-                geometry_cost = abs(beats - geometry_beats) * 0.22
-                # Triplet values are legal but should be selected only when
-                # they materially improve a complete measure.
-                triplet_penalty = 0.10 if ticks % 3 != 0 else 0.0
-                row.append((ticks, ratio_cost * evidence_weight + geometry_cost + triplet_penalty))
-            candidate_rows.append(row)
-            strict_candidate_rows.append(
-                [choice for choice in row if choice[0] == preferred_ticks]
-                if descriptor["evidence"] == "black" else row
-            )
-
-        def solve(candidate_matrix: list[list[tuple[int, float]]]) -> dict[int, tuple[float, list[int]]]:
+        def solve(candidate_matrix: list[list[tuple[int, float]]], target_ticks: int) -> dict[int, tuple[float, list[int]]]:
             states: dict[int, tuple[float, list[int]]] = {0: (0.0, [])}
             for candidate_row in candidate_matrix:
                 next_states: dict[int, tuple[float, list[int]]] = {}
                 for total, (cost, path) in states.items():
                     for ticks, choice_cost in candidate_row:
                         new_total = total + ticks
-                        if new_total > measure_ticks:
+                        if new_total > target_ticks:
                             continue
                         candidate = (cost + choice_cost, [*path, ticks])
                         if new_total not in next_states or candidate[0] < next_states[new_total][0]:
@@ -1208,9 +1365,135 @@ def _semantic_measure_rhythm(
                     break
             return states
 
-        strict_states = solve(strict_candidate_rows)
-        states = strict_states if measure_ticks in strict_states else solve(candidate_rows)
-        if not states:
+        def solve_sequence(
+            sequence: list[dict], target_ticks: int, sequence_right: float,
+        ) -> tuple[list[int] | None, bool]:
+            candidate_rows = []
+            strict_candidate_rows = []
+            for index, descriptor in enumerate(sequence):
+                preferred_ticks = max(1, int(round(descriptor["preferred"] * ticks_per_beat)))
+                if descriptor["evidence"] == "rest":
+                    candidates = [preferred_ticks]
+                else:
+                    candidates = [tick for tick in legal_ticks if tick <= target_ticks]
+                    if preferred_ticks not in candidates:
+                        candidates.append(preferred_ticks)
+                next_x = sequence[index + 1]["x"] if index + 1 < len(sequence) else sequence_right
+                geometry_beats = max(0.04, (next_x - descriptor["x"]) / max(1.0, pixels_per_beat))
+                row = []
+                for ticks in sorted(set(candidates)):
+                    beats = ticks / ticks_per_beat
+                    ratio_cost = abs(math.log(max(beats, 1 / 48) / max(descriptor["preferred"], 1 / 48)))
+                    evidence_weight = {
+                        "semantic": 1.8,
+                        "black": 4.0,
+                        "beam": 1.7,
+                        "beam-propagated": 2.0,
+                    }.get(descriptor["evidence"], 0.42)
+                    geometry_cost = abs(beats - geometry_beats) * 0.22
+                    # Triplet values are legal but should be selected only
+                    # when they materially improve a complete span.
+                    triplet_penalty = 0.10 if ticks % 3 != 0 else 0.0
+                    row.append((ticks, ratio_cost * evidence_weight + geometry_cost + triplet_penalty))
+                candidate_rows.append(row)
+                strict_candidate_rows.append(
+                    [choice for choice in row if choice[0] == preferred_ticks]
+                    if descriptor["evidence"] == "black" else row
+                )
+
+            strict_states = solve(strict_candidate_rows, target_ticks)
+            states = strict_states if target_ticks in strict_states else solve(candidate_rows, target_ticks)
+            if not states:
+                return None, False
+            if target_ticks in states:
+                return states[target_ticks][1], True
+            best_total = min(states, key=lambda total: (
+                abs(target_ticks - total) * 2.5 + states[total][0], states[total][0],
+            ))
+            return states[best_total][1], False
+
+        def apply_path(sequence: list[dict], path: list[int], start_tick: int = 0) -> None:
+            nonlocal corrected_durations
+            cursor = start_tick
+            for descriptor, advance_ticks in zip(sequence, path):
+                onset = cursor / ticks_per_beat
+                selected_duration = advance_ticks / ticks_per_beat
+                for note in descriptor["notes"]:
+                    onset_by_mark[id(note)] = round(onset, 6)
+                    if note.duration_source in {"black-note", "beam-geometry"}:
+                        if abs(note.duration_beats - selected_duration) > 1e-6:
+                            corrected_durations += 1
+                        note.duration_beats = selected_duration
+                        note.duration_source = "measure-rhythm-solver"
+                cursor += advance_ticks
+
+        # A held voice and a moving voice can begin in the same printed
+        # column. Treating that column as one monophonic sequence shifts every
+        # later onset. Two mixed long-note anchors give us a reliable local
+        # coordinate system: the long notes define the voice boundaries and
+        # the shorter notes/rests are solved independently inside each span.
+        long_anchors: list[tuple[int, float]] = []
+        for index, descriptor in enumerate(descriptors):
+            explicit_long = [
+                note.duration_beats for note in descriptor["notes"]
+                if note.duration_source == "explicit-note-value" and note.duration_beats >= 1.5
+            ]
+            if not explicit_long:
+                continue
+            longest = max(explicit_long)
+            has_parallel_event = bool(descriptor["rests"]) or any(
+                note.duration_beats <= longest * 0.5
+                for note in descriptor["notes"]
+                if not (
+                    note.duration_source == "explicit-note-value"
+                    and note.duration_beats >= 1.5
+                )
+            )
+            if has_parallel_event:
+                long_anchors.append((index, float(np.median(explicit_long))))
+
+        polyphonic_path_applied = False
+        if len(long_anchors) >= 2 and long_anchors[0][0] == 0:
+            anchor_tick = 0
+            complete = True
+            solved_regions: list[tuple[list[dict], list[int], int]] = []
+            for anchor_number, (start_index, long_beats) in enumerate(long_anchors):
+                next_index = (
+                    long_anchors[anchor_number + 1][0]
+                    if anchor_number + 1 < len(long_anchors) else len(descriptors)
+                )
+                target_ticks = min(
+                    measure_ticks - anchor_tick,
+                    max(1, int(round(long_beats * ticks_per_beat))),
+                )
+                if target_ticks <= 0 or next_index <= start_index:
+                    complete = False
+                    break
+                sequence = descriptors[start_index:next_index]
+                sequence_right = (
+                    descriptors[next_index]["x"]
+                    if next_index < len(descriptors) else right - spacing
+                )
+                path, exact = solve_sequence(sequence, target_ticks, sequence_right)
+                if path is None or not exact:
+                    complete = False
+                    break
+                solved_regions.append((sequence, path, anchor_tick))
+                anchor_tick += target_ticks
+            if complete and anchor_tick == measure_ticks:
+                for sequence, path, start_tick in solved_regions:
+                    apply_path(sequence, path, start_tick)
+                polyphonic_measures += 1
+                parallel_voice_anchors += len(long_anchors)
+                solved_measures += 1
+                exact_measures += 1
+                polyphonic_path_applied = True
+
+        if polyphonic_path_applied:
+            continue
+
+        path, exact = solve_sequence(descriptors, measure_ticks, right - spacing)
+        if path is None:
             # Defensive fallback: semantic pages should virtually always have
             # a legal path, but geometry-only behaviour is safer than failure.
             for descriptor in descriptors:
@@ -1218,34 +1501,18 @@ def _semantic_measure_rhythm(
                     raw = (descriptor["x"] - left) / max(1.0, right - left) * measure_beats
                     onset_by_mark[id(note)] = round(max(0.0, min(measure_beats, raw)), 6)
             continue
-        if measure_ticks in states:
-            _, path = states[measure_ticks]
+        if exact:
             exact_measures += 1
-        else:
-            best_total = min(states, key=lambda total: (
-                abs(measure_ticks - total) * 2.5 + states[total][0], states[total][0],
-            ))
-            _, path = states[best_total]
         solved_measures += 1
-
-        cursor = 0
-        for descriptor, advance_ticks in zip(descriptors, path):
-            onset = cursor / ticks_per_beat
-            selected_duration = advance_ticks / ticks_per_beat
-            for note in descriptor["notes"]:
-                onset_by_mark[id(note)] = round(onset, 6)
-                if note.duration_source in {"black-note", "beam-geometry"}:
-                    if abs(note.duration_beats - selected_duration) > 1e-6:
-                        corrected_durations += 1
-                    note.duration_beats = selected_duration
-                    note.duration_source = "measure-rhythm-solver"
-            cursor += advance_ticks
+        apply_path(descriptors, path)
 
     return onset_by_mark, {
         "measuresSolved": solved_measures,
         "exactMeasureBalances": exact_measures,
         "restAnchors": rest_anchors,
         "correctedAmbiguousDurations": corrected_durations,
+        "polyphonicMeasures": polyphonic_measures,
+        "parallelVoiceAnchors": parallel_voice_anchors,
         "ticksPerQuarter": ticks_per_beat,
     }
 
