@@ -207,7 +207,7 @@
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
   color: var(--text);
   background:
@@ -758,6 +758,15 @@ button { -webkit-tap-highlight-color: transparent; }
   font-weight: 950;
   font-size: 1.05rem;
 }
+.brand-copy {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  text-align: left;
+  line-height: 1.05;
+}
+.brand-copy strong,
+.brand-copy small { display: block; }
 .brand-mark {
   display: grid;
   width: 34px;
@@ -1183,7 +1192,7 @@ button { -webkit-tap-highlight-color: transparent; }
   top: 72px;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 7px;
   padding: 7px;
   border: 1px solid var(--line);
@@ -1519,6 +1528,7 @@ button { -webkit-tap-highlight-color: transparent; }
   min-width: 82px;
   color: var(--muted);
 }
+.key-notes-short { display: none; }
 .key-notes-toggle.active {
   color: var(--gold);
   border-color: rgba(255,231,138,0.42);
@@ -1704,8 +1714,15 @@ button { -webkit-tap-highlight-color: transparent; }
   font-size: 0.72rem;
   font-weight: 750;
 }
-.fretboard.wide { min-width: 1120px; }
-.fretboard.wide .guitar-string { grid-template-columns: 74px repeat(13, minmax(68px, 1fr)); }
+.fretboard.wide {
+  --guitar-label-column: clamp(42px, 6vw, 74px);
+  width: 100%;
+  min-width: 0;
+}
+.fretboard.wide .guitar-string {
+  grid-template-columns: var(--guitar-label-column) repeat(13, minmax(0, 1fr));
+}
+.fretboard.wide .guitar-string::after { left: var(--guitar-label-column); }
 .lesson-sequence.vertical { display: grid; max-height: 410px; overflow-y: auto; }
 .lesson-sequence.vertical > button {
   display: grid;
@@ -1793,9 +1810,9 @@ button:disabled {
 }
 
 .upload-active-mode {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 12px;
   min-width: 0;
   padding: 11px 12px;
@@ -1823,9 +1840,11 @@ button:disabled {
 }
 
 .upload-active-mode .ghost {
-  flex: 0 0 auto;
+  width: 100%;
   min-height: 38px;
   padding: 8px 11px;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .upload-mode-grid > button,
@@ -2862,12 +2881,13 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
   .guitar-target-bridge span { width: 24px; height: 24px; }
   .interactive-fretboard-card { overflow: hidden; }
   .interactive-fretboard-card .fretboard.wide {
+    --guitar-label-column: 30px;
     width: 100%;
     min-width: 0;
     padding: 8px 4px;
   }
   .fretboard.wide .guitar-string {
-    grid-template-columns: 30px repeat(13, minmax(0, 1fr));
+    grid-template-columns: var(--guitar-label-column) repeat(13, minmax(0, 1fr));
   }
   .fretboard.wide .guitar-string button {
     min-width: 0;
@@ -4667,6 +4687,30 @@ details[open] > summary {
 .mobile-flow-guide,
 .mobile-player-anchor { display: none; }
 
+/* Tablet and half-screen navigation must remain one clean row. Account actions
+   are still available from More, so they do not compete with primary routes. */
+@media (min-width: 721px) and (max-width: 1100px) {
+  .top-shell {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 10px 18px;
+  }
+  .app-nav {
+    flex-wrap: nowrap;
+    gap: clamp(12px, 2vw, 22px);
+  }
+  .brand-button { margin-right: 0; }
+  .nav-links {
+    justify-content: flex-end;
+    overflow: visible;
+  }
+  .nav-links > button,
+  .nav-more > summary {
+    padding-inline: clamp(8px, 1.2vw, 12px);
+    font-size: clamp(0.75rem, 1.35vw, 0.84rem);
+  }
+  .global-actions { display: none; }
+}
+
 @media (max-width: 1100px) {
   .studio-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
 
@@ -4756,7 +4800,7 @@ details[open] > summary {
 .piano-hand-options button {
   min-width: 0;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   word-break: normal;
 }
 .app-root button > span,
@@ -4769,7 +4813,7 @@ details[open] > summary {
   min-width: 0;
   max-width: 100%;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .nav-links button,
 .nav-more summary { overflow-wrap: normal; white-space: nowrap; }
@@ -4805,6 +4849,13 @@ details[open] > summary {
   .nav-more > summary { padding-inline: 6px; font-size: 0.69rem; }
   .mobile-flow-guide strong { font-size: 0.82rem; }
   .mobile-flow-guide small { font-size: 0.68rem; line-height: 1.3; }
+  .dock-progress {
+    grid-template-columns: 34px minmax(0, 1fr) 34px;
+    gap: 5px;
+  }
+  .timeline-time { min-width: 0; }
+  .key-notes-full { display: none; }
+  .key-notes-short { display: inline; }
 }
 
 /* Piano preparation keeps mobile audio initialization explicit and measurable. */

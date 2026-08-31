@@ -89,7 +89,8 @@ export default function TransportDock({
           aria-pressed={showKeyNotes}
           onClick={() => onShowKeyNotesChange?.(!showKeyNotes)}
         >
-          Key notes
+          <span className="key-notes-full">Key notes</span>
+          <span className="key-notes-short" aria-hidden="true">Notes</span>
         </button>
       </div>
 
