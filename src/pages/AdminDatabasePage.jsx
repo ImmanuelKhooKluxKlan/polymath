@@ -27,7 +27,7 @@ const DEVICE_PRESETS = [
 
 const PREVIEW_PAGES = [
   ['studio', 'Piano Studio'], ['guitar', 'Guitar Studio'], ['ensemble', 'Instrument Studio'],
-  ['band', 'Band'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
+  ['band', 'Band'], ['find-teacher', 'Find Teacher'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
   ['payment', 'Payments'], ['account', 'Account'],
 ];
 

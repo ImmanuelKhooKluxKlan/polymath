@@ -40,6 +40,7 @@ const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
 const GuitarPage = lazy(() => import('./pages/GuitarPage.jsx'));
 const EnsemblePage = lazy(() => import('./pages/EnsemblePage.jsx'));
 const MarketplacePage = lazy(() => import('./pages/MarketplacePage.jsx'));
+const TeacherMarketplacePage = lazy(() => import('./pages/TeacherMarketplacePage.jsx'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage.jsx'));
 const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
 const BandPage = lazy(() => import('./pages/BandPage.jsx'));
@@ -829,9 +830,10 @@ export default function App() {
       return <BandPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
     if (route.page === 'published-songs') return <MarketplacePage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} onNavigate={navigate} />;
     if (route.page === 'your-songs') return <YourSongsPage user={user} onNavigate={navigate} />;
     if (route.page === 'admin-database') return <AdminDatabasePage user={user} onNavigate={navigate} />;
-    if (route.page === 'messages') return <MessagesPage user={user} initialUser={messageUserId ? { user_id: messageUserId, name: messageName } : null} onNavigate={navigate} />;
+    if (route.page === 'messages') return <MessagesPage user={user} initialUser={messageUserId ? { user_id: messageUserId, name: messageName } : null} context={route.params.get('context')} onNavigate={navigate} />;
     if (route.page === 'account') return (
       <AccountPage
         user={user}

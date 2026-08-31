@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../services/api.js';
 
-export default function MessagesPage({ user, initialUser, onNavigate }) {
+export default function MessagesPage({ user, initialUser, context, onNavigate }) {
   const [threads, setThreads] = useState([]);
   const [activeUser, setActiveUser] = useState(initialUser || null);
   const [messages, setMessages] = useState([]);
@@ -61,7 +61,7 @@ export default function MessagesPage({ user, initialUser, onNavigate }) {
       <section className="page-shell narrow-page empty-state-page">
         <div className="empty-state">
           <h1>Sign in to view messages.</h1>
-          <p>Buyer and composer chat histories are stored under your user_id.</p>
+          <p>Your private conversations are stored under your account.</p>
           <button className="primary" type="button" onClick={() => onNavigate('account')}>Open account</button>
         </div>
       </section>
@@ -72,7 +72,7 @@ export default function MessagesPage({ user, initialUser, onNavigate }) {
     <section className="page-shell messages-page">
       <div className="page-heading">
         <p className="eyebrow">Messages</p>
-        <h1>Buyer and composer conversations.</h1>
+        <h1>Private conversations.</h1>
       </div>
       <div className="chat-layout">
         <aside className="thread-list">
@@ -88,12 +88,12 @@ export default function MessagesPage({ user, initialUser, onNavigate }) {
               <span><strong>{thread.otherUser.name}</strong><small>{thread.lastMessage.text}</small></span>
             </button>
           ))}
-          {!mergedThreads.length && <p className="muted thread-empty">Start from a composer’s Chat button.</p>}
+          {!mergedThreads.length && <p className="muted thread-empty">Start from a teacher or composer profile.</p>}
         </aside>
         <section className="conversation-panel">
           {activeUser ? (
             <>
-              <header className="conversation-header"><span className="avatar">{activeUser.name.slice(0, 1).toUpperCase()}</span><div><strong>{activeUser.name}</strong><small>Composer conversation</small></div></header>
+              <header className="conversation-header"><span className="avatar">{activeUser.name.slice(0, 1).toUpperCase()}</span><div><strong>{activeUser.name}</strong><small>{context === 'teacher' ? 'Teacher conversation' : 'Private conversation'}</small></div></header>
               <div className="message-stream">
                 {messages.map((message) => (
                   <div key={message.id} className={`message-bubble ${message.fromUserId === user.user_id ? 'mine' : ''}`}>
@@ -101,7 +101,7 @@ export default function MessagesPage({ user, initialUser, onNavigate }) {
                     <small>{new Date(message.createdAt).toLocaleString()}</small>
                   </div>
                 ))}
-                {!messages.length && <div className="conversation-empty">Ask about the song format, license, fingering, or lesson difficulty.</div>}
+                {!messages.length && <div className="conversation-empty">Introduce yourself and ask your first question.</div>}
               </div>
               <form className="message-composer" onSubmit={send}>
                 <input value={text} onChange={(event) => setText(event.target.value)} placeholder={`Message ${activeUser.name}`} />

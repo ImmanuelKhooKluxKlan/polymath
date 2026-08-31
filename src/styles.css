@@ -5898,3 +5898,207 @@ details[open] > summary {
   .model-lab-history-list button { grid-template-columns: 1fr; }
   .model-lab-history-list button > span:last-child { text-align: left; }
 }
+
+/* Find Teacher */
+.teacher-marketplace-page {
+  width: min(100%, 1480px);
+  margin: 0 auto;
+  display: grid;
+  gap: 22px;
+}
+.teacher-marketplace-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: clamp(22px, 4vw, 42px);
+  border: 1px solid var(--line);
+  border-radius: 30px;
+  background: linear-gradient(135deg, rgba(79, 113, 255, 0.18), rgba(171, 82, 255, 0.15));
+}
+.teacher-marketplace-heading h1 {
+  margin: 3px 0 10px;
+  font-size: clamp(2.35rem, 5vw, 4.9rem);
+  line-height: 0.95;
+  letter-spacing: -0.055em;
+}
+.teacher-marketplace-heading p:not(.eyebrow) { margin: 0; color: var(--muted); }
+.teacher-marketplace-heading > button { flex: 0 0 auto; }
+
+.teacher-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.5fr) repeat(3, minmax(150px, 0.65fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(13, 17, 43, 0.86);
+}
+.teacher-filter-bar input,
+.teacher-filter-bar select { min-width: 0; }
+
+.teacher-profile-editor {
+  display: grid;
+  gap: 18px;
+  padding: clamp(18px, 3vw, 30px);
+  border: 1px solid rgba(151, 164, 255, 0.28);
+  border-radius: 26px;
+  background: rgba(11, 15, 38, 0.94);
+  box-shadow: 0 25px 90px rgba(0, 0, 0, 0.3);
+}
+.teacher-profile-editor > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.teacher-profile-editor h2 { margin-top: 4px; }
+.teacher-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.teacher-form-grid.compact { align-items: start; }
+.teacher-choice-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.teacher-choice-group legend {
+  margin-bottom: 9px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+.teacher-choice-group > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.teacher-choice-group button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 11px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+.teacher-choice-group button.selected {
+  border-color: rgba(139, 111, 255, 0.8);
+  color: white;
+  background: linear-gradient(135deg, rgba(67, 100, 255, 0.72), rgba(156, 76, 255, 0.72));
+}
+.teacher-publish-toggle { display: flex; align-items: center; gap: 9px; color: var(--muted); font-weight: 750; }
+.teacher-publish-toggle input { width: 18px; height: 18px; accent-color: #836bff; }
+.teacher-profile-editor > .primary { justify-self: start; }
+
+.teacher-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.teacher-card {
+  min-width: 0;
+  display: grid;
+  gap: 17px;
+  padding: clamp(18px, 2.5vw, 26px);
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  background: linear-gradient(160deg, rgba(17, 22, 54, 0.94), rgba(12, 13, 32, 0.96));
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.22);
+}
+.teacher-card.reviews-open { grid-column: 1 / -1; }
+.teacher-card-identity { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 15px; align-items: center; }
+.teacher-card-identity h2 { margin: 0 0 3px; overflow-wrap: anywhere; }
+.teacher-card-identity p { margin: 0; color: var(--muted); line-height: 1.4; }
+.teacher-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  color: white;
+  background: linear-gradient(135deg, #5176ff, #ab62ff);
+  font-weight: 900;
+}
+.teacher-avatar.large { width: 68px; height: 68px; font-size: 1.05rem; }
+.teacher-avatar.small { width: 34px; height: 34px; font-size: 0.7rem; }
+.teacher-rating-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.75rem;
+}
+.teacher-stars { display: flex; align-items: center; gap: 1px; color: rgba(255, 255, 255, 0.18); }
+.teacher-stars span,
+.teacher-stars button { padding: 0; border: 0; color: inherit; background: transparent; font-size: 0.94rem; }
+.teacher-stars .filled { color: #ffd65a; }
+.teacher-stars.interactive button { padding: 2px; font-size: 1.3rem; }
+.teacher-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.teacher-tags span {
+  max-width: 100%;
+  padding: 6px 9px;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(145, 126, 255, 0.2);
+  border-radius: 999px;
+  color: #dcd7ff;
+  background: rgba(117, 90, 255, 0.1);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.teacher-bio { margin: 0; color: var(--muted); line-height: 1.6; }
+.teacher-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 0; }
+.teacher-details > div { min-width: 0; padding: 10px 11px; border-radius: 13px; background: rgba(255, 255, 255, 0.035); }
+.teacher-details dt { color: var(--muted); font-size: 0.66rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
+.teacher-details dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 0.82rem; font-weight: 750; }
+.teacher-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 4px; }
+.teacher-card-footer > strong { color: #d6ceff; font-size: 0.88rem; }
+.teacher-card-footer > div { display: flex; gap: 8px; }
+
+.teacher-reviews { display: grid; grid-template-columns: minmax(230px, 0.65fr) minmax(0, 1.35fr); gap: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.teacher-review-form { display: grid; align-content: start; gap: 10px; }
+.teacher-review-form textarea { width: 100%; }
+.teacher-review-form .primary { justify-self: start; }
+.teacher-review-unlock {
+  align-self: start;
+  border: 1px dashed rgba(151, 164, 255, 0.35);
+  border-radius: 16px;
+  padding: 15px;
+  color: #dcd7ff;
+  background: rgba(103, 86, 255, 0.08);
+  text-align: left;
+  line-height: 1.45;
+}
+.teacher-review-list { display: grid; gap: 10px; }
+.teacher-review-list > article { padding: 14px; border: 1px solid var(--line); border-radius: 17px; background: rgba(255, 255, 255, 0.03); }
+.teacher-review-list > article > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; }
+.teacher-review-list > article span { display: grid; min-width: 0; }
+.teacher-review-list > article small,
+.teacher-review-list time { color: var(--muted); font-size: 0.68rem; }
+.teacher-review-list p { margin: 11px 0 8px; overflow-wrap: anywhere; line-height: 1.5; }
+.teacher-no-reviews { margin: 0; padding: 24px; color: var(--muted); text-align: center; }
+.teacher-empty-state { display: grid; justify-items: center; gap: 9px; padding: 54px 20px; border: 1px dashed var(--line); border-radius: 25px; text-align: center; }
+.teacher-empty-state h2,
+.teacher-empty-state p { margin: 0; }
+.teacher-empty-state p { color: var(--muted); }
+
+@media (max-width: 980px) {
+  .teacher-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .teacher-grid { grid-template-columns: 1fr; }
+  .teacher-card.reviews-open { grid-column: auto; }
+}
+
+@media (max-width: 680px) {
+  .teacher-marketplace-heading { align-items: stretch; flex-direction: column; border-radius: 24px; }
+  .teacher-marketplace-heading > button { width: 100%; }
+  .teacher-filter-bar,
+  .teacher-form-grid,
+  .teacher-form-grid.compact,
+  .teacher-reviews { grid-template-columns: 1fr; }
+  .teacher-profile-editor > header { align-items: flex-start; }
+  .teacher-card { padding: 17px; border-radius: 21px; }
+  .teacher-card-identity { align-items: start; }
+  .teacher-avatar.large { width: 56px; height: 56px; }
+  .teacher-details { grid-template-columns: 1fr; }
+  .teacher-card-footer { align-items: stretch; flex-direction: column; }
+  .teacher-card-footer > div { display: grid; grid-template-columns: 1fr 1fr; }
+  .teacher-review-list > article > div { grid-template-columns: auto minmax(0, 1fr); }
+  .teacher-review-list .teacher-stars { grid-column: 1 / -1; }
+}

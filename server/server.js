@@ -403,6 +403,8 @@ function ensureStorage() {
       listingReviews: [],
       composerFollows: [],
       messages: [],
+      teacherProfiles: [],
+      teacherReviews: [],
       withdrawals: [],
       paymentOrders: [],
       subscriptions: [],
@@ -470,6 +472,8 @@ function normalizeDb(db) {
     'listingReviews',
     'composerFollows',
     'messages',
+    'teacherProfiles',
+    'teacherReviews',
     'withdrawals',
     'paymentOrders',
     'subscriptions',
@@ -2370,6 +2374,165 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/teachers', async (req, res) => {
+  const db = await readDb();
+  const viewer = authUser(req, db);
+  const query = String(req.query.query || '').trim().toLowerCase();
+  const instrument = String(req.query.instrument || '').trim().toLowerCase();
+  const lessonMode = String(req.query.lessonMode || '').trim().toLowerCase();
+  const level = String(req.query.level || '').trim().toLowerCase();
+  const teachers = db.teacherProfiles
+    .filter((profile) => profile.published !== false)
+    .map((profile) => publicTeacherProfile(profile, db, viewer?.id))
+    .filter(Boolean)
+    .filter((teacher) => !instrument || teacher.instruments.includes(instrument))
+    .filter((teacher) => !lessonMode || teacher.lessonModes.includes(lessonMode))
+    .filter((teacher) => !level || teacher.levels.includes(level))
+    .filter((teacher) => !query || [
+      teacher.name,
+      teacher.headline,
+      teacher.bio,
+      teacher.location,
+      ...teacher.instruments,
+      ...teacher.languages,
+    ].join(' ').toLowerCase().includes(query))
+    .sort((a, b) => (
+      Number(b.reviewSummary.averageRating) - Number(a.reviewSummary.averageRating)
+      || Number(b.reviewSummary.reviewCount) - Number(a.reviewSummary.reviewCount)
+      || String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt))
+    ));
+  res.json({ teachers });
+});
+
+app.get('/api/teachers/me', requireAuth, async (req, res) => {
+  const profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
+  res.json({ teacher: profile ? publicTeacherProfile(profile, req.db, req.user.id) : null });
+});
+
+app.put('/api/teachers/me', requireAuth, async (req, res) => {
+  const headline = String(req.body.headline || '').trim().slice(0, 100);
+  const bio = String(req.body.bio || '').trim().slice(0, 1200);
+  const instruments = cleanStringList(req.body.instruments, {
+    maximum: 8,
+    allowed: new Set(Object.keys(MUSCRIPTOR_INSTRUMENTS)),
+  });
+  const levels = cleanStringList(req.body.levels, { maximum: 3, allowed: TEACHER_LEVELS });
+  const lessonModes = cleanStringList(req.body.lessonModes, { maximum: 2, allowed: TEACHER_LESSON_MODES });
+  const languages = cleanStringList(req.body.languages, { maximum: 8 })
+    .map((language) => language.slice(0, 40));
+  const location = String(req.body.location || '').trim().slice(0, 100);
+  const availability = String(req.body.availability || '').trim().slice(0, 200);
+  const hourlyRateMcoins = Number(req.body.hourlyRateMcoins || 0);
+  const published = req.body.published !== false;
+
+  if (headline.length < 3) return res.status(400).json({ error: 'Add a short teaching headline.' });
+  if (bio.length < 10) return res.status(400).json({ error: 'Tell students a little more about your teaching.' });
+  if (!instruments.length) return res.status(400).json({ error: 'Choose at least one instrument.' });
+  if (!levels.length) return res.status(400).json({ error: 'Choose at least one student level.' });
+  if (!lessonModes.length) return res.status(400).json({ error: 'Choose online lessons, in-person lessons, or both.' });
+  if (!Number.isFinite(hourlyRateMcoins) || hourlyRateMcoins < 0 || hourlyRateMcoins > 100000) {
+    return res.status(400).json({ error: 'Enter an hourly rate between 0 and 100,000 Mcoins.' });
+  }
+
+  const now = new Date().toISOString();
+  let profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
+  if (profile) {
+    Object.assign(profile, {
+      headline,
+      bio,
+      instruments,
+      levels,
+      lessonModes,
+      languages,
+      location,
+      availability,
+      hourlyRateMcoins: Number(hourlyRateMcoins.toFixed(2)),
+      published,
+      updatedAt: now,
+    });
+  } else {
+    profile = {
+      id: id('teacher'),
+      userId: req.user.id,
+      headline,
+      bio,
+      instruments,
+      levels,
+      lessonModes,
+      languages,
+      location,
+      availability,
+      hourlyRateMcoins: Number(hourlyRateMcoins.toFixed(2)),
+      published,
+      createdAt: now,
+    };
+    req.db.teacherProfiles.push(profile);
+  }
+  await writeDb(req.db);
+  res.status(profile.createdAt === now ? 201 : 200).json({
+    teacher: publicTeacherProfile(profile, req.db, req.user.id),
+  });
+});
+
+app.get('/api/teachers/:teacherProfileId/reviews', async (req, res) => {
+  const db = await readDb();
+  const viewer = authUser(req, db);
+  const profile = db.teacherProfiles.find((item) => item.id === req.params.teacherProfileId && item.published !== false);
+  if (!profile) return res.status(404).json({ error: 'Teacher profile not found.' });
+  const reviews = db.teacherReviews
+    .filter((review) => review.teacherProfileId === profile.id)
+    .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))
+    .map((review) => publicTeacherReview(review, db, viewer?.id));
+  return res.json({ reviews, summary: teacherReviewSummary(db, profile.id) });
+});
+
+app.post('/api/teachers/:teacherProfileId/reviews', requireAuth, async (req, res) => {
+  const profile = req.db.teacherProfiles.find(
+    (item) => item.id === req.params.teacherProfileId && item.published !== false,
+  );
+  if (!profile) return res.status(404).json({ error: 'Teacher profile not found.' });
+  if (profile.userId === req.user.id) return res.status(403).json({ error: 'Teachers cannot review themselves.' });
+  if (!hasTeacherConversation(req.db, req.user.id, profile.userId)) {
+    return res.status(403).json({ error: 'Start a private conversation with this teacher before leaving a review.' });
+  }
+
+  const rating = Number(req.body.rating);
+  const comment = String(req.body.comment || '').trim();
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return res.status(400).json({ error: 'Choose a star rating from 1 to 5.' });
+  }
+  if (comment.length < 2 || comment.length > 1000) {
+    return res.status(400).json({ error: 'Write a review between 2 and 1,000 characters.' });
+  }
+
+  const now = new Date().toISOString();
+  let review = req.db.teacherReviews.find(
+    (item) => item.teacherProfileId === profile.id && item.studentId === req.user.id,
+  );
+  const created = !review;
+  if (review) {
+    review.rating = rating;
+    review.comment = comment;
+    review.updatedAt = now;
+  } else {
+    review = {
+      id: id('teacher-review'),
+      teacherProfileId: profile.id,
+      teacherUserId: profile.userId,
+      studentId: req.user.id,
+      rating,
+      comment,
+      createdAt: now,
+    };
+    req.db.teacherReviews.push(review);
+  }
+  await writeDb(req.db);
+  return res.status(created ? 201 : 200).json({
+    review: publicTeacherReview(review, req.db, req.user.id),
+    summary: teacherReviewSummary(req.db, profile.id),
+  });
+});
+
 app.get('/api/listings', async (req, res) => {
   const db = await readDb();
   const viewer = authUser(req, db);
@@ -4043,6 +4206,79 @@ function publicTranslationJob(job) {
       ? job.pianoPerformance
       : null,
   };
+}
+
+const TEACHER_LEVELS = new Set(['beginner', 'intermediate', 'advanced']);
+const TEACHER_LESSON_MODES = new Set(['online', 'in-person']);
+
+function teacherReviewSummary(db, teacherProfileId) {
+  const reviews = db.teacherReviews.filter((review) => review.teacherProfileId === teacherProfileId);
+  const total = reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0);
+  return {
+    averageRating: reviews.length ? Number((total / reviews.length).toFixed(2)) : 0,
+    reviewCount: reviews.length,
+  };
+}
+
+function hasTeacherConversation(db, studentId, teacherUserId) {
+  if (!studentId || !teacherUserId || studentId === teacherUserId) return false;
+  return db.messages.some((message) => (
+    (message.fromUserId === studentId && message.toUserId === teacherUserId)
+    || (message.fromUserId === teacherUserId && message.toUserId === studentId)
+  ));
+}
+
+function publicTeacherProfile(profile, db, viewerId = null) {
+  const teacher = db.users.find((user) => user.id === profile.userId);
+  if (!teacher) return null;
+  return {
+    id: profile.id,
+    user_id: teacher.id,
+    name: teacher.name || 'Music teacher',
+    avatarUrl: teacher.avatarUrl || '',
+    headline: profile.headline,
+    bio: profile.bio,
+    instruments: profile.instruments,
+    levels: profile.levels,
+    lessonModes: profile.lessonModes,
+    location: profile.location || '',
+    languages: profile.languages || [],
+    availability: profile.availability || '',
+    hourlyRateMcoins: Number(profile.hourlyRateMcoins || 0),
+    published: profile.published !== false,
+    reviewSummary: teacherReviewSummary(db, profile.id),
+    isSelf: viewerId === teacher.id,
+    canReview: hasTeacherConversation(db, viewerId, teacher.id),
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt || null,
+  };
+}
+
+function publicTeacherReview(review, db, viewerId = null) {
+  const author = db.users.find((user) => user.id === review.studentId);
+  return {
+    id: review.id,
+    teacherProfileId: review.teacherProfileId,
+    rating: Number(review.rating),
+    comment: review.comment,
+    createdAt: review.createdAt,
+    updatedAt: review.updatedAt || null,
+    mine: viewerId === review.studentId,
+    connectedStudent: true,
+    author: {
+      user_id: review.studentId,
+      name: author?.name || 'Former student',
+      avatarUrl: author?.avatarUrl || '',
+    },
+  };
+}
+
+function cleanStringList(value, { maximum = 8, allowed = null } = {}) {
+  const entries = Array.isArray(value) ? value : [];
+  return [...new Set(entries
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter((entry) => entry && (!allowed || allowed.has(entry))))]
+    .slice(0, maximum);
 }
 
 function refundTranslationJob(db, job, reason) {
