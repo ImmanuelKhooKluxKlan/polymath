@@ -226,7 +226,11 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
         out=output,
         execute=True,
         rights_acknowledgement=RIGHTS_ACKNOWLEDGEMENT,
-        minimum_train_songs=2,
+        # The CLI and worker must enforce the same generalization floor.  Tiny
+        # two/three-song runs are useful only as manual overfit smoke tests and
+        # repeatedly produced candidates that lowered loss while regressing
+        # decoded piano quality.
+        minimum_train_songs=20,
         train_last_layers=train_last_layers,
         epochs=epochs,
         learning_rate=learning_rate,

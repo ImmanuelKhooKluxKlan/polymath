@@ -398,7 +398,7 @@ export default function MlOperationsConsole() {
         <div className="mlops-change-view">
           <section className="mlops-inset">
             <div className="mlops-section-heading"><div><p className="eyebrow">Step 1</p><h3>Prepare and review evidence</h3></div></div>
-            <p>Use the supervision workbench below to compare desired MIDI/JSON with raw model output. Accept, reject, or anchor uncertain five-second regions before building the prepared dataset on the private volume.</p>
+            <p>Use the supervision workbench below to compare desired MIDI/JSON with raw model output. Accept, reject, or anchor uncertain five-second regions before building the prepared dataset on the private volume. A trainable candidate requires at least 20 distinct training songs; clips from three songs are not 222 independent songs.</p>
             <button type="button" className="ghost" onClick={scrollToFeedData}>Open data workbench</button>
           </section>
           <form className="mlops-candidate-form" onSubmit={createExperiment}>
