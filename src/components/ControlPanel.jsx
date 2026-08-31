@@ -1,3 +1,5 @@
+import MusicChoiceDisclosure from './MusicChoiceDisclosure.jsx';
+
 function songLabel(song) {
   const artist = String(song?.artist || song?.composer || '').trim();
   const genericArtists = new Set(['Unknown composer', 'CSV/JSON import', 'MIDI import']);
@@ -9,24 +11,29 @@ export default function ControlPanel({
   songs,
   onSongChange,
   onPlayNow,
+  expanded,
+  onToggle,
 }) {
   return (
     <aside className="control-panel">
-      <div>
-        <p className="eyebrow">Available songs</p>
-        <h2>{songLabel(song)}</h2>
-      </div>
+      <MusicChoiceDisclosure
+        id="piano-available-songs"
+        title="Choose available songs"
+        summary={songLabel(song)}
+        expanded={expanded}
+        onToggle={onToggle}
+      >
+        <label className="field">
+          Song
+          <select value={song.title} onChange={(event) => onSongChange(event.target.value)}>
+            {songs.map((candidate) => <option key={candidate.title} value={candidate.title}>{songLabel(candidate)}</option>)}
+          </select>
+        </label>
 
-      <label className="field">
-        Select song
-        <select value={song.title} onChange={(event) => onSongChange(event.target.value)}>
-          {songs.map((candidate) => <option key={candidate.title} value={candidate.title}>{songLabel(candidate)}</option>)}
-        </select>
-      </label>
-
-      <button className="primary song-play-now" type="button" onClick={onPlayNow}>
-        Play now
-      </button>
+        <button className="primary song-play-now" type="button" onClick={onPlayNow}>
+          Play now
+        </button>
+      </MusicChoiceDisclosure>
     </aside>
   );
 }

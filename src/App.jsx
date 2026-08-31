@@ -101,6 +101,7 @@ export default function App() {
   const [autoplayVolume, setAutoplayVolume] = useState(1);
   const [pedalDown, setPedalDown] = useState(false);
   const [showKeyNotes, setShowKeyNotes] = useState(true);
+  const [openMusicChooser, setOpenMusicChooser] = useState(null);
   const [playbackEpoch, setPlaybackEpoch] = useState(0);
   const [teachingMode, setTeachingMode] = useState('regular');
   const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(15);
@@ -558,6 +559,7 @@ export default function App() {
     setSelectedSectionIndex(0);
     setSongs((previous) => [normalized, ...previous.filter((candidate) => candidate.title !== normalized.title)]);
     setSongTitle(normalized.title);
+    setOpenMusicChooser(null);
     focusMobilePlayer();
   }
 
@@ -916,7 +918,12 @@ export default function App() {
             song={song}
             songs={songs}
             onSongChange={handleSongChange}
-            onPlayNow={() => focusMobilePlayer(true)}
+            onPlayNow={() => {
+              setOpenMusicChooser(null);
+              focusMobilePlayer(true);
+            }}
+            expanded={openMusicChooser === 'available'}
+            onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
           />
 
           <div className='mobile-flow-guide mobile-player-guide'>
@@ -991,7 +998,14 @@ export default function App() {
             </details>
           </div>
 
-          <SongUploader onUpload={handleUpload} user={user} setUser={setUser} onNavigate={navigate} />
+          <SongUploader
+            onUpload={handleUpload}
+            user={user}
+            setUser={setUser}
+            onNavigate={navigate}
+            expanded={openMusicChooser === 'upload'}
+            onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
+          />
         </section>
       </section>
     );

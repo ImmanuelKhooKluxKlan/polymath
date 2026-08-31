@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import InstrumentTeacherSurface from '../components/InstrumentTeacherSurface.jsx';
 import InstrumentIcon from '../components/InstrumentIcon.jsx';
 import MusicUploadPanel from '../components/MusicUploadPanel.jsx';
+import MusicChoiceDisclosure from '../components/MusicChoiceDisclosure.jsx';
 import LearnModePanel from '../components/LearnModePanel.jsx';
 import { ENSEMBLE_INSTRUMENTS, INSTRUMENT_BY_ID } from '../data/instruments.js';
 import { ensembleAudio } from '../engine/ensembleEngine.js';
@@ -180,6 +181,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
   const [selectedSectionIndex, setSelectedSectionIndex] = useState(0);
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
+  const [openMusicChooser, setOpenMusicChooser] = useState(null);
 
   const nextEventIndex = useRef(0);
   const startStamp = useRef(0);
@@ -320,6 +322,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
     setCurrentTime(0);
     pauseOffset.current = 0;
     setInstrument(nextInstrument);
+    setOpenMusicChooser(null);
     if (!isCustomSong) setSong(demoSongFor(nextInstrument));
   }
 
@@ -419,6 +422,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
     stopPlayback();
     setSong(normalized);
     setIsCustomSong(true);
+    setOpenMusicChooser(null);
     return normalized;
   }
 
@@ -502,12 +506,20 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
             <p className="muted">{selectedInstrument.description}</p>
           </div>
 
-          <label className="field">Available songs
-            <select value={song.title} onChange={(event) => chooseAvailableSong(event.target.value)}>
-              {!availableSongs.some((candidate) => candidate.title === song.title) && <option value={song.title}>{song.title} — uploaded</option>}
-              {availableSongs.map((candidate) => <option key={candidate.title} value={candidate.title}>{candidate.title}</option>)}
-            </select>
-          </label>
+          <MusicChoiceDisclosure
+            id="ensemble-available-songs"
+            title="Choose available songs"
+            summary={song.title}
+            expanded={openMusicChooser === 'available'}
+            onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
+          >
+            <label className="field">Song
+              <select value={song.title} onChange={(event) => chooseAvailableSong(event.target.value)}>
+                {!availableSongs.some((candidate) => candidate.title === song.title) && <option value={song.title}>{song.title} — uploaded</option>}
+                {availableSongs.map((candidate) => <option key={candidate.title} value={candidate.title}>{candidate.title}</option>)}
+              </select>
+            </label>
+          </MusicChoiceDisclosure>
 
           <div className="teacher-mode-badge">
             <span>LIVE</span>
@@ -587,14 +599,21 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
         </div>
 
         <aside className="ensemble-upload-card">
-          <MusicUploadPanel
-            compact
-            user={user}
-            setUser={setUser}
-            onNavigate={onNavigate}
-            instrument={instrument}
-            onReadyFile={loadReadySheet}
-          />
+          <MusicChoiceDisclosure
+            id="ensemble-choose-music"
+            title="Choose music"
+            expanded={openMusicChooser === 'upload'}
+            onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
+          >
+            <MusicUploadPanel
+              compact
+              user={user}
+              setUser={setUser}
+              onNavigate={onNavigate}
+              instrument={instrument}
+              onReadyFile={loadReadySheet}
+            />
+          </MusicChoiceDisclosure>
         </aside>
       </div>
     </section>

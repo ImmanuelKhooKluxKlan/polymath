@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import GuitarFallingNotes from '../components/GuitarFallingNotes.jsx';
 import GuitarTransport from '../components/GuitarTransport.jsx';
 import MusicUploadPanel from '../components/MusicUploadPanel.jsx';
+import MusicChoiceDisclosure from '../components/MusicChoiceDisclosure.jsx';
 import LearnModePanel from '../components/LearnModePanel.jsx';
 import { GUITAR_TONE_LABELS, guitarAudio } from '../engine/guitarEngine.js';
 import { assignNotesToStrings } from '../engine/guitarVoicing.js';
@@ -228,6 +229,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
   const [manualStringVibration, setManualStringVibration] = useState(null);
+  const [openMusicChooser, setOpenMusicChooser] = useState(null);
 
   const nextEventIndex = useRef(0);
   const startStamp = useRef(0);
@@ -559,6 +561,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     if (!commit) return parsed;
     stopLesson();
     setLesson(parsed);
+    setOpenMusicChooser(null);
     return parsed;
   }
 
@@ -570,6 +573,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   }
 
   function focusGuitarPlayer() {
+    setOpenMusicChooser(null);
     window.setTimeout(() => {
       const player = guitarPlayerRef.current;
       if (!player) return;
@@ -634,28 +638,30 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
 
       <div className="guitar-studio-grid">
         <aside className="guitar-control-panel">
-          <div>
-            <p className="eyebrow">Available songs</p>
-            <h2>{lessonLabel(lesson)}</h2>
-          </div>
+          <MusicChoiceDisclosure
+            id="guitar-available-songs"
+            title="Choose available songs"
+            summary={lessonLabel(lesson)}
+            expanded={openMusicChooser === 'available'}
+            onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
+          >
+            <label className="field">Song
+              <select value={lesson.title} onChange={(event) => chooseFreeLesson(event.target.value)}>
+                {!freeLessons.some((candidate) => candidate.title === lesson.title) && (
+                  <option value={lesson.title}>{lessonLabel(lesson)} — uploaded</option>
+                )}
+                {freeLessons.map((candidate) => (
+                  <option key={candidate.title} value={candidate.title}>
+                    {lessonLabel(candidate)}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <label className="field">Select song
-            <select value={lesson.title} onChange={(event) => chooseFreeLesson(event.target.value)}>
-              {!freeLessons.some((candidate) => candidate.title === lesson.title) && (
-                <option value={lesson.title}>{lessonLabel(lesson)} — uploaded</option>
-              )}
-              {freeLessons.map((candidate) => (
-                <option key={candidate.title} value={candidate.title}>
-                  {lessonLabel(candidate)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button className="primary song-play-now" type="button" onClick={focusGuitarPlayer}>
-            Play now
-          </button>
-
+            <button className="primary song-play-now" type="button" onClick={focusGuitarPlayer}>
+              Play now
+            </button>
+          </MusicChoiceDisclosure>
         </aside>
 
         <div ref={guitarPlayerRef} className="guitar-visual-stack" tabIndex="-1">
@@ -784,14 +790,21 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
         </div>
 
         <aside className="guitar-upload-card">
-          <MusicUploadPanel
-            compact
-            user={user}
-            setUser={setUser}
-            onNavigate={onNavigate}
-            instrument="guitar"
-            onReadyFile={loadReadyLesson}
-          />
+          <MusicChoiceDisclosure
+            id="guitar-choose-music"
+            title="Choose music"
+            expanded={openMusicChooser === 'upload'}
+            onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
+          >
+            <MusicUploadPanel
+              compact
+              user={user}
+              setUser={setUser}
+              onNavigate={onNavigate}
+              instrument="guitar"
+              onReadyFile={loadReadyLesson}
+            />
+          </MusicChoiceDisclosure>
         </aside>
       </div>
     </section>
