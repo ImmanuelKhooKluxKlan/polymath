@@ -14,7 +14,7 @@ export default function SongUploader({ onUpload, user, setUser, onNavigate, expa
     <section className='uploader-card'>
       <MusicChoiceDisclosure
         id="piano-choose-music"
-        title="Choose music"
+        title="Upload music sheet or video"
         expanded={expanded}
         onToggle={onToggle}
       >

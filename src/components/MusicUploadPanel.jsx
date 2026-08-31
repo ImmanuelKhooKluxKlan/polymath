@@ -93,39 +93,61 @@ export default function MusicUploadPanel({
     ? Math.max(0, Number(readyAllowance?.remaining ?? 2))
     : guestAllowance.remaining;
 
+  const modeLabels = {
+    ready: 'Ready-to-play sheet',
+    pdf: 'PDF music sheet',
+    media: 'Audio or music video',
+  };
+
+  function chooseAnotherType() {
+    if (busy) return;
+    setMode(null);
+    setStatus('');
+  }
+
   return (
     <div className={`music-upload-panel ${compact ? 'compact-panel' : ''}`}>
-      <div className="upload-mode-grid" aria-label="Music sheet upload options">
-        <label className={`upload-mode-option ${mode === 'ready' ? 'active' : ''}`} onClick={() => setShowUploadAllowance(true)}>
-          <input type="file" accept={readyAccept} onChange={handleReadyFile} disabled={busy} />
-          <strong>{busy ? 'Loading…' : 'Upload Ready-to-Play Sheet'}</strong>
-          {showUploadAllowance && (
-            <small>
-              {unlimitedUploads
-                ? '∞'
-                : remainingUploads > 0
-                  ? `${remainingUploads} free`
-                  : user
-                    ? '0 free · 0.5 Mcoin'
-                    : '0 free · sign in'}
-            </small>
-          )}
-        </label>
-        <button
-          type="button"
-          className={mode === 'pdf' ? 'active' : ''}
-          onClick={() => setMode('pdf')}
-        >
-          <strong>Translate to Ready to Play Sheet (PDF)</strong>
-        </button>
-        <button
-          type="button"
-          className={mode === 'media' ? 'active' : ''}
-          onClick={() => setMode('media')}
-        >
-          <strong>Transcribe Music Audio/Video (MuScriptor)</strong>
-        </button>
-      </div>
+      {mode === null ? (
+        <>
+          <p className="upload-choice-prompt">What are you uploading?</p>
+          <div className="upload-mode-grid" aria-label="Choose what to upload">
+            <label className="upload-mode-option" onClick={() => setShowUploadAllowance(true)}>
+              <input type="file" accept={readyAccept} onChange={handleReadyFile} disabled={busy} />
+              <strong>Ready-to-play sheet</strong>
+              <small>
+                JSON or MIDI
+                {showUploadAllowance && (
+                  unlimitedUploads
+                    ? ' · unlimited'
+                    : remainingUploads > 0
+                      ? ` · ${remainingUploads} free`
+                      : user
+                        ? ' · 0.5 Mcoin'
+                        : ' · sign in'
+                )}
+              </small>
+            </label>
+            <button type="button" onClick={() => setMode('pdf')}>
+              <strong>PDF music sheet</strong>
+              <small>Turn a PDF into playable notes</small>
+            </button>
+            <button type="button" onClick={() => setMode('media')}>
+              <strong>Audio or music video</strong>
+              <small>Create a playable transcription</small>
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="upload-active-mode">
+          <div>
+            <small>Upload type</small>
+            <strong>{modeLabels[mode]}</strong>
+          </div>
+          <button className="ghost" type="button" onClick={chooseAnotherType} disabled={busy}>
+            Choose another type
+          </button>
+        </div>
+      )}
 
       {mode === 'pdf' ? (
         <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} onReadyFile={onReadyFile} />

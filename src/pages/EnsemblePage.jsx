@@ -508,7 +508,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
 
           <MusicChoiceDisclosure
             id="ensemble-available-songs"
-            title="Choose available songs"
+            title="Choose available songs to play"
             summary={song.title}
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
@@ -601,7 +601,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
         <aside className="ensemble-upload-card">
           <MusicChoiceDisclosure
             id="ensemble-choose-music"
-            title="Choose music"
+            title="Upload music sheet or video"
             expanded={openMusicChooser === 'upload'}
             onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
           >

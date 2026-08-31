@@ -18,7 +18,7 @@ export default function ControlPanel({
     <aside className="control-panel">
       <MusicChoiceDisclosure
         id="piano-available-songs"
-        title="Choose available songs"
+        title="Choose available songs to play"
         summary={songLabel(song)}
         expanded={expanded}
         onToggle={onToggle}

@@ -640,7 +640,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
         <aside className="guitar-control-panel">
           <MusicChoiceDisclosure
             id="guitar-available-songs"
-            title="Choose available songs"
+            title="Choose available songs to play"
             summary={lessonLabel(lesson)}
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
@@ -792,7 +792,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
         <aside className="guitar-upload-card">
           <MusicChoiceDisclosure
             id="guitar-choose-music"
-            title="Choose music"
+            title="Upload music sheet or video"
             expanded={openMusicChooser === 'upload'}
             onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
           >

@@ -1785,6 +1785,49 @@ button:disabled {
   gap: 9px;
 }
 
+.upload-choice-prompt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.upload-active-mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(88,240,255,0.22);
+  border-radius: 15px;
+  background: rgba(88,240,255,0.055);
+}
+
+.upload-active-mode > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.upload-active-mode small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.upload-active-mode strong {
+  overflow-wrap: anywhere;
+}
+
+.upload-active-mode .ghost {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 8px 11px;
+}
+
 .upload-mode-grid > button,
 .upload-mode-option {
   display: grid;

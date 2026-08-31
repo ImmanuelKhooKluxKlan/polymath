@@ -911,8 +911,8 @@ export default function App() {
           <div className='mobile-flow-guide mobile-source-guide'>
             <span>1</span>
             <div>
-              <strong>Choose your music</strong>
-              <small>Pick a song or upload a ready sheet, PDF, MP3, or video.</small>
+              <strong>Choose what to play</strong>
+              <small>Play an available song or upload a music sheet, audio file, or video.</small>
             </div>
           </div>
 
