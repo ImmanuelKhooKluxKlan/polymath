@@ -907,7 +907,7 @@ export default function App() {
           </section>
         )}
 
-        <section className="studio-grid">
+        <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''}`}>
           <div className='mobile-flow-guide mobile-source-guide'>
             <span>1</span>
             <div>

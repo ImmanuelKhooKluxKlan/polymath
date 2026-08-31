@@ -79,6 +79,7 @@ export default function MediaTranscriptionPanel({
     const selected = event.target.files?.[0] || null;
     setJob(null);
     setStatus('');
+    setRightsConfirmed(false);
     setFile(selected);
     event.target.value = '';
   }
@@ -204,16 +205,18 @@ export default function MediaTranscriptionPanel({
         <small>No file-size limit · first 10 minutes processed</small>
       </label>
 
-      <label className="media-rights-check">
-        <input
-          type="checkbox"
-          checked={rightsConfirmed}
-          onChange={(event) => setRightsConfirmed(event.target.checked)}
-        />
-        <span>I have permission to transcribe this recording.</span>
-      </label>
+      {file && (
+        <label className="media-rights-check">
+          <input
+            type="checkbox"
+            checked={rightsConfirmed}
+            onChange={(event) => setRightsConfirmed(event.target.checked)}
+          />
+          <span>I have permission to transcribe this recording.</span>
+        </label>
+      )}
 
-      {instrument === 'piano' && (
+      {file && rightsConfirmed && instrument === 'piano' && (
         <fieldset className={'media-playback-options'}>
           <legend>Playback version</legend>
           <label className={'media-playback-option ' + (playbackMode === 'full' ? 'active' : '')}>
@@ -247,7 +250,7 @@ export default function MediaTranscriptionPanel({
         </fieldset>
       )}
 
-      {!job && (
+      {!job && file && rightsConfirmed && (
         <button
           className="primary full"
           type="button"

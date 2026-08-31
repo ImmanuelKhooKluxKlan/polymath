@@ -6196,3 +6196,27 @@ details[open] > summary {
   .teacher-review-list > article > div { grid-template-columns: auto minmax(0, 1fr); }
   .teacher-review-list .teacher-stars { grid-column: 1 / -1; }
 }
+
+/* Final studio alignment: an expanded transcription workflow needs more room
+   than the collapsed source chooser, while mid-sized desktops use a full row. */
+.uploader-card .media-playback-options,
+.compact-panel .media-playback-options {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1451px) {
+  .studio-grid.upload-open {
+    grid-template-columns: minmax(220px, 250px) minmax(620px, 1fr) minmax(340px, 380px);
+  }
+}
+
+@media (min-width: 1101px) and (max-width: 1450px) {
+  .studio-grid,
+  .studio-grid.upload-open {
+    grid-template-columns: minmax(220px, 250px) minmax(0, 1fr);
+  }
+  .studio-grid .uploader-card {
+    display: block;
+    grid-column: 1 / -1;
+  }
+}
