@@ -793,6 +793,8 @@ function nextTranslationResetAt(now = new Date()) {
 
 function activeSubscriptionTier(user) {
   if (String(user?.institutionStatus || '').toUpperCase() === 'ACTIVE') return 'musician';
+  const administratorGrant = activeAdminSubscriptionGrant(user);
+  if (administratorGrant) return administratorGrant.tier;
   const explicitTier = String(user?.subscriptionTier || '').toLowerCase();
   if (['chill', 'musician'].includes(explicitTier)
     && String(user?.proStatus || '').toUpperCase() === 'ACTIVE') {
@@ -801,6 +803,24 @@ function activeSubscriptionTier(user) {
   // Existing Pro members migrate to Musician without losing access.
   if (user?.pro) return 'musician';
   return 'free';
+}
+
+function activeAdminSubscriptionGrant(user, now = new Date()) {
+  const grant = user?.adminSubscriptionGrant;
+  const tier = String(grant?.tier || '').toLowerCase();
+  const expiresAt = new Date(grant?.expiresAt || '');
+  if (!['chill', 'musician'].includes(tier) || Number.isNaN(expiresAt.getTime()) || expiresAt <= now) {
+    return null;
+  }
+  return grant;
+}
+
+function effectiveSubscriptionInterval(user) {
+  return activeAdminSubscriptionGrant(user)?.interval || user?.subscriptionInterval || null;
+}
+
+function effectiveSubscriptionStartedAt(user) {
+  return activeAdminSubscriptionGrant(user)?.startedAt || user?.subscriptionStartedAt || null;
 }
 
 function hasMusicianAccess(user) {
@@ -884,7 +904,7 @@ function utcMonthAnniversary(anchor, monthsToAdd) {
 
 function translationUsageWindow(user, now = new Date()) {
   const tier = activeSubscriptionTier(user);
-  const anchor = new Date(user?.subscriptionStartedAt || '');
+  const anchor = new Date(effectiveSubscriptionStartedAt(user) || '');
   if (tier === 'free' || Number.isNaN(anchor.getTime()) || anchor > now) {
     return {
       key: currentTranslationPeriod(now),
@@ -922,6 +942,10 @@ function ensureTranslationUsage(user, now = new Date()) {
 
 function isAdministrator(user) {
   return ADMIN_EMAILS.has(String(user?.email || '').toLowerCase());
+}
+
+function hasUnlimitedMcoins(user) {
+  return isAdministrator(user);
 }
 
 function translationAllowance(user, now = new Date()) {
@@ -973,6 +997,7 @@ function restoreTranslationAllowance(user, bucket) {
 function safeUser(user) {
   const subscriptionTier = activeSubscriptionTier(user);
   const administrator = isAdministrator(user);
+  const administratorGrant = activeAdminSubscriptionGrant(user);
   return {
     user_id: user.id,
     friend_id: user.friendId || '',
@@ -981,13 +1006,21 @@ function safeUser(user) {
     email: user.email,
     phone: user.phone || '',
     mcoins: user.mcoins,
+    unlimitedMcoins: hasUnlimitedMcoins(user),
     withdrawableMcoins: Number(user.withdrawableMcoins || 0),
     cashoutEligibleMcoins: Number(user.mcoins || 0),
     pro: subscriptionTier !== 'free',
     subscriptionTier,
-    subscriptionInterval: user.subscriptionInterval || null,
-    subscriptionStartedAt: user.subscriptionStartedAt || null,
-    proStatus: user.proStatus || (user.pro ? 'ACTIVE' : 'INACTIVE'),
+    subscriptionInterval: effectiveSubscriptionInterval(user),
+    subscriptionStartedAt: effectiveSubscriptionStartedAt(user),
+    proStatus: administratorGrant ? 'ACTIVE' : (user.proStatus || (user.pro ? 'ACTIVE' : 'INACTIVE')),
+    adminSubscriptionGrant: user.adminSubscriptionGrant ? {
+      tier: String(user.adminSubscriptionGrant.tier || '').toLowerCase(),
+      interval: String(user.adminSubscriptionGrant.interval || '').toUpperCase(),
+      startedAt: user.adminSubscriptionGrant.startedAt || null,
+      expiresAt: user.adminSubscriptionGrant.expiresAt || null,
+      active: Boolean(administratorGrant),
+    } : null,
     paypalSubscriptionId: user.paypalSubscriptionId || null,
     luckyCodeApplied: Boolean(user.luckyCodeClaim),
     institution: user.institutionId ? {
@@ -1369,6 +1402,19 @@ function decodeYouTubeText(value = '') {
     .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)));
 }
 
+function marketplaceRanking(averageRating = 0, audienceCount = 0) {
+  const rating = Math.min(5, Math.max(0, Number(averageRating) || 0));
+  const audience = Math.max(0, Number(audienceCount) || 0);
+  const ratingPoints = Number(((rating / 5) * 10).toFixed(1));
+  const audiencePoints = Number(Math.min(40, audience).toFixed(1));
+  return {
+    ratingPoints,
+    audiencePoints,
+    totalPoints: Number((ratingPoints + audiencePoints).toFixed(1)),
+    maximumPoints: 50,
+  };
+}
+
 function publicListing(listing, db, viewerId = null) {
   const seller = db.users.find((user) => user.id === listing.sellerId);
   const purchased = Boolean(viewerId && db.purchases.some(
@@ -1381,7 +1427,17 @@ function publicListing(listing, db, viewerId = null) {
     assetPath: undefined,
     seller: seller
       ? composer
-      : { user_id: listing.sellerId, friend_id: '', name: 'Composer', avatarUrl: '', followerCount: 0, averageRating: 0, ratingCount: 0 },
+      : {
+          user_id: listing.sellerId,
+          friend_id: '',
+          name: 'Composer',
+          avatarUrl: '',
+          followerCount: 0,
+          averageRating: 0,
+          ratingCount: 0,
+          buyerCount: 0,
+          ranking: marketplaceRanking(),
+        },
     reviewSummary,
     purchased,
     owned: viewerId === listing.sellerId,
@@ -1407,9 +1463,21 @@ function composerRatingSummary(db, composerId) {
   };
 }
 
+function composerBuyerCount(db, composerId) {
+  const listingIds = new Set(
+    db.listings.filter((listing) => listing.sellerId === composerId).map((listing) => listing.id),
+  );
+  return new Set(
+    db.purchases
+      .filter((purchase) => listingIds.has(purchase.listingId))
+      .map((purchase) => purchase.buyerId),
+  ).size;
+}
+
 function publicComposer(user, db, viewerId = null) {
   if (!user) return null;
   const rating = composerRatingSummary(db, user.id);
+  const buyerCount = composerBuyerCount(db, user.id);
   return {
     user_id: user.id,
     friend_id: user.friendId || '',
@@ -1418,6 +1486,8 @@ function publicComposer(user, db, viewerId = null) {
     followerCount: db.composerFollows.filter((follow) => follow.composerId === user.id).length,
     averageRating: rating.averageRating,
     ratingCount: rating.ratingCount,
+    buyerCount,
+    ranking: marketplaceRanking(rating.averageRating, buyerCount),
     publishedCount: db.listings.filter((listing) => listing.sellerId === user.id).length,
     isFollowing: Boolean(viewerId && db.composerFollows.some(
       (follow) => follow.composerId === user.id && follow.followerId === viewerId,
@@ -2397,7 +2467,8 @@ app.get('/api/teachers', async (req, res) => {
       ...teacher.languages,
     ].join(' ').toLowerCase().includes(query))
     .sort((a, b) => (
-      Number(b.reviewSummary.averageRating) - Number(a.reviewSummary.averageRating)
+      Number(b.ranking.totalPoints) - Number(a.ranking.totalPoints)
+      || Number(b.reviewSummary.averageRating) - Number(a.reviewSummary.averageRating)
       || Number(b.reviewSummary.reviewCount) - Number(a.reviewSummary.reviewCount)
       || String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt))
     ));
@@ -2545,8 +2616,12 @@ app.get('/api/listings', async (req, res) => {
     .filter((listing) => !artist || listing.artist.toLowerCase().includes(artist))
     .filter((listing) => !format || listing.format.toLowerCase() === format)
     .filter((listing) => !query || `${listing.artist} ${listing.title}`.toLowerCase().includes(query))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((listing) => publicListing(listing, db, viewer?.id));
+    .map((listing) => publicListing(listing, db, viewer?.id))
+    .sort((a, b) => (
+      Number(b.seller?.ranking?.totalPoints || 0) - Number(a.seller?.ranking?.totalPoints || 0)
+      || Number(b.reviewSummary?.averageRating || 0) - Number(a.reviewSummary?.averageRating || 0)
+      || String(b.createdAt).localeCompare(String(a.createdAt))
+    ));
   res.json({ listings });
 });
 
@@ -2802,14 +2877,17 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     ? Math.min(listing.priceMcoins, Math.floor(listing.priceMcoins * promotion.value / 100))
     : 0;
   const buyerPaidMcoins = listing.priceMcoins - discountMcoins;
-  if (req.user.mcoins < buyerPaidMcoins) return res.status(402).json({ error: 'Not enough Mcoins.' });
+  const administratorPurchase = hasUnlimitedMcoins(req.user);
+  if (!administratorPurchase && req.user.mcoins < buyerPaidMcoins) {
+    return res.status(402).json({ error: 'Not enough Mcoins.' });
+  }
 
   const seller = req.db.users.find((user) => user.id === listing.sellerId);
   const platform = req.db.users.find((user) => user.id === 'platform');
   const platformFeeMcoins = listing.priceMcoins * MARKETPLACE_FEE_RATE;
   const sellerEarningsMcoins = listing.priceMcoins - platformFeeMcoins;
 
-  req.user.mcoins -= buyerPaidMcoins;
+  if (!administratorPurchase) req.user.mcoins -= buyerPaidMcoins;
   if (seller) {
     seller.mcoins += sellerEarningsMcoins;
     seller.withdrawableMcoins = Number(seller.withdrawableMcoins || 0) + sellerEarningsMcoins;
@@ -2828,6 +2906,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     amountMcoins: buyerPaidMcoins,
     grossMcoins: listing.priceMcoins,
     buyerPaidMcoins,
+    paymentMethod: administratorPurchase ? 'administrator_unlimited' : 'mcoins',
     promotionDiscountMcoins: discountMcoins,
     promotionId: promotion?.id || null,
     promotionCode: promotion?.code || null,
@@ -2841,7 +2920,13 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     createdAt: new Date().toISOString(),
   };
   req.db.purchases.push(purchase);
-  addLedger(req.db, req.user.id, -buyerPaidMcoins, 'listing_purchase', `${listing.title} (${listing.format})${promotion ? `; coupon ${promotion.code}: -${discountMcoins} Mcoins` : ''}`);
+  addLedger(
+    req.db,
+    req.user.id,
+    administratorPurchase ? 0 : -buyerPaidMcoins,
+    administratorPurchase ? 'admin_listing_purchase' : 'listing_purchase',
+    `${listing.title} (${listing.format})${administratorPurchase ? '; unlimited administrator wallet' : ''}${promotion ? `; coupon ${promotion.code}: -${discountMcoins} Mcoins` : ''}`,
+  );
   if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; 25% platform fee: ${platformFeeMcoins} Mcoins`);
   if (platform) addLedger(req.db, platform.id, platformFeeMcoins - discountMcoins, 'marketplace_fee', promotion ? `${listing.title}; sponsored discount ${discountMcoins} Mcoins` : listing.title);
   if (promotion) {
@@ -2972,15 +3057,24 @@ app.post('/api/bands/:bandId/join', requireMusician, async (req, res) => {
   }
   if (band.accessMode === 'paid') {
     const fee = Math.max(1, Number(band.entryFeeMcoins || 0));
-    if (req.user.mcoins < fee) return res.status(402).json({ error: 'Not enough Mcoins to join this band.' });
+    const administratorPayment = hasUnlimitedMcoins(req.user);
+    if (!administratorPayment && req.user.mcoins < fee) {
+      return res.status(402).json({ error: 'Not enough Mcoins to join this band.' });
+    }
     const host = req.db.users.find((user) => user.id === band.hostId);
-    req.user.mcoins -= fee;
+    if (!administratorPayment) req.user.mcoins -= fee;
     if (host && host.id !== req.user.id) {
       host.mcoins += fee;
       host.withdrawableMcoins = Number(host.withdrawableMcoins || 0) + fee;
       addLedger(req.db, host.id, fee, 'band_entry_received', `${req.user.name} joined ${band.name}`);
     }
-    addLedger(req.db, req.user.id, -fee, 'band_entry_paid', band.name);
+    addLedger(
+      req.db,
+      req.user.id,
+      administratorPayment ? 0 : -fee,
+      administratorPayment ? 'admin_band_entry' : 'band_entry_paid',
+      administratorPayment ? `${band.name}; unlimited administrator wallet` : band.name,
+    );
   }
   req.db.bandMemberships.push({
     id: id('band_member'),
@@ -3255,6 +3349,8 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
       0,
     );
     const mcoins = Number(user.mcoins || 0);
+    const administrator = isAdministrator(user);
+    const administratorGrant = activeAdminSubscriptionGrant(user);
     return {
       userId: user.id,
       friendId: user.friendId || '',
@@ -3262,12 +3358,24 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
       email: user.email,
       phone: user.phone || '',
       mcoins,
+      unlimitedMcoins: administrator,
+      admin: administrator,
       mcoinUsdEquivalent: Number((mcoins / MCOINS_PER_USD).toFixed(2)),
       usdSpent: Number(usdSpent.toFixed(2)),
       marketplaceSpentMcoins,
       marketplaceSpentUsdEquivalent: Number((marketplaceSpentMcoins / MCOINS_PER_USD).toFixed(2)),
       purchaseCount: completedOrders.length + marketplacePurchases.length,
-      proStatus: user.proStatus || (user.pro ? 'ACTIVE' : 'INACTIVE'),
+      subscriptionTier: activeSubscriptionTier(user),
+      subscriptionInterval: effectiveSubscriptionInterval(user),
+      subscriptionStartedAt: effectiveSubscriptionStartedAt(user),
+      proStatus: administratorGrant ? 'ACTIVE' : (user.proStatus || (user.pro ? 'ACTIVE' : 'INACTIVE')),
+      adminSubscriptionGrant: user.adminSubscriptionGrant ? {
+        tier: String(user.adminSubscriptionGrant.tier || '').toLowerCase(),
+        interval: String(user.adminSubscriptionGrant.interval || '').toUpperCase(),
+        startedAt: user.adminSubscriptionGrant.startedAt || null,
+        expiresAt: user.adminSubscriptionGrant.expiresAt || null,
+        active: Boolean(administratorGrant),
+      } : null,
       createdAt: user.createdAt,
       lastLoginAt: user.lastLoginAt || null,
       loginCount: Number(user.loginCount || 0),
@@ -3307,6 +3415,104 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
       marketplaceFeesMcoins: platformFeesMcoins,
       marketplaceFeesUsdEquivalent: Number((platformFeesMcoins / MCOINS_PER_USD).toFixed(2)),
     },
+  });
+});
+
+app.post('/api/admin/users/:userId/mcoins', requireAuth, requireAdmin, async (req, res) => {
+  const target = req.db.users.find((candidate) => candidate.id === req.params.userId && candidate.id !== 'platform');
+  if (!target) return res.status(404).json({ error: 'User account not found.' });
+  if (isAdministrator(target)) {
+    return res.status(400).json({ error: 'Administrator accounts already have unlimited Mcoins.' });
+  }
+  const requestedAmount = Number(req.body.amountMcoins);
+  const amountMcoins = Number.isFinite(requestedAmount)
+    ? Number((Math.floor(requestedAmount * 100) / 100).toFixed(2))
+    : Number.NaN;
+  if (!Number.isFinite(amountMcoins) || amountMcoins <= 0 || amountMcoins > 1000000) {
+    return res.status(400).json({ error: 'Enter an Mcoin gift between 0.01 and 1,000,000.' });
+  }
+  target.mcoins = Number((Number(target.mcoins || 0) + amountMcoins).toFixed(2));
+  addLedger(
+    req.db,
+    target.id,
+    amountMcoins,
+    'admin_mcoin_grant',
+    `Administrator gift from ${req.user.email}`,
+  );
+  await writeDb(req.db);
+  return res.json({
+    user: safeUser(target),
+    message: `${amountMcoins.toLocaleString()} Mcoins were added to ${target.name}.`,
+  });
+});
+
+app.post('/api/admin/users/:userId/subscription', requireAuth, requireAdmin, async (req, res) => {
+  const target = req.db.users.find((candidate) => candidate.id === req.params.userId && candidate.id !== 'platform');
+  if (!target) return res.status(404).json({ error: 'User account not found.' });
+  if (isAdministrator(target)) {
+    return res.status(400).json({ error: 'Administrator accounts already have unlimited platform access.' });
+  }
+  const tier = String(req.body.tier || '').trim().toLowerCase();
+  const interval = String(req.body.interval || '').trim().toUpperCase();
+  if (!['chill', 'musician'].includes(tier)) {
+    return res.status(400).json({ error: 'Choose Chill or Musician.' });
+  }
+  if (!['MONTH', 'YEAR'].includes(interval)) {
+    return res.status(400).json({ error: 'Choose a monthly or yearly access period.' });
+  }
+
+  const now = new Date();
+  const existing = activeAdminSubscriptionGrant(target, now);
+  const extending = Boolean(existing && existing.tier === tier && existing.interval === interval);
+  const periodBase = extending ? new Date(existing.expiresAt) : now;
+  const expiresAt = utcMonthAnniversary(periodBase, interval === 'YEAR' ? 12 : 1);
+  target.adminSubscriptionGrant = {
+    tier,
+    interval,
+    startedAt: extending ? existing.startedAt : now.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+    grantedAt: now.toISOString(),
+    grantedBy: req.user.id,
+  };
+  if (!extending) {
+    target.translationUsage = {
+      period: translationUsageWindow(target, now).key,
+      includedUsed: 0,
+    };
+  }
+  addLedger(
+    req.db,
+    target.id,
+    0,
+    extending ? 'admin_subscription_renewed' : 'admin_subscription_granted',
+    `${tier} ${interval.toLowerCase()} access through ${expiresAt.toISOString()} by ${req.user.email}`,
+  );
+  await writeDb(req.db);
+  return res.json({
+    user: safeUser(target),
+    extended: extending,
+    message: `${tier === 'musician' ? 'Musician' : 'Chill'} access for ${target.name} is active through ${expiresAt.toLocaleDateString('en-SG')}.`,
+  });
+});
+
+app.delete('/api/admin/users/:userId/subscription', requireAuth, requireAdmin, async (req, res) => {
+  const target = req.db.users.find((candidate) => candidate.id === req.params.userId && candidate.id !== 'platform');
+  if (!target) return res.status(404).json({ error: 'User account not found.' });
+  if (!target.adminSubscriptionGrant) {
+    return res.status(404).json({ error: 'This account has no administrator-granted subscription.' });
+  }
+  delete target.adminSubscriptionGrant;
+  addLedger(
+    req.db,
+    target.id,
+    0,
+    'admin_subscription_grant_removed',
+    `Manual access removed by ${req.user.email}; PayPal and institution access were not changed`,
+  );
+  await writeDb(req.db);
+  return res.json({
+    user: safeUser(target),
+    message: `Administrator-granted access was removed from ${target.name}. PayPal or institution access, if any, remains unchanged.`,
   });
 });
 
@@ -4228,9 +4434,20 @@ function hasTeacherConversation(db, studentId, teacherUserId) {
   ));
 }
 
+function teacherStudentCount(db, teacherUserId) {
+  return new Set(
+    db.messages
+      .filter((message) => message.fromUserId === teacherUserId || message.toUserId === teacherUserId)
+      .map((message) => message.fromUserId === teacherUserId ? message.toUserId : message.fromUserId)
+      .filter((userId) => userId && userId !== teacherUserId),
+  ).size;
+}
+
 function publicTeacherProfile(profile, db, viewerId = null) {
   const teacher = db.users.find((user) => user.id === profile.userId);
   if (!teacher) return null;
+  const reviewSummary = teacherReviewSummary(db, profile.id);
+  const studentCount = teacherStudentCount(db, teacher.id);
   return {
     id: profile.id,
     user_id: teacher.id,
@@ -4246,7 +4463,9 @@ function publicTeacherProfile(profile, db, viewerId = null) {
     availability: profile.availability || '',
     hourlyRateMcoins: Number(profile.hourlyRateMcoins || 0),
     published: profile.published !== false,
-    reviewSummary: teacherReviewSummary(db, profile.id),
+    reviewSummary,
+    studentCount,
+    ranking: marketplaceRanking(reviewSummary.averageRating, studentCount),
     isSelf: viewerId === teacher.id,
     canReview: hasTeacherConversation(db, viewerId, teacher.id),
     createdAt: profile.createdAt,

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiRequest, downloadProtectedFile, fileToBase64 } from '../services/api.js';
 import { INSTRUMENTS, INSTRUMENT_BY_ID } from '../data/instruments.js';
 import InstrumentIcon from '../components/InstrumentIcon.jsx';
+import ReputationScore from '../components/ReputationScore.jsx';
 
 const ARTISTS = [
   'Taylor Swift', 'Adele', 'Ed Sheeran', 'Bruno Mars', 'Billie Eilish',
@@ -298,11 +299,14 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
             <ComposerAvatar composer={composerProfile.composer} size='large' />
             <div><p className='eyebrow'>Composer</p><h2>{composerProfile.composer.name}</h2><StarRating value={composerProfile.composer.averageRating} label={`${composerProfile.composer.name} average rating`} /></div>
           </div>
-          <div className='composer-profile-stats'>
-            <span><strong>{composerProfile.composer.averageRating || '—'}</strong><small>average stars</small></span>
-            <span><strong>{composerProfile.composer.ratingCount}</strong><small>ratings</small></span>
-            <span><strong>{composerProfile.composer.followerCount}</strong><small>followers</small></span>
-            <span><strong>{composerProfile.composer.publishedCount}</strong><small>sheets</small></span>
+          <div className='composer-profile-score'>
+            <ReputationScore ranking={composerProfile.composer.ranking} audienceLabel='buyers' />
+            <div className='composer-profile-stats'>
+              <span><strong>{composerProfile.composer.buyerCount}</strong><small>unique buyers</small></span>
+              <span><strong>{composerProfile.composer.ratingCount}</strong><small>ratings</small></span>
+              <span><strong>{composerProfile.composer.followerCount}</strong><small>followers</small></span>
+              <span><strong>{composerProfile.composer.publishedCount}</strong><small>sheets</small></span>
+            </div>
           </div>
           <div className='composer-profile-actions'>
             {!composerProfile.composer.isSelf && <button className={composerProfile.composer.isFollowing ? 'ghost following' : 'primary'} type='button' onClick={toggleFollow}>{composerProfile.composer.isFollowing ? 'Following' : 'Follow'}</button>}
@@ -339,6 +343,7 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
                   <StarRating value={listing.reviewSummary?.averageRating || 0} label={`${listing.title} rating`} />
                   <span>{listing.reviewSummary?.reviewCount ? `${listing.reviewSummary.averageRating} (${listing.reviewSummary.reviewCount})` : 'No reviews'}</span>
                 </button>
+                <ReputationScore compact ranking={listing.seller?.ranking} audienceLabel='buyers' />
                 <button className='composer-link' type='button' onClick={() => openComposer(listing.seller?.user_id)}>
                   <ComposerAvatar composer={listing.seller} size='small' />
                   <span><small>Composer</small><strong>{listing.seller?.name}</strong></span>

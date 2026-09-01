@@ -8,7 +8,7 @@ const ADMIN_SECTIONS = [
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
   ['promotions', 'Discounts', 'Create and pause percentage codes'],
   ['policies', 'Rules & policies', 'Signup and spending minimums'],
-  ['users', 'Users & passwords', 'Accounts and secure resets'],
+  ['users', 'Account manager', 'Search, Mcoins, access, and secure resets'],
 ];
 
 const DEVICE_PRESETS = [
@@ -47,6 +47,33 @@ const EMPTY_PROMOTION = {
   minimumAccountAgeDays: 0, maxRedemptions: 0, perUserLimit: 1, startsAt: '', expiresAt: '',
 };
 
+const EMPTY_ACCOUNT_MANAGER = {
+  userId: '',
+  amountMcoins: 100,
+  tier: 'musician',
+  interval: 'MONTH',
+};
+
+function normalizedDigits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function accountMatchRank(row, query) {
+  if (!query) return 0;
+  const text = query.toLowerCase();
+  const digits = normalizedDigits(query);
+  const name = String(row.name || '').toLowerCase();
+  const email = String(row.email || '').toLowerCase();
+  const phone = normalizedDigits(row.phone);
+  if (name.startsWith(text)) return 0;
+  if (email.startsWith(text)) return 1;
+  if (digits && phone.includes(digits)) return 2;
+  if (name.includes(text)) return 3;
+  if (email.includes(text)) return 4;
+  if (String(row.friendId || '').toLowerCase().includes(text)) return 5;
+  return Number.POSITIVE_INFINITY;
+}
+
 function formatAmount(amount, currency) {
   if (currency === 'USD') return Number(amount || 0).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
   return `${Number(amount || 0).toLocaleString()} Mcoins`;
@@ -70,6 +97,9 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [policies, setPolicies] = useState(null);
   const [status, setStatus] = useState('Loading admin console...');
   const [userSearch, setUserSearch] = useState('');
+  const [userSort, setUserSort] = useState('relevance');
+  const [accountManager, setAccountManager] = useState(EMPTY_ACCOUNT_MANAGER);
+  const [accountActionBusy, setAccountActionBusy] = useState(false);
   const [passwordReset, setPasswordReset] = useState({ userId: '', name: '', email: '', password: '', confirm: '' });
   const [issuedPassword, setIssuedPassword] = useState('');
   const [promotion, setPromotion] = useState(EMPTY_PROMOTION);
@@ -110,11 +140,22 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     [database.rows],
   );
   const filteredUsers = useMemo(() => {
-    const query = userSearch.trim().toLowerCase();
-    return query
-      ? database.rows.filter((row) => `${row.name} ${row.email} ${row.phone} ${row.friendId}`.toLowerCase().includes(query))
-      : database.rows;
-  }, [database.rows, userSearch]);
+    const query = userSearch.trim();
+    const matching = query
+      ? database.rows.filter((row) => Number.isFinite(accountMatchRank(row, query)))
+      : database.rows.slice();
+    return matching.sort((left, right) => {
+      if (query && userSort === 'relevance') {
+        const relevance = accountMatchRank(left, query) - accountMatchRank(right, query);
+        if (relevance) return relevance;
+      }
+      if (userSort === 'email') return String(left.email || '').localeCompare(String(right.email || ''), undefined, { sensitivity: 'base' });
+      if (userSort === 'phone') return normalizedDigits(left.phone).localeCompare(normalizedDigits(right.phone), undefined, { numeric: true });
+      if (userSort === 'newest') return String(right.createdAt || '').localeCompare(String(left.createdAt || ''));
+      return String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' });
+    });
+  }, [database.rows, userSearch, userSort]);
+  const selectedAccount = database.rows.find((row) => row.userId === accountManager.userId) || null;
 
   const preset = DEVICE_PRESETS.find((device) => device.id === deviceId) || DEVICE_PRESETS[1];
   const baseWidth = preset.id === 'custom' ? Number(customViewport.width) || 390 : preset.width;
@@ -219,6 +260,74 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   function openPasswordReset(row) {
     setIssuedPassword('');
     setPasswordReset({ userId: row.userId, name: row.name, email: row.email, password: '', confirm: '' });
+  }
+
+  function openAccountManager(row) {
+    setAccountManager({
+      userId: row.userId,
+      amountMcoins: 100,
+      tier: row.adminSubscriptionGrant?.tier || (['chill', 'musician'].includes(row.subscriptionTier) ? row.subscriptionTier : 'musician'),
+      interval: row.adminSubscriptionGrant?.interval || row.subscriptionInterval || 'MONTH',
+    });
+    window.setTimeout(() => document.getElementById('admin-account-manager')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }
+
+  async function grantMcoins(event) {
+    event.preventDefault();
+    if (!selectedAccount) return;
+    const amountMcoins = Number(accountManager.amountMcoins);
+    if (!window.confirm(`Give ${amountMcoins.toLocaleString()} Mcoins to ${selectedAccount.name}?`)) return;
+    setAccountActionBusy(true);
+    setStatus(`Adding Mcoins to ${selectedAccount.name}...`);
+    try {
+      const data = await apiRequest(`/api/admin/users/${selectedAccount.userId}/mcoins`, {
+        method: 'POST',
+        body: JSON.stringify({ amountMcoins }),
+      });
+      await loadConsole();
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setAccountActionBusy(false);
+    }
+  }
+
+  async function grantSubscription(event) {
+    event.preventDefault();
+    if (!selectedAccount) return;
+    const tierLabel = accountManager.tier === 'musician' ? 'Musician' : 'Chill';
+    const periodLabel = accountManager.interval === 'YEAR' ? 'one year' : 'one month';
+    if (!window.confirm(`Grant or renew ${tierLabel} access for ${selectedAccount.name} for ${periodLabel}?`)) return;
+    setAccountActionBusy(true);
+    setStatus(`Updating ${selectedAccount.name}'s access...`);
+    try {
+      const data = await apiRequest(`/api/admin/users/${selectedAccount.userId}/subscription`, {
+        method: 'POST',
+        body: JSON.stringify({ tier: accountManager.tier, interval: accountManager.interval }),
+      });
+      await loadConsole();
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setAccountActionBusy(false);
+    }
+  }
+
+  async function removeSubscriptionGrant() {
+    if (!selectedAccount?.adminSubscriptionGrant) return;
+    if (!window.confirm(`Remove administrator-granted access from ${selectedAccount.name}? PayPal or institution access will not be changed.`)) return;
+    setAccountActionBusy(true);
+    try {
+      const data = await apiRequest(`/api/admin/users/${selectedAccount.userId}/subscription`, { method: 'DELETE' });
+      await loadConsole();
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setAccountActionBusy(false);
+    }
   }
 
   if (!user?.admin) {
@@ -403,27 +512,58 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       {activeSection === 'users' && (
         <section className='admin-workspace'>
           <div className='admin-section-heading'>
-            <div><p className='eyebrow'>Accounts and recovery</p><h2>Users and password resets</h2><p>Issue a temporary password. The user is signed out everywhere and must choose a private password at next login.</p></div>
-            <label className='admin-user-search'>Search users<input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder='Name, email, or phone' /></label>
+            <div><p className='eyebrow'>Accounts and recovery</p><h2>User account manager</h2><p>Find an account, grant Mcoins, renew access, or issue a secure temporary password.</p></div>
+            <div className='admin-user-tools'>
+              <label className='admin-user-search'>Search users<input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder='Start typing a name, email, or phone' /></label>
+              <label>Arrange by<select value={userSort} onChange={(event) => setUserSort(event.target.value)}><option value='relevance'>Best match</option><option value='name'>Name A–Z</option><option value='email'>Email A–Z</option><option value='phone'>Phone number</option><option value='newest'>Newest account</option></select></label>
+              <small>{filteredUsers.length} of {database.rows.length} accounts</small>
+            </div>
           </div>
           <div className='database-table-wrap'>
             <table className='database-table admin-users-table'>
-              <thead><tr><th>User</th><th>Contact</th><th>Wallet</th><th>Spent</th><th>Membership</th><th>Last login</th><th>Security</th></tr></thead>
+              <thead><tr><th>User</th><th>Contact</th><th>Wallet</th><th>Spent</th><th>Membership</th><th>Last login</th><th>Actions</th></tr></thead>
               <tbody>
                 {filteredUsers.map((row) => (
-                  <tr key={row.userId}>
+                  <tr className={selectedAccount?.userId === row.userId ? 'selected-account-row' : ''} key={row.userId}>
                     <td><strong>{row.name}</strong><code className='friend-id-chip'>{row.friendId}</code><small>Joined {row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '-'}</small></td>
                     <td>{row.email}<small>{row.phone || 'No phone'}</small></td>
-                    <td className='amount-cell'>{row.mcoins.toLocaleString()} Mcoins</td>
+                    <td className='amount-cell'>{row.unlimitedMcoins ? '∞ Mcoins' : `${row.mcoins.toLocaleString()} Mcoins`}</td>
                     <td>{formatAmount(row.usdSpent, 'USD')}<small>{row.marketplaceSpentMcoins.toLocaleString()} music-sheet Mcoins</small></td>
-                    <td><span className='status-pill'>{row.proStatus}</span></td>
+                    <td><span className='status-pill'>{row.admin ? 'ADMIN' : row.subscriptionTier === 'musician' ? 'MUSICIAN' : row.subscriptionTier === 'chill' ? 'CHILL' : row.proStatus}</span>{row.adminSubscriptionGrant && <small>{row.adminSubscriptionGrant.active ? 'Admin access until' : 'Admin access expired'} {row.adminSubscriptionGrant.expiresAt ? new Date(row.adminSubscriptionGrant.expiresAt).toLocaleDateString() : ''}</small>}</td>
                     <td>{row.lastLoginAt ? new Date(row.lastLoginAt).toLocaleString() : 'Never'}<small>{row.loginCount} recorded sign-ins</small></td>
-                    <td><button className='ghost compact-action' type='button' disabled={row.userId === user.user_id} onClick={() => openPasswordReset(row)}>{row.userId === user.user_id ? 'Your account' : 'Reset password'}</button></td>
+                    <td><div className='admin-user-actions'><button className='primary compact-action' type='button' onClick={() => openAccountManager(row)}>Manage</button><button className='ghost compact-action' type='button' disabled={row.userId === user.user_id} onClick={() => openPasswordReset(row)}>{row.userId === user.user_id ? 'Your account' : 'Reset password'}</button></div></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {!filteredUsers.length && <div className='empty-state'>No account matches “{userSearch}”. Try fewer letters or digits.</div>}
+          {selectedAccount && (
+            <section className='admin-account-manager' id='admin-account-manager'>
+              <header>
+                <div><p className='eyebrow'>Selected account</p><h3>{selectedAccount.name}</h3><span>{selectedAccount.email}{selectedAccount.phone ? ` · ${selectedAccount.phone}` : ''}</span></div>
+                <button className='ghost compact-action' type='button' onClick={() => setAccountManager(EMPTY_ACCOUNT_MANAGER)}>Close</button>
+              </header>
+              {selectedAccount.admin ? (
+                <div className='admin-unlimited-notice'><strong>Administrator account</strong><span>This account already has unlimited Mcoins, translations, Learn, and Band access.</span></div>
+              ) : (
+                <div className='admin-account-actions-grid'>
+                  <form onSubmit={grantMcoins}>
+                    <div><p className='eyebrow'>Wallet gift</p><h3>{selectedAccount.mcoins.toLocaleString()} Mcoins</h3><small>Add spendable Mcoins. The action is recorded in the user’s ledger.</small></div>
+                    <label className='field'>Mcoins to give<input type='number' min='0.01' max='1000000' step='0.01' value={accountManager.amountMcoins} onChange={(event) => setAccountManager({ ...accountManager, amountMcoins: event.target.value })} required /></label>
+                    <button className='primary' type='submit' disabled={accountActionBusy}>Give Mcoins</button>
+                  </form>
+                  <form onSubmit={grantSubscription}>
+                    <div><p className='eyebrow'>Subscription help</p><h3>Grant or renew access</h3><small>Extends the same active grant. This does not create, charge, cancel, or alter a PayPal subscription.</small></div>
+                    <label className='field'>Plan<select value={accountManager.tier} onChange={(event) => setAccountManager({ ...accountManager, tier: event.target.value })}><option value='chill'>Chill</option><option value='musician'>Musician</option></select></label>
+                    <label className='field'>Access period<select value={accountManager.interval} onChange={(event) => setAccountManager({ ...accountManager, interval: event.target.value })}><option value='MONTH'>One month</option><option value='YEAR'>One year</option></select></label>
+                    {selectedAccount.adminSubscriptionGrant && <small className={selectedAccount.adminSubscriptionGrant.active ? 'active-grant' : 'expired-grant'}>{selectedAccount.adminSubscriptionGrant.active ? 'Active through' : 'Expired'} {new Date(selectedAccount.adminSubscriptionGrant.expiresAt).toLocaleDateString()}</small>}
+                    <div className='button-row'><button className='primary' type='submit' disabled={accountActionBusy}>Grant / renew</button>{selectedAccount.adminSubscriptionGrant && <button className='ghost' type='button' disabled={accountActionBusy} onClick={removeSubscriptionGrant}>Remove manual access</button>}</div>
+                  </form>
+                </div>
+              )}
+            </section>
+          )}
           {passwordReset.userId && (
             <form className='temporary-password-card' onSubmit={resetPassword}>
               <div><strong>Reset password for {passwordReset.name}</strong><span>{passwordReset.email}</span></div>

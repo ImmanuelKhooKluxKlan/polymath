@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { INSTRUMENTS, INSTRUMENT_BY_ID } from '../data/instruments.js';
 import { apiRequest } from '../services/api.js';
+import ReputationScore from '../components/ReputationScore.jsx';
 
 const LEVELS = [
   ['beginner', 'Beginner'],
@@ -337,6 +338,8 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
                   </button>
                 </div>
               </header>
+
+              <ReputationScore ranking={teacher.ranking} audienceLabel="students" />
 
               <div className="teacher-tags">
                 {teacher.instruments.map((instrument) => <span key={instrument}>{INSTRUMENT_BY_ID[instrument]?.shortLabel || titleCase(instrument)}</span>)}

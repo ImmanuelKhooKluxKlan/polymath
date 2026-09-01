@@ -379,6 +379,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(adminRegistration.status, 201);
   assert.equal(adminRegistration.data.user.admin, true);
+  assert.equal(adminRegistration.data.user.unlimitedMcoins, true);
   assert.equal(adminRegistration.data.user.translationAllowance.plan, 'admin');
   assert.equal(adminRegistration.data.user.translationAllowance.unlimited, true);
   assert.equal(adminRegistration.data.user.translationAllowance.limit, null);
@@ -409,6 +410,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     },
   });
   assert.equal(userRegistration.status, 201);
+  assert.equal(userRegistration.data.user.unlimitedMcoins, false);
   assert.equal(userRegistration.data.user.translationAllowance.unlimited, false);
   assert.equal(userRegistration.data.user.translationAllowance.plan, 'free');
   assert.equal(userRegistration.data.user.translationAllowance.limit, 0);
@@ -419,6 +421,60 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.match(userRegistration.data.user.friend_id, /^user_[a-f0-9]{5}$/);
   const userToken = userRegistration.data.token;
   const userId = userRegistration.data.user.user_id;
+
+  const unauthorizedGrant = await api(`/api/admin/users/${userId}/mcoins`, {
+    method: 'POST',
+    token: userToken,
+    body: { amountMcoins: 25 },
+  });
+  assert.equal(unauthorizedGrant.status, 403);
+
+  const mcoinGrant = await api(`/api/admin/users/${userId}/mcoins`, {
+    method: 'POST',
+    token: adminToken,
+    body: { amountMcoins: 125.5 },
+  });
+  assert.equal(mcoinGrant.status, 200);
+  assert.equal(mcoinGrant.data.user.mcoins, 125.5);
+  assert.equal(mcoinGrant.data.user.unlimitedMcoins, false);
+
+  const firstSubscriptionGrant = await api(`/api/admin/users/${userId}/subscription`, {
+    method: 'POST',
+    token: adminToken,
+    body: { tier: 'musician', interval: 'MONTH' },
+  });
+  assert.equal(firstSubscriptionGrant.status, 200);
+  assert.equal(firstSubscriptionGrant.data.extended, false);
+  assert.equal(firstSubscriptionGrant.data.user.subscriptionTier, 'musician');
+  assert.equal(firstSubscriptionGrant.data.user.subscriptionInterval, 'MONTH');
+  assert.equal(firstSubscriptionGrant.data.user.adminSubscriptionGrant.active, true);
+  const firstGrantExpiry = new Date(firstSubscriptionGrant.data.user.adminSubscriptionGrant.expiresAt);
+
+  const renewedSubscriptionGrant = await api(`/api/admin/users/${userId}/subscription`, {
+    method: 'POST',
+    token: adminToken,
+    body: { tier: 'musician', interval: 'MONTH' },
+  });
+  assert.equal(renewedSubscriptionGrant.status, 200);
+  assert.equal(renewedSubscriptionGrant.data.extended, true);
+  assert.ok(new Date(renewedSubscriptionGrant.data.user.adminSubscriptionGrant.expiresAt) > firstGrantExpiry);
+
+  const adminUsers = await api('/api/admin/users', { token: adminToken });
+  assert.equal(adminUsers.status, 200);
+  const managedCustomer = adminUsers.data.rows.find((row) => row.userId === userId);
+  const managedAdmin = adminUsers.data.rows.find((row) => row.userId === adminRegistration.data.user.user_id);
+  assert.equal(managedCustomer.mcoins, 125.5);
+  assert.equal(managedCustomer.subscriptionTier, 'musician');
+  assert.equal(managedCustomer.adminSubscriptionGrant.active, true);
+  assert.equal(managedAdmin.unlimitedMcoins, true);
+
+  const removedSubscriptionGrant = await api(`/api/admin/users/${userId}/subscription`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  assert.equal(removedSubscriptionGrant.status, 200);
+  assert.equal(removedSubscriptionGrant.data.user.adminSubscriptionGrant, null);
+  assert.equal(removedSubscriptionGrant.data.user.subscriptionTier, 'free');
 
   const freeBandAccess = await api('/api/bands', { token: userToken });
   assert.equal(freeBandAccess.status, 403);
@@ -624,6 +680,16 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(discountedPurchase.data.purchase.buyerPaidMcoins, 40);
   assert.equal(discountedPurchase.data.user.mcoins, 35);
 
+  const administratorPurchase = await api(`/api/listings/${listingCreate.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: adminToken,
+    body: {},
+  });
+  assert.equal(administratorPurchase.status, 201);
+  assert.equal(administratorPurchase.data.purchase.paymentMethod, 'administrator_unlimited');
+  assert.equal(administratorPurchase.data.user.unlimitedMcoins, true);
+  assert.equal(administratorPurchase.data.user.mcoins, 0);
+
   const honestReview = await api(`/api/listings/${listingCreate.data.listing.id}/reviews`, {
     method: 'POST',
     token: luckyToken,
@@ -665,6 +731,13 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(composerProfile.status, 200);
   assert.equal(composerProfile.data.composer.averageRating, 2);
   assert.equal(composerProfile.data.composer.ratingCount, 1);
+  assert.equal(composerProfile.data.composer.buyerCount, 2);
+  assert.deepEqual(composerProfile.data.composer.ranking, {
+    ratingPoints: 4,
+    audiencePoints: 2,
+    totalPoints: 6,
+    maximumPoints: 50,
+  });
   assert.equal(composerProfile.data.composer.followerCount, 1);
   assert.ok(composerProfile.data.listings.some((listing) => listing.id === listingCreate.data.listing.id));
 

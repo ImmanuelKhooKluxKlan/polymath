@@ -1274,11 +1274,37 @@ button { -webkit-tap-highlight-color: transparent; }
 .promotion-row code { width: fit-content; padding: 5px 8px; border-radius: 8px; color: var(--gold); background: rgba(255,231,138,0.09); font-weight: 900; }
 .promotion-row small { color: var(--muted); }
 .promotion-row.inactive { opacity: 0.56; }
-.admin-user-search { display: grid; gap: 6px; min-width: min(360px, 100%); color: var(--muted); font-size: 0.76rem; font-weight: 850; }
+.admin-user-tools { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(145px, 180px); align-items: end; gap: 8px; min-width: min(520px, 100%); }
+.admin-user-tools > label { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 0.76rem; font-weight: 850; }
+.admin-user-tools > small { grid-column: 1 / -1; color: var(--muted); text-align: right; }
+.admin-user-search { min-width: 0; }
 .admin-users-table td { vertical-align: top; }
 .admin-users-table td strong,
 .admin-users-table td small { display: block; }
 .admin-users-table td small { margin-top: 4px; color: var(--muted); white-space: nowrap; }
+.admin-users-table .selected-account-row { background: rgba(126, 109, 255, 0.1); }
+.admin-user-actions { display: grid; gap: 6px; }
+.admin-account-manager {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid rgba(88, 240, 255, 0.3);
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(20, 27, 63, 0.96), rgba(16, 15, 42, 0.96));
+  scroll-margin-top: 90px;
+}
+.admin-account-manager > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.admin-account-manager h3,
+.admin-account-manager p { margin: 0.2rem 0; }
+.admin-account-manager header span,
+.admin-account-manager small { color: var(--muted); line-height: 1.45; }
+.admin-account-actions-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.admin-account-actions-grid > form { display: grid; align-content: start; gap: 13px; min-width: 0; padding: 17px; border: 1px solid var(--line); border-radius: 17px; background: rgba(255, 255, 255, 0.03); }
+.admin-account-actions-grid > form > .primary { justify-self: start; }
+.admin-unlimited-notice { display: grid; gap: 4px; padding: 16px; border: 1px solid rgba(255, 214, 90, 0.3); border-radius: 16px; color: var(--gold); background: rgba(255, 214, 90, 0.06); }
+.admin-unlimited-notice span { color: var(--muted); }
+.active-grant { color: #77efaa !important; }
+.expired-grant { color: #ffb0bd !important; }
 .custom-viewport-controls { display: grid; grid-template-columns: repeat(2, minmax(120px, 220px)); gap: 10px; }
 .policy-notice { padding: 12px 14px; border-left: 3px solid var(--cyan); color: var(--muted); background: rgba(88,240,255,0.055); line-height: 1.5; }
 .policy-links { display: flex; gap: 14px; margin: 0; }
@@ -1341,7 +1367,10 @@ button { -webkit-tap-highlight-color: transparent; }
   .promotion-row > div:nth-child(2) { grid-column: 1; }
   .promotion-row > button { grid-column: 2; grid-row: 1 / span 2; }
   .custom-viewport-controls { grid-template-columns: 1fr 1fr; }
-  .admin-user-search { min-width: 0; }
+  .admin-user-tools { grid-template-columns: 1fr; min-width: 0; }
+  .admin-user-tools > small { grid-column: 1; text-align: left; }
+  .admin-account-manager > header { flex-direction: column; }
+  .admin-account-actions-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 900px) {
@@ -5088,6 +5117,51 @@ details[open] > summary {
   background: transparent;
 }
 .star-rating.interactive button { font-size: 1.35rem; }
+.reputation-score {
+  display: grid;
+  grid-template-columns: auto repeat(2, minmax(68px, 1fr));
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(126, 109, 255, 0.24);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(81, 118, 255, 0.1), rgba(171, 98, 255, 0.08));
+}
+.reputation-score > span { min-width: 0; }
+.reputation-total {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 4px 10px 4px 3px;
+  border-right: 1px solid var(--line);
+  color: #f0ecff;
+}
+.reputation-total strong { font-size: 1.18rem; line-height: 1; }
+.reputation-total small { color: var(--muted); font-size: 0.65rem; font-weight: 850; }
+.reputation-part { display: grid; gap: 2px; }
+.reputation-part small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.reputation-part b { color: #dcd7ff; font-size: 0.76rem; }
+.reputation-score.compact {
+  grid-template-columns: auto repeat(2, minmax(58px, auto));
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 8px;
+  border-radius: 11px;
+}
+.reputation-score.compact .reputation-total { padding: 2px 8px 2px 0; }
+.reputation-score.compact .reputation-total strong { font-size: 0.9rem; }
+.reputation-score.compact .reputation-part { display: grid; gap: 2px; }
+.reputation-score.compact .reputation-part b { font-size: 0.68rem; white-space: nowrap; }
 .composer-link {
   display: flex;
   align-items: center;
@@ -5154,6 +5228,7 @@ details[open] > summary {
 .composer-profile-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .composer-profile-identity h2,
 .composer-profile-identity p { margin: 0.2rem 0; }
+.composer-profile-score { display: grid; align-self: center; gap: 7px; min-width: 0; }
 .composer-profile-stats { display: grid; grid-template-columns: repeat(4, minmax(72px, 1fr)); gap: 7px; align-self: center; }
 .composer-profile-stats span { display: grid; gap: 3px; padding: 10px; border-radius: 12px; background: rgba(255,255,255,0.04); }
 .composer-profile-stats strong { font-size: 1.15rem; }
@@ -5192,6 +5267,8 @@ details[open] > summary {
   .composer-profile-songs button { align-items: flex-start; flex-direction: column; }
   .review-author { grid-template-columns: auto minmax(0, 1fr); }
   .review-author .star-rating { grid-column: 2; }
+  .reputation-score { grid-template-columns: auto 1fr 1fr; }
+  .reputation-score.compact { grid-template-columns: auto 1fr 1fr; width: 100%; }
 }
 
 @media (max-width: 720px) {

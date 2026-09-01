@@ -106,6 +106,16 @@ test('teachers publish profiles, connected students review, and chats remain pri
   assert.equal(review.data.review.connectedStudent, true);
   assert.equal(review.data.summary.averageRating, 5);
 
+  const rankedDirectory = await api('/api/teachers?instrument=piano');
+  assert.equal(rankedDirectory.status, 200);
+  assert.equal(rankedDirectory.data.teachers[0].studentCount, 1);
+  assert.deepEqual(rankedDirectory.data.teachers[0].ranking, {
+    ratingPoints: 10,
+    audiencePoints: 1,
+    totalPoints: 11,
+    maximumPoints: 50,
+  });
+
   const ownReview = await api(`/api/teachers/${profile.id}/reviews`, {
     method: 'POST',
     token: teacher.token,

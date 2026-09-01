@@ -314,11 +314,13 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
       <div className="account-grid">
         <article className="wallet-card featured-card">
           <p className="eyebrow">Mcoin wallet</p>
-          <strong className="wallet-balance">{user.mcoins.toLocaleString()}</strong>
-          <p className="muted">$1 USD equals 1 Mcoin. Cash-out eligible: {(user.cashoutEligibleMcoins ?? user.mcoins).toLocaleString()} Mcoins.</p>
+          <strong className="wallet-balance">{user.unlimitedMcoins ? '∞' : user.mcoins.toLocaleString()}</strong>
+          <p className="muted">{user.unlimitedMcoins
+            ? `Unlimited administrator spending. Only the stored ${Number(user.cashoutEligibleMcoins || 0).toLocaleString()} earned Mcoins can be cashed out.`
+            : `$1 USD equals 1 Mcoin. Cash-out eligible: ${(user.cashoutEligibleMcoins ?? user.mcoins).toLocaleString()} Mcoins.`}</p>
           <div className="button-row">
-            <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'mcoins-100' })}>Buy Mcoins</button>
-            <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: user.subscriptionTier === 'chill' ? 'polymath-musician-monthly' : 'polymath-chill-monthly' })}>{user.pro ? planName + ' active' : 'See subscriptions'}</button>
+            {!user.unlimitedMcoins && <button className="primary" type="button" onClick={() => onNavigate('payment', { productId: 'mcoins-100' })}>Buy Mcoins</button>}
+            {!user.admin && <button className="ghost" type="button" onClick={() => onNavigate('payment', { productId: user.subscriptionTier === 'chill' ? 'polymath-musician-monthly' : 'polymath-chill-monthly' })}>{user.pro ? planName + ' active' : 'See subscriptions'}</button>}
           </div>
         </article>
 
@@ -362,7 +364,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
           <h2>{user.admin ? 'Administrator - Unlimited' : user.pro ? planName : 'Free account'}</h2>
           <p className="muted">
             {user.admin
-              ? 'Administrator translation limits and translation charges are disabled for this account.'
+              ? 'Administrator translation limits and Mcoin charges are disabled for this account.'
               : user.pro
               ? planName + ' is active. PayPal subscription status: ' + (user.proStatus || 'ACTIVE') + '.'
               : 'Chill starts at $7.99/month. Musician unlocks Learn and Band.'}

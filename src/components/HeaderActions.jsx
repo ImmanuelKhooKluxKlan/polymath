@@ -1,6 +1,6 @@
 export default function HeaderActions({ user, onNavigate, route }) {
   const isLesson = ['studio', 'guitar', 'ensemble', 'band'].includes(route);
-  const walletValue = user ? user.mcoins.toLocaleString() : 'Mcoins';
+  const walletValue = user ? (user.unlimitedMcoins ? '∞' : user.mcoins.toLocaleString()) : 'Mcoins';
   const planLabel = user?.admin
     ? 'Admin'
     : user?.subscriptionTier === 'musician'
@@ -20,7 +20,7 @@ export default function HeaderActions({ user, onNavigate, route }) {
         className='mcoin-button header-status-button'
         type='button'
         onClick={() => user ? onNavigate('account') : onNavigate('payment', { productId: 'mcoins-100' })}
-        aria-label={user ? 'Open wallet with ' + walletValue + ' Mcoins' : 'Learn about Mcoins'}
+        aria-label={user ? (user.unlimitedMcoins ? 'Open unlimited administrator wallet' : 'Open wallet with ' + walletValue + ' Mcoins') : 'Learn about Mcoins'}
       >
         <span>Wallet</span>
         <strong>{walletValue}</strong>
