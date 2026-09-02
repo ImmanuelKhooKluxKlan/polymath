@@ -342,6 +342,11 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     region: 'local',
   });
 
+  const stateHealth = await api('/api/health/state');
+  assert.equal(stateHealth.status, 200);
+  assert.equal(stateHealth.data.ok, true);
+  assert.equal(stateHealth.data.state, 'ready');
+
   const catalog = await api('/api/catalog');
   assert.equal(catalog.status, 200);
   assert.equal(catalog.data.mcoinsPerUsd, 1);

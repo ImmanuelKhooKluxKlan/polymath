@@ -2162,6 +2162,30 @@ app.get('/api/health', async (req, res) => res.json({
   queue: JOB_QUEUE.enabled ? 'sqs' : 'in-process',
   region: process.env.APP_REGION || 'local',
 }));
+app.get('/api/health/state', async (req, res) => {
+  try {
+    await readDb();
+    return res.json({
+      ok: true,
+      storage: STATE_STORE.provider,
+      state: 'ready',
+      region: process.env.APP_REGION || 'local',
+    });
+  } catch (error) {
+    console.error('State dependency health check failed:', error);
+    const rawCode = String(error?.code || '').trim().toUpperCase();
+    const code = /^[A-Z0-9_]{2,64}$/.test(rawCode)
+      ? rawCode
+      : 'STATE_READ_FAILED';
+    return res.status(503).json({
+      ok: false,
+      storage: STATE_STORE.provider,
+      state: 'unavailable',
+      code,
+      region: process.env.APP_REGION || 'local',
+    });
+  }
+});
 app.get('/api/test', async (req, res) => res.json({
   message: 'Backend is working',
   environment: PAYPAL_ENV,
