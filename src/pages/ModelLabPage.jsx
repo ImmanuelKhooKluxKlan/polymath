@@ -19,6 +19,10 @@ function displayCheckpoint(value) {
   return String(value || 'Checking…').replaceAll('muscriptor-tester', 'polymath-tester');
 }
 
+function polymathLabel(value) {
+  return String(value || '').replace(/MuScriptor/gi, 'Polymath');
+}
+
 function seconds(value) {
   const number = Number(value) || 0;
   if (number < 1) return `${Math.round(number * 1000)} ms`;
@@ -205,7 +209,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
         )}
         {job && (
           <div className="model-lab-progress">
-            <div><strong>{job.stage}</strong><span>{job.progress}%</span></div>
+            <div><strong>{polymathLabel(job.stage)}</strong><span>{job.progress}%</span></div>
             <div className="job-progress-track"><span style={{ width: `${job.progress}%` }} /></div>
           </div>
         )}
@@ -260,7 +264,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
             <div>
               <p className="eyebrow">Raw result</p>
               <h2>{raw.title || job.title}</h2>
-              <p>{analysis.model.provider}</p>
+              <p>{polymathLabel(analysis.model.provider)}</p>
             </div>
             <div className="model-lab-actions">
               <button type="button" className="ghost" onClick={() => downloadJson(analysis, `${job.title}-analysis.json`)}>Analysis JSON</button>

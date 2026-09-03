@@ -8,6 +8,10 @@ import {
 
 const MEDIA_ACCEPT = 'audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.webm,.mkv,.avi';
 
+function polymathLabel(value) {
+  return String(value || '').replace(/MuScriptor/gi, 'Polymath');
+}
+
 export default function MediaTranscriptionPanel({
   user,
   setUser,
@@ -64,7 +68,7 @@ export default function MediaTranscriptionPanel({
         return;
       }
       if (data.job.status === 'failed') {
-        setStatus(data.job.error || 'Polymath could not transcribe this recording.');
+        setStatus(polymathLabel(data.job.error) || 'Polymath could not transcribe this recording.');
         clearPolling();
         return;
       }
@@ -170,7 +174,7 @@ export default function MediaTranscriptionPanel({
       {capability && !capability.enabled && (
         <div className="quota-warning">
           <strong>Polymath transcription is not enabled on this server.</strong>
-          <span>{capability.reason}</span>
+          <span>{polymathLabel(capability.reason)}</span>
         </div>
       )}
 
@@ -270,7 +274,7 @@ export default function MediaTranscriptionPanel({
       {job && (
         <div className={`media-transcription-job ${job.status}`}>
           <div className="job-status-row">
-            <div><span>{job.stage}</span><strong>{job.title}</strong></div>
+            <div><span>{polymathLabel(job.stage)}</span><strong>{job.title}</strong></div>
             <span className="job-state-badge">{job.progress}%</span>
           </div>
           <div className="job-progress-track" aria-label={`Transcription progress ${job.progress}%`}>
