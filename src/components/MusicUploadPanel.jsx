@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { apiRequest } from '../services/api.js';
+import {
+  apiRequest,
+  fileToBase64,
+  uploadProtectedArtifact,
+} from '../services/api.js';
 import PdfTranslationPanel from './PdfTranslationPanel.jsx';
 import MediaTranscriptionPanel from './MediaTranscriptionPanel.jsx';
 
@@ -22,6 +26,22 @@ function readGuestAllowance() {
   }
 }
 
+function cloudSongFile(prepared, instrument, fallbackName) {
+  const title = String(prepared?.title || fallbackName || 'ready-to-play-song').trim();
+  const safeTitle = title.replace(/[^a-z0-9-_]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'ready-to-play-song';
+  const payload = {
+    ...prepared,
+    title,
+    instrument: prepared?.instrument || instrument,
+    readyToPlayFormat: prepared?.readyToPlayFormat || 'polymath-musician-json-v1',
+  };
+  return new window.File(
+    [JSON.stringify(payload)],
+    `${safeTitle}.json`,
+    { type: 'application/json' },
+  );
+}
+
 export default function MusicUploadPanel({
   user,
   setUser,
@@ -30,6 +50,7 @@ export default function MusicUploadPanel({
   onReadyFile,
   readyAccept = '.json,.mid,.midi',
   compact = false,
+  onPersonalSongSaved,
 }) {
   const [mode, setMode] = useState(null);
   const [status, setStatus] = useState('');
@@ -47,11 +68,21 @@ export default function MusicUploadPanel({
       const prepared = await onReadyFile(file, { commit: false });
       let payment;
       if (user) {
+        const personalFile = cloudSongFile(prepared, instrument, file.name.replace(/\.[^.]+$/, ''));
+        const directUpload = await uploadProtectedArtifact(personalFile, 'personal-song');
         payment = await apiRequest('/api/ready-sheet-uploads', {
           method: 'POST',
-          body: JSON.stringify({ filename: file.name }),
+          body: JSON.stringify({
+            filename: personalFile.name,
+            title: prepared?.title || file.name.replace(/\.[^.]+$/, ''),
+            artist: prepared?.artist || prepared?.composer || '',
+            instrument,
+            directUploadReceipt: directUpload?.receipt || '',
+            contentBase64: directUpload ? '' : await fileToBase64(personalFile),
+          }),
         });
         if (payment.user) setUser?.(payment.user);
+        if (payment.personalSong) onPersonalSongSaved?.(payment.personalSong);
       } else {
         const current = readGuestAllowance();
         if (current.remaining <= 0) {
@@ -67,7 +98,15 @@ export default function MusicUploadPanel({
         setGuestAllowance(next);
         payment = { costMcoins: 0, paymentMethod: 'free_attempt' };
       }
-      const result = await onReadyFile(file, { commit: true, prepared });
+      const savedPrepared = payment.personalSong
+        ? {
+            ...prepared,
+            personalSongId: payment.personalSong.id,
+            libraryId: `personal:${payment.personalSong.id}`,
+            libraryType: 'personal',
+          }
+        : prepared;
+      const result = await onReadyFile(file, { commit: true, prepared: savedPrepared });
       const title = result?.title || file.name;
       const updatedAllowance = payment.user?.readySheetAllowance;
       const remaining = payment.user
@@ -78,7 +117,7 @@ export default function MusicUploadPanel({
         : payment.costMcoins > 0
           ? `${payment.costMcoins} Mcoin`
           : `${remaining} free left`;
-      setStatus(`Loaded ${title} · ${resultLabel}`);
+      setStatus(`Loaded ${title} · ${resultLabel}${user ? ' · saved to your songs' : ''}`);
     } catch (error) {
       setStatus(error.message || 'The ready-to-play sheet could not be loaded.');
     } finally {
@@ -150,7 +189,7 @@ export default function MusicUploadPanel({
       )}
 
       {mode === 'pdf' ? (
-        <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} onReadyFile={onReadyFile} />
+        <PdfTranslationPanel user={user} setUser={setUser} instrument={instrument} onNavigate={onNavigate} onReadyFile={onReadyFile} onPersonalSongSaved={onPersonalSongSaved} />
       ) : mode === 'media' ? (
         <MediaTranscriptionPanel
           user={user}
@@ -158,6 +197,7 @@ export default function MusicUploadPanel({
           onNavigate={onNavigate}
           instrument={instrument}
           onReadyFile={onReadyFile}
+          onPersonalSongSaved={onPersonalSongSaved}
         />
       ) : (
         status && <p className="form-status">{status}</p>

@@ -1,4 +1,5 @@
 import { normalizeSong } from '../engine/scheduler.js';
+import { midiToNote } from '../engine/noteMath.js';
 import { parseMidiArrayBuffer } from './midiParser.js';
 import { parseMusicXmlText } from './musicXmlParser.js';
 
@@ -44,6 +45,47 @@ export function parseSongText(text, filename = 'Uploaded Song') {
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     const parsed = JSON.parse(trimmed);
     if (Array.isArray(parsed)) return normalizeSong({ title: filename, notes: parsed });
+    if (!Array.isArray(parsed.notes) && Array.isArray(parsed.events)) {
+      const openStringMidi = [40, 45, 50, 55, 59, 64];
+      const notes = parsed.events.flatMap((event, eventIndex) => {
+        const time = Number(event.time ?? event.at ?? event.start ?? 0);
+        const duration = Number(event.duration ?? event.length ?? 0.7);
+        const velocity = Number(event.velocity ?? 0.8);
+        if (!Number.isFinite(time) || time < 0) return [];
+        if (event.note) return [{ ...event, time, duration, velocity }];
+        if (Array.isArray(event.frets)) {
+          return event.frets.flatMap((fretValue, stringIndex) => {
+            const fret = Number(fretValue);
+            if (!Number.isFinite(fret) || fret < 0 || stringIndex >= openStringMidi.length) return [];
+            const midi = openStringMidi[stringIndex] + Math.round(fret);
+            return [{
+              id: `guitar-event-${eventIndex}-${stringIndex}`,
+              note: midiToNote(midi),
+              time,
+              duration,
+              velocity,
+            }];
+          });
+        }
+        const stringIndex = Number(event.stringIndex ?? event.string);
+        const fret = Number(event.fret);
+        if (!Number.isInteger(stringIndex) || !Number.isFinite(fret)) return [];
+        const zeroBasedString = stringIndex >= 0 && stringIndex <= 5
+          ? stringIndex
+          : stringIndex >= 1 && stringIndex <= 6
+            ? stringIndex - 1
+            : -1;
+        if (zeroBasedString < 0 || zeroBasedString >= openStringMidi.length || fret < 0) return [];
+        return [{
+          id: `guitar-event-${eventIndex}`,
+          note: midiToNote(openStringMidi[zeroBasedString] + Math.round(fret)),
+          time,
+          duration,
+          velocity,
+        }];
+      });
+      return normalizeSong({ ...parsed, notes });
+    }
     return normalizeSong(parsed);
   }
 

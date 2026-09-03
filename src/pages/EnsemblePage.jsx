@@ -3,6 +3,7 @@ import InstrumentTeacherSurface from '../components/InstrumentTeacherSurface.jsx
 import InstrumentIcon from '../components/InstrumentIcon.jsx';
 import MusicUploadPanel from '../components/MusicUploadPanel.jsx';
 import MusicChoiceDisclosure from '../components/MusicChoiceDisclosure.jsx';
+import SearchableSongSelect from '../components/SearchableSongSelect.jsx';
 import LearnModePanel from '../components/LearnModePanel.jsx';
 import { ENSEMBLE_INSTRUMENTS, INSTRUMENT_BY_ID } from '../data/instruments.js';
 import { ensembleAudio } from '../engine/ensembleEngine.js';
@@ -166,7 +167,7 @@ function formatTime(seconds) {
   return `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
 
-export default function EnsemblePage({ user, setUser, onNavigate }) {
+export default function EnsemblePage({ user, setUser, onNavigate, personalSongs = [], onPersonalSongSaved }) {
   const [instrument, setInstrument] = useState('fiddle');
   const [song, setSong] = useState(() => demoSongFor('fiddle'));
   const [isCustomSong, setIsCustomSong] = useState(false);
@@ -183,6 +184,8 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
   const [openMusicChooser, setOpenMusicChooser] = useState(null);
+  const [loadingPersonalSongId, setLoadingPersonalSongId] = useState('');
+  const [personalSongStatus, setPersonalSongStatus] = useState('');
 
   const nextEventIndex = useRef(0);
   const startStamp = useRef(0);
@@ -210,6 +213,30 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
     demoSongFor(instrument),
     ...librarySongs.filter((item) => item.instrument === instrument).map((item) => item.song),
   ], [instrument, librarySongs]);
+  const songChoices = useMemo(() => {
+    const localSongs = song.personalSongId || availableSongs.some((candidate) => candidate === song)
+      ? availableSongs
+      : [song, ...availableSongs];
+    return [
+      ...localSongs
+        .filter((candidate) => !candidate.personalSongId)
+        .map((candidate, index) => ({
+          id: `local:${candidate.libraryId || `${candidate.title}:${candidate.composer || ''}:${index}`}`,
+          label: candidate.composer ? `${candidate.title} (${candidate.composer})` : candidate.title,
+          searchText: `${candidate.title} ${candidate.artist || candidate.composer || ''}`,
+          song: candidate,
+        })),
+      ...personalSongs.map((candidate) => ({
+        id: `personal:${candidate.id}`,
+        label: candidate.artist ? `${candidate.title} (${candidate.artist})` : candidate.title,
+        searchText: `${candidate.title} ${candidate.artist || ''}`,
+        personalSong: candidate,
+      })),
+    ];
+  }, [availableSongs, personalSongs, song]);
+  const selectedSongChoice = song.personalSongId
+    ? `personal:${song.personalSongId}`
+    : songChoices.find((choice) => choice.song === song)?.id || songChoices[0]?.id || '';
 
   useEffect(() => {
     ensembleAudio.setMasterVolume(volume);
@@ -427,6 +454,45 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
     return normalized;
   }
 
+  async function loadPersonalEnsembleSong(personalSong) {
+    if (!personalSong?.id || loadingPersonalSongId) return;
+    setLoadingPersonalSongId(personalSong.id);
+    setPersonalSongStatus('Loading your cloud song…');
+    try {
+      const file = await fetchProtectedFile(
+        `/api/personal-songs/${personalSong.id}/download`,
+        personalSong.filename || `${personalSong.title}.json`,
+      );
+      const parsed = await parseUploadedSongFile(file);
+      if (!parsed.notes?.length) throw new Error('This song does not contain notes for this instrument studio.');
+      await loadReadySheet(file, {
+        prepared: {
+          ...parsed,
+          title: personalSong.title || parsed.title,
+          composer: personalSong.artist || parsed.composer,
+          personalSongId: personalSong.id,
+          libraryId: `personal:${personalSong.id}`,
+          libraryType: 'personal',
+        },
+      });
+      setPersonalSongStatus('Cloud song ready.');
+    } catch (error) {
+      setPersonalSongStatus(error.message || 'The cloud song could not be loaded.');
+    } finally {
+      setLoadingPersonalSongId('');
+    }
+  }
+
+  function chooseSong(value) {
+    const choice = songChoices.find((candidate) => candidate.id === value);
+    if (choice?.personalSong) loadPersonalEnsembleSong(choice.personalSong);
+    else if (choice?.song) {
+      stopPlayback();
+      setSong(choice.song);
+      setIsCustomSong(choice.song.title !== demoSongFor(instrument).title);
+    }
+  }
+
   function playManualNote(note) {
     const durationSeconds = instrument === 'fiddle' || instrument === 'dobro' ? 1.05 : instrument === 'drums' ? 0.32 : 0.72;
     ensembleAudio.play(note, instrument, 0.86, durationSeconds);
@@ -445,14 +511,6 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
     stopPlayback();
     setSong(demoSongFor(instrument));
     setIsCustomSong(false);
-  }
-
-  function chooseAvailableSong(title) {
-    const selected = availableSongs.find((candidate) => candidate.title === title);
-    if (!selected) return;
-    stopPlayback();
-    setSong(selected);
-    setIsCustomSong(selected.title !== demoSongFor(instrument).title);
   }
 
   return (
@@ -514,12 +572,14 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
           >
-            <label className="field">Song
-              <select value={song.title} onChange={(event) => chooseAvailableSong(event.target.value)}>
-                {!availableSongs.some((candidate) => candidate.title === song.title) && <option value={song.title}>{song.title} — uploaded</option>}
-                {availableSongs.map((candidate) => <option key={candidate.title} value={candidate.title}>{candidate.title}</option>)}
-              </select>
-            </label>
+            <SearchableSongSelect
+              id="ensemble-song-library"
+              choices={songChoices}
+              value={selectedSongChoice}
+              onChange={chooseSong}
+              busy={Boolean(loadingPersonalSongId)}
+            />
+            {personalSongStatus && <small className="song-library-search-status">{personalSongStatus}</small>}
             <button className="ghost song-download" type="button" onClick={() => downloadSongJson(song)}>
               Download song
             </button>
@@ -616,6 +676,7 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
               onNavigate={onNavigate}
               instrument={instrument}
               onReadyFile={loadReadySheet}
+              onPersonalSongSaved={onPersonalSongSaved}
             />
           </MusicChoiceDisclosure>
         </aside>

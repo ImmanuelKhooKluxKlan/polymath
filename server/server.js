@@ -167,6 +167,8 @@ function artifactKey(group, filename) {
 function uploadContentType(filename, suppliedType = '') {
   const extension = path.extname(String(filename || '')).toLowerCase();
   if (extension === '.pdf') return 'application/pdf';
+  if (extension === '.json') return 'application/json';
+  if (extension === '.mid' || extension === '.midi') return 'audio/midi';
   const normalized = String(suppliedType || '').trim().toLowerCase();
   if (/^(audio|video)\/[a-z0-9.+-]+$/.test(normalized)) return normalized;
   return 'application/octet-stream';
@@ -400,6 +402,7 @@ function ensureStorage() {
 
       ],
       purchases: [],
+      personalSongs: [],
       listingReviews: [],
       composerFollows: [],
       messages: [],
@@ -469,6 +472,7 @@ function normalizeDb(db) {
     'sessions',
     'listings',
     'purchases',
+    'personalSongs',
     'listingReviews',
     'composerFollows',
     'messages',
@@ -1391,6 +1395,29 @@ function validateMarketplaceAsset(format, filename, bytes) {
   }
 }
 
+function readySheetFormat(filename) {
+  const extension = path.extname(String(filename || '')).toLowerCase();
+  if (extension === '.json') return 'JSON';
+  if (extension === '.mid' || extension === '.midi') return 'MIDI';
+  return '';
+}
+
+function readySheetMetadata(bytes, format, fallback = {}) {
+  if (format !== 'JSON') return {
+    title: String(fallback.title || '').trim(),
+    artist: String(fallback.artist || '').trim(),
+  };
+  const parsed = JSON.parse(bytes.toString('utf8'));
+  if (!Array.isArray(parsed) && !Array.isArray(parsed?.notes)
+    && !Array.isArray(parsed?.events) && !Array.isArray(parsed?.tabs)) {
+    throw new Error('Ready-to-play JSON must contain notes, events, or tabs.');
+  }
+  return {
+    title: String(fallback.title || parsed?.title || '').trim(),
+    artist: String(fallback.artist || parsed?.artist || parsed?.composer || '').trim(),
+  };
+}
+
 function decodeYouTubeText(value = '') {
   return String(value)
     .replace(/&amp;/g, '&')
@@ -1442,6 +1469,114 @@ function publicListing(listing, db, viewerId = null) {
     purchased,
     owned: viewerId === listing.sellerId,
   };
+}
+
+function publicPersonalSong(song) {
+  return {
+    id: song.id,
+    title: song.title,
+    artist: song.artist || '',
+    instrument: song.instrument,
+    format: song.format,
+    filename: song.filename,
+    size: Number(song.size || 0),
+    createdAt: song.createdAt,
+  };
+}
+
+function attachGeneratedPersonalSong(db, job, {
+  title,
+  artist = '',
+  instrument,
+  filename,
+  assetPath,
+  bytes,
+  sourceJobType,
+}) {
+  const existingForJob = db.personalSongs.find((song) => (
+    song.userId === job.userId && song.sourceJobId === job.id
+  ));
+  if (existingForJob) {
+    job.personalSongId = existingForJob.id;
+    return existingForJob;
+  }
+
+  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  const duplicate = db.personalSongs.find((song) => (
+    song.userId === job.userId && song.sha256 === sha256
+  ));
+  if (duplicate) {
+    job.personalSongId = duplicate.id;
+    return duplicate;
+  }
+
+  const personalSong = {
+    id: id('song'),
+    userId: job.userId,
+    title: String(title || path.basename(filename, path.extname(filename)) || 'Untitled song').slice(0, 160),
+    artist: String(artist || '').slice(0, 120),
+    instrument: String(instrument || 'piano').slice(0, 60),
+    format: 'JSON',
+    filename: sanitizeFilename(filename || 'ready-to-play-song.json'),
+    assetPath,
+    size: bytes.length,
+    sha256,
+    sourceJobId: job.id,
+    sourceJobType,
+    createdAt: new Date().toISOString(),
+  };
+  db.personalSongs.push(personalSong);
+  job.personalSongId = personalSong.id;
+  return personalSong;
+}
+
+function backfillGeneratedPersonalSongs(db, userId) {
+  let changed = false;
+  const sources = [
+    ...(db.mediaTranscriptionJobs || []).map((job) => ({
+      job,
+      sourceJobType: 'media-transcription',
+      title: job.title,
+    })),
+    ...(db.scoreTranslationJobs || []).map((job) => ({
+      job,
+      sourceJobType: 'score-translation',
+      title: path.basename(job.filename || '', path.extname(job.filename || '')),
+    })),
+  ];
+  for (const source of sources) {
+    const { job } = source;
+    if (job.userId !== userId || job.status !== 'completed' || !job.outputPath || job.personalSongHiddenAt) continue;
+    const existing = db.personalSongs.find((song) => (
+      song.userId === userId && song.sourceJobId === job.id
+    ));
+    if (existing) {
+      if (job.personalSongId !== existing.id) {
+        job.personalSongId = existing.id;
+        changed = true;
+      }
+      continue;
+    }
+    const personalSong = {
+      id: job.personalSongId || `song_${job.id}`,
+      userId,
+      title: String(source.title || 'Untitled song').slice(0, 160),
+      artist: '',
+      instrument: String(job.instrument || 'piano').slice(0, 60),
+      format: 'JSON',
+      filename: sanitizeFilename(job.outputFilename || 'ready-to-play-song.json'),
+      assetPath: job.outputPath,
+      size: 0,
+      sha256: '',
+      sourceJobId: job.id,
+      sourceJobType: source.sourceJobType,
+      createdAt: job.completedAt || job.startedAt || new Date().toISOString(),
+    };
+    db.personalSongs.push(personalSong);
+    job.personalSongId = personalSong.id;
+    changed = true;
+  }
+  return changed;
 }
 
 function listingReviewSummary(db, listingId) {
@@ -1686,6 +1821,7 @@ function publicMediaTranscriptionJob(job) {
     failedAt: job.failedAt || null,
     error: job.error || '',
     outputFilename: job.status === 'completed' ? job.outputFilename : undefined,
+    personalSongId: job.status === 'completed' ? job.personalSongId : undefined,
   };
 }
 
@@ -2089,6 +2225,15 @@ async function processMediaTranscriptionJob(jobId) {
     job.stage = 'Ready to play';
     job.progress = 100;
     job.completedAt = new Date().toISOString();
+    attachGeneratedPersonalSong(db, job, {
+      title: result.title || job.title,
+      artist: result.artist || result.composer || '',
+      instrument: job.instrument,
+      filename: job.outputFilename,
+      assetPath: job.outputPath,
+      bytes: fs.readFileSync(outputPath),
+      sourceJobType: 'media-transcription',
+    });
     await writeDb(db);
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
@@ -2425,25 +2570,133 @@ app.put('/api/profile/avatar', requireAuth, async (req, res) => {
   res.json({ user: safeUser(req.user) });
 });
 
-app.post('/api/ready-sheet-uploads', requireAuth, async (req, res) => {
-  const filename = sanitizeFilename(String(req.body.filename || 'ready-to-play-sheet'));
-  const format = path.extname(filename).slice(1).toLowerCase();
-  if (!['json', 'mid', 'midi'].includes(format)) {
+app.post('/api/ready-sheet-uploads', requireAuth, async (req, res, next) => {
+  let filename = sanitizeFilename(String(req.body.filename || 'ready-to-play-sheet'));
+  let format = readySheetFormat(filename);
+  const directUploadReceipt = String(req.body.directUploadReceipt || '').trim();
+  const contentBase64 = String(req.body.contentBase64 || '').trim();
+  let pendingKey = '';
+  let finalKey = '';
+
+  if (!format) {
     return res.status(400).json({ error: 'Only ready-to-play JSON or MIDI sheets count as direct uploads.' });
   }
-  const charged = chargeReadySheetUpload(req.db, req.user, filename);
-  if (!charged) {
-    return res.status(402).json({
-      error: `You need ${READY_SHEET_UPLOAD_MCOIN_COST} Mcoin to upload this ready-to-play sheet.`,
-      costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+
+  // Older clients only record allowance usage. Current clients also send the
+  // normalized ready-to-play file so it can become part of the account cloud library.
+  if (!directUploadReceipt && !contentBase64) {
+    const charged = chargeReadySheetUpload(req.db, req.user, filename);
+    if (!charged) {
+      return res.status(402).json({
+        error: `You need ${READY_SHEET_UPLOAD_MCOIN_COST} Mcoin to upload this ready-to-play sheet.`,
+        costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+      });
+    }
+    await writeDb(req.db);
+    return res.status(201).json({
+      user: safeUser(req.user),
+      costMcoins: charged.costMcoins,
+      paymentMethod: charged.paymentMethod,
+      personalSong: null,
     });
   }
-  await writeDb(req.db);
-  return res.status(201).json({
-    user: safeUser(req.user),
-    costMcoins: charged.costMcoins,
-    paymentMethod: charged.paymentMethod,
-  });
+
+  try {
+    let bytes;
+    if (directUploadReceipt) {
+      const upload = await DIRECT_UPLOADS.inspect(directUploadReceipt, {
+        userId: req.user.id,
+        purpose: 'personal-song',
+      });
+      pendingKey = upload.key;
+      filename = sanitizeFilename(upload.filename);
+      format = readySheetFormat(filename);
+      if (!format) throw Object.assign(new Error('Use a ready-to-play JSON or MIDI sheet.'), { status: 400 });
+      bytes = await ARTIFACT_STORE.getBuffer(upload.key);
+    } else {
+      bytes = Buffer.from(contentBase64, 'base64');
+    }
+
+    validateMarketplaceAsset(format, filename, bytes);
+    const metadata = readySheetMetadata(bytes, format, {
+      title: req.body.title,
+      artist: req.body.artist,
+    });
+    const instrument = String(req.body.instrument || 'piano').trim().toLowerCase();
+    if (!INSTRUMENTS[instrument]) {
+      throw Object.assign(new Error('Choose a supported instrument for this song.'), { status: 400 });
+    }
+    const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    const duplicate = req.db.personalSongs.find((song) => (
+      song.userId === req.user.id && song.sha256 === sha256
+    ));
+    if (duplicate) {
+      if (pendingKey) await safeRemoveArtifact(pendingKey);
+      return res.json({
+        user: safeUser(req.user),
+        costMcoins: 0,
+        paymentMethod: 'existing',
+        personalSong: publicPersonalSong(duplicate),
+        alreadySaved: true,
+      });
+    }
+
+    const charged = chargeReadySheetUpload(req.db, req.user, filename);
+    if (!charged) {
+      if (pendingKey) await safeRemoveArtifact(pendingKey);
+      return res.status(402).json({
+        error: `You need ${READY_SHEET_UPLOAD_MCOIN_COST} Mcoin to upload this ready-to-play sheet.`,
+        costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+      });
+    }
+
+    const songId = id('song');
+    const userSegment = String(req.user.id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    finalKey = artifactKey(`personal-songs/${userSegment}`, `${songId}-${filename}`);
+    if (pendingKey) await ARTIFACT_STORE.promote(pendingKey, finalKey);
+    else await ARTIFACT_STORE.putBuffer(
+      finalKey,
+      bytes,
+      format === 'JSON' ? 'application/json' : 'audio/midi',
+    );
+    pendingKey = '';
+
+    const personalSong = {
+      id: songId,
+      userId: req.user.id,
+      title: String(metadata.title || path.basename(filename, path.extname(filename)) || 'Untitled song').slice(0, 160),
+      artist: String(metadata.artist || '').slice(0, 120),
+      instrument,
+      format,
+      filename,
+      assetPath: finalKey,
+      size: bytes.length,
+      sha256,
+      createdAt: new Date().toISOString(),
+    };
+    req.db.personalSongs.push(personalSong);
+    try {
+      await writeDb(req.db);
+    } catch (error) {
+      await safeRemoveArtifact(finalKey);
+      throw error;
+    }
+    finalKey = '';
+    return res.status(201).json({
+      user: safeUser(req.user),
+      costMcoins: charged.costMcoins,
+      paymentMethod: charged.paymentMethod,
+      personalSong: publicPersonalSong(personalSong),
+      alreadySaved: false,
+    });
+  } catch (error) {
+    if (pendingKey) await safeRemoveArtifact(pendingKey);
+    if (finalKey) await safeRemoveArtifact(finalKey);
+    if (!error.status && /invalid|must contain|smaller than|filename|file type/i.test(error.message || '')) {
+      error.status = 400;
+    }
+    return next(error);
+  }
 });
 
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
@@ -2757,6 +3010,12 @@ app.delete('/api/composers/:composerId/follow', requireAuth, async (req, res) =>
 });
 
 app.get('/api/library', requireAuth, async (req, res) => {
+  const backfilled = backfillGeneratedPersonalSongs(req.db, req.user.id);
+  if (backfilled) await writeDb(req.db);
+  const personalSongs = req.db.personalSongs
+    .filter((song) => song.userId === req.user.id)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map(publicPersonalSong);
   const purchasedSongs = req.db.purchases
     .filter((purchase) => purchase.buyerId === req.user.id)
     .map((purchase) => {
@@ -2774,7 +3033,49 @@ app.get('/api/library', requireAuth, async (req, res) => {
     .filter((listing) => listing.sellerId === req.user.id)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((listing) => publicListing(listing, req.db, req.user.id));
-  res.json({ purchasedSongs, sellingSongs });
+  res.json({ personalSongs, purchasedSongs, sellingSongs });
+});
+
+app.get('/api/personal-songs/:songId/download', requireAuth, async (req, res) => {
+  const song = req.db.personalSongs.find((item) => (
+    item.id === req.params.songId && item.userId === req.user.id
+  ));
+  if (!song) return res.status(404).json({ error: 'Song not found in your cloud library.' });
+  return ARTIFACT_STORE.sendDownload(
+    res,
+    song.assetPath,
+    song.filename,
+    song.format === 'JSON' ? 'application/json' : 'audio/midi',
+  );
+});
+
+app.delete('/api/personal-songs/:songId', requireAuth, async (req, res, next) => {
+  const index = req.db.personalSongs.findIndex((item) => (
+    item.id === req.params.songId && item.userId === req.user.id
+  ));
+  if (index < 0) return res.status(404).json({ error: 'Song not found in your cloud library.' });
+  const [song] = req.db.personalSongs.splice(index, 1);
+  try {
+    if (song.sourceJobId) {
+      const sourceJob = [
+        ...(req.db.mediaTranscriptionJobs || []),
+        ...(req.db.scoreTranslationJobs || []),
+      ].find((job) => job.id === song.sourceJobId && job.userId === req.user.id);
+      if (sourceJob) {
+        sourceJob.personalSongId = null;
+        sourceJob.personalSongHiddenAt = new Date().toISOString();
+      }
+    }
+    await writeDb(req.db);
+    if (!song.sourceJobId) {
+      await safeRemoveArtifact(song.assetPath).catch((error) => {
+        console.error('Orphaned personal song artifact could not be removed:', error);
+      });
+    }
+    return res.json({ ok: true, song: publicPersonalSong(song) });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.post('/api/listings', requireAuth, async (req, res) => {
@@ -4435,6 +4736,8 @@ function publicTranslationJob(job) {
     pianoPerformance: job.pianoPerformance && typeof job.pianoPerformance === 'object'
       ? job.pianoPerformance
       : null,
+    outputFilename: job.status === 'completed' ? job.outputFilename : undefined,
+    personalSongId: job.status === 'completed' ? job.personalSongId : undefined,
   };
 }
 
@@ -4943,6 +5246,15 @@ async function processTranslationJob(jobId) {
     job.stage = 'Ready to download';
     job.progress = 100;
     job.completedAt = new Date().toISOString();
+    attachGeneratedPersonalSong(db, job, {
+      title: result.title || path.basename(job.filename, path.extname(job.filename)),
+      artist: result.artist || result.composer || '',
+      instrument: job.instrument,
+      filename: job.outputFilename,
+      assetPath: job.outputPath,
+      bytes: fs.readFileSync(outputPath),
+      sourceJobType: 'score-translation',
+    });
     await writeDb(db);
     if (ARTIFACT_STORE.remote) {
       safeRemoveUpload(sourcePath);
@@ -4990,6 +5302,10 @@ app.post('/api/artifact-upload-intents', requireAuth, async (req, res) => {
     }
     if (!MEDIA_EXTENSIONS.has(extension)) {
       return res.status(400).json({ error: 'Use MP3, WAV, FLAC, M4A, MP4, MOV, WebM, MKV, or AVI.' });
+    }
+  } else if (purpose === 'personal-song') {
+    if (!['.json', '.mid', '.midi'].includes(extension) || size > MARKETPLACE_MAX_BYTES) {
+      return res.status(400).json({ error: 'Ready-to-play JSON or MIDI songs must be smaller than 8 MB.' });
     }
   } else {
     return res.status(400).json({ error: 'Choose a supported upload purpose.' });

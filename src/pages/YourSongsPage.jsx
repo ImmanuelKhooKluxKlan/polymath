@@ -76,14 +76,18 @@ function EditableListing({ listing, onSaved }) {
 }
 
 export default function YourSongsPage({ user, onNavigate }) {
-  const [library, setLibrary] = useState({ purchasedSongs: [], sellingSongs: [] });
+  const [library, setLibrary] = useState({ personalSongs: [], purchasedSongs: [], sellingSongs: [] });
   const [status, setStatus] = useState('');
 
   const loadLibrary = useCallback(async () => {
     if (!user) return;
     try {
       const data = await apiRequest('/api/library');
-      setLibrary(data);
+      setLibrary({
+        personalSongs: data.personalSongs || [],
+        purchasedSongs: data.purchasedSongs || [],
+        sellingSongs: data.sellingSongs || [],
+      });
       setStatus('');
     } catch (error) {
       setStatus(error.message);
@@ -96,6 +100,29 @@ export default function YourSongsPage({ user, onNavigate }) {
     try {
       await downloadProtectedFile(`/api/listings/${song.id}/download`, `${song.title}.${EXTENSIONS[song.format] || song.format.toLowerCase()}`);
       setStatus(`Downloaded "${song.title}". It remains saved in Your Songs.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function downloadPersonalSong(song) {
+    try {
+      await downloadProtectedFile(`/api/personal-songs/${song.id}/download`, song.filename || `${song.title}.json`);
+      setStatus(`Downloaded "${song.title}".`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function deletePersonalSong(song) {
+    if (!window.confirm(`Remove "${song.title}" from your cloud songs?`)) return;
+    try {
+      await apiRequest(`/api/personal-songs/${song.id}`, { method: 'DELETE' });
+      setLibrary((current) => ({
+        ...current,
+        personalSongs: current.personalSongs.filter((candidate) => candidate.id !== song.id),
+      }));
+      setStatus(`Removed "${song.title}" from your cloud songs.`);
     } catch (error) {
       setStatus(error.message);
     }
@@ -123,6 +150,33 @@ export default function YourSongsPage({ user, onNavigate }) {
         </div>
         <button className="primary" type="button" onClick={() => onNavigate('published-songs')}>Browse composers</button>
       </div>
+
+      <section className="library-section">
+        <div className="section-title-row">
+          <div><p className="eyebrow">Private account storage</p><h2>Your uploaded songs</h2></div>
+          <span className="library-count">{library.personalSongs.length}</span>
+        </div>
+        <div className="playlist-table">
+          {library.personalSongs.map((song, index) => {
+            const instrument = INSTRUMENT_BY_ID[song.instrument] || { label: song.instrument };
+            return (
+              <article className="playlist-row personal-song-row" key={song.id}>
+                <span className="playlist-number">{String(index + 1).padStart(2, '0')}</span>
+                <InstrumentIcon instrument={song.instrument} size="sm" />
+                <div className="playlist-title"><strong>{song.title}</strong><span>{song.artist || 'Unknown artist'}</span></div>
+                <span>{instrument.label}</span>
+                <span>{song.format}</span>
+                <span>{new Date(song.createdAt).toLocaleDateString()}</span>
+                <div className="personal-song-actions">
+                  <button className="primary" type="button" onClick={() => downloadPersonalSong(song)}>Download</button>
+                  <button className="ghost" type="button" onClick={() => deletePersonalSong(song)}>Remove</button>
+                </div>
+              </article>
+            );
+          })}
+          {!library.personalSongs.length && <div className="empty-state">Ready-to-play songs you upload will be saved here.</div>}
+        </div>
+      </section>
 
       <section className="library-section">
         <div className="section-title-row">

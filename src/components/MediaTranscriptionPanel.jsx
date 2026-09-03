@@ -18,6 +18,7 @@ export default function MediaTranscriptionPanel({
   onNavigate,
   instrument,
   onReadyFile,
+  onPersonalSongSaved,
 }) {
   const [capability, setCapability] = useState(null);
   const [file, setFile] = useState(null);
@@ -150,6 +151,17 @@ export default function MediaTranscriptionPanel({
         readyJob.outputFilename || 'polymath-ready-to-play.json',
       );
       await onReadyFile(readyFile);
+      if (readyJob.personalSongId) {
+        onPersonalSongSaved?.({
+          id: readyJob.personalSongId,
+          title: readyJob.title || String(readyJob.outputFilename || 'Ready-to-play song').replace(/\.json$/i, ''),
+          artist: '',
+          instrument: readyJob.instrument || instrument,
+          format: 'JSON',
+          filename: readyJob.outputFilename || readyFile.name,
+          createdAt: readyJob.completedAt,
+        });
+      }
       setStatus('Loaded into the studio and ready to play.');
     } catch (error) {
       setStatus(error.message);

@@ -40,7 +40,7 @@ async function verifyPdfFile(file) {
   }
 }
 
-export default function PdfTranslationPanel({ user, setUser, instrument, onNavigate, onReadyFile }) {
+export default function PdfTranslationPanel({ user, setUser, instrument, onNavigate, onReadyFile, onPersonalSongSaved }) {
   const [file, setFile] = useState(null);
   const [job, setJob] = useState(null);
   const [status, setStatus] = useState('Upload a readable instrumental PDF music sheet.');
@@ -172,6 +172,17 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
         `${file?.name?.replace(/\.pdf$/i, '') || 'ready-to-play-sheet'}.json`,
       );
       await onReadyFile(readyFile);
+      if (completedJob.personalSongId) {
+        onPersonalSongSaved?.({
+          id: completedJob.personalSongId,
+          title: String(completedJob.outputFilename || completedJob.filename || 'Ready-to-play song').replace(/\.json$/i, ''),
+          artist: '',
+          instrument,
+          format: 'JSON',
+          filename: completedJob.outputFilename || readyFile.name,
+          createdAt: completedJob.completedAt,
+        });
+      }
       setStatus('Loaded into the piano studio and ready to play.');
     } catch (error) {
       setStatus(error.message);

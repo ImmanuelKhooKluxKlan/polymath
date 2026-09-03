@@ -87,11 +87,20 @@ function manualVoiceKey(note, interaction = {}) {
     : `pointer:${interaction.pointerId}`;
 }
 
+function songLibraryId(song) {
+  return song?.libraryId
+    || (song?.personalSongId ? `personal:${song.personalSongId}` : '')
+    || `${song?.libraryType || 'song'}:${song?.title || 'Untitled Song'}:${song?.composer || song?.artist || 'Unknown'}`;
+}
+
 export default function App() {
   const [route, setRoute] = useState(readRoute);
   const [user, setUser] = useState(null);
   const [songs, setSongs] = useState(() => sampleSongs.map(normalizeSong));
-  const [songTitle, setSongTitle] = useState(sampleSongs[0].title);
+  const [songSelectionId, setSongSelectionId] = useState(() => songLibraryId(sampleSongs[0]));
+  const [personalSongs, setPersonalSongs] = useState([]);
+  const [loadingPersonalSongId, setLoadingPersonalSongId] = useState('');
+  const [personalSongStatus, setPersonalSongStatus] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [activeNotes, setActiveNotes] = useState(new Set());
@@ -149,8 +158,8 @@ export default function App() {
   });
 
   const song = useMemo(
-    () => songs.find((candidate) => candidate.title === songTitle) || songs[0],
-    [songs, songTitle],
+    () => songs.find((candidate) => songLibraryId(candidate) === songSelectionId) || songs[0],
+    [songs, songSelectionId],
   );
   const pianoLayout = useMemo(
     () => teachingMode === 'learn'
@@ -201,7 +210,7 @@ export default function App() {
         if (cancelled || !featured.length) return;
         const normalized = featured.map(normalizeSong);
         setSongs((previous) => [...normalized, ...previous.filter((item) => !normalized.some((featuredSong) => featuredSong.title === item.title))]);
-        setSongTitle(normalized[0].title);
+        setSongSelectionId(songLibraryId(normalized[0]));
       })
       .catch((error) => console.error(error));
     return () => { cancelled = true; };
@@ -216,17 +225,30 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!user?.user_id) return undefined;
+    if (!user?.user_id) {
+      setPersonalSongs([]);
+      return undefined;
+    }
     apiRequest('/api/library')
-      .then(async ({ purchasedSongs }) => {
+      .then(async ({ personalSongs: cloudSongs = [], purchasedSongs }) => {
+        if (!cancelled) setPersonalSongs(cloudSongs);
         const pianoSongs = purchasedSongs.filter((item) => item.instrument === 'piano' && ['JSON', 'MIDI', 'MUSICXML'].includes(item.format));
         const loaded = await Promise.all(pianoSongs.map(async (item) => {
           const file = await fetchProtectedFile(`/api/listings/${item.id}/download`, item.filename || `${item.title}.${item.format.toLowerCase()}`);
           const parsed = await parseUploadedSongFile(file);
-          return normalizeSong({ ...parsed, title: item.title, composer: item.artist || parsed.composer });
+          return normalizeSong({
+            ...parsed,
+            title: item.title,
+            composer: item.artist || parsed.composer,
+            libraryId: `purchase:${item.id}`,
+            libraryType: 'purchased',
+          });
         }));
         if (cancelled || !loaded.length) return;
-        setSongs((previous) => [...previous.filter((songItem) => !loaded.some((librarySong) => librarySong.title === songItem.title)), ...loaded]);
+        setSongs((previous) => [
+          ...previous.filter((songItem) => !loaded.some((librarySong) => songLibraryId(librarySong) === songLibraryId(songItem))),
+          ...loaded,
+        ]);
       })
       .catch((error) => console.error('Purchased piano songs could not be loaded:', error));
     return () => { cancelled = true; };
@@ -546,22 +568,58 @@ export default function App() {
     }
   }
 
-  function handleSongChange(title) {
+  function handleSongChange(libraryId) {
     stopPlayback();
     setPracticeRange(null);
     setSelectedSectionIndex(0);
-    setSongTitle(title);
+    setSongSelectionId(libraryId);
   }
 
   function handleUpload(uploadedSong) {
     const normalized = normalizeSong(uploadedSong);
+    const libraryId = songLibraryId(normalized);
     stopPlayback();
     setPracticeRange(null);
     setSelectedSectionIndex(0);
-    setSongs((previous) => [normalized, ...previous.filter((candidate) => candidate.title !== normalized.title)]);
-    setSongTitle(normalized.title);
+    setSongs((previous) => [normalized, ...previous.filter((candidate) => songLibraryId(candidate) !== libraryId)]);
+    setSongSelectionId(libraryId);
     setOpenMusicChooser(null);
     focusMobilePlayer();
+  }
+
+  function rememberPersonalSong(personalSong) {
+    if (!personalSong?.id) return;
+    setPersonalSongs((previous) => [
+      personalSong,
+      ...previous.filter((candidate) => candidate.id !== personalSong.id),
+    ]);
+  }
+
+  async function loadPersonalPianoSong(personalSong) {
+    if (!personalSong?.id || loadingPersonalSongId) return;
+    setLoadingPersonalSongId(personalSong.id);
+    setPersonalSongStatus('Loading your cloud song…');
+    try {
+      const file = await fetchProtectedFile(
+        `/api/personal-songs/${personalSong.id}/download`,
+        personalSong.filename || `${personalSong.title}.json`,
+      );
+      const parsed = await parseUploadedSongFile(file);
+      if (!parsed.notes?.length) throw new Error('This song does not contain notes that can be played on piano.');
+      handleUpload({
+        ...parsed,
+        title: personalSong.title || parsed.title,
+        composer: personalSong.artist || parsed.composer,
+        personalSongId: personalSong.id,
+        libraryId: `personal:${personalSong.id}`,
+        libraryType: 'personal',
+      });
+      setPersonalSongStatus('Cloud song ready.');
+    } catch (error) {
+      setPersonalSongStatus(error.message || 'The cloud song could not be loaded.');
+    } finally {
+      setLoadingPersonalSongId('');
+    }
   }
 
   function getSongTimeFromPerformanceClock(now = performance.now()) {
@@ -814,8 +872,24 @@ export default function App() {
     if (user?.mustChangePassword && route.page !== 'account') {
       return <AccountPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
-    if (route.page === 'guitar') return <GuitarPage user={user} setUser={setUser} onNavigate={navigate} />;
-    if (route.page === 'ensemble') return <EnsemblePage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'guitar') return (
+      <GuitarPage
+        user={user}
+        setUser={setUser}
+        onNavigate={navigate}
+        personalSongs={personalSongs}
+        onPersonalSongSaved={rememberPersonalSong}
+      />
+    );
+    if (route.page === 'ensemble') return (
+      <EnsemblePage
+        user={user}
+        setUser={setUser}
+        onNavigate={navigate}
+        personalSongs={personalSongs}
+        onPersonalSongSaved={rememberPersonalSong}
+      />
+    );
     if (route.page === 'band') {
       if (!user?.admin && !user?.access?.band) {
         return (
@@ -918,6 +992,10 @@ export default function App() {
             }}
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
+            personalSongs={personalSongs}
+            onPersonalSongChange={loadPersonalPianoSong}
+            loadingPersonalSongId={loadingPersonalSongId}
+            personalSongStatus={personalSongStatus}
           />
           <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
             <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} performanceTier={performanceTier} />
@@ -991,6 +1069,7 @@ export default function App() {
             onNavigate={navigate}
             expanded={openMusicChooser === 'upload'}
             onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
+            onPersonalSongSaved={rememberPersonalSong}
           />
         </section>
       </section>

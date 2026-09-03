@@ -1153,6 +1153,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .playlist-number { color: var(--muted); font-variant-numeric: tabular-nums; }
 .playlist-title, .seller-song-row > div { display: grid; gap: 3px; }
 .playlist-title span, .seller-song-row span, .seller-song-row small { color: var(--muted); font-size: 0.78rem; }
+.personal-song-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.personal-song-actions button { min-width: 0; }
 .seller-song-row { grid-template-columns: 42px minmax(220px, 1fr) minmax(150px, auto) auto; }
 .seller-song-row > .form-status { grid-column: 1 / -1; }
 .seller-song-price { text-align: right; }
@@ -1385,6 +1387,8 @@ button { -webkit-tap-highlight-color: transparent; }
   .library-heading { align-items: stretch; flex-direction: column; }
   .playlist-row { grid-template-columns: 28px 34px minmax(0, 1fr); }
   .playlist-row > button { grid-column: 2 / -1; }
+  .personal-song-actions { grid-column: 2 / -1; justify-content: stretch; }
+  .personal-song-actions button { flex: 1 1 110px; }
   .seller-song-row { grid-template-columns: 34px minmax(0, 1fr); }
   .seller-song-price { text-align: left; grid-column: 2; }
   .seller-song-row > button { grid-column: 1 / -1; }
@@ -2622,6 +2626,30 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
 .song-download {
   width: 100%;
   min-height: 44px;
+}
+.song-library-picker {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.song-library-picker input[type="search"] {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  color: var(--text);
+  background: rgba(6, 8, 22, 0.72);
+}
+.song-search-count {
+  margin-top: -5px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+.song-library-search-status {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
 .player-settings {
   margin-top: 8px;

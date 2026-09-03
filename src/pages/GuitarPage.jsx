@@ -3,6 +3,7 @@ import GuitarFallingNotes from '../components/GuitarFallingNotes.jsx';
 import GuitarTransport from '../components/GuitarTransport.jsx';
 import MusicUploadPanel from '../components/MusicUploadPanel.jsx';
 import MusicChoiceDisclosure from '../components/MusicChoiceDisclosure.jsx';
+import SearchableSongSelect from '../components/SearchableSongSelect.jsx';
 import LearnModePanel from '../components/LearnModePanel.jsx';
 import { GUITAR_TONE_LABELS, guitarAudio } from '../engine/guitarEngine.js';
 import { assignNotesToStrings } from '../engine/guitarVoicing.js';
@@ -212,7 +213,7 @@ function songToGuitarLesson(song, metadata = {}) {
   }, metadata);
 }
 
-export default function GuitarPage({ user, setUser, onNavigate }) {
+export default function GuitarPage({ user, setUser, onNavigate, personalSongs = [], onPersonalSongSaved }) {
   const [selectedChord, setSelectedChord] = useState('C');
   const [lesson, setLesson] = useState(DEMO_LESSON);
   const [freeLessons, setFreeLessons] = useState([DEMO_LESSON]);
@@ -231,6 +232,8 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   const [practiceRange, setPracticeRange] = useState(null);
   const [manualStringVibration, setManualStringVibration] = useState(null);
   const [openMusicChooser, setOpenMusicChooser] = useState(null);
+  const [loadingPersonalSongId, setLoadingPersonalSongId] = useState('');
+  const [personalSongStatus, setPersonalSongStatus] = useState('');
 
   const nextEventIndex = useRef(0);
   const startStamp = useRef(0);
@@ -243,6 +246,30 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
   const guitarPlayerRef = useRef(null);
 
   const duration = useMemo(() => lessonDuration(lesson), [lesson]);
+  const songChoices = useMemo(() => {
+    const localLessons = lesson.personalSongId || freeLessons.some((candidate) => candidate === lesson)
+      ? freeLessons
+      : [lesson, ...freeLessons];
+    return [
+      ...localLessons
+        .filter((candidate) => !candidate.personalSongId)
+        .map((candidate, index) => ({
+          id: `local:${candidate.libraryId || `${candidate.title}:${candidate.artist || ''}:${index}`}`,
+          label: lessonLabel(candidate),
+          searchText: `${candidate.title} ${candidate.artist || ''}`,
+          lesson: candidate,
+        })),
+      ...personalSongs.map((candidate) => ({
+        id: `personal:${candidate.id}`,
+        label: lessonLabel(candidate),
+        searchText: `${candidate.title} ${candidate.artist || ''}`,
+        personalSong: candidate,
+      })),
+    ];
+  }, [freeLessons, lesson, personalSongs]);
+  const selectedSongChoice = lesson.personalSongId
+    ? `personal:${lesson.personalSongId}`
+    : songChoices.find((choice) => choice.lesson === lesson)?.id || songChoices[0]?.id || '';
   const learningSections = useMemo(
     () => analyzeLearningSections(lesson.events, duration, preferredSectionSeconds),
     [lesson, duration, preferredSectionSeconds],
@@ -538,6 +565,43 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     throw new Error('Use a ready-to-play guitar JSON, CSV, MIDI, or MusicXML file.');
   }, []);
 
+  async function loadPersonalGuitarSong(personalSong) {
+    if (!personalSong?.id || loadingPersonalSongId) return;
+    setLoadingPersonalSongId(personalSong.id);
+    setPersonalSongStatus('Loading your cloud song…');
+    try {
+      const file = await fetchProtectedFile(
+        `/api/personal-songs/${personalSong.id}/download`,
+        personalSong.filename || `${personalSong.title}.json`,
+      );
+      const parsed = await readLessonFile(file);
+      await loadReadyLesson(file, {
+        prepared: {
+          ...parsed,
+          title: personalSong.title || parsed.title,
+          artist: personalSong.artist || parsed.artist,
+          personalSongId: personalSong.id,
+          libraryId: `personal:${personalSong.id}`,
+          libraryType: 'personal',
+        },
+      });
+      setPersonalSongStatus('Cloud song ready.');
+    } catch (error) {
+      setPersonalSongStatus(error.message || 'The cloud song could not be loaded.');
+    } finally {
+      setLoadingPersonalSongId('');
+    }
+  }
+
+  function chooseSong(value) {
+    const choice = songChoices.find((candidate) => candidate.id === value);
+    if (choice?.personalSong) loadPersonalGuitarSong(choice.personalSong);
+    else if (choice?.lesson) {
+      stopLesson();
+      setLesson(choice.lesson);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     if (!user?.user_id) return undefined;
@@ -564,13 +628,6 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
     setLesson(parsed);
     setOpenMusicChooser(null);
     return parsed;
-  }
-
-  function chooseFreeLesson(title) {
-    const selected = freeLessons.find((candidate) => candidate.title === title);
-    if (!selected) return;
-    stopLesson();
-    setLesson(selected);
   }
 
   function focusGuitarPlayer() {
@@ -646,21 +703,17 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
           >
-            <label className="field">Song
-              <select value={lesson.title} onChange={(event) => chooseFreeLesson(event.target.value)}>
-                {!freeLessons.some((candidate) => candidate.title === lesson.title) && (
-                  <option value={lesson.title}>{lessonLabel(lesson)} — uploaded</option>
-                )}
-                {freeLessons.map((candidate) => (
-                  <option key={candidate.title} value={candidate.title}>
-                    {lessonLabel(candidate)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SearchableSongSelect
+              id="guitar-song-library"
+              choices={songChoices}
+              value={selectedSongChoice}
+              onChange={chooseSong}
+              busy={Boolean(loadingPersonalSongId)}
+            />
+            {personalSongStatus && <small className="song-library-search-status">{personalSongStatus}</small>}
 
-            <button className="primary song-play-now" type="button" onClick={focusGuitarPlayer}>
-              Play now
+            <button className="primary song-play-now" type="button" onClick={focusGuitarPlayer} disabled={Boolean(loadingPersonalSongId)}>
+              {loadingPersonalSongId ? 'Loading song…' : 'Play now'}
             </button>
             <button className="ghost song-download" type="button" onClick={() => downloadSongJson(lesson)}>
               Download song
@@ -807,6 +860,7 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
               onNavigate={onNavigate}
               instrument="guitar"
               onReadyFile={loadReadyLesson}
+              onPersonalSongSaved={onPersonalSongSaved}
             />
           </MusicChoiceDisclosure>
         </aside>

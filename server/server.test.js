@@ -443,6 +443,110 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(mcoinGrant.data.user.mcoins, 125.5);
   assert.equal(mcoinGrant.data.user.unlimitedMcoins, false);
 
+  const personalSongPayload = {
+    title: 'Cloud Library Test',
+    composer: 'Test Artist',
+    instrument: 'piano',
+    notes: [{ note: 'C4', time: 0, duration: 0.5, velocity: 0.8 }],
+  };
+  const personalSongUpload = await api('/api/ready-sheet-uploads', {
+    method: 'POST',
+    token: userToken,
+    body: {
+      filename: 'cloud-library-test.json',
+      title: personalSongPayload.title,
+      artist: personalSongPayload.composer,
+      instrument: 'piano',
+      contentBase64: Buffer.from(JSON.stringify(personalSongPayload)).toString('base64'),
+    },
+  });
+  assert.equal(personalSongUpload.status, 201);
+  assert.equal(personalSongUpload.data.personalSong.title, 'Cloud Library Test');
+  assert.equal(personalSongUpload.data.personalSong.artist, 'Test Artist');
+  assert.equal(personalSongUpload.data.personalSong.instrument, 'piano');
+  assert.equal(personalSongUpload.data.alreadySaved, false);
+
+  const duplicatePersonalSong = await api('/api/ready-sheet-uploads', {
+    method: 'POST',
+    token: userToken,
+    body: {
+      filename: 'cloud-library-test-copy.json',
+      title: personalSongPayload.title,
+      artist: personalSongPayload.composer,
+      instrument: 'piano',
+      contentBase64: Buffer.from(JSON.stringify(personalSongPayload)).toString('base64'),
+    },
+  });
+  assert.equal(duplicatePersonalSong.status, 200);
+  assert.equal(duplicatePersonalSong.data.alreadySaved, true);
+  assert.equal(duplicatePersonalSong.data.personalSong.id, personalSongUpload.data.personalSong.id);
+
+  const personalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(personalLibrary.status, 200);
+  assert.equal(personalLibrary.data.personalSongs.length, 1);
+  assert.equal(personalLibrary.data.personalSongs[0].title, 'Cloud Library Test');
+  assert.equal(Object.prototype.hasOwnProperty.call(personalLibrary.data.personalSongs[0], 'assetPath'), false);
+
+  const otherAccountDownload = await api(`/api/personal-songs/${personalSongUpload.data.personalSong.id}/download`, {
+    token: adminToken,
+  });
+  assert.equal(otherAccountDownload.status, 404);
+
+  const personalSongDownload = await api(`/api/personal-songs/${personalSongUpload.data.personalSong.id}/download`, {
+    token: userToken,
+  });
+  assert.equal(personalSongDownload.status, 200);
+  assert.equal(personalSongDownload.data.title, 'Cloud Library Test');
+
+  const personalSongDelete = await api(`/api/personal-songs/${personalSongUpload.data.personalSong.id}`, {
+    method: 'DELETE',
+    token: userToken,
+  });
+  assert.equal(personalSongDelete.status, 200);
+  const emptyPersonalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(emptyPersonalLibrary.data.personalSongs.length, 0);
+
+  const legacyOutputFilename = 'legacy-media-output.json';
+  const legacyOutput = {
+    title: 'Earlier Cloud Translation',
+    instrument: 'piano',
+    notes: [{ note: 'D4', time: 0, duration: 0.75, velocity: 0.7 }],
+  };
+  fs.mkdirSync(path.join(testDataDir, 'uploads'), { recursive: true });
+  fs.writeFileSync(
+    path.join(testDataDir, 'uploads', legacyOutputFilename),
+    JSON.stringify(legacyOutput),
+  );
+  const legacyFixturePath = path.join(testDataDir, 'database.json');
+  const legacyFixture = JSON.parse(fs.readFileSync(legacyFixturePath, 'utf8'));
+  legacyFixture.mediaTranscriptionJobs.push({
+    id: 'media_tx_legacy_cloud_test',
+    userId,
+    filename: 'earlier-song.mp3',
+    title: legacyOutput.title,
+    instrument: 'piano',
+    outputPath: legacyOutputFilename,
+    outputFilename: legacyOutputFilename,
+    status: 'completed',
+    progress: 100,
+    startedAt: new Date(Date.now() - 2000).toISOString(),
+    completedAt: new Date(Date.now() - 1000).toISOString(),
+  });
+  fs.writeFileSync(legacyFixturePath, JSON.stringify(legacyFixture, null, 2));
+
+  const backfilledPersonalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(backfilledPersonalLibrary.data.personalSongs.length, 1);
+  assert.equal(backfilledPersonalLibrary.data.personalSongs[0].title, 'Earlier Cloud Translation');
+  const backfilledSongId = backfilledPersonalLibrary.data.personalSongs[0].id;
+  const removeBackfilledSong = await api(`/api/personal-songs/${backfilledSongId}`, {
+    method: 'DELETE',
+    token: userToken,
+  });
+  assert.equal(removeBackfilledSong.status, 200);
+  const hiddenPersonalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(hiddenPersonalLibrary.data.personalSongs.length, 0);
+  assert.equal(fs.existsSync(path.join(testDataDir, 'uploads', legacyOutputFilename)), true);
+
   const firstSubscriptionGrant = await api(`/api/admin/users/${userId}/subscription`, {
     method: 'POST',
     token: adminToken,

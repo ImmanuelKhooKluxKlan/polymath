@@ -2,7 +2,7 @@ import { parseUploadedSongFile } from '../utils/songParser.js';
 import MusicUploadPanel from './MusicUploadPanel.jsx';
 import MusicChoiceDisclosure from './MusicChoiceDisclosure.jsx';
 
-export default function SongUploader({ onUpload, user, setUser, onNavigate, expanded, onToggle }) {
+export default function SongUploader({ onUpload, user, setUser, onNavigate, expanded, onToggle, onPersonalSongSaved }) {
   async function loadReadySheet(file, { commit = true, prepared = null } = {}) {
     const song = prepared || await parseUploadedSongFile(file);
     if (!commit) return song;
@@ -24,6 +24,7 @@ export default function SongUploader({ onUpload, user, setUser, onNavigate, expa
           onNavigate={onNavigate}
           instrument='piano'
           onReadyFile={loadReadySheet}
+          onPersonalSongSaved={onPersonalSongSaved}
         />
       </MusicChoiceDisclosure>
     </section>
