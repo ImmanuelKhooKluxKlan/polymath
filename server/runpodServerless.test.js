@@ -61,6 +61,73 @@ test('reports missing configuration without exposing secret values', () => {
   assert.ok(client.missing.includes('RUNPOD_API_KEY'));
 });
 
+test('an admin model test can override the default with a safe checkpoint', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'runpod-checkpoint-override-'));
+  const audioPath = path.join(directory, 'prepared.wav');
+  fs.writeFileSync(audioPath, 'wav-fixture');
+  const requests = [];
+  const client = createRunpodServerlessClient({
+    endpointId: 'endpoint-compare', apiKey: 'secret', volumeId: 'volume-compare',
+    region: 'US-KS-2', s3Endpoint: 'https://s3.example.test',
+    s3AccessKeyId: 'storage-user', s3SecretAccessKey: 'storage-secret',
+    inferenceVersion: 'phase1-v002', pollIntervalMs: 1,
+  }, {
+    s3: {
+      async send(command) {
+        if (command.constructor.name === 'PutObjectCommand') {
+          for await (const chunk of command.input.Body) assert.ok(chunk.length > 0);
+        }
+      },
+    },
+    async fetchImpl(url, options) {
+      requests.push({ url, options });
+      const payload = url.endsWith('/run')
+        ? { id: 'checkpoint-comparison-job' }
+        : { status: 'COMPLETED', output: { notes: [{ midi: 60 }] } };
+      return { ok: true, status: 200, async text() { return JSON.stringify(payload); } };
+    },
+  });
+
+  try {
+    await client.transcribe({
+      job: { id: 'model-lab-original', title: 'Original test', instrument: 'band' },
+      preparedPath: audioPath,
+      checkpointVersion: 'original',
+    });
+    const submitted = JSON.parse(requests[0].options.body);
+    assert.equal(submitted.input.checkpoint_version, 'original');
+    assert.equal(client.inferenceVersion, 'phase1-v002');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('checkpoint overrides reject arbitrary paths before uploading audio', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'runpod-checkpoint-reject-'));
+  const audioPath = path.join(directory, 'prepared.wav');
+  fs.writeFileSync(audioPath, 'wav-fixture');
+  let storageCalls = 0;
+  const client = createRunpodServerlessClient({
+    endpointId: 'endpoint-compare', apiKey: 'secret', volumeId: 'volume-compare',
+    region: 'US-KS-2', s3Endpoint: 'https://s3.example.test',
+    s3AccessKeyId: 'storage-user', s3SecretAccessKey: 'storage-secret',
+  }, { s3: { async send() { storageCalls += 1; } } });
+
+  try {
+    await assert.rejects(
+      client.transcribe({
+        job: { id: 'unsafe-model-test', title: 'Unsafe', instrument: 'band' },
+        preparedPath: audioPath,
+        checkpointVersion: '../../private-key',
+      }),
+      /Inference checkpoint must be original/,
+    );
+    assert.equal(storageCalls, 0);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('submits, inspects, and cancels guarded ML operations without returning credentials', async () => {
   const requests = [];
   const replies = [

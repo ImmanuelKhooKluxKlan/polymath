@@ -5324,7 +5324,7 @@ details[open] > summary {
 
 .model-lab-upload-card {
   display: grid;
-  grid-template-columns: minmax(190px, 0.7fr) minmax(300px, 2fr) auto;
+  grid-template-columns: repeat(2, minmax(190px, 0.72fr)) minmax(300px, 2fr) auto;
   align-items: center;
   gap: 18px;
   margin-top: 24px;
@@ -5333,15 +5333,26 @@ details[open] > summary {
 
 .model-lab-checkpoint {
   display: grid;
-  gap: 4px;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
 }
 
-.model-lab-checkpoint span,
+.model-lab-checkpoint label,
 .model-lab-stat-card span {
   color: #bcb4dd;
   font-size: 0.76rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.model-lab-checkpoint select {
+  width: 100%;
+  min-width: 0;
+  color: #f8f6ff;
+  border: 1px solid rgba(170, 151, 255, 0.32);
+  border-radius: 12px;
+  background: rgba(17, 18, 48, 0.9);
 }
 
 .model-lab-checkpoint small,

@@ -9,7 +9,10 @@ const multer = require('multer');
 const bundledFfmpegPath = require('ffmpeg-static');
 const { analyzeTranscription } = require('./modelLabAnalysis');
 const { createMlOperations } = require('./mlOperations');
-const { createRunpodServerlessClient } = require('./runpodServerless');
+const {
+  createRunpodServerlessClient,
+  normalizeInferenceCheckpoint,
+} = require('./runpodServerless');
 
 const MEDIA_EXTENSIONS = new Set([
   '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac',
@@ -361,10 +364,45 @@ function publicJob(job) {
     sourceDurationSeconds: Number.isFinite(job.sourceDurationSeconds)
       ? Number(job.sourceDurationSeconds.toFixed(4))
       : null,
+    checkpoint: job.checkpoint || 'original',
     error: job.error || '',
     archive: job.archive || { saved: false },
     result: job.status === 'completed' ? job.result : undefined,
   };
+}
+
+function buildModelLabCheckpoints(defaultCheckpoint, configuredValue = '') {
+  const configured = String(configuredValue || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const ids = [...new Set(['original', ...configured, defaultCheckpoint])]
+    .filter((value) => {
+      try {
+        normalizeInferenceCheckpoint(value);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+  return ids.map((id) => {
+    const version = id === 'original'
+      ? 'v001'
+      : id.match(/v\d{3,}$/)?.[0] || id;
+    const isDefault = id === defaultCheckpoint;
+    return {
+      id,
+      version,
+      label: id === 'original'
+        ? 'v001 · Original baseline'
+        : `${version} · ${isDefault ? 'Current trained checkpoint' : id}`,
+      description: id === 'original'
+        ? 'Immutable foundation weights before Polymath supervised changes.'
+        : `${id}${isDefault ? ' · current website inference choice' : ''}`,
+      default: isDefault,
+    };
+  });
 }
 
 function createModelLab(environment = process.env, options = {}) {
@@ -379,12 +417,20 @@ function createModelLab(environment = process.env, options = {}) {
   );
   const ffmpegPath = String(environment.FFMPEG_PATH || '').trim() || bundledFfmpegPath;
   const maximumSeconds = Math.max(10, Math.min(3600, Number(environment.MODEL_LAB_MAX_SECONDS) || 600));
-  const inferenceVersion = String(
+  const configuredInferenceVersion = String(
     options.inferenceVersion
       || environment.MUSCRIPTOR_INFERENCE_VERSION
       || environment.MODEL_LAB_MODEL_VERSION
       || 'original',
   ).trim().toLowerCase().split('/').filter(Boolean).at(-1) || 'original';
+  const inferenceVersion = configuredInferenceVersion === 'v001'
+    ? 'original'
+    : configuredInferenceVersion;
+  const checkpoints = buildModelLabCheckpoints(
+    normalizeInferenceCheckpoint(inferenceVersion),
+    environment.MODEL_LAB_CHECKPOINTS,
+  );
+  const checkpointIds = new Set(checkpoints.map((checkpoint) => checkpoint.id));
   fs.mkdirSync(dataRoot, { recursive: true });
   const artifactStore = options.artifactStore || null;
   const remoteHistoryCacheRoot = path.join(dataRoot, 'remote-history-cache');
@@ -462,6 +508,8 @@ function createModelLab(environment = process.env, options = {}) {
       rawModelOutput: true,
       model: 'Polymath Large',
       checkpoint: runpod.inferenceVersion,
+      defaultCheckpoint: runpod.inferenceVersion,
+      checkpoints,
       storageTargets: runpod.storageTargetCount,
       maximumSeconds,
       missing,
@@ -597,7 +645,7 @@ function createModelLab(environment = process.env, options = {}) {
       await runFfmpeg(ffmpegPath, job.sourcePath, preparedPath, maximumSeconds);
       job.sourceDurationSeconds = readWavDurationSeconds(preparedPath);
 
-      job.stage = `Submitting raw audio to tester ${runpod.inferenceVersion}`;
+      job.stage = `Submitting raw audio to ${job.checkpoint}`;
       job.progress = 15;
       const raw = await runpod.transcribe({
         job: {
@@ -607,6 +655,7 @@ function createModelLab(environment = process.env, options = {}) {
         },
         preparedPath,
         constraints: [],
+        checkpointVersion: job.checkpoint,
         onProgress(remote) {
           const state = String(remote.state || '').toUpperCase();
           job.stage = state === 'IN_QUEUE'
@@ -631,7 +680,6 @@ function createModelLab(environment = process.env, options = {}) {
       job.stage = 'Model analysis ready';
       job.progress = 100;
       job.completedAt = new Date().toISOString();
-      job.checkpoint = capability().checkpoint;
       try {
         archiveRawTestSnapshot({ archiveRoot: rawTestArchiveRoot, job });
         try {
@@ -682,10 +730,16 @@ function createModelLab(environment = process.env, options = {}) {
       if (!request.file) return response.status(400).json({ error: 'Choose a supported audio or video file.' });
       const id = crypto.randomUUID();
       const title = String(request.body.title || path.parse(request.file.originalname).name || 'Model Lab test').slice(0, 120);
+      const checkpoint = String(request.body.checkpoint || runpod.inferenceVersion).trim().toLowerCase();
+      if (!checkpointIds.has(checkpoint)) {
+        try { fs.rmSync(request.file.path, { force: true }); } catch { /* cleanup retry is harmless */ }
+        return response.status(400).json({ error: 'Choose one of the available Model Lab checkpoints.' });
+      }
       const job = {
         id,
         title,
         filename: request.file.originalname,
+        checkpoint,
         sourcePath: request.file.path,
         status: 'processing',
         stage: 'Queued locally',
@@ -757,6 +811,7 @@ function createModelLab(environment = process.env, options = {}) {
         createdAt: archive.manifest.createdAt,
         completedAt: archive.manifest.completedAt,
         sourceDurationSeconds: archive.manifest.sourceDurationSeconds,
+        checkpoint: archive.manifest.checkpoint || 'original',
         result: { analysis: archive.analysis, raw: archive.raw },
         archived: true,
       },
@@ -981,6 +1036,7 @@ function createModelLab(environment = process.env, options = {}) {
 module.exports = {
   archiveRawTestSnapshot,
   archiveAlignmentSnapshot,
+  buildModelLabCheckpoints,
   createModelLab,
   isLoopback,
   listAlignmentArchives,

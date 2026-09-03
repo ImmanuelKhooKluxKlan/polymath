@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
 import { downloadSongMidi } from '../utils/exporters.js';
+import { INSTRUMENTS } from '../data/instruments.js';
 import ModelLabPlaybackMixer from '../components/ModelLabPlaybackMixer.jsx';
 import MlOperationsConsole from '../components/MlOperationsConsole.jsx';
 import PianoDetailsTester from '../components/PianoDetailsTester.jsx';
@@ -55,6 +56,8 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
   const [job, setJob] = useState(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [selectedCheckpoint, setSelectedCheckpoint] = useState('');
+  const [listenAs, setListenAs] = useState('piano');
   const [instrumentFilter, setInstrumentFilter] = useState('all');
   const [history, setHistory] = useState({ rawTests: [], alignments: [] });
   const [historyStatus, setHistoryStatus] = useState('');
@@ -76,6 +79,14 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
     return clearPolling;
   }, []);
 
+  useEffect(() => {
+    const options = capability?.checkpoints || [];
+    if (!options.length) return;
+    if (!options.some((checkpoint) => checkpoint.id === selectedCheckpoint)) {
+      setSelectedCheckpoint(capability.defaultCheckpoint || options[0].id);
+    }
+  }, [capability, selectedCheckpoint]);
+
   async function refreshHistory() {
     try {
       setHistory(await apiRequest('/api/model-lab/history'));
@@ -92,6 +103,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
       setCapability(data.capability);
       setFile(null);
       setJob(data.job);
+      setSelectedCheckpoint(data.job.checkpoint || data.capability.defaultCheckpoint || 'original');
       setInstrumentFilter('all');
       setHistoryStatus('Archived raw test loaded.');
     } catch (error) {
@@ -141,6 +153,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
       const form = new FormData();
       form.append('media', file, file.name);
       form.append('title', file.name.replace(/\.[^.]+$/, ''));
+      form.append('checkpoint', selectedCheckpoint || capability?.defaultCheckpoint || 'original');
       const data = await apiRequest('/api/model-lab/jobs', { method: 'POST', body: form });
       setCapability(data.capability);
       setJob(data.job);
@@ -155,6 +168,10 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
   const analysis = job?.result?.analysis;
   const raw = job?.result?.raw;
   const instruments = analysis?.instruments || [];
+  const checkpointOptions = capability?.checkpoints || [];
+  const selectedCheckpointOption = checkpointOptions.find(
+    (checkpoint) => checkpoint.id === (job?.checkpoint || selectedCheckpoint),
+  );
   const visibleNotes = useMemo(() => (
     (analysis?.notePreview || [])
       .filter((note) => instrumentFilter === 'all' || note.instrument === instrumentFilter)
@@ -178,9 +195,36 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
 
       <section className="model-lab-upload-card">
         <div className="model-lab-checkpoint">
-          <span>Checkpoint</span>
-          <strong>{displayCheckpoint(capability?.checkpoint)}</strong>
-          <small>Raw Polymath Large · no arrangement or duplicate-note cleanup</small>
+          <label htmlFor="model-lab-checkpoint-select">Model version</label>
+          <select
+            id="model-lab-checkpoint-select"
+            value={selectedCheckpoint}
+            disabled={busy || !checkpointOptions.length}
+            onChange={(event) => {
+              setSelectedCheckpoint(event.target.value);
+              setJob(null);
+              setStatus('');
+            }}
+          >
+            {checkpointOptions.map((checkpoint) => (
+              <option key={checkpoint.id} value={checkpoint.id}>{checkpoint.label}</option>
+            ))}
+          </select>
+          <small>{checkpointOptions.find((checkpoint) => checkpoint.id === selectedCheckpoint)?.description || 'Loading available checkpoints…'}</small>
+        </div>
+        <div className="model-lab-checkpoint">
+          <label htmlFor="model-lab-listen-as">Hear output as</label>
+          <select
+            id="model-lab-listen-as"
+            value={listenAs}
+            disabled={busy}
+            onChange={(event) => setListenAs(event.target.value)}
+          >
+            {INSTRUMENTS.map((instrument) => (
+              <option key={instrument.id} value={instrument.id}>{instrument.label}</option>
+            ))}
+          </select>
+          <small>This changes playback only, never the model’s detected notes.</small>
         </div>
         <label className="upload-box">
           <input
@@ -202,7 +246,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
           disabled={!file || busy || capability?.enabled === false}
           onClick={startTest}
         >
-          {busy ? 'Model test running…' : 'Test raw model'}
+          {busy ? 'Model test running…' : `Run ${checkpointOptions.find((checkpoint) => checkpoint.id === selectedCheckpoint)?.version || 'model'} test`}
         </button>
         {capability?.enabled === false && (
           <p className="form-status error">Missing: {(capability.missing || []).join(', ') || 'Model Lab configuration'}</p>
@@ -228,7 +272,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
             <div className="model-lab-history-list">
               {history.rawTests.map((record) => (
                 <button type="button" key={record.id} onClick={() => openRawTest(record.id)}>
-                  <span><strong>{record.title}</strong><small>{new Date(record.completedAt).toLocaleString()}</small></span>
+                  <span><strong>{record.title}</strong><small>{displayCheckpoint(record.checkpoint || 'original')} · {new Date(record.completedAt).toLocaleString()}</small></span>
                   <span><b>{record.noteCount} notes</b><small>{record.instrumentCount} instruments · {record.rapidRepeats75ms} rapid repeats</small></span>
                 </button>
               ))}
@@ -265,6 +309,10 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
               <p className="eyebrow">Raw result</p>
               <h2>{raw.title || job.title}</h2>
               <p>{polymathLabel(analysis.model.provider)}</p>
+              <p>
+                <strong>{selectedCheckpointOption?.label || displayCheckpoint(job.checkpoint)}</strong>
+                {' · '}listening as {INSTRUMENTS.find((instrument) => instrument.id === listenAs)?.label || listenAs}
+              </p>
             </div>
             <div className="model-lab-actions">
               <button type="button" className="ghost" onClick={() => downloadJson(analysis, `${job.title}-analysis.json`)}>Analysis JSON</button>
@@ -311,7 +359,7 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
             <StatCard label="Median sustain" value={seconds(analysis.timing.medianDurationSeconds)} />
           </section>
 
-          <ModelLabPlaybackMixer raw={raw} instrumentStats={instruments} />
+          <ModelLabPlaybackMixer raw={raw} instrumentStats={instruments} initialSound={listenAs} />
 
           <PianoDetailsTester
             raw={raw}

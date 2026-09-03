@@ -100,7 +100,7 @@ function selectionDiagnostics(notes) {
   return { rapid, overlaps };
 }
 
-export default function ModelLabPlaybackMixer({ raw, instrumentStats = [] }) {
+export default function ModelLabPlaybackMixer({ raw, instrumentStats = [], initialSound = 'piano' }) {
   const notes = useMemo(() => normalizeNotes(raw), [raw]);
   const detectedParts = useMemo(() => (
     [...new Set(notes.map((note) => note.instrument))]
@@ -108,7 +108,9 @@ export default function ModelLabPlaybackMixer({ raw, instrumentStats = [] }) {
   ), [notes]);
   const duration = useMemo(() => Math.max(0, ...notes.map((note) => note.time + note.duration)), [notes]);
   const [selectedParts, setSelectedParts] = useState(() => new Set(detectedParts));
-  const [selectedOwnedSound, setSelectedOwnedSound] = useState('piano');
+  const [selectedOwnedSound, setSelectedOwnedSound] = useState(
+    INSTRUMENT_BY_ID[initialSound] ? initialSound : 'piano',
+  );
   const [bandLayers, setBandLayers] = useState(() => new Set());
   const [soloSound, setSoloSound] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -151,10 +153,12 @@ export default function ModelLabPlaybackMixer({ raw, instrumentStats = [] }) {
   }
 
   useEffect(() => {
+    const startingSound = INSTRUMENT_BY_ID[initialSound] ? initialSound : 'piano';
     alive.current = true;
     setSelectedParts(new Set(detectedParts));
     setBandLayers(new Set());
-    setSoloSound(null);
+    setSelectedOwnedSound(startingSound);
+    setSoloSound(startingSound);
     setCurrentTime(0);
     setSkippedNotes(0);
     return () => {
@@ -162,7 +166,7 @@ export default function ModelLabPlaybackMixer({ raw, instrumentStats = [] }) {
       clearTimers();
       silenceAll();
     };
-  }, [raw, detectedParts]);
+  }, [raw, detectedParts, initialSound]);
 
   function togglePart(part) {
     pausePlayback(false);
@@ -335,7 +339,7 @@ export default function ModelLabPlaybackMixer({ raw, instrumentStats = [] }) {
         <div>
           <p className="eyebrow">A/B playback diagnosis</p>
           <h2>Hear where the stutter comes from</h2>
-          <p>Select model parts on the left. Revoice or add Polymath-owned sounds on the right.</p>
+          <p>Select detected parts on the left, then hear this model’s notes through any Polymath-owned instrument on the right.</p>
         </div>
         <div className={`model-lab-play-state ${diagnostics.rapid ? 'warning' : ''}`}>
           <span>{audioStatus}</span>
