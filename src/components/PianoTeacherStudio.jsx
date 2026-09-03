@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { teacherReply, TEACHER_PROFILES } from '../engine/teacherHands.js';
+import PoseableTeacherStage from './PoseableTeacherStage.jsx';
 
 function TeacherPortrait({ teacher }) {
   return (
@@ -63,16 +64,7 @@ export default function PianoTeacherStudio({
       </header>
 
       <div className="piano-teacher-workspace human-teacher-workspace">
-        <article className="teacher-human-preview">
-          <div className="teacher-human-preview-image">
-            <img src={teacher.image} alt={`${teacher.name}, selected virtual piano teacher`} loading="lazy" draggable="false" />
-          </div>
-          <div>
-            <strong>{teacher.name}</strong>
-            <span>{teacher.description}</span>
-            <small>{targetSentence(targets, showHands)}</small>
-          </div>
-        </article>
+        <PoseableTeacherStage teacher={teacher} targetSummary={targetSentence(targets, showHands)} />
 
         <div className="teacher-chat-panel">
           <div className="teacher-chat-heading">

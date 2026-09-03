@@ -9,6 +9,12 @@ import {
   teacherHandForEvent,
   TEACHER_PROFILES,
 } from '../../src/engine/teacherHands.js';
+import {
+  clampTeacherOffset,
+  normalizeTeacherArmAngle,
+  teacherPoseById,
+  TEACHER_POSES,
+} from '../../src/engine/teacherAvatarControls.js';
 
 test('explicit metadata wins and pitch provides a safe fallback', () => {
   assert.equal(teacherHandForEvent({ note: 'C5', hand: 'left' }), 'left');
@@ -77,4 +83,13 @@ test('Mace stays stern and does not give empty praise', () => {
   const reply = teacherReply(mace, 'Can you help my hands?', buildTeacherHandTargets([], 0));
   assert.match(reply, /Again/);
   assert.doesNotMatch(reply, /great|perfect|amazing/i);
+});
+
+test('teacher pose controls remain bounded and always have a safe fallback', () => {
+  assert.equal(TEACHER_POSES.length, 5);
+  assert.equal(teacherPoseById('rest').rotation, 88);
+  assert.equal(teacherPoseById('not-real').id, 'ready');
+  assert.deepEqual(clampTeacherOffset({ x: 900, y: -900 }, { maximumX: 120, maximumY: 80 }), { x: 120, y: -80 });
+  assert.equal(normalizeTeacherArmAngle(500), 110);
+  assert.equal(normalizeTeacherArmAngle(-500), -110);
 });
