@@ -5,7 +5,9 @@ import {
   fingerForMidi,
   pianoPercentForMidi,
   prepareTeacherHandTimeline,
+  teacherReply,
   teacherHandForEvent,
+  TEACHER_PROFILES,
 } from '../../src/engine/teacherHands.js';
 
 test('explicit metadata wins and pitch provides a safe fallback', () => {
@@ -60,4 +62,19 @@ test('the prepared timeline sorts once and can be reused during playback', () =>
   assert.deepEqual(timeline.entries.map((event) => event.note), ['C3', 'C5']);
   const targets = buildTeacherHandTargets(timeline, 2.5);
   assert.equal(targets.left.notes[0].note, 'C3');
+});
+
+test('the four human teachers have deployable image assets', () => {
+  assert.deepEqual(TEACHER_PROFILES.map((teacher) => teacher.id), ['padme', 'anakin', 'taylor', 'mace']);
+  for (const teacher of TEACHER_PROFILES) {
+    assert.match(teacher.image, /^\/teachers\/.+\.webp$/);
+    assert.match(teacher.armImage, /^\/teachers\/arm-.+\.webp$/);
+  }
+});
+
+test('Mace stays stern and does not give empty praise', () => {
+  const mace = TEACHER_PROFILES.find((teacher) => teacher.id === 'mace');
+  const reply = teacherReply(mace, 'Can you help my hands?', buildTeacherHandTargets([], 0));
+  assert.match(reply, /Again/);
+  assert.doesNotMatch(reply, /great|perfect|amazing/i);
 });

@@ -7,7 +7,9 @@ export const TEACHER_PROFILES = Object.freeze([
     title: 'Performance coach',
     description: 'Warm, precise, and focused on expressive melody.',
     voice: 'Encouraging',
-    palette: { skin: '#d9a07f', hair: '#24192a', primary: '#7857d8', secondary: '#cf5eaa' },
+    image: '/teachers/padme-human-v1.webp',
+    armImage: '/teachers/arm-light-full-v1.webp',
+    palette: { skin: '#d9a07f', skinShadow: '#a96e54', hair: '#24192a', primary: '#7857d8', secondary: '#cf5eaa' },
     look: 'athletic',
   },
   {
@@ -16,17 +18,21 @@ export const TEACHER_PROFILES = Object.freeze([
     title: 'Technique coach',
     description: 'Direct coaching for timing, power, and confident movement.',
     voice: 'Focused',
-    palette: { skin: '#d3a27f', hair: '#543524', primary: '#2b3152', secondary: '#8ca1d8' },
+    image: '/teachers/anakin-human-v1.webp',
+    armImage: '/teachers/arm-light-full-v1.webp',
+    palette: { skin: '#d3a27f', skinShadow: '#9c654a', hair: '#543524', primary: '#2b3152', secondary: '#8ca1d8' },
     look: 'athletic-male',
   },
   {
-    id: 'celeste',
-    name: 'Celeste',
-    title: 'Musicality coach',
-    description: 'Calm phrasing lessons with a concert-hall feel.',
-    voice: 'Calm',
-    palette: { skin: '#c98f73', hair: '#27182c', primary: '#3569d4', secondary: '#7a78ed' },
-    look: 'blue-dress',
+    id: 'taylor',
+    name: 'Taylor',
+    title: 'Songwriting coach',
+    description: 'Friendly guidance for melody, phrasing, and storytelling.',
+    voice: 'Thoughtful',
+    image: '/teachers/taylor-human-v1.webp',
+    armImage: '/teachers/arm-light-full-v1.webp',
+    palette: { skin: '#e2b39e', skinShadow: '#ae7868', hair: '#d4bd9d', primary: '#b77c98', secondary: '#e4b5cf' },
+    look: 'songwriter',
   },
   {
     id: 'mace',
@@ -34,7 +40,9 @@ export const TEACHER_PROFILES = Object.freeze([
     title: 'Piano master',
     description: 'Clear, disciplined guidance for difficult passages.',
     voice: 'Exact',
-    palette: { skin: '#75452f', hair: '#20191b', primary: '#4c347a', secondary: '#c4b8ea' },
+    image: '/teachers/mace-human-v1.webp',
+    armImage: '/teachers/arm-dark-full-v1.webp',
+    palette: { skin: '#75452f', skinShadow: '#4d2a1d', hair: '#20191b', primary: '#4c347a', secondary: '#c4b8ea' },
     look: 'master',
   },
 ]);
@@ -192,6 +200,13 @@ export function teacherReply(teacher, message, targets) {
     ? played.map((note) => `${note.note} (finger ${note.finger})`).join(', ')
     : 'the next falling notes';
   const name = teacher?.name || 'Your teacher';
+
+  if (teacher?.id === 'mace') {
+    if (/hello|hi|hey/.test(text)) return 'Sit properly. Wrists level. Begin when the timing line reaches the keys.';
+    if (/slow|fast|speed|tempo/.test(text)) return 'Reduce the speed. Accuracy first. Increase it only after three clean repetitions.';
+    if (/finger|hand|play|note|wrong|help/.test(text)) return `Watch ${noteSummary}. Again—and this time, do not rush the release.`;
+    return `Focus on ${noteSummary}. I will compliment it when it is actually precise.`;
+  }
 
   if (/hello|hi|hey/.test(text)) return `${name} here. Start the lesson when you are ready, and I will demonstrate each hand.`;
   if (/finger|hand|play|note|wrong|help/.test(text)) return `Watch ${noteSummary}. Keep your wrist relaxed and press only when the note reaches the line.`;

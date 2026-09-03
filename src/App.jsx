@@ -25,6 +25,11 @@ import {
 } from './engine/devicePerformance.js';
 import { buildAdaptivePianoLayout, buildLearningHandLayout } from './engine/grandPianoLayout.js';
 import {
+  buildTeacherHandTargets,
+  prepareTeacherHandTimeline,
+  TEACHER_PROFILES,
+} from './engine/teacherHands.js';
+import {
   findStartIndex,
   getPedalStateAt,
   getSongDuration,
@@ -120,6 +125,8 @@ export default function App() {
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
   const [pianoHandMode, setPianoHandMode] = useState('left');
+  const [pianoTeacherId, setPianoTeacherId] = useState(() => window.localStorage.getItem('polymath-piano-teacher') || 'padme');
+  const [teacherHandsEnabled, setTeacherHandsEnabled] = useState(() => window.localStorage.getItem('polymath-teacher-hands') === 'true');
   const [portraitDevice, setPortraitDevice] = useState(() => (
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
   ));
@@ -174,6 +181,18 @@ export default function App() {
       : song.notes
   ), [song, teachingMode, pianoHandMode]);
   const teachingSong = useMemo(() => ({ ...song, notes: playbackNotes }), [song, playbackNotes]);
+  const pianoTeacher = useMemo(
+    () => TEACHER_PROFILES.find((profile) => profile.id === pianoTeacherId) || TEACHER_PROFILES[0],
+    [pianoTeacherId],
+  );
+  const teacherHandTimeline = useMemo(
+    () => prepareTeacherHandTimeline(teachingSong.notes),
+    [teachingSong],
+  );
+  const teacherHandTargets = useMemo(
+    () => buildTeacherHandTargets(teacherHandTimeline, currentTime, { handMode: pianoHandMode }),
+    [teacherHandTimeline, currentTime, pianoHandMode],
+  );
   const learningSections = useMemo(
     () => analyzeLearningSections(song.notes, getSongDuration(song), preferredSectionSeconds),
     [song, preferredSectionSeconds],
@@ -191,6 +210,14 @@ export default function App() {
     // preference so the recommendation can return the next time the app opens.
     window.localStorage.removeItem('polymath-orientation-prompt-dismissed');
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('polymath-piano-teacher', pianoTeacher.id);
+  }, [pianoTeacher.id]);
+
+  useEffect(() => {
+    window.localStorage.setItem('polymath-teacher-hands', String(teacherHandsEnabled));
+  }, [teacherHandsEnabled]);
 
   useEffect(() => {
     function checkOrientation() {
@@ -1020,6 +1047,10 @@ export default function App() {
                 performanceTier={performanceTier}
                 deviceClass={deviceClass}
                 onPrepare={prepareKeyboard}
+                teacher={teachingMode === 'learn' && teacherHandsEnabled ? pianoTeacher : null}
+                teacherTargets={teacherHandTargets}
+                teacherHandMode={pianoHandMode}
+                teacherIsPlaying={isPlaying}
               />
             </div>
             <TransportDock
@@ -1063,10 +1094,16 @@ export default function App() {
             </details>
             {teachingMode === 'learn' && (
               <PianoTeacherStudio
-                song={teachingSong}
-                currentTime={currentTime}
-                isPlaying={isPlaying}
-                handMode={pianoHandMode}
+                teacherId={pianoTeacher.id}
+                onTeacherChange={setPianoTeacherId}
+                showHands={teacherHandsEnabled}
+                onShowHandsChange={(enabled) => {
+                  setTeacherHandsEnabled(enabled);
+                  if (enabled) {
+                    window.setTimeout(() => studioPlayerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+                  }
+                }}
+                targets={teacherHandTargets}
               />
             )}
           </div>

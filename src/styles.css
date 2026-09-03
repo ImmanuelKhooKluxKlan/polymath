@@ -6557,3 +6557,176 @@ details[open] > summary {
   .teacher-svg-hand,
   .teacher-target-marker { transition: none; animation: none; }
 }
+
+/* Human piano teacher, seated behind the real playable keyboard. */
+.main-teacher-presence {
+  position: relative;
+  z-index: 1;
+  height: clamp(205px, 25vw, 300px);
+  margin: 0 -8px -38px;
+  overflow: hidden;
+  pointer-events: none;
+  background: transparent;
+}
+.main-teacher-aura {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  width: min(48vw, 470px);
+  height: 78%;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, rgba(142, 107, 255, 0.2), transparent 66%);
+  filter: blur(9px);
+}
+.main-teacher-presence > img {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: -82px;
+  width: auto;
+  height: calc(100% + 100px);
+  max-width: min(48%, 410px);
+  object-fit: contain;
+  object-position: center bottom;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 18px 28px rgba(0,0,0,.5));
+  user-select: none;
+}
+.main-teacher-status {
+  position: absolute;
+  z-index: 5;
+  right: 12px;
+  bottom: 48px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 44%;
+  padding: 6px 9px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  color: #eeeaff;
+  background: rgba(8,9,28,.78);
+  backdrop-filter: blur(8px);
+  font-size: .66rem;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+.main-teacher-status i { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #9189ac; }
+.main-teacher-status.is-live i { background: #6bf0b5; box-shadow: 0 0 0 4px rgba(107,240,181,.13); }
+
+.piano-shell.has-main-teacher .piano-rows { z-index: 4; }
+.main-teacher-hands-overlay {
+  position: absolute;
+  z-index: 9;
+  top: -72px;
+  left: 0;
+  width: 100%;
+  height: calc(100% + 72px);
+  overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(0 7px 5px rgba(0,0,0,.34));
+}
+.main-teacher-limb {
+  transition: transform 135ms cubic-bezier(.22,.8,.3,1), opacity 120ms ease;
+}
+.main-teacher-limb.is-pressing { animation: main-teacher-key-press 150ms ease-out; }
+.main-teacher-limb.at-rest { opacity: .8; }
+.main-teacher-fingertip circle {
+  fill: #fff06e;
+  stroke: rgba(255,255,255,.95);
+  stroke-width: 3;
+  filter: drop-shadow(0 0 7px rgba(255,231,91,.94));
+}
+.main-teacher-fingertip text { fill: #24173a; font-size: 13px; font-weight: 950; }
+
+@keyframes main-teacher-key-press {
+  0% { translate: 0 -5px; }
+  60% { translate: 0 6px; }
+  100% { translate: 0 0; }
+}
+
+.human-teacher-workspace { grid-template-columns: minmax(250px, .82fr) minmax(280px, 1.18fr); }
+.teacher-human-preview {
+  display: grid;
+  grid-template-columns: minmax(110px, .7fr) minmax(130px, 1fr);
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  min-height: 250px;
+  padding: 13px;
+  border: 1px solid rgba(177,158,255,.2);
+  border-radius: 19px;
+  background:
+    radial-gradient(circle at 26% 40%, rgba(124,91,229,.2), transparent 40%),
+    rgba(7,9,27,.58);
+  overflow: hidden;
+}
+.teacher-human-preview-image {
+  align-self: stretch;
+  min-height: 220px;
+  border-radius: 15px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 42%, #34306a, #101126 72%);
+}
+.teacher-human-preview-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  filter: drop-shadow(0 10px 18px rgba(0,0,0,.44));
+}
+.teacher-human-preview > div:last-child { display: grid; gap: 8px; min-width: 0; }
+.teacher-human-preview strong { font-size: clamp(1rem, 2vw, 1.3rem); }
+.teacher-human-preview span { color: #d7d1f3; font-size: .78rem; line-height: 1.5; }
+.teacher-human-preview small {
+  padding-top: 8px;
+  border-top: 1px solid rgba(173,155,236,.16);
+  color: var(--muted);
+  font-size: .68rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.teacher-human-portrait {
+  position: relative;
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 13px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #373273, #12132b);
+}
+.teacher-human-portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 15%;
+  transform: scale(1.42);
+  transform-origin: center 17%;
+}
+.teacher-choice .teacher-human-portrait { flex-basis: 48px; width: 48px; height: 48px; }
+
+@media (max-width: 900px) {
+  .human-teacher-workspace { grid-template-columns: minmax(0, 1fr); }
+  .teacher-human-preview { grid-template-columns: minmax(105px, .55fr) minmax(0, 1fr); min-height: 210px; }
+  .teacher-human-preview-image { min-height: 190px; }
+}
+
+@media (max-width: 560px) {
+  .main-teacher-presence { height: 165px; margin-bottom: -28px; }
+  .main-teacher-presence > img { bottom: -58px; height: calc(100% + 72px); max-width: 57%; }
+  .main-teacher-status { right: 6px; bottom: 33px; max-width: 48%; padding: 4px 6px; font-size: .56rem; }
+  .main-teacher-hands-overlay { top: -48px; height: calc(100% + 48px); }
+  .teacher-human-preview { grid-template-columns: 105px minmax(0, 1fr); min-height: 175px; padding: 9px; }
+  .teacher-human-preview-image { min-height: 158px; }
+  .teacher-human-preview span { font-size: .7rem; }
+  .teacher-human-preview small { font-size: .61rem; }
+  .teacher-human-portrait,
+  .teacher-choice .teacher-human-portrait { flex-basis: 39px; width: 39px; height: 39px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-teacher-limb { transition: none; animation: none; }
+}

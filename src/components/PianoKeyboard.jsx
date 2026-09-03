@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BLACK_KEY_WIDTH_RATIO } from '../engine/grandPianoLayout.js';
 import { noteToDisplayName } from '../engine/noteMath.js';
+import { TeacherKeyboardPresence, TeacherRowHands } from './TeacherKeyboardOverlay.jsx';
 
 // QWERTY keys cover useful center notes; click/touch covers the full adaptive piano.
 const keyboardMap = {
@@ -62,7 +63,19 @@ function strikeVersionFor(strikeVersions, note) {
   return strikeVersions?.get?.(note) || 0;
 }
 
-function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease, disabled, showKeyNotes }) {
+function PianoRow({
+  row,
+  rowIndex,
+  activeNotes,
+  strikeVersions,
+  onPress,
+  onRelease,
+  disabled,
+  showKeyNotes,
+  teacher,
+  teacherTargets,
+  teacherHandMode,
+}) {
   return (
     <div
       className="piano-row-shell"
@@ -108,6 +121,15 @@ function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease, disabl
             );
           })}
         </div>
+        {teacher && (
+          <TeacherRowHands
+            teacher={teacher}
+            targets={teacherTargets}
+            row={row}
+            handMode={teacherHandMode}
+            showAtRest={rowIndex === 0 && !teacherTargets?.hasTargets}
+          />
+        )}
       </div>
     </div>
   );
@@ -126,6 +148,10 @@ export default function PianoKeyboard({
   performanceTier = 'full',
   deviceClass = 'desktop',
   onPrepare,
+  teacher = null,
+  teacherTargets = null,
+  teacherHandMode = 'both',
+  teacherIsPlaying = false,
 }) {
   useEffect(() => () => {
     activePointers.clear();
@@ -141,7 +167,7 @@ export default function PianoKeyboard({
   const liteWarning = performanceTier === 'lite';
   return (
     <section
-      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
+      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'} ${teacher ? 'has-main-teacher' : ''}`}
       aria-label={`Playable piano section, ${layout.rangeLabel}`}
     >
       <div className="piano-mode-label">
@@ -149,17 +175,22 @@ export default function PianoKeyboard({
         <small className="performance-tier-badge">{deviceLabel} · {performanceTier}</small>
       </div>
       <div className="piano-glow" />
+      {teacher && <TeacherKeyboardPresence teacher={teacher} isPlaying={teacherIsPlaying} />}
       <div className="piano-rows">
-        {layout.rows.map((row) => (
+        {layout.rows.map((row, rowIndex) => (
           <PianoRow
             key={row.id}
             row={row}
+            rowIndex={rowIndex}
             activeNotes={activeNotes}
             strikeVersions={strikeVersions}
             onPress={onPress}
             onRelease={onRelease}
             disabled={disabled}
             showKeyNotes={showKeyNotes}
+            teacher={teacher}
+            teacherTargets={teacherTargets}
+            teacherHandMode={teacherHandMode}
           />
         ))}
       </div>
