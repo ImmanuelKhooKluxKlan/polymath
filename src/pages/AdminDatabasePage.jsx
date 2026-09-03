@@ -6,7 +6,7 @@ const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
-  ['promotions', 'Discounts', 'Create and pause percentage codes'],
+  ['promotions', 'Discounts', 'Create percentage or fixed-Mcoin codes'],
   ['withdrawals', 'Payouts', 'Review pending cash-outs and platform outflow'],
   ['policies', 'Rules & policies', 'Security, marketplace, rewards, fees, and outflow limits'],
   ['users', 'Account manager', 'Search, Mcoins, access, and secure resets'],
@@ -82,13 +82,17 @@ function formatAmount(amount, currency) {
 
 function promotionKindLabel(kind) {
   if (kind === 'marketplace_percent') return 'Composers percentage';
+  if (kind === 'marketplace_fixed') return 'Composers fixed Mcoin discount';
   if (kind === 'friend_id_percent') return 'Friend ID percentage voucher';
   if (kind === 'subscription_percent') return 'Lucky code subscription discount';
   return 'Retired legacy promotion';
 }
 
 function promotionValueLabel(item) {
-  return item.retired ? 'Retired' : String(item.value) + '% off';
+  if (item.retired) return 'Retired';
+  return item.kind === 'marketplace_fixed'
+    ? `${Number(item.value).toLocaleString()} Mcoins off`
+    : `${item.value}% off`;
 }
 
 export default function AdminDatabasePage({ user, onNavigate }) {
@@ -201,6 +205,16 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       const data = await apiRequest('/api/admin/policies', { method: 'PUT', body: JSON.stringify(policies) });
       setPolicies(data.policies);
       setStatus(data.message);
+    } catch (error) { setStatus(error.message); }
+  }
+
+  async function saveMaximumCashout(event) {
+    event.preventDefault();
+    setStatus('Saving maximum cash-out...');
+    try {
+      const data = await apiRequest('/api/admin/policies', { method: 'PUT', body: JSON.stringify(policies) });
+      setPolicies(data.policies);
+      setStatus(`Maximum cash-out saved: ${data.policies.maximumWithdrawalMcoins > 0 ? `${Number(data.policies.maximumWithdrawalMcoins).toLocaleString()} Mcoins per request` : 'unlimited'}.`);
     } catch (error) { setStatus(error.message); }
   }
 
@@ -478,14 +492,14 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       {activeSection === 'promotions' && (
         <section className='admin-workspace'>
           <div className='admin-section-heading'>
-            <div><p className='eyebrow'>Commercial tools</p><h2>Percentage discounts</h2><p>Codes reduce a subscription or Composers purchase by a percentage. They never add Mcoins to a wallet.</p></div>
+            <div><p className='eyebrow'>Commercial tools</p><h2>Discount codes</h2><p>Use a percentage for subscriptions or Composers, or take an exact Mcoin amount off a Composers purchase.</p></div>
           </div>
           <form className='admin-form-card' onSubmit={createPromotion}>
             <div className='admin-form-grid'>
               <label className='field'>Code<input value={promotion.code} maxLength='32' placeholder='WELCOME50' onChange={(event) => setPromotion({ ...promotion, code: event.target.value.toUpperCase() })} required /></label>
               <label className='field'>Internal name<input value={promotion.name} placeholder='Launch voucher' onChange={(event) => setPromotion({ ...promotion, name: event.target.value })} required /></label>
-              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value })}><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
-              <label className='field'>Percentage off<input type='number' min='1' max='100' value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /></label>
+              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value, value: event.target.value === 'marketplace_fixed' ? 10 : 20 })}><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='marketplace_fixed'>Composers fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
+              <label className='field'>{promotion.kind === 'marketplace_fixed' ? 'Mcoins off' : 'Percentage off'}<input type='number' min={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} max={promotion.kind === 'marketplace_fixed' ? '1000000000' : '100'} step={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /><small>{promotion.kind === 'marketplace_fixed' ? 'The platform funds this exact discount; it cannot exceed the song price.' : 'Enter a value from 1 to 100.'}</small></label>
               <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>
               <label className='field'>Minimum account age (days)<input type='number' min='0' value={promotion.minimumAccountAgeDays} onChange={(event) => setPromotion({ ...promotion, minimumAccountAgeDays: event.target.value })} /></label>
               <label className='field'>Total redemption limit<input type='number' min='0' value={promotion.maxRedemptions} onChange={(event) => setPromotion({ ...promotion, maxRedemptions: event.target.value })} /><small>0 means unlimited</small></label>
@@ -504,7 +518,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 <button className='ghost compact-action' type='button' disabled={item.retired} onClick={() => togglePromotion(item)}>{item.retired ? 'Retired' : item.active ? 'Pause' : 'Activate'}</button>
               </article>
             ))}
-            {!promotions.length && <div className='empty-state'>No percentage discounts yet.</div>}
+            {!promotions.length && <div className='empty-state'>No discount codes yet.</div>}
           </div>
         </section>
       )}
@@ -518,6 +532,17 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             <article><span>Pending gross</span><strong>{Number(withdrawals.summary?.pendingGrossMcoins || 0).toLocaleString()} Mcoins</strong></article>
             <article><span>Pending net outflow</span><strong>{Number(withdrawals.summary?.pendingNetMcoins || 0).toLocaleString()} Mcoins</strong></article>
           </div>
+          {policies && (
+            <form className='admin-form-card' onSubmit={saveMaximumCashout}>
+              <div className='admin-section-heading'>
+                <div><p className='eyebrow'>Cash-out guardrail</p><h3>Maximum per request</h3><p>This backend rule blocks any single cash-out above your chosen amount.</p></div>
+              </div>
+              <div className='admin-form-grid'>
+                <label className='field'>Maximum cash-out (Mcoins)<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, maximumWithdrawalMcoins: Number(event.target.value) })} /><small>0 means unlimited. It cannot be lower than the current minimum cash-out.</small></label>
+              </div>
+              <button className='primary' type='submit'>Save maximum cash-out</button>
+            </form>
+          )}
           <div className='database-table-wrap'>
             <table className='database-table payout-table'>
               <thead><tr><th>Account</th><th>Requested</th><th>Fee</th><th>Net payout</th><th>Payout email</th><th>Status</th><th>Review</th></tr></thead>

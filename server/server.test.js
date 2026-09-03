@@ -696,17 +696,18 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(freeMcoinVoucherBlocked.status, 400);
 
-  const fixedValueCouponBlocked = await api('/api/admin/promotions', {
+  const fixedValueCoupon = await api('/api/admin/promotions', {
     method: 'POST',
     token: adminToken,
     body: {
       code: 'FIXED50',
-      name: 'Blocked fixed-value discount',
+      name: 'Fixed Mcoin discount',
       kind: 'marketplace_fixed',
       value: 50,
     },
   });
-  assert.equal(fixedValueCouponBlocked.status, 400);
+  assert.equal(fixedValueCoupon.status, 201);
+  assert.equal(fixedValueCoupon.data.promotion.value, 50);
 
   const luckyRegistration = await register('/api/auth/register', {
     method: 'POST',
@@ -832,6 +833,17 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(discountedPurchase.data.purchase.buyerPaidMcoins, 40);
   assert.equal(discountedPurchase.data.user.mcoins, 35);
 
+  const fixedDiscountPurchase = await api(`/api/listings/${listingCreate.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: userToken,
+    body: { promotionCode: 'FIXED50' },
+  });
+  assert.equal(fixedDiscountPurchase.status, 201);
+  assert.equal(fixedDiscountPurchase.data.purchase.grossMcoins, 100);
+  assert.equal(fixedDiscountPurchase.data.purchase.promotionDiscountMcoins, 50);
+  assert.equal(fixedDiscountPurchase.data.purchase.buyerPaidMcoins, 50);
+  assert.equal(fixedDiscountPurchase.data.purchase.sellerEarningsMcoins, 75);
+
   const administratorPurchase = await api(`/api/listings/${listingCreate.data.listing.id}/purchase`, {
     method: 'POST',
     token: adminToken,
@@ -883,11 +895,11 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(composerProfile.status, 200);
   assert.equal(composerProfile.data.composer.averageRating, 2);
   assert.equal(composerProfile.data.composer.ratingCount, 1);
-  assert.equal(composerProfile.data.composer.buyerCount, 2);
+  assert.equal(composerProfile.data.composer.buyerCount, 3);
   assert.deepEqual(composerProfile.data.composer.ranking, {
     ratingPoints: 4,
-    audiencePoints: 2,
-    totalPoints: 6,
+    audiencePoints: 3,
+    totalPoints: 7,
     maximumPoints: 50,
   });
   assert.equal(composerProfile.data.composer.followerCount, 1);
@@ -1035,8 +1047,8 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(policyCompliantUser.birthDate, undefined);
   assert.ok(database.sessions.every((session) => session.tokenHash && !session.token));
   assert.equal(database.settings.minimumWithdrawalMcoins, 250);
-  assert.equal(database.promotions.length, 3);
-  assert.equal(database.promotionRedemptions.length, 4);
+  assert.equal(database.promotions.length, 4);
+  assert.equal(database.promotionRedemptions.length, 5);
   assert.equal(database.promotionRedemptions.filter((entry) => entry.friendId === sellerFriendId).length, 2);
   assert.equal(database.passwordResetEvents.length, 1);
   assert.ok(Array.isArray(database.mediaTranscriptionJobs));

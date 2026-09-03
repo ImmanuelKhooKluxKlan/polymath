@@ -540,7 +540,7 @@ function normalizeDb(db) {
     }
   });
   normalized.promotions.forEach((promotion) => {
-    if (!['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind)) {
+    if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind)) {
       promotion.active = false;
       promotion.retired = true;
     }
@@ -1233,7 +1233,7 @@ function promotionForUse(db, code, user, expectedKinds, spendMcoins = 0) {
   if (promotion.active === false) return { promotion: null, error: 'That promotion is inactive.' };
   if (!expectedKinds.includes(promotion.kind)) {
     return { promotion: null, error: promotion.retired
-      ? 'That legacy promotion has been retired. Polymath promotions now use percentage discounts only.'
+      ? 'That legacy promotion has been retired.'
       : 'This promotion cannot be used for this purchase.' };
   }
   const now = Date.now();
@@ -3364,14 +3364,19 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
       req.db,
       promotionCode,
       req.user,
-      ['marketplace_percent'],
+      ['marketplace_percent', 'marketplace_fixed'],
       listing.priceMcoins,
     );
   if (promotionResult.error) return res.status(400).json({ error: promotionResult.error });
   const promotion = promotionResult.promotion;
   const friendUser = promotionResult.friendUser || null;
   const discountMcoins = promotion
-    ? Math.min(listing.priceMcoins, Number((listing.priceMcoins * promotion.value / 100).toFixed(2)))
+    ? Math.min(
+      listing.priceMcoins,
+      promotion.kind === 'marketplace_fixed'
+        ? Number(Number(promotion.value).toFixed(2))
+        : Number((listing.priceMcoins * promotion.value / 100).toFixed(2)),
+    )
     : 0;
   const buyerPaidMcoins = Number((listing.priceMcoins - discountMcoins).toFixed(2));
   const administratorPurchase = hasUnlimitedMcoins(req.user);
@@ -4136,13 +4141,22 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) =>
   const code = normalizePromotionCode(req.body.code);
   const name = String(req.body.name || '').trim().slice(0, 100);
   const kind = String(req.body.kind || '');
-  const value = clampInteger(req.body.value, 1, 100, 1);
+  const fixedMcoinDiscount = kind === 'marketplace_fixed';
+  const rawValue = Number(req.body.value);
+  const value = fixedMcoinDiscount
+    ? clampDecimal(rawValue, 0.01, 1000000000, 0.01)
+    : clampInteger(rawValue, 1, 100, 1);
   const startsAtDate = req.body.startsAt ? new Date(req.body.startsAt) : null;
   const expiresAtDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
   if (code.length < 3) return res.status(400).json({ error: 'Promotion code must contain at least 3 letters or numbers.' });
   if (!name) return res.status(400).json({ error: 'Give the promotion a short name.' });
-  if (!['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
-    return res.status(400).json({ error: 'Promotions must be a Composers, subscription, or Friend ID percentage discount.' });
+  if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
+    return res.status(400).json({ error: 'Choose a supported percentage or fixed-Mcoin discount.' });
+  }
+  if (!Number.isFinite(rawValue) || rawValue <= 0 || (!fixedMcoinDiscount && rawValue > 100)) {
+    return res.status(400).json({ error: fixedMcoinDiscount
+      ? 'Fixed discounts must be greater than 0 Mcoins.'
+      : 'Percentage discounts must be between 1% and 100%.' });
   }
   if (req.db.promotions.some((promotion) => promotion.code === code)) {
     return res.status(409).json({ error: 'That promotion code already exists.' });
@@ -4190,7 +4204,7 @@ app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, async
   const promotion = req.db.promotions.find((item) => item.id === req.params.promotionId);
   if (!promotion) return res.status(404).json({ error: 'Promotion not found.' });
   if (promotion.retired && req.body.active === true) {
-    return res.status(400).json({ error: 'Legacy Mcoin and fixed-value promotions are permanently retired.' });
+    return res.status(400).json({ error: 'This legacy promotion is permanently retired.' });
   }
   if (req.body.active !== undefined) promotion.active = Boolean(req.body.active);
   promotion.updatedAt = new Date().toISOString();
