@@ -35,7 +35,7 @@ import {
   getSongDuration,
   normalizeSong,
 } from './engine/scheduler.js';
-import { apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
+import { apiAssetUrl, apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
 import { parseUploadedSongFile } from './utils/songParser.js';
 import { analyzeLearningSections } from './utils/learningSections.js';
 
@@ -131,6 +131,7 @@ export default function App() {
     if (!savedTeacher || savedTeacher === 'padme' || (savedTeacher === 'nova' && !adultConfirmed)) return 'anakin';
     return savedTeacher;
   });
+  const [customTeacherProfiles, setCustomTeacherProfiles] = useState([]);
   const [teacherHandsEnabled, setTeacherHandsEnabled] = useState(() => window.localStorage.getItem('polymath-teacher-hands') === 'true');
   const [portraitDevice, setPortraitDevice] = useState(() => (
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
@@ -186,11 +187,22 @@ export default function App() {
       : song.notes
   ), [song, teachingMode, pianoHandMode]);
   const teachingSong = useMemo(() => ({ ...song, notes: playbackNotes }), [song, playbackNotes]);
+  const teacherProfiles = useMemo(() => [
+    ...TEACHER_PROFILES,
+    ...customTeacherProfiles.map((profile) => ({
+      ...profile,
+      image: apiAssetUrl(profile.imagePath),
+      armImage: profile.armTone === 'dark'
+        ? '/teachers/arm-dark-full-v1.webp'
+        : '/teachers/arm-light-full-v1.webp',
+      look: 'custom',
+    })),
+  ], [customTeacherProfiles]);
   const pianoTeacher = useMemo(
-    () => TEACHER_PROFILES.find((profile) => profile.id === pianoTeacherId)
-      || TEACHER_PROFILES.find((profile) => profile.id === 'anakin')
-      || TEACHER_PROFILES[0],
-    [pianoTeacherId],
+    () => teacherProfiles.find((profile) => profile.id === pianoTeacherId)
+      || teacherProfiles.find((profile) => profile.id === 'anakin')
+      || teacherProfiles[0],
+    [pianoTeacherId, teacherProfiles],
   );
   const teacherHandTimeline = useMemo(
     () => prepareTeacherHandTimeline(teachingSong.notes),
@@ -216,6 +228,23 @@ export default function App() {
     // Dismissal lasts only for this app session. Remove the legacy permanent
     // preference so the recommendation can return the next time the app opens.
     window.localStorage.removeItem('polymath-orientation-prompt-dismissed');
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadVirtualTeachers = () => {
+      apiRequest('/api/virtual-teachers')
+        .then((data) => {
+          if (!cancelled) setCustomTeacherProfiles(Array.isArray(data.characters) ? data.characters : []);
+        })
+        .catch((error) => console.error('Custom virtual teachers could not be loaded:', error));
+    };
+    loadVirtualTeachers();
+    window.addEventListener('polymath:virtual-teachers-changed', loadVirtualTeachers);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('polymath:virtual-teachers-changed', loadVirtualTeachers);
+    };
   }, []);
 
   useEffect(() => {
@@ -1101,6 +1130,7 @@ export default function App() {
             </details>
             {teachingMode === 'learn' && (
               <PianoTeacherStudio
+                profiles={teacherProfiles}
                 teacherId={pianoTeacher.id}
                 onTeacherChange={setPianoTeacherId}
                 showHands={teacherHandsEnabled}

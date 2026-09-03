@@ -20,6 +20,12 @@ export function setAuthToken(token) {
   window.localStorage.removeItem(LEGACY_TOKEN_KEY);
 }
 
+export function apiAssetUrl(path) {
+  const value = String(path || '').trim();
+  if (!value || /^(blob:|data:|https?:\/\/)/i.test(value)) return value;
+  return `${API_BASE.replace(/\/$/, '')}/${value.replace(/^\//, '')}`;
+}
+
 export async function apiRequest(path, options = {}) {
   const token = getAuthToken();
   const headers = new Headers(options.headers || {});

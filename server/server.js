@@ -105,6 +105,8 @@ const DIRECT_UPLOAD_MAX_BYTES = Math.max(
 const MAX_MEDIA_SECONDS = 10 * 60;
 const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS || 0)));
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
+const VIRTUAL_TEACHER_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const BUILT_IN_VIRTUAL_TEACHER_IDS = new Set(['nova', 'anakin', 'taylor', 'mace']);
 const MUSCRIPTOR_ENABLED = String(process.env.MUSCRIPTOR_ENABLED || 'false').trim().toLowerCase() === 'true';
 const MUSCRIPTOR_ADMIN_ONLY = String(
   process.env.MUSCRIPTOR_ADMIN_ONLY || (IS_PRODUCTION ? 'true' : 'false'),
@@ -422,6 +424,7 @@ function ensureStorage() {
       messages: [],
       teacherProfiles: [],
       teacherReviews: [],
+      virtualTeacherCharacters: [],
       withdrawals: [],
       paymentOrders: [],
       subscriptions: [],
@@ -492,6 +495,7 @@ function normalizeDb(db) {
     'messages',
     'teacherProfiles',
     'teacherReviews',
+    'virtualTeacherCharacters',
     'withdrawals',
     'paymentOrders',
     'subscriptions',
@@ -1834,6 +1838,52 @@ const mediaUpload = multer({
   },
 });
 
+const virtualTeacherImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    files: 1,
+    fields: 8,
+    fileSize: VIRTUAL_TEACHER_IMAGE_MAX_BYTES,
+  },
+  fileFilter(req, file, callback) {
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp']);
+    if (allowed.has(String(file.mimetype || '').toLowerCase())) {
+      callback(null, true);
+      return;
+    }
+    const error = new Error('Upload a PNG, JPEG, or WebP character image.');
+    error.status = 400;
+    callback(error);
+  },
+});
+
+function virtualTeacherImageContentType(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if (buffer.length >= 12
+      && buffer.subarray(0, 4).equals(Buffer.from('RIFF'))
+      && buffer.subarray(8, 12).equals(Buffer.from('WEBP'))) return 'image/webp';
+  if (buffer.length >= 8
+      && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  return '';
+}
+
+function publicVirtualTeacherCharacter(character) {
+  return {
+    id: character.id,
+    name: character.name,
+    title: character.title,
+    description: character.description,
+    voice: character.voice,
+    armTone: character.armTone === 'dark' ? 'dark' : 'light',
+    requiresAdultConfirmation: Boolean(character.requiresAdultConfirmation),
+    imagePath: `/api/virtual-teachers/${encodeURIComponent(character.id)}/image?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`,
+    custom: true,
+    createdAt: character.createdAt,
+    updatedAt: character.updatedAt || character.createdAt,
+  };
+}
+
 function selectMuscriptorExecution({ serverlessConfigured, remoteUrl }) {
   if (serverlessConfigured) return 'runpod-serverless';
   if (String(remoteUrl || '').trim()) return 'remote-gpu';
@@ -2418,6 +2468,117 @@ app.get('/api/test', async (req, res) => res.json({
   environment: PAYPAL_ENV,
   scoreTranslation: localOmrAvailability(),
 }));
+
+app.get('/api/virtual-teachers', async (req, res) => {
+  const db = await readDb();
+  const characters = db.virtualTeacherCharacters
+    .map(publicVirtualTeacherCharacter)
+    .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' }));
+  res.json({ characters });
+});
+
+app.get('/api/virtual-teachers/:characterId/image', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const character = db.virtualTeacherCharacters.find((item) => item.id === req.params.characterId);
+    if (!character?.imageKey) return res.status(404).json({ error: 'Character image not found.' });
+    const bytes = await ARTIFACT_STORE.getBuffer(character.imageKey);
+    res.setHeader('Content-Type', character.contentType || 'image/webp');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Character image not found.' });
+    }
+    return next(error);
+  }
+});
+
+app.get('/api/admin/virtual-teachers', requireAuth, requireAdmin, async (req, res) => {
+  res.json({
+    characters: req.db.virtualTeacherCharacters
+      .map(publicVirtualTeacherCharacter)
+      .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' })),
+    builtInCharacterIds: [...BUILT_IN_VIRTUAL_TEACHER_IDS],
+  });
+});
+
+app.post(
+  '/api/admin/virtual-teachers',
+  requireAuth,
+  requireAdmin,
+  virtualTeacherImageUpload.single('image'),
+  async (req, res, next) => {
+    let imageKey = '';
+    try {
+      const name = String(req.body.name || '').trim().slice(0, 50);
+      const title = String(req.body.title || '').trim().slice(0, 80);
+      const description = String(req.body.description || '').trim().slice(0, 240);
+      const voice = String(req.body.voice || '').trim().slice(0, 50);
+      const armTone = req.body.armTone === 'dark' ? 'dark' : 'light';
+      const requiresAdultConfirmation = String(req.body.requiresAdultConfirmation || '').toLowerCase() === 'true';
+      if (name.length < 2) return res.status(400).json({ error: 'Character name must contain at least 2 characters.' });
+      if (title.length < 2) return res.status(400).json({ error: 'Add a short role or title.' });
+      if (description.length < 5) return res.status(400).json({ error: 'Add a short character description.' });
+      if (voice.length < 2) return res.status(400).json({ error: 'Describe the character voice or teaching style.' });
+      if (!req.file?.buffer?.length) return res.status(400).json({ error: 'Choose a character image.' });
+      const contentType = virtualTeacherImageContentType(req.file.buffer);
+      if (!contentType) return res.status(400).json({ error: 'The uploaded file is not a valid PNG, JPEG, or WebP image.' });
+
+      const characterId = id('virtual_teacher');
+      const extension = contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp';
+      imageKey = artifactKey(`virtual-teachers/${characterId}`, `portrait-${characterId}.${extension}`);
+      await ARTIFACT_STORE.putBuffer(imageKey, req.file.buffer, contentType);
+      const now = new Date().toISOString();
+      const character = {
+        id: characterId,
+        name,
+        title,
+        description,
+        voice,
+        armTone,
+        requiresAdultConfirmation,
+        imageKey,
+        contentType,
+        createdBy: req.user.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      req.db.virtualTeacherCharacters.push(character);
+      await writeDb(req.db);
+      return res.status(201).json({
+        character: publicVirtualTeacherCharacter(character),
+        message: `${name} is now available in the virtual teacher library.`,
+      });
+    } catch (error) {
+      if (imageKey) await safeRemoveArtifact(imageKey).catch(() => {});
+      return next(error);
+    }
+  },
+);
+
+app.delete('/api/admin/virtual-teachers/:characterId', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const characterId = String(req.params.characterId || '');
+    if (BUILT_IN_VIRTUAL_TEACHER_IDS.has(characterId)) {
+      return res.status(403).json({ error: 'Built-in teachers are protected and cannot be deleted.' });
+    }
+    const index = req.db.virtualTeacherCharacters.findIndex((item) => item.id === characterId);
+    if (index < 0) return res.status(404).json({ error: 'Character not found.' });
+    const [character] = req.db.virtualTeacherCharacters.splice(index, 1);
+    await writeDb(req.db);
+    if (character.imageKey) {
+      await safeRemoveArtifact(character.imageKey).catch((error) => {
+        console.error(`Could not remove deleted virtual teacher artifact ${character.imageKey}:`, error);
+      });
+    }
+    return res.json({ id: character.id, message: `${character.name} was deleted.` });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 app.get('/api/media-transcriptions/capabilities', async (req, res) => {
   res.json(muscriptorAvailability());
@@ -6043,6 +6204,12 @@ if (IS_PRODUCTION) {
 }
 
 app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'The character image must be 8 MB or smaller.'
+      : 'The character upload form was not accepted. Choose one image and try again.';
+    return res.status(400).json({ error: message, code: error.code });
+  }
   if (error instanceof StateConflictError) {
     return res.status(409).json({
       error: 'Another request updated the same account data. Please retry.',

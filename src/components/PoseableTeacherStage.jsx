@@ -1,27 +1,84 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  clampTeacherDepth,
   clampTeacherOffset,
-  normalizeTeacherArmAngle,
-  teacherBodyPartById,
   teacherPoseById,
-  TEACHER_BODY_PARTS,
   TEACHER_POSES,
 } from '../engine/teacherAvatarControls.js';
 
-const INITIAL_ARMS = Object.freeze({ left: -8, right: 8 });
+const INITIAL_POSITION = Object.freeze({ x: 0, y: 0 });
 
-function initialPartOffsets() {
-  return {
-    head: { x: 0, y: 0 },
-    torso: { x: 0, y: 0 },
-    lower: { x: 0, y: 0 },
-  };
-}
+function TeacherJoystick({ onMove, onReset }) {
+  const padRef = useRef(null);
+  const pointerRef = useRef(null);
+  const [knob, setKnob] = useState({ x: 0, y: 0 });
 
-function sideForPart(partId) {
-  if (partId === 'leftArm') return 'left';
-  if (partId === 'rightArm') return 'right';
-  return null;
+  function updateFromPointer(event) {
+    const pad = padRef.current;
+    if (!pad) return;
+    const bounds = pad.getBoundingClientRect();
+    const centerX = bounds.left + bounds.width / 2;
+    const centerY = bounds.top + bounds.height / 2;
+    const radius = Math.max(1, bounds.width * 0.31);
+    let x = event.clientX - centerX;
+    let y = event.clientY - centerY;
+    const length = Math.hypot(x, y);
+    if (length > radius) {
+      x = (x / length) * radius;
+      y = (y / length) * radius;
+    }
+    setKnob({ x, y });
+    const previous = pointerRef.current?.last || { x: 0, y: 0 };
+    pointerRef.current.last = { x, y };
+    onMove({
+      horizontal: (x - previous.x) / radius,
+      depth: -(y - previous.y) / radius,
+    });
+  }
+
+  function begin(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerRef.current = { pointerId: event.pointerId, last: { x: 0, y: 0 } };
+    updateFromPointer(event);
+  }
+
+  function move(event) {
+    if (pointerRef.current?.pointerId !== event.pointerId) return;
+    updateFromPointer(event);
+  }
+
+  function end(event) {
+    if (pointerRef.current?.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    pointerRef.current = null;
+    setKnob({ x: 0, y: 0 });
+  }
+
+  return (
+    <div className="teacher-joystick-control">
+      <span>Move / depth</span>
+      <div
+        ref={padRef}
+        className="teacher-joystick"
+        onPointerDown={begin}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerCancel={end}
+        aria-label="Drag joystick left or right to move. Drag forward or back to change depth."
+      >
+        <button type="button" className="teacher-joystick-front" aria-label="Move teacher forward" onClick={() => onMove({ depth: 0.08 })}>Front</button>
+        <button type="button" className="teacher-joystick-left" aria-label="Move teacher left" onClick={() => onMove({ horizontal: -0.12 })}>Left</button>
+        <button type="button" className="teacher-joystick-centre" aria-label="Reset teacher position and depth" onClick={onReset}>Reset</button>
+        <button type="button" className="teacher-joystick-right" aria-label="Move teacher right" onClick={() => onMove({ horizontal: 0.12 })}>Right</button>
+        <button type="button" className="teacher-joystick-back" aria-label="Move teacher back" onClick={() => onMove({ depth: -0.08 })}>Back</button>
+        <i className="teacher-joystick-knob" aria-hidden="true" style={{ '--joystick-x': `${knob.x}px`, '--joystick-y': `${knob.y}px` }} />
+      </div>
+    </div>
+  );
 }
 
 export default function PoseableTeacherStage({ teacher, targetSummary }) {
@@ -29,111 +86,76 @@ export default function PoseableTeacherStage({ teacher, targetSummary }) {
   const dragRef = useRef(null);
   const [poseId, setPoseId] = useState('ready');
   const [motionKey, setMotionKey] = useState(0);
-  const [selectedPart, setSelectedPart] = useState('torso');
-  const [partOffsets, setPartOffsets] = useState(initialPartOffsets);
-  const [arms, setArms] = useState(INITIAL_ARMS);
-  const [customArms, setCustomArms] = useState(false);
+  const [position, setPosition] = useState(INITIAL_POSITION);
+  const [depth, setDepth] = useState(1);
+  const [dragging, setDragging] = useState(false);
   const pose = teacherPoseById(poseId);
-  const selectedPartLabel = teacherBodyPartById(selectedPart).label;
 
   useEffect(() => {
     setPoseId('ready');
-    setSelectedPart('torso');
-    setPartOffsets(initialPartOffsets());
-    setArms(INITIAL_ARMS);
-    setCustomArms(false);
+    setPosition(INITIAL_POSITION);
+    setDepth(1);
+    setDragging(false);
   }, [teacher.id]);
-
-  function selectPart(partId) {
-    setSelectedPart(partId);
-    if (sideForPart(partId)) setCustomArms(true);
-  }
 
   function selectPose(nextPoseId) {
     setPoseId(nextPoseId);
     setMotionKey((current) => current + 1);
-    if (nextPoseId === 'stretch') {
-      setArms({ left: -92, right: 92 });
-      setCustomArms(true);
-    }
   }
 
-  function beginPartDrag(partId, event) {
+  function beginTeacherDrag(event) {
     if (event.button !== 0) return;
     event.preventDefault();
-    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    selectPart(partId);
-    const side = sideForPart(partId);
     dragRef.current = {
       pointerId: event.pointerId,
-      partId,
       clientX: event.clientX,
       clientY: event.clientY,
-      offset: side ? null : partOffsets[partId],
-      armAngle: side ? arms[side] : null,
+      position,
     };
+    setDragging(true);
   }
 
-  function movePartDrag(event) {
+  function moveTeacherDrag(event) {
     const drag = dragRef.current;
     const stage = stageRef.current;
     if (!drag || drag.pointerId !== event.pointerId || !stage) return;
-    const deltaX = event.clientX - drag.clientX;
-    const deltaY = event.clientY - drag.clientY;
-    const side = sideForPart(drag.partId);
-
-    if (side) {
-      setArms((current) => ({
-        ...current,
-        [side]: normalizeTeacherArmAngle(drag.armAngle + deltaX * 0.72 - deltaY * 0.18),
-      }));
-      return;
-    }
-
     const bounds = stage.getBoundingClientRect();
-    const nextOffset = clampTeacherOffset({
-      x: drag.offset.x + deltaX,
-      y: drag.offset.y + deltaY,
+    setPosition(clampTeacherOffset({
+      x: drag.position.x + event.clientX - drag.clientX,
+      y: drag.position.y + event.clientY - drag.clientY,
     }, {
-      maximumX: Math.max(0, bounds.width * 0.22),
-      maximumY: Math.max(0, bounds.height * 0.16),
-    });
-    setPartOffsets((current) => ({ ...current, [drag.partId]: nextOffset }));
+      maximumX: Math.max(0, bounds.width * 0.36),
+      maximumY: Math.max(0, bounds.height * 0.27),
+    }));
   }
 
-  function endPartDrag(event) {
+  function endTeacherDrag(event) {
     if (dragRef.current?.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     dragRef.current = null;
+    setDragging(false);
   }
 
-  function partPointerHandlers(partId) {
-    return {
-      onPointerDown: (event) => beginPartDrag(partId, event),
-      onPointerMove: movePartDrag,
-      onPointerUp: endPartDrag,
-      onPointerCancel: endPartDrag,
-    };
-  }
-
-  function bodyPartStyle(partId) {
-    const offset = partOffsets[partId];
-    return {
-      '--part-x': `${offset.x}px`,
-      '--part-y': `${offset.y}px`,
-    };
+  function moveWithJoystick({ horizontal = 0, depth: depthChange = 0 }) {
+    const stageWidth = stageRef.current?.getBoundingClientRect().width || 600;
+    setPosition((current) => clampTeacherOffset({
+      ...current,
+      x: current.x + horizontal * stageWidth * 0.34,
+    }, {
+      maximumX: stageWidth * 0.36,
+      maximumY: stageRef.current?.getBoundingClientRect().height * 0.27 || 150,
+    }));
+    setDepth((current) => clampTeacherDepth(current + depthChange));
   }
 
   function resetTeacher() {
     setPoseId('ready');
     setMotionKey((current) => current + 1);
-    setSelectedPart('torso');
-    setPartOffsets(initialPartOffsets());
-    setArms(INITIAL_ARMS);
-    setCustomArms(false);
+    setPosition(INITIAL_POSITION);
+    setDepth(1);
   }
 
   return (
@@ -144,66 +166,31 @@ export default function PoseableTeacherStage({ teacher, targetSummary }) {
         aria-label={`${teacher.name} interactive teacher stage`}
       >
         <div className="poseable-teacher-stage-glow" />
-        <div className="poseable-teacher-instruction">
-          Selected: {selectedPartLabel} · drag the highlighted part
-        </div>
+        <div className="poseable-teacher-instruction">Touch and drag {teacher.name}</div>
         <div
           key={`${teacher.id}-${pose.id}-${motionKey}`}
-          className={`poseable-teacher-rig is-pose-${pose.id} ${customArms ? 'has-custom-arms' : ''}`}
+          className={`poseable-teacher-rig is-pose-${pose.id} ${dragging ? 'is-dragging' : ''}`}
           style={{
+            '--teacher-x': `${position.x}px`,
+            '--teacher-y': `${position.y}px`,
+            '--teacher-pose-y': pose.translateY || '0%',
             '--teacher-rotation': `${pose.rotation}deg`,
-            '--teacher-scale': pose.scale,
+            '--teacher-scale-x': Number(pose.scaleX || pose.scale || 1) * depth,
+            '--teacher-scale-y': Number(pose.scaleY || pose.scale || 1) * depth,
           }}
           role="img"
-          aria-label={`${teacher.name}, interactive virtual piano teacher`}
+          aria-label={`${teacher.name}, draggable virtual piano teacher`}
+          onPointerDown={beginTeacherDrag}
+          onPointerMove={moveTeacherDrag}
+          onPointerUp={endTeacherDrag}
+          onPointerCancel={endTeacherDrag}
         >
           <img
-            className={`poseable-teacher-body-part poseable-teacher-lower ${selectedPart === 'lower' ? 'is-selected' : ''}`}
+            className="poseable-teacher-body"
             src={teacher.image}
             alt=""
             draggable="false"
-            style={bodyPartStyle('lower')}
-            {...partPointerHandlers('lower')}
           />
-          <img
-            className={`poseable-teacher-body-part poseable-teacher-torso ${selectedPart === 'torso' ? 'is-selected' : ''}`}
-            src={teacher.image}
-            alt=""
-            draggable="false"
-            style={bodyPartStyle('torso')}
-            {...partPointerHandlers('torso')}
-          />
-          <img
-            className={`poseable-teacher-body-part poseable-teacher-head ${selectedPart === 'head' ? 'is-selected' : ''}`}
-            src={teacher.image}
-            alt=""
-            draggable="false"
-            style={bodyPartStyle('head')}
-            {...partPointerHandlers('head')}
-          />
-          <img
-            className={`poseable-teacher-arm poseable-teacher-arm-left ${selectedPart === 'leftArm' ? 'is-selected' : ''}`}
-            src={teacher.armImage}
-            alt=""
-            draggable="false"
-            style={{ '--arm-rotation': `${arms.left}deg` }}
-            {...partPointerHandlers('leftArm')}
-          />
-          <img
-            className={`poseable-teacher-arm poseable-teacher-arm-right ${selectedPart === 'rightArm' ? 'is-selected' : ''}`}
-            src={teacher.armImage}
-            alt=""
-            draggable="false"
-            style={{ '--arm-rotation': `${arms.right}deg` }}
-            {...partPointerHandlers('rightArm')}
-          />
-          {!sideForPart(selectedPart) && (
-            <span
-              className={`poseable-teacher-part-highlight is-${selectedPart}`}
-              style={bodyPartStyle(selectedPart)}
-              aria-hidden="true"
-            />
-          )}
         </div>
         <div className="poseable-teacher-caption">
           <strong>{teacher.name}</strong>
@@ -212,20 +199,7 @@ export default function PoseableTeacherStage({ teacher, targetSummary }) {
         </div>
       </div>
 
-      <div className="teacher-motion-controls" aria-label={`Pose ${teacher.name}`}>
-        <div className="teacher-part-buttons" role="group" aria-label="Select a body part to move">
-          {TEACHER_BODY_PARTS.map((part) => (
-            <button
-              type="button"
-              key={part.id}
-              className={part.id === selectedPart ? 'is-selected' : ''}
-              aria-pressed={part.id === selectedPart}
-              onClick={() => selectPart(part.id)}
-            >
-              {part.label}
-            </button>
-          ))}
-        </div>
+      <div className="teacher-motion-controls" aria-label={`Move and pose ${teacher.name}`}>
         <div className="teacher-pose-buttons" role="group" aria-label="Teacher pose">
           {TEACHER_POSES.map((candidate) => (
             <button
@@ -239,7 +213,7 @@ export default function PoseableTeacherStage({ teacher, targetSummary }) {
             </button>
           ))}
         </div>
-        <button type="button" className="teacher-reset-pose" onClick={resetTeacher}>Reset all parts</button>
+        <TeacherJoystick onMove={moveWithJoystick} onReset={resetTeacher} />
       </div>
     </article>
   );

@@ -1,17 +1,10 @@
 export const TEACHER_POSES = Object.freeze([
-  { id: 'ready', label: 'Ready', rotation: 0, scale: 1 },
-  { id: 'bow', label: 'Bend', rotation: 24, scale: 0.94 },
-  { id: 'stretch', label: 'Stretch', rotation: 0, scale: 1 },
-  { id: 'rest', label: 'Lie down', rotation: 88, scale: 0.82 },
-  { id: 'jump', label: 'Jump', rotation: 0, scale: 1 },
-]);
-
-export const TEACHER_BODY_PARTS = Object.freeze([
-  { id: 'head', label: 'Head' },
-  { id: 'torso', label: 'Torso' },
-  { id: 'leftArm', label: 'Left arm' },
-  { id: 'rightArm', label: 'Right arm' },
-  { id: 'lower', label: 'Lower body' },
+  { id: 'ready', label: 'Ready', rotation: 0, scaleX: 1, scaleY: 1, translateY: '0%' },
+  { id: 'bend', label: 'Bend', rotation: 18, scaleX: 0.96, scaleY: 0.94, translateY: '4%' },
+  { id: 'kneel', label: 'Kneel', rotation: 0, scaleX: 1.04, scaleY: 0.74, translateY: '17%' },
+  { id: 'wide', label: 'Wide stance', rotation: 0, scaleX: 1.15, scaleY: 0.96, translateY: '2%' },
+  { id: 'rest', label: 'Lie down', rotation: 88, scaleX: 0.82, scaleY: 0.82, translateY: '1%' },
+  { id: 'jump', label: 'Jump', rotation: 0, scaleX: 1, scaleY: 1, translateY: '0%' },
 ]);
 
 export function teacherPoseById(poseId) {
@@ -27,10 +20,6 @@ export function clampTeacherOffset(offset, bounds = {}) {
   };
 }
 
-export function normalizeTeacherArmAngle(value) {
-  return Math.max(-110, Math.min(110, Math.round(Number(value) || 0)));
-}
-
-export function teacherBodyPartById(partId) {
-  return TEACHER_BODY_PARTS.find((part) => part.id === partId) || TEACHER_BODY_PARTS[1];
+export function clampTeacherDepth(value) {
+  return Math.max(0.7, Math.min(1.45, Number(value) || 1));
 }

@@ -10,11 +10,9 @@ import {
   TEACHER_PROFILES,
 } from '../../src/engine/teacherHands.js';
 import {
+  clampTeacherDepth,
   clampTeacherOffset,
-  normalizeTeacherArmAngle,
-  teacherBodyPartById,
   teacherPoseById,
-  TEACHER_BODY_PARTS,
   TEACHER_POSES,
 } from '../../src/engine/teacherAvatarControls.js';
 
@@ -89,13 +87,10 @@ test('Mace stays stern and does not give empty praise', () => {
 });
 
 test('teacher pose controls remain bounded and always have a safe fallback', () => {
-  assert.equal(TEACHER_POSES.length, 5);
+  assert.equal(TEACHER_POSES.length, 6);
   assert.equal(teacherPoseById('rest').rotation, 88);
   assert.equal(teacherPoseById('not-real').id, 'ready');
   assert.deepEqual(clampTeacherOffset({ x: 900, y: -900 }, { maximumX: 120, maximumY: 80 }), { x: 120, y: -80 });
-  assert.equal(normalizeTeacherArmAngle(500), 110);
-  assert.equal(normalizeTeacherArmAngle(-500), -110);
-  assert.equal(TEACHER_BODY_PARTS.length, 5);
-  assert.equal(teacherBodyPartById('leftArm').label, 'Left arm');
-  assert.equal(teacherBodyPartById('not-real').id, 'torso');
+  assert.equal(clampTeacherDepth(9), 1.45);
+  assert.equal(clampTeacherDepth(-2), 0.7);
 });

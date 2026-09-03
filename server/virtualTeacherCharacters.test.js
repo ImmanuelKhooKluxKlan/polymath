@@ -1,0 +1,99 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polymath-virtual-teachers-test-'));
+process.env.POLYMATH_DATA_DIR = testDataDir;
+process.env.NODE_ENV = 'test';
+process.env.REGISTRATION_OTP_TEST_CODE = '123456';
+process.env.MUSCRIPTOR_ENABLED = 'false';
+process.env.ADMIN_EMAILS = 'character-admin@example.test';
+process.env.DATABASE_URL = '';
+process.env.ARTIFACT_S3_BUCKET = '';
+
+const { app } = require('./server');
+
+test('administrators can publish and delete durable custom virtual teachers', async (context) => {
+  const server = await new Promise((resolve) => {
+    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+  });
+  context.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(testDataDir, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+
+  async function jsonApi(pathname, { method = 'GET', token = '', body } = {}) {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      method,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    return { status: response.status, data: await response.json() };
+  }
+
+  const challenge = await jsonApi('/api/auth/register/otp', {
+    method: 'POST',
+    body: { channel: 'email', email: 'character-admin@example.test' },
+  });
+  assert.equal(challenge.status, 202);
+  const registration = await jsonApi('/api/auth/register', {
+    method: 'POST',
+    body: {
+      name: 'Character Admin',
+      email: 'character-admin@example.test',
+      password: 'CharacterTest123',
+      challengeId: challenge.data.challengeId,
+      verificationCode: '123456',
+    },
+  });
+  assert.equal(registration.status, 201);
+  assert.equal(registration.data.user.admin, true);
+  const token = registration.data.token;
+
+  const onePixelPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const form = new FormData();
+  form.append('name', 'Aria');
+  form.append('title', 'Rhythm coach');
+  form.append('description', 'Keeps practice sessions steady and clear.');
+  form.append('voice', 'Calm');
+  form.append('armTone', 'dark');
+  form.append('requiresAdultConfirmation', 'false');
+  form.append('image', new Blob([onePixelPng], { type: 'image/png' }), 'aria.png');
+  const createdResponse = await fetch(`${baseUrl}/api/admin/virtual-teachers`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  const created = await createdResponse.json();
+  assert.equal(createdResponse.status, 201);
+  assert.equal(created.character.name, 'Aria');
+  assert.equal(created.character.armTone, 'dark');
+
+  const publicList = await jsonApi('/api/virtual-teachers');
+  assert.equal(publicList.status, 200);
+  assert.deepEqual(publicList.data.characters.map((character) => character.name), ['Aria']);
+  const imageResponse = await fetch(`${baseUrl}${created.character.imagePath}`);
+  assert.equal(imageResponse.status, 200);
+  assert.equal(imageResponse.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), onePixelPng);
+
+  const builtInDelete = await jsonApi('/api/admin/virtual-teachers/anakin', { method: 'DELETE', token });
+  assert.equal(builtInDelete.status, 403);
+
+  const deleted = await jsonApi(`/api/admin/virtual-teachers/${created.character.id}`, { method: 'DELETE', token });
+  assert.equal(deleted.status, 200);
+  const emptyList = await jsonApi('/api/virtual-teachers');
+  assert.deepEqual(emptyList.data.characters, []);
+  const deletedImage = await fetch(`${baseUrl}${created.character.imagePath}`);
+  assert.equal(deletedImage.status, 404);
+});
+

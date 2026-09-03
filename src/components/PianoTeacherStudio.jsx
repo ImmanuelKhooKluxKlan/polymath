@@ -18,6 +18,7 @@ function targetSentence(targets, showHands) {
 }
 
 export default function PianoTeacherStudio({
+  profiles = TEACHER_PROFILES,
   teacherId,
   onTeacherChange,
   showHands,
@@ -30,9 +31,9 @@ export default function PianoTeacherStudio({
     () => window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true',
   );
   const [pendingAdultTeacher, setPendingAdultTeacher] = useState(null);
-  const teacher = TEACHER_PROFILES.find((profile) => profile.id === teacherId)
-    || TEACHER_PROFILES.find((profile) => profile.id === 'anakin')
-    || TEACHER_PROFILES[0];
+  const teacher = profiles.find((profile) => profile.id === teacherId)
+    || profiles.find((profile) => profile.id === 'anakin')
+    || profiles[0];
 
   function chooseTeacher(profile) {
     if (profile.requiresAdultConfirmation && !adultConfirmed) {
@@ -105,7 +106,7 @@ export default function PianoTeacherStudio({
       </div>
 
       <div className="teacher-roster" role="group" aria-label="Choose a virtual piano teacher">
-        {TEACHER_PROFILES.map((profile) => (
+        {profiles.map((profile) => (
           <button
             type="button"
             key={profile.id}
@@ -128,7 +129,7 @@ export default function PianoTeacherStudio({
             <TeacherPortrait teacher={pendingAdultTeacher} />
             <span>
               <strong id="teacher-age-gate-title">Confirm you are 18+</strong>
-              <small>Nova is an adult-only optional character. This confirmation is stored on this device.</small>
+              <small>{pendingAdultTeacher.name} is an adult-only optional character. This confirmation is stored on this device.</small>
             </span>
           </div>
           <div className="teacher-age-gate-actions">
