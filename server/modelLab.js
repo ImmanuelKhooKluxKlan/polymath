@@ -177,7 +177,7 @@ function archiveRawTestSnapshot({ archiveRoot, job }) {
     kind: 'raw-test',
     title: job.title,
     originalFilename: job.filename,
-    checkpoint: job.checkpoint || 'muscriptor-tester/v001',
+    checkpoint: job.checkpoint || 'original',
     createdAt: job.createdAt,
     completedAt: job.completedAt,
     sourceDurationSeconds: job.sourceDurationSeconds,
@@ -379,6 +379,12 @@ function createModelLab(environment = process.env, options = {}) {
   );
   const ffmpegPath = String(environment.FFMPEG_PATH || '').trim() || bundledFfmpegPath;
   const maximumSeconds = Math.max(10, Math.min(3600, Number(environment.MODEL_LAB_MAX_SECONDS) || 600));
+  const inferenceVersion = String(
+    options.inferenceVersion
+      || environment.MUSCRIPTOR_INFERENCE_VERSION
+      || environment.MODEL_LAB_MODEL_VERSION
+      || 'original',
+  ).trim().toLowerCase().split('/').filter(Boolean).at(-1) || 'original';
   fs.mkdirSync(dataRoot, { recursive: true });
   const artifactStore = options.artifactStore || null;
   const remoteHistoryCacheRoot = path.join(dataRoot, 'remote-history-cache');
@@ -392,6 +398,7 @@ function createModelLab(environment = process.env, options = {}) {
     s3AccessKeyId: environment.RUNPOD_S3_ACCESS_KEY_ID,
     s3SecretAccessKey: environment.RUNPOD_S3_SECRET_ACCESS_KEY,
     replicas: environment.RUNPOD_S3_REPLICAS,
+    inferenceVersion,
     timeoutMs: Math.max(10 * 60 * 1000, Number(environment.MODEL_LAB_TIMEOUT_MS) || 2 * 60 * 60 * 1000),
     pollIntervalMs: 2_000,
   }, options.dependencies);
@@ -454,7 +461,7 @@ function createModelLab(environment = process.env, options = {}) {
       localOnly,
       rawModelOutput: true,
       model: 'Polymath Large',
-      checkpoint: String(environment.MODEL_LAB_MODEL_VERSION || 'muscriptor-tester/v001'),
+      checkpoint: runpod.inferenceVersion,
       storageTargets: runpod.storageTargetCount,
       maximumSeconds,
       missing,
@@ -590,7 +597,7 @@ function createModelLab(environment = process.env, options = {}) {
       await runFfmpeg(ffmpegPath, job.sourcePath, preparedPath, maximumSeconds);
       job.sourceDurationSeconds = readWavDurationSeconds(preparedPath);
 
-      job.stage = 'Submitting raw audio to tester v001';
+      job.stage = `Submitting raw audio to tester ${runpod.inferenceVersion}`;
       job.progress = 15;
       const raw = await runpod.transcribe({
         job: {

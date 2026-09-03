@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "test": "node --test server.test.js registrationOtp.test.js subscriptionRules.test.js runpodServerless.test.js modelLabAnalysis.test.js mlOperations.test.js adminBootstrap.test.js bandCollaboration.test.js teacherMarketplace.test.js stateStore.test.js artifactStore.test.js directUpload.test.js awsRuntime.test.js localOmr.test.js",
+    "test": "node --test server.test.js registrationOtp.test.js subscriptionRules.test.js runpodServerless.test.js modelLabCheckpoint.test.js modelLabAnalysis.test.js mlOperations.test.js adminBootstrap.test.js bandCollaboration.test.js teacherMarketplace.test.js stateStore.test.js artifactStore.test.js directUpload.test.js awsRuntime.test.js localOmr.test.js",
     "bootstrap:muscriptor": "node bootstrapRunpodModel.js",
     "upload:muscriptor": "node uploadMuscriptorModels.js",
     "r2:sync-instruments": "node syncR2Assets.js",

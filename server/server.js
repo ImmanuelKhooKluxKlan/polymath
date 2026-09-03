@@ -161,6 +161,7 @@ const RUNPOD_SERVERLESS = createRunpodServerlessClient({
 const MODEL_LAB = createModelLab(process.env, {
   dataRoot: path.join(DATA_DIR, 'model-lab'),
   artifactStore: ARTIFACT_STORE,
+  inferenceVersion: MUSCRIPTOR_INFERENCE_VERSION,
 });
 
 function artifactKey(group, filename) {
