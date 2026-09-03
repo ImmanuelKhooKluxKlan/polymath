@@ -58,6 +58,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
   const s3SecretAccessKey = clean(configuration.s3SecretAccessKey);
   const timeoutMs = Math.max(60_000, Number(configuration.timeoutMs) || 60 * 60 * 1000);
   const pollIntervalMs = Math.max(250, Number(configuration.pollIntervalMs) || 2_000);
+  const inferenceVersion = clean(configuration.inferenceVersion || 'original').toLowerCase();
   const fetchImpl = dependencies.fetchImpl || fetch;
 
   const missing = [];
@@ -196,6 +197,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
             title: job.title,
             instrument: job.instrument,
             instruments: constraints,
+            checkpoint_version: inferenceVersion,
           },
           policy: {
             executionTimeout: timeoutMs,
@@ -236,6 +238,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
     getJobStatus,
     missing,
     storageTargetCount: storageTargets.length,
+    inferenceVersion,
     submitAction,
     transcribe,
   };

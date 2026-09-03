@@ -609,9 +609,18 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     body: {
       registrationEnabled: true,
       minimumSignupAge: 18,
-      minimumPasswordLength: 10,
+      minimumPasswordLength: 1,
       minimumMarketplacePriceMcoins: 30,
+      maximumMarketplacePriceMcoins: 100000,
+      marketplaceFeePercent: 25,
+      listenerRewardsEnabled: true,
+      maximumListenerRewardMcoins: 5,
+      maximumRewardOutflowPerListingMcoins: 5,
       minimumWithdrawalMcoins: 250,
+      maximumWithdrawalMcoins: 250,
+      dailyWithdrawalLimitMcoins: 250,
+      maximumPendingWithdrawalOutflowMcoins: 187.5,
+      withdrawalFeePercent: 25,
       welcomeMcoins: 25,
       policyNotice: 'Adults only during this test.',
       supportEmail: 'support@example.test',
@@ -619,6 +628,20 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(policyUpdate.status, 200);
   assert.equal(policyUpdate.data.policies.minimumSignupAge, 18);
+  assert.equal(policyUpdate.data.policies.minimumPasswordLength, 1);
+  assert.equal(policyUpdate.data.policies.maximumRewardOutflowPerListingMcoins, 5);
+
+  const oneCharacterPasswordRegistration = await register('/api/auth/register', {
+    method: 'POST',
+    body: {
+      name: 'Admin Policy Minimum Test',
+      email: 'one-character-password@example.test',
+      password: 'x',
+      birthDate: '1990-01-01',
+      termsAccepted: true,
+    },
+  });
+  assert.equal(oneCharacterPasswordRegistration.status, 201);
 
   const underageBlocked = await register('/api/auth/register', {
     method: 'POST',
@@ -715,6 +738,14 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   fs.writeFileSync(cashoutFixturePath, JSON.stringify(cashoutFixture, null, 2));
 
+  const overMaximumCashout = await api('/api/wallet/withdraw', {
+    method: 'POST',
+    token: luckyToken,
+    body: { amountMcoins: 251, payoutEmail: 'lucky-payout@example.test' },
+  });
+  assert.equal(overMaximumCashout.status, 400);
+  assert.match(overMaximumCashout.data.error, /maximum withdrawal/i);
+
   const regularAccountCashout = await api('/api/wallet/withdraw', {
     method: 'POST',
     token: luckyToken,
@@ -732,6 +763,18 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(cashoutWallet.data.withdrawalFeeRate, 0.25);
   assert.equal(cashoutWallet.data.withdrawals.length, 1);
   assert.equal(cashoutWallet.data.withdrawals[0].status, 'pending_manual_review');
+
+  const adminWithdrawalQueue = await api('/api/admin/withdrawals', { token: adminToken });
+  assert.equal(adminWithdrawalQueue.status, 200);
+  assert.equal(adminWithdrawalQueue.data.summary.pendingCount, 1);
+  assert.equal(adminWithdrawalQueue.data.summary.pendingNetMcoins, 187.5);
+  const paidWithdrawal = await api(`/api/admin/withdrawals/${regularAccountCashout.data.withdrawal.id}`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { status: 'paid' },
+  });
+  assert.equal(paidWithdrawal.status, 200);
+  assert.equal(paidWithdrawal.data.withdrawal.status, 'paid');
 
   const retiredWalletRedemption = await api('/api/promotions/redeem', {
     method: 'POST',
@@ -849,6 +892,74 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(composerProfile.data.composer.followerCount, 1);
   assert.ok(composerProfile.data.listings.some((listing) => listing.id === listingCreate.data.listing.id));
+
+  const freeListing = await api('/api/listings', {
+    method: 'POST',
+    token: sellerToken,
+    body: {
+      artist: 'Test Artist',
+      title: 'Free Sheet',
+      instrument: 'piano',
+      format: 'JSON',
+      listingMode: 'free',
+      priceMcoins: 0,
+      filename: 'free-sheet.json',
+      contentBase64: Buffer.from(JSON.stringify({ title: 'Free Sheet', notes: [] })).toString('base64'),
+      rightsConfirmed: true,
+      feeConfirmed: false,
+    },
+  });
+  assert.equal(freeListing.status, 201);
+  assert.equal(freeListing.data.listing.listingMode, 'free');
+  const freeClaim = await api(`/api/listings/${freeListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: userToken,
+    body: {},
+  });
+  assert.equal(freeClaim.status, 201);
+  assert.equal(freeClaim.data.purchase.buyerPaidMcoins, 0);
+
+  const rewardListing = await api('/api/listings', {
+    method: 'POST',
+    token: sellerToken,
+    body: {
+      artist: 'Test Artist',
+      title: 'Listener Reward Sheet',
+      instrument: 'piano',
+      format: 'JSON',
+      listingMode: 'listener-reward',
+      listenerRewardMcoins: 5,
+      filename: 'listener-reward-sheet.json',
+      contentBase64: Buffer.from(JSON.stringify({ title: 'Listener Reward Sheet', notes: [] })).toString('base64'),
+      rightsConfirmed: true,
+      feeConfirmed: false,
+    },
+  });
+  assert.equal(rewardListing.status, 201);
+  assert.equal(rewardListing.data.listing.rewardAvailable, true);
+  const rewardClaim = await api(`/api/listings/${rewardListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: adultToken,
+    body: {},
+  });
+  assert.equal(rewardClaim.status, 201);
+  assert.equal(rewardClaim.data.purchase.paymentMethod, 'listener_reward');
+  assert.equal(rewardClaim.data.purchase.listenerRewardMcoins, 5);
+  assert.equal(rewardClaim.data.user.mcoins, 30);
+  const duplicateRewardClaim = await api(`/api/listings/${rewardListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: adultToken,
+    body: {},
+  });
+  assert.equal(duplicateRewardClaim.status, 200);
+  assert.equal(duplicateRewardClaim.data.user.mcoins, 30);
+  const exhaustedRewardClaim = await api(`/api/listings/${rewardListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: luckyToken,
+    body: {},
+  });
+  assert.equal(exhaustedRewardClaim.status, 409);
+  assert.match(exhaustedRewardClaim.data.error, /paused|exhausted/i);
 
   const friendVoucherCreate = await api('/api/admin/promotions', {
     method: 'POST',

@@ -25,6 +25,7 @@ test('uploads audio, polls a permanent endpoint, and cleans the volume object', 
     s3Endpoint: 'https://s3api-us-ks-2.runpod.io',
     s3AccessKeyId: 'user-test',
     s3SecretAccessKey: 'rps-test',
+    inferenceVersion: 'phase1-v002',
     timeoutMs: 60_000,
     pollIntervalMs: 1,
   }, {
@@ -48,6 +49,7 @@ test('uploads audio, polls a permanent endpoint, and cleans the volume object', 
     assert.match(requests.at(-1).url, /status\/remote-job-1$/);
     const submitted = JSON.parse(requests[0].options.body);
     assert.equal(submitted.input.audio_path, '/runpod-volume/jobs/media-1.wav');
+    assert.equal(submitted.input.checkpoint_version, 'phase1-v002');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

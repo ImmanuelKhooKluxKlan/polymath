@@ -114,6 +114,9 @@ const MUSCRIPTOR_MODEL = ['small', 'medium', 'large'].includes(
 )
   ? String(process.env.MUSCRIPTOR_MODEL || 'large').trim().toLowerCase()
   : 'large';
+const MUSCRIPTOR_INFERENCE_VERSION = String(
+  process.env.MUSCRIPTOR_INFERENCE_VERSION || 'phase1-v002',
+).trim().toLowerCase();
 const MUSCRIPTOR_PYTHON = String(process.env.MUSCRIPTOR_PYTHON || '').trim() || (
   process.platform === 'win32'
     ? path.join(os.homedir(), 'muscriptor-eval-env', 'Scripts', 'python.exe')
@@ -150,6 +153,7 @@ const RUNPOD_SERVERLESS = createRunpodServerlessClient({
   s3AccessKeyId: process.env.RUNPOD_S3_ACCESS_KEY_ID,
   s3SecretAccessKey: process.env.RUNPOD_S3_SECRET_ACCESS_KEY,
   replicas: process.env.RUNPOD_S3_REPLICAS,
+  inferenceVersion: MUSCRIPTOR_INFERENCE_VERSION,
   timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
   pollIntervalMs: 2_000,
 });
@@ -338,8 +342,17 @@ const DEFAULT_SITE_POLICIES = Object.freeze({
   registrationEnabled: true,
   minimumSignupAge: 0,
   minimumPasswordLength: 8,
-  minimumMarketplacePriceMcoins: 10,
+  minimumMarketplacePriceMcoins: 0,
+  maximumMarketplacePriceMcoins: 100000,
+  marketplaceFeePercent: MARKETPLACE_FEE_RATE * 100,
+  listenerRewardsEnabled: true,
+  maximumListenerRewardMcoins: 100,
+  maximumRewardOutflowPerListingMcoins: 1000,
   minimumWithdrawalMcoins: 20,
+  maximumWithdrawalMcoins: 1000000,
+  dailyWithdrawalLimitMcoins: 0,
+  maximumPendingWithdrawalOutflowMcoins: 0,
+  withdrawalFeePercent: WITHDRAWAL_FEE_RATE * 100,
   welcomeMcoins: WELCOME_MCOINS,
   policyNotice: '',
   termsUrl: '',
@@ -515,7 +528,15 @@ function normalizeDb(db) {
     user.pro = user.proStatus === 'ACTIVE' || user.pro === true;
   });
   normalized.listings.forEach((listing) => {
-    listing.marketplaceFeeRate = MARKETPLACE_FEE_RATE;
+    if (!listing.listingMode) {
+      listing.listingMode = Number(listing.priceMcoins || 0) > 0 ? 'sale' : 'free';
+    }
+    listing.priceMcoins = Number(listing.priceMcoins || 0);
+    listing.listenerRewardMcoins = Number(listing.listenerRewardMcoins || 0);
+    listing.rewardPaidMcoins = Number(listing.rewardPaidMcoins || 0);
+    if (!Number.isFinite(Number(listing.marketplaceFeeRate))) {
+      listing.marketplaceFeeRate = MARKETPLACE_FEE_RATE;
+    }
   });
   normalized.promotions.forEach((promotion) => {
     if (!['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind)) {
@@ -755,15 +776,36 @@ function clampInteger(value, minimum, maximum, fallback) {
   return Math.min(maximum, Math.max(minimum, number));
 }
 
+function clampDecimal(value, minimum, maximum, fallback, decimals = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  const clamped = Math.min(maximum, Math.max(minimum, number));
+  return Number(clamped.toFixed(decimals));
+}
+
+function mcoinAmount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : Number.NaN;
+}
+
 function sitePolicies(db) {
   const raw = db?.settings && typeof db.settings === 'object' ? db.settings : {};
   return {
     registrationEnabled: raw.registrationEnabled !== false,
     minimumSignupAge: clampInteger(raw.minimumSignupAge, 0, 120, DEFAULT_SITE_POLICIES.minimumSignupAge),
-    minimumPasswordLength: clampInteger(raw.minimumPasswordLength, 8, 64, DEFAULT_SITE_POLICIES.minimumPasswordLength),
-    minimumMarketplacePriceMcoins: clampInteger(raw.minimumMarketplacePriceMcoins, 1, 100000, DEFAULT_SITE_POLICIES.minimumMarketplacePriceMcoins),
-    minimumWithdrawalMcoins: clampInteger(raw.minimumWithdrawalMcoins, 1, 1000000, DEFAULT_SITE_POLICIES.minimumWithdrawalMcoins),
-    welcomeMcoins: clampInteger(raw.welcomeMcoins, 0, 100000, DEFAULT_SITE_POLICIES.welcomeMcoins),
+    minimumPasswordLength: clampInteger(raw.minimumPasswordLength, 1, 256, DEFAULT_SITE_POLICIES.minimumPasswordLength),
+    minimumMarketplacePriceMcoins: clampDecimal(raw.minimumMarketplacePriceMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.minimumMarketplacePriceMcoins),
+    maximumMarketplacePriceMcoins: clampDecimal(raw.maximumMarketplacePriceMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumMarketplacePriceMcoins),
+    marketplaceFeePercent: clampDecimal(raw.marketplaceFeePercent, 0, 100, DEFAULT_SITE_POLICIES.marketplaceFeePercent),
+    listenerRewardsEnabled: raw.listenerRewardsEnabled !== false,
+    maximumListenerRewardMcoins: clampDecimal(raw.maximumListenerRewardMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumListenerRewardMcoins),
+    maximumRewardOutflowPerListingMcoins: clampDecimal(raw.maximumRewardOutflowPerListingMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumRewardOutflowPerListingMcoins),
+    minimumWithdrawalMcoins: clampDecimal(raw.minimumWithdrawalMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.minimumWithdrawalMcoins),
+    maximumWithdrawalMcoins: clampDecimal(raw.maximumWithdrawalMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumWithdrawalMcoins),
+    dailyWithdrawalLimitMcoins: clampDecimal(raw.dailyWithdrawalLimitMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.dailyWithdrawalLimitMcoins),
+    maximumPendingWithdrawalOutflowMcoins: clampDecimal(raw.maximumPendingWithdrawalOutflowMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumPendingWithdrawalOutflowMcoins),
+    withdrawalFeePercent: clampDecimal(raw.withdrawalFeePercent, 0, 100, DEFAULT_SITE_POLICIES.withdrawalFeePercent),
+    welcomeMcoins: clampDecimal(raw.welcomeMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.welcomeMcoins),
     policyNotice: String(raw.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(raw.termsUrl || '').trim().slice(0, 500),
     privacyUrl: String(raw.privacyUrl || '').trim().slice(0, 500),
@@ -1442,6 +1484,35 @@ function marketplaceRanking(averageRating = 0, audienceCount = 0) {
   };
 }
 
+function listingMode(listing) {
+  const mode = String(listing?.listingMode || '').trim().toLowerCase();
+  if (['sale', 'free', 'listener-reward'].includes(mode)) return mode;
+  return Number(listing?.priceMcoins || 0) > 0 ? 'sale' : 'free';
+}
+
+function listenerRewardStatus(listing, db) {
+  const policies = sitePolicies(db);
+  const rewardMcoins = Math.max(0, mcoinAmount(listing.listenerRewardMcoins) || 0);
+  const paidMcoins = Math.max(0, mcoinAmount(listing.rewardPaidMcoins) || 0);
+  const capMcoins = policies.maximumRewardOutflowPerListingMcoins;
+  const remainingCapMcoins = capMcoins > 0
+    ? Math.max(0, Number((capMcoins - paidMcoins).toFixed(2)))
+    : null;
+  const seller = db.users.find((user) => user.id === listing.sellerId);
+  const sellerCanFund = Boolean(seller && (hasUnlimitedMcoins(seller) || Number(seller.mcoins || 0) >= rewardMcoins));
+  const withinCap = remainingCapMcoins === null || remainingCapMcoins >= rewardMcoins;
+  return {
+    rewardMcoins,
+    paidMcoins,
+    remainingCapMcoins,
+    available: listingMode(listing) === 'listener-reward'
+      && policies.listenerRewardsEnabled
+      && rewardMcoins > 0
+      && withinCap
+      && sellerCanFund,
+  };
+}
+
 function publicListing(listing, db, viewerId = null) {
   const seller = db.users.find((user) => user.id === listing.sellerId);
   const purchased = Boolean(viewerId && db.purchases.some(
@@ -1449,8 +1520,16 @@ function publicListing(listing, db, viewerId = null) {
   ));
   const reviewSummary = listingReviewSummary(db, listing.id);
   const composer = publicComposer(seller, db, viewerId);
+  const mode = listingMode(listing);
+  const reward = listenerRewardStatus(listing, db);
   return {
     ...listing,
+    listingMode: mode,
+    priceMcoins: mode === 'sale' ? Number(listing.priceMcoins || 0) : 0,
+    listenerRewardMcoins: mode === 'listener-reward' ? reward.rewardMcoins : 0,
+    rewardPaidMcoins: reward.paidMcoins,
+    rewardRemainingMcoins: reward.remainingCapMcoins,
+    rewardAvailable: reward.available,
     assetPath: undefined,
     seller: seller
       ? composer
@@ -1605,6 +1684,7 @@ function composerBuyerCount(db, composerId) {
   return new Set(
     db.purchases
       .filter((purchase) => listingIds.has(purchase.listingId))
+      .filter((purchase) => Number(purchase.grossMcoins ?? purchase.amountMcoins ?? purchase.amount ?? 0) > 0)
       .map((purchase) => purchase.buyerId),
   ).size;
 }
@@ -1788,6 +1868,7 @@ function muscriptorAvailability() {
     configured: MUSCRIPTOR_ENABLED,
     adminOnly: MUSCRIPTOR_ADMIN_ONLY,
     model: MUSCRIPTOR_MODEL,
+    checkpoint: RUNPOD_SERVERLESS.inferenceVersion,
     execution,
     storageTargets: serverlessConfigured ? RUNPOD_SERVERLESS.storageTargetCount : 0,
     maxBytes: null,
@@ -2344,11 +2425,13 @@ app.get('/api/media-transcriptions/capabilities', async (req, res) => {
 app.get('/api/catalog', async (req, res) => {
   const db = await readDb();
   const { updatedBy: _updatedBy, ...publicPolicies } = sitePolicies(db);
+  const withdrawalFeeRate = publicPolicies.withdrawalFeePercent / 100;
+  const marketplaceFeeRate = publicPolicies.marketplaceFeePercent / 100;
   res.json({
     products: Object.values(PRODUCTS).filter((product) => !product.legacy),
-    withdrawalFeeRate: WITHDRAWAL_FEE_RATE,
-    withdrawalFeeLabel: '25% cash-out fee for every account',
-    marketplaceFeeRate: MARKETPLACE_FEE_RATE,
+    withdrawalFeeRate,
+    withdrawalFeeLabel: `${publicPolicies.withdrawalFeePercent}% cash-out fee for every account`,
+    marketplaceFeeRate,
     mcoinsPerUsd: MCOINS_PER_USD,
     translationMcoinCosts: {
       subscriber: SUBSCRIBER_TRANSLATION_MCOIN_COST,
@@ -2701,7 +2784,7 @@ app.post('/api/ready-sheet-uploads', requireAuth, async (req, res, next) => {
 
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const password = String(req.body.password || '');
-  const minimumLength = Math.max(12, sitePolicies(req.db).minimumPasswordLength);
+  const minimumLength = sitePolicies(req.db).minimumPasswordLength;
   if (password.length < minimumLength) return res.status(400).json({ error: `Your new password must contain at least ${minimumLength} characters.` });
   const { salt, hash } = hashPassword(password);
   req.user.passwordHash = hash;
@@ -3078,26 +3161,57 @@ app.delete('/api/personal-songs/:songId', requireAuth, async (req, res, next) =>
   }
 });
 
+function listingCommercialTerms(input, policies, fallback = {}) {
+  const mode = String(input.listingMode ?? fallback.listingMode ?? 'sale').trim().toLowerCase();
+  if (!['sale', 'free', 'listener-reward'].includes(mode)) {
+    return { error: 'Choose Sell, Free, or Reward listeners.' };
+  }
+
+  if (mode === 'listener-reward') {
+    if (!policies.listenerRewardsEnabled) return { error: 'Listener rewards are disabled by the site rules.' };
+    const listenerRewardMcoins = mcoinAmount(input.listenerRewardMcoins ?? fallback.listenerRewardMcoins);
+    if (!Number.isFinite(listenerRewardMcoins) || listenerRewardMcoins <= 0) {
+      return { error: 'Listener reward must be greater than 0 Mcoins.' };
+    }
+    if (policies.maximumListenerRewardMcoins > 0 && listenerRewardMcoins > policies.maximumListenerRewardMcoins) {
+      return { error: `Listener reward cannot exceed ${policies.maximumListenerRewardMcoins.toLocaleString()} Mcoins per listener.` };
+    }
+    return { listingMode: mode, priceMcoins: 0, listenerRewardMcoins };
+  }
+
+  if (mode === 'free') return { listingMode: mode, priceMcoins: 0, listenerRewardMcoins: 0 };
+
+  const priceMcoins = mcoinAmount(input.priceMcoins ?? fallback.priceMcoins);
+  if (!Number.isFinite(priceMcoins) || priceMcoins < policies.minimumMarketplacePriceMcoins) {
+    return { error: `Price must be at least ${policies.minimumMarketplacePriceMcoins.toLocaleString()} Mcoins.` };
+  }
+  if (policies.maximumMarketplacePriceMcoins > 0 && priceMcoins > policies.maximumMarketplacePriceMcoins) {
+    return { error: `Price cannot exceed ${policies.maximumMarketplacePriceMcoins.toLocaleString()} Mcoins.` };
+  }
+  return { listingMode: mode, priceMcoins, listenerRewardMcoins: 0 };
+}
+
 app.post('/api/listings', requireAuth, async (req, res) => {
   const artist = String(req.body.artist || '').trim();
   const title = String(req.body.title || '').trim();
   const instrument = String(req.body.instrument || '').trim().toLowerCase();
   const format = String(req.body.format || '').trim().toUpperCase();
   const description = String(req.body.description || '').trim().slice(0, 800);
-  const priceMcoins = Math.floor(Number(req.body.priceMcoins));
   const filename = sanitizeFilename(req.body.filename || `${title}.${format.toLowerCase()}`);
   const contentBase64 = String(req.body.contentBase64 || '');
   const rightsConfirmed = req.body.rightsConfirmed === true;
   const feeConfirmed = req.body.feeConfirmed === true;
   const policies = sitePolicies(req.db);
-  const minimumListingPrice = Math.ceil(policies.minimumMarketplacePriceMcoins / 10) * 10;
+  const commercial = listingCommercialTerms(req.body, policies);
 
   if (!artist || !title) return res.status(400).json({ error: 'Artist and song title are required.' });
-  if (!rightsConfirmed) return res.status(400).json({ error: 'Confirm that you own the rights or have permission to sell this file.' });
-  if (!feeConfirmed) return res.status(400).json({ error: 'Confirm the 25% sale fee before publishing.' });
+  if (!rightsConfirmed) return res.status(400).json({ error: 'Confirm that you own the rights or have permission to publish this file.' });
   if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
   if (!['JSON', 'PDF', 'MIDI', 'MUSICXML'].includes(format)) return res.status(400).json({ error: 'Unsupported listing format.' });
-  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments.` });
+  if (commercial.error) return res.status(400).json({ error: commercial.error });
+  if (commercial.listingMode === 'sale' && policies.marketplaceFeePercent > 0 && !feeConfirmed) {
+    return res.status(400).json({ error: `Confirm the ${policies.marketplaceFeePercent}% sale fee before publishing.` });
+  }
   if (!contentBase64) return res.status(400).json({ error: 'Attach the song file before publishing.' });
 
   let bytes;
@@ -3126,15 +3240,18 @@ app.post('/api/listings', requireAuth, async (req, res) => {
     title,
     instrument,
     format,
-    priceMcoins,
+    listingMode: commercial.listingMode,
+    priceMcoins: commercial.priceMcoins,
+    listenerRewardMcoins: commercial.listenerRewardMcoins,
+    rewardPaidMcoins: 0,
     description,
     cover: INSTRUMENTS[instrument].cover,
     filename,
     assetPath: storedKey,
     demo: false,
     rightsConfirmed: true,
-    feeConfirmed: true,
-    marketplaceFeeRate: MARKETPLACE_FEE_RATE,
+    feeConfirmed: commercial.listingMode !== 'sale' || feeConfirmed,
+    marketplaceFeeRate: policies.marketplaceFeePercent / 100,
     createdAt: new Date().toISOString(),
   };
   req.db.listings.push(listing);
@@ -3153,20 +3270,25 @@ app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
   const title = String(req.body.title ?? listing.title).trim();
   const instrument = String(req.body.instrument ?? listing.instrument).trim().toLowerCase();
   const description = String(req.body.description ?? listing.description).trim().slice(0, 800);
-  const priceMcoins = Math.floor(Number(req.body.priceMcoins ?? listing.priceMcoins));
-  const minimumListingPrice = Math.ceil(sitePolicies(req.db).minimumMarketplacePriceMcoins / 10) * 10;
+  const policies = sitePolicies(req.db);
+  const commercial = listingCommercialTerms(req.body, policies, {
+    listingMode: listingMode(listing),
+    priceMcoins: listing.priceMcoins,
+    listenerRewardMcoins: listing.listenerRewardMcoins,
+  });
   if (!artist || !title) return res.status(400).json({ error: 'Artist and song title are required.' });
   if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
-  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) {
-    return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments.` });
-  }
+  if (commercial.error) return res.status(400).json({ error: commercial.error });
 
   Object.assign(listing, {
     artist,
     title,
     instrument,
     description,
-    priceMcoins,
+    listingMode: commercial.listingMode,
+    priceMcoins: commercial.priceMcoins,
+    listenerRewardMcoins: commercial.listenerRewardMcoins,
+    marketplaceFeeRate: policies.marketplaceFeePercent / 100,
     cover: INSTRUMENTS[instrument].cover,
     updatedAt: new Date().toISOString(),
   });
@@ -3181,8 +3303,57 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
   const existing = req.db.purchases.find((purchase) => purchase.listingId === listing.id && purchase.buyerId === req.user.id);
   if (existing) return res.json({ purchase: existing, user: safeUser(req.user) });
 
+  const mode = listingMode(listing);
+  const seller = req.db.users.find((user) => user.id === listing.sellerId);
+  const platform = req.db.users.find((user) => user.id === 'platform');
+
+  if (mode === 'listener-reward') {
+    const reward = listenerRewardStatus(listing, req.db);
+    if (!reward.available) {
+      return res.status(409).json({ error: 'This listener reward is paused, exhausted, or cannot currently be funded.' });
+    }
+    if (!seller) return res.status(409).json({ error: 'The composer account is unavailable.' });
+
+    if (!hasUnlimitedMcoins(seller)) {
+      seller.mcoins = Number((Number(seller.mcoins || 0) - reward.rewardMcoins).toFixed(2));
+      seller.withdrawableMcoins = Math.min(Number(seller.withdrawableMcoins || 0), seller.mcoins);
+    }
+    req.user.mcoins = Number((Number(req.user.mcoins || 0) + reward.rewardMcoins).toFixed(2));
+    req.user.withdrawableMcoins = Number((Number(req.user.withdrawableMcoins || 0) + reward.rewardMcoins).toFixed(2));
+    listing.rewardPaidMcoins = Number((reward.paidMcoins + reward.rewardMcoins).toFixed(2));
+
+    const purchase = {
+      id: id('purchase'),
+      listingId: listing.id,
+      buyerId: req.user.id,
+      sellerId: listing.sellerId,
+      amount: 0,
+      currency: 'MCOINS',
+      amountMcoins: 0,
+      grossMcoins: 0,
+      buyerPaidMcoins: 0,
+      listenerRewardMcoins: reward.rewardMcoins,
+      paymentMethod: 'listener_reward',
+      promotionDiscountMcoins: 0,
+      platformFeeMcoins: 0,
+      platformFeeRate: 0,
+      sellerEarningsMcoins: 0,
+      format: listing.format,
+      instrument: listing.instrument,
+      createdAt: new Date().toISOString(),
+    };
+    req.db.purchases.push(purchase);
+    addLedger(req.db, seller.id, hasUnlimitedMcoins(seller) ? 0 : -reward.rewardMcoins, 'listener_reward_paid', `${listing.title}; rewarded ${req.user.name}`);
+    addLedger(req.db, req.user.id, reward.rewardMcoins, 'listener_reward_received', `${listing.title}; paid by ${seller.name}`);
+    await writeDb(req.db);
+    return res.status(201).json({ purchase, user: safeUser(req.user) });
+  }
+
   const promotionCode = String(req.body.promotionCode || '').trim();
   const requestedFriendId = String(req.body.friendId || '').trim();
+  if (mode !== 'sale' && (promotionCode || requestedFriendId)) {
+    return res.status(400).json({ error: 'Coupons and Friend IDs only apply to paid listings.' });
+  }
   if (promotionCode && requestedFriendId) {
     return res.status(400).json({ error: 'Use either a music-sheet coupon or a Friend ID voucher, not both together.' });
   }
@@ -3199,26 +3370,25 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
   const promotion = promotionResult.promotion;
   const friendUser = promotionResult.friendUser || null;
   const discountMcoins = promotion
-    ? Math.min(listing.priceMcoins, Math.floor(listing.priceMcoins * promotion.value / 100))
+    ? Math.min(listing.priceMcoins, Number((listing.priceMcoins * promotion.value / 100).toFixed(2)))
     : 0;
-  const buyerPaidMcoins = listing.priceMcoins - discountMcoins;
+  const buyerPaidMcoins = Number((listing.priceMcoins - discountMcoins).toFixed(2));
   const administratorPurchase = hasUnlimitedMcoins(req.user);
   if (!administratorPurchase && req.user.mcoins < buyerPaidMcoins) {
     return res.status(402).json({ error: 'Not enough Mcoins.' });
   }
 
-  const seller = req.db.users.find((user) => user.id === listing.sellerId);
-  const platform = req.db.users.find((user) => user.id === 'platform');
-  const platformFeeMcoins = listing.priceMcoins * MARKETPLACE_FEE_RATE;
-  const sellerEarningsMcoins = listing.priceMcoins - platformFeeMcoins;
+  const marketplaceFeeRate = Math.min(1, Math.max(0, Number(listing.marketplaceFeeRate ?? sitePolicies(req.db).marketplaceFeePercent / 100)));
+  const platformFeeMcoins = Number((listing.priceMcoins * marketplaceFeeRate).toFixed(2));
+  const sellerEarningsMcoins = Number((listing.priceMcoins - platformFeeMcoins).toFixed(2));
 
-  if (!administratorPurchase) req.user.mcoins -= buyerPaidMcoins;
+  if (!administratorPurchase) req.user.mcoins = Number((req.user.mcoins - buyerPaidMcoins).toFixed(2));
   if (seller) {
-    seller.mcoins += sellerEarningsMcoins;
-    seller.withdrawableMcoins = Number(seller.withdrawableMcoins || 0) + sellerEarningsMcoins;
+    seller.mcoins = Number((Number(seller.mcoins || 0) + sellerEarningsMcoins).toFixed(2));
+    seller.withdrawableMcoins = Number((Number(seller.withdrawableMcoins || 0) + sellerEarningsMcoins).toFixed(2));
   }
   if (platform) {
-    platform.mcoins += platformFeeMcoins - discountMcoins;
+    platform.mcoins = Number((Number(platform.mcoins || 0) + platformFeeMcoins - discountMcoins).toFixed(2));
   }
 
   const purchase = {
@@ -3238,7 +3408,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     friendUserId: friendUser?.id || null,
     friendId: friendUser?.friendId || null,
     platformFeeMcoins,
-    platformFeeRate: MARKETPLACE_FEE_RATE,
+    platformFeeRate: marketplaceFeeRate,
     sellerEarningsMcoins,
     format: listing.format,
     instrument: listing.instrument,
@@ -3252,7 +3422,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     administratorPurchase ? 'admin_listing_purchase' : 'listing_purchase',
     `${listing.title} (${listing.format})${administratorPurchase ? '; unlimited administrator wallet' : ''}${promotion ? `; coupon ${promotion.code}: -${discountMcoins} Mcoins` : ''}`,
   );
-  if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; 25% platform fee: ${platformFeeMcoins} Mcoins`);
+  if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; ${Number((marketplaceFeeRate * 100).toFixed(2))}% platform fee: ${platformFeeMcoins} Mcoins`);
   if (platform) addLedger(req.db, platform.id, platformFeeMcoins - discountMcoins, 'marketplace_fee', promotion ? `${listing.title}; sponsored discount ${discountMcoins} Mcoins` : listing.title);
   if (promotion) {
     recordPromotionRedemption(req.db, promotion, req.user, {
@@ -3640,7 +3810,8 @@ app.post('/api/messages', requireAuth, async (req, res) => {
 app.get('/api/wallet', requireAuth, async (req, res) => {
   const ledger = req.db.ledger.filter((entry) => entry.userId === req.user.id).slice(-100).reverse();
   const withdrawals = req.db.withdrawals.filter((item) => item.userId === req.user.id).slice(-20).reverse();
-  res.json({ user: safeUser(req.user), ledger, withdrawals, withdrawalFeeRate: WITHDRAWAL_FEE_RATE });
+  const policies = sitePolicies(req.db);
+  res.json({ user: safeUser(req.user), ledger, withdrawals, withdrawalFeeRate: policies.withdrawalFeePercent / 100, policies });
 });
 
 app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, async (req, res) => {
@@ -3845,15 +4016,87 @@ app.get('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   res.json({ policies: sitePolicies(req.db) });
 });
 
+app.get('/api/admin/withdrawals', requireAuth, requireAdmin, async (req, res) => {
+  const withdrawals = req.db.withdrawals
+    .slice()
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+    .map((withdrawal) => {
+      const account = req.db.users.find((user) => user.id === withdrawal.userId);
+      return {
+        ...withdrawal,
+        account: account ? {
+          userId: account.id,
+          name: account.name,
+          email: account.email,
+          phone: account.phone || '',
+        } : null,
+      };
+    });
+  const pending = withdrawals.filter((item) => String(item.status || '').toLowerCase().startsWith('pending'));
+  res.json({
+    withdrawals,
+    summary: {
+      pendingCount: pending.length,
+      pendingGrossMcoins: Number(pending.reduce((total, item) => total + Number(item.amountMcoins || 0), 0).toFixed(2)),
+      pendingNetMcoins: Number(pending.reduce((total, item) => total + Number(item.netMcoins || 0), 0).toFixed(2)),
+    },
+  });
+});
+
+app.patch('/api/admin/withdrawals/:withdrawalId', requireAuth, requireAdmin, async (req, res) => {
+  const withdrawal = req.db.withdrawals.find((item) => item.id === req.params.withdrawalId);
+  if (!withdrawal) return res.status(404).json({ error: 'Withdrawal request not found.' });
+  if (!String(withdrawal.status || '').toLowerCase().startsWith('pending')) {
+    return res.status(409).json({ error: 'Only a pending withdrawal can be completed or rejected.' });
+  }
+  const nextStatus = String(req.body.status || '').trim().toLowerCase();
+  if (!['paid', 'rejected'].includes(nextStatus)) {
+    return res.status(400).json({ error: 'Choose paid or rejected.' });
+  }
+
+  const account = req.db.users.find((user) => user.id === withdrawal.userId);
+  if (nextStatus === 'rejected' && account) {
+    const amountMcoins = Number(withdrawal.amountMcoins || 0);
+    const feeMcoins = Number(withdrawal.feeMcoins || 0);
+    account.mcoins = Number((Number(account.mcoins || 0) + amountMcoins).toFixed(2));
+    account.withdrawableMcoins = Math.min(
+      account.mcoins,
+      Number((Number(account.withdrawableMcoins || 0) + amountMcoins).toFixed(2)),
+    );
+    const platform = req.db.users.find((user) => user.id === 'platform');
+    if (platform) {
+      platform.mcoins = Number((Number(platform.mcoins || 0) - feeMcoins).toFixed(2));
+      addLedger(req.db, platform.id, -feeMcoins, 'cashout_fee_reversed', `${account.name} rejected cash-out`);
+    }
+    addLedger(req.db, account.id, amountMcoins, 'withdrawal_rejected_refund', `Withdrawal ${withdrawal.id} rejected by administrator`);
+  }
+
+  withdrawal.status = nextStatus;
+  withdrawal.reviewedAt = new Date().toISOString();
+  withdrawal.reviewedBy = req.user.id;
+  await writeDb(req.db);
+  res.json({ withdrawal, message: nextStatus === 'paid' ? 'Withdrawal marked as paid.' : 'Withdrawal rejected and refunded.' });
+});
+
 app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
+  const current = sitePolicies(req.db);
   const next = {
     registrationEnabled: req.body.registrationEnabled !== false,
-    minimumSignupAge: clampInteger(req.body.minimumSignupAge, 0, 120, 0),
-    minimumPasswordLength: clampInteger(req.body.minimumPasswordLength, 8, 64, 8),
-    minimumMarketplacePriceMcoins: clampInteger(req.body.minimumMarketplacePriceMcoins, 1, 100000, 10),
-    minimumWithdrawalMcoins: clampInteger(req.body.minimumWithdrawalMcoins, 1, 1000000, 20),
+    minimumSignupAge: clampInteger(req.body.minimumSignupAge, 0, 120, current.minimumSignupAge),
+    minimumPasswordLength: clampInteger(req.body.minimumPasswordLength, 1, 256, current.minimumPasswordLength),
+    minimumMarketplacePriceMcoins: clampDecimal(req.body.minimumMarketplacePriceMcoins, 0, 1000000000, current.minimumMarketplacePriceMcoins),
+    maximumMarketplacePriceMcoins: clampDecimal(req.body.maximumMarketplacePriceMcoins, 0, 1000000000, current.maximumMarketplacePriceMcoins),
+    marketplaceFeePercent: clampDecimal(req.body.marketplaceFeePercent, 0, 100, current.marketplaceFeePercent),
+    listenerRewardsEnabled: req.body.listenerRewardsEnabled !== false,
+    maximumListenerRewardMcoins: clampDecimal(req.body.maximumListenerRewardMcoins, 0, 1000000000, current.maximumListenerRewardMcoins),
+    maximumRewardOutflowPerListingMcoins: clampDecimal(req.body.maximumRewardOutflowPerListingMcoins, 0, 1000000000, current.maximumRewardOutflowPerListingMcoins),
+    minimumWithdrawalMcoins: clampDecimal(req.body.minimumWithdrawalMcoins, 0, 1000000000, current.minimumWithdrawalMcoins),
+    maximumWithdrawalMcoins: clampDecimal(req.body.maximumWithdrawalMcoins, 0, 1000000000, current.maximumWithdrawalMcoins),
+    dailyWithdrawalLimitMcoins: clampDecimal(req.body.dailyWithdrawalLimitMcoins, 0, 1000000000, current.dailyWithdrawalLimitMcoins),
+    maximumPendingWithdrawalOutflowMcoins: clampDecimal(req.body.maximumPendingWithdrawalOutflowMcoins, 0, 1000000000, current.maximumPendingWithdrawalOutflowMcoins),
+    withdrawalFeePercent: clampDecimal(req.body.withdrawalFeePercent, 0, 100, current.withdrawalFeePercent),
     minimumWithdrawal20MigrationApplied: true,
-    welcomeMcoins: clampInteger(req.body.welcomeMcoins, 0, 100000, 0),
+    welcomeMcoins: clampDecimal(req.body.welcomeMcoins, 0, 1000000000, current.welcomeMcoins),
     policyNotice: String(req.body.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(req.body.termsUrl || '').trim().slice(0, 500),
     privacyUrl: String(req.body.privacyUrl || '').trim().slice(0, 500),
@@ -3861,6 +4104,12 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
     updatedAt: new Date().toISOString(),
     updatedBy: req.user.id,
   };
+  if (next.maximumMarketplacePriceMcoins > 0 && next.maximumMarketplacePriceMcoins < next.minimumMarketplacePriceMcoins) {
+    return res.status(400).json({ error: 'Maximum listing price must be 0 (unlimited) or at least the minimum listing price.' });
+  }
+  if (next.maximumWithdrawalMcoins > 0 && next.maximumWithdrawalMcoins < next.minimumWithdrawalMcoins) {
+    return res.status(400).json({ error: 'Maximum withdrawal must be 0 (unlimited) or at least the minimum withdrawal.' });
+  }
   if (next.supportEmail && !/^\S+@\S+\.\S+$/.test(next.supportEmail)) {
     return res.status(400).json({ error: 'Enter a valid support email or leave it blank.' });
   }
@@ -4004,12 +4253,31 @@ app.post('/api/wallet/withdraw', requireAuth, async (req, res) => {
     ? Math.floor(requestedMcoins * 100) / 100
     : Number.NaN;
   const payoutEmail = String(req.body.payoutEmail || '').trim().toLowerCase();
-  const minimumWithdrawalMcoins = sitePolicies(req.db).minimumWithdrawalMcoins;
-  if (!Number.isFinite(amountMcoins) || amountMcoins < minimumWithdrawalMcoins) return res.status(400).json({ error: `Minimum withdrawal is ${minimumWithdrawalMcoins.toLocaleString()} Mcoins.` });
+  const policies = sitePolicies(req.db);
+  const minimumWithdrawalMcoins = policies.minimumWithdrawalMcoins;
+  if (!Number.isFinite(amountMcoins) || amountMcoins <= 0 || amountMcoins < minimumWithdrawalMcoins) return res.status(400).json({ error: `Withdrawal must be greater than 0 and at least ${minimumWithdrawalMcoins.toLocaleString()} Mcoins.` });
+  if (policies.maximumWithdrawalMcoins > 0 && amountMcoins > policies.maximumWithdrawalMcoins) {
+    return res.status(400).json({ error: `Maximum withdrawal is ${policies.maximumWithdrawalMcoins.toLocaleString()} Mcoins per request.` });
+  }
   if (req.user.mcoins < amountMcoins) return res.status(402).json({ error: 'Insufficient Mcoin balance.' });
   if (!/^\S+@\S+\.\S+$/.test(payoutEmail)) return res.status(400).json({ error: 'Enter a valid payout email.' });
-  const feeMcoins = Number((amountMcoins * WITHDRAWAL_FEE_RATE).toFixed(2));
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const userOutflowToday = req.db.withdrawals
+    .filter((item) => item.userId === req.user.id && String(item.createdAt || '').startsWith(todayUtc) && !['rejected', 'cancelled'].includes(String(item.status || '').toLowerCase()))
+    .reduce((total, item) => total + Number(item.amountMcoins || 0), 0);
+  if (policies.dailyWithdrawalLimitMcoins > 0 && userOutflowToday + amountMcoins > policies.dailyWithdrawalLimitMcoins) {
+    const remaining = Math.max(0, Number((policies.dailyWithdrawalLimitMcoins - userOutflowToday).toFixed(2)));
+    return res.status(400).json({ error: `Daily withdrawal limit reached. ${remaining.toLocaleString()} Mcoins remain today.` });
+  }
+  const withdrawalFeeRate = policies.withdrawalFeePercent / 100;
+  const feeMcoins = Number((amountMcoins * withdrawalFeeRate).toFixed(2));
   const netMcoins = Number((amountMcoins - feeMcoins).toFixed(2));
+  const pendingOutflow = req.db.withdrawals
+    .filter((item) => String(item.status || '').toLowerCase().startsWith('pending'))
+    .reduce((total, item) => total + Number(item.netMcoins || 0), 0);
+  if (policies.maximumPendingWithdrawalOutflowMcoins > 0 && pendingOutflow + netMcoins > policies.maximumPendingWithdrawalOutflowMcoins) {
+    return res.status(409).json({ error: 'The platform pending payout limit has been reached. Please try again after an administrator processes existing payouts.' });
+  }
   req.user.mcoins = Number((req.user.mcoins - amountMcoins).toFixed(2));
   req.user.withdrawableMcoins = Math.min(
     Number(req.user.withdrawableMcoins || 0),
@@ -4026,13 +4294,13 @@ app.post('/api/wallet/withdraw', requireAuth, async (req, res) => {
     amountMcoins,
     feeMcoins,
     netMcoins,
-    feeRate: WITHDRAWAL_FEE_RATE,
+    feeRate: withdrawalFeeRate,
     payoutEmail,
     status: 'pending_manual_review',
     createdAt: new Date().toISOString(),
   };
   req.db.withdrawals.push(withdrawal);
-  addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `25% cash-out fee: ${feeMcoins} Mcoins; net: ${netMcoins} Mcoins`);
+  addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `${policies.withdrawalFeePercent}% cash-out fee: ${feeMcoins} Mcoins; net: ${netMcoins} Mcoins`);
   await writeDb(req.db);
   res.status(201).json({ withdrawal, user: safeUser(req.user) });
 });

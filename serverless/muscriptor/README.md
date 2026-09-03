@@ -75,6 +75,12 @@ Then add this environment variable to the Serverless endpoint:
 MUSCRIPTOR_WEIGHTS_PATH=/runpod-volume/models/muscriptor-tester/v001/model.safetensors
 ```
 
+The AWS backend can request a reviewed canary checkpoint without overwriting
+the endpoint's default model. Set `MUSCRIPTOR_INFERENCE_VERSION=phase1-v002`
+in the API environment, or use `original` to roll back. The worker accepts only
+`original` or a versioned folder below `models/muscriptor-tester/` and includes
+the exact checkpoint version in every transcription result.
+
 When this variable is set, the worker loads the custom weights instead of the
 published model. The RunPod cached-model field is optional and only accelerates
 the unmodified Hugging Face model; it does not replace custom volume weights.

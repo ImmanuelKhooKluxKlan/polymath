@@ -70,12 +70,40 @@ def load_model() -> TranscriptionModel:
 
 
 MODEL: TranscriptionModel | None = None
+MODEL_ACTIVE_SOURCE = ''
 
 
-def get_model() -> TranscriptionModel:
-    global MODEL
-    if MODEL is None:
-        MODEL = load_model()
+def resolve_inference_source(version: Any) -> tuple[Any, str, str, str]:
+    """Resolve only the immutable original or a versioned tester checkpoint."""
+    requested = str(version or '').strip().lower()
+    if not requested or requested == 'original':
+        return MODEL_SOURCE, str(MODEL_SOURCE), MODEL_PROVIDER, MODEL_SOURCE_ID
+    if not re.fullmatch(r'phase\d+-v\d{3,}', requested):
+        raise ValueError('Inference checkpoint must be original or look like phase1-v002')
+    root = (TEST_MODEL_ROOT / requested).resolve()
+    if not root.is_relative_to(TEST_MODEL_ROOT):
+        raise ValueError('Inference checkpoint escaped the tester model directory')
+    weights = root / 'model.safetensors'
+    config = root / 'config.json'
+    if not weights.is_file() or not config.is_file():
+        raise FileNotFoundError(f'Inference checkpoint is incomplete: {requested}')
+    return (
+        weights,
+        str(weights),
+        f'Polymath candidate {requested} on RunPod Serverless GPU',
+        f'polymath-{requested}-runpod-serverless',
+    )
+
+
+def get_model(source: Any, source_key: str) -> TranscriptionModel:
+    global MODEL, MODEL_ACTIVE_SOURCE
+    if MODEL is None or MODEL_ACTIVE_SOURCE != source_key:
+        MODEL = None
+        gc.collect()
+        print(f'Loading Polymath checkpoint {source_key} into GPU memory', flush=True)
+        MODEL = TranscriptionModel.load_model(source)
+        MODEL_ACTIVE_SOURCE = source_key
+        print(f'Polymath checkpoint {source_key} is ready', flush=True)
     return MODEL
 
 
@@ -348,7 +376,10 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
     notes: list[dict[str, Any]] = []
     progress = {'completed': 0, 'total': 0}
 
-    model = get_model()
+    model_source, source_key, model_provider, model_source_id = resolve_inference_source(
+        job_input.get('checkpoint_version')
+    )
+    model = get_model(model_source, source_key)
     for event in model.transcribe(str(audio_path), instruments=instruments):
         if hasattr(event, 'start_time') and hasattr(event, 'pitch'):
             starts[int(event.index)] = event
@@ -365,7 +396,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
                 'velocity': 0.78,
                 'hand': 'left' if midi < 60 else 'right',
                 'instrument': str(start.instrument),
-                'source': MODEL_SOURCE_ID,
+                'source': model_source_id,
             })
             starts.pop(int(start.index), None)
         elif hasattr(event, 'completed') and hasattr(event, 'total'):
@@ -385,7 +416,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
             'velocity': 0.7,
             'hand': 'left' if midi < 60 else 'right',
             'instrument': str(start.instrument),
-            'source': MODEL_SOURCE_ID,
+            'source': model_source_id,
         })
 
     notes.sort(key=lambda note: (note['time'], note['midi'], note['instrument']))
@@ -401,7 +432,8 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
         'instrumentGroups': sorted({note['instrument'] for note in notes}),
         'sourceType': 'muscriptor-audio-transcription',
         'readyToPlayFormat': 'polymath-musician-json-v1',
-        'transcriptionProvider': MODEL_PROVIDER,
+        'transcriptionProvider': model_provider,
+        'checkpointVersion': str(job_input.get('checkpoint_version') or 'original'),
         'modelLicense': 'CC-BY-NC-4.0',
         'progress': progress,
     }

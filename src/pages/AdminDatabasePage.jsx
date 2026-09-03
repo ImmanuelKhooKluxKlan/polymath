@@ -7,7 +7,8 @@ const ADMIN_SECTIONS = [
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
   ['promotions', 'Discounts', 'Create and pause percentage codes'],
-  ['policies', 'Rules & policies', 'Signup and spending minimums'],
+  ['withdrawals', 'Payouts', 'Review pending cash-outs and platform outflow'],
+  ['policies', 'Rules & policies', 'Security, marketplace, rewards, fees, and outflow limits'],
   ['users', 'Account manager', 'Search, Mcoins, access, and secure resets'],
 ];
 
@@ -94,6 +95,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [activeSection, setActiveSection] = useState('overview');
   const [database, setDatabase] = useState({ rows: [], footer: {}, configuration: {} });
   const [promotions, setPromotions] = useState([]);
+  const [withdrawals, setWithdrawals] = useState({ withdrawals: [], summary: {} });
   const [policies, setPolicies] = useState(null);
   const [status, setStatus] = useState('Loading admin console...');
   const [userSearch, setUserSearch] = useState('');
@@ -112,14 +114,16 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [phoneReviews, setPhoneReviews] = useState(loadPhoneReviews);
 
   async function loadConsole() {
-    const [usersData, policiesData, promotionsData] = await Promise.all([
+    const [usersData, policiesData, promotionsData, withdrawalsData] = await Promise.all([
       apiRequest('/api/admin/users'),
       apiRequest('/api/admin/policies'),
       apiRequest('/api/admin/promotions'),
+      apiRequest('/api/admin/withdrawals'),
     ]);
     setDatabase(usersData);
     setPolicies(policiesData.policies);
     setPromotions(promotionsData.promotions);
+    setWithdrawals(withdrawalsData);
   }
 
   useEffect(() => {
@@ -196,6 +200,23 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     try {
       const data = await apiRequest('/api/admin/policies', { method: 'PUT', body: JSON.stringify(policies) });
       setPolicies(data.policies);
+      setStatus(data.message);
+    } catch (error) { setStatus(error.message); }
+  }
+
+  async function reviewWithdrawal(withdrawalId, nextStatus) {
+    const prompt = nextStatus === 'paid'
+      ? 'Confirm that the payout was completed outside Polymath. Mark this request as paid?'
+      : 'Reject this request and return the full requested Mcoins to the user?';
+    if (!window.confirm(prompt)) return;
+    setStatus(nextStatus === 'paid' ? 'Recording completed payout...' : 'Rejecting and refunding withdrawal...');
+    try {
+      const data = await apiRequest(`/api/admin/withdrawals/${withdrawalId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const refreshed = await apiRequest('/api/admin/withdrawals');
+      setWithdrawals(refreshed);
       setStatus(data.message);
     } catch (error) { setStatus(error.message); }
   }
@@ -487,24 +508,88 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           </div>
         </section>
       )}
+      {activeSection === 'withdrawals' && (
+        <section className='admin-workspace'>
+          <div className='admin-section-heading'>
+            <div><p className='eyebrow'>Manual payout queue</p><h2>Cash-out requests</h2><p>Send the net payout outside Polymath before marking it paid. Rejecting a pending request refunds the user and reverses its platform fee.</p></div>
+          </div>
+          <div className='admin-summary-grid payout-summary-grid'>
+            <article><span>Pending requests</span><strong>{Number(withdrawals.summary?.pendingCount || 0).toLocaleString()}</strong></article>
+            <article><span>Pending gross</span><strong>{Number(withdrawals.summary?.pendingGrossMcoins || 0).toLocaleString()} Mcoins</strong></article>
+            <article><span>Pending net outflow</span><strong>{Number(withdrawals.summary?.pendingNetMcoins || 0).toLocaleString()} Mcoins</strong></article>
+          </div>
+          <div className='database-table-wrap'>
+            <table className='database-table payout-table'>
+              <thead><tr><th>Account</th><th>Requested</th><th>Fee</th><th>Net payout</th><th>Payout email</th><th>Status</th><th>Review</th></tr></thead>
+              <tbody>
+                {withdrawals.withdrawals.map((item) => {
+                  const pending = String(item.status || '').toLowerCase().startsWith('pending');
+                  return (
+                    <tr key={item.id}>
+                      <td><strong>{item.account?.name || 'Deleted account'}</strong><small>{item.account?.email || item.userId}</small></td>
+                      <td>{Number(item.amountMcoins || 0).toLocaleString()} Mcoins<small>{new Date(item.createdAt).toLocaleString()}</small></td>
+                      <td>{Number(item.feeMcoins || 0).toLocaleString()} Mcoins</td>
+                      <td className='amount-cell'>{Number(item.netMcoins || 0).toLocaleString()} Mcoins</td>
+                      <td>{item.payoutEmail}</td>
+                      <td><span className='status-pill'>{String(item.status || 'pending').replaceAll('_', ' ')}</span>{item.reviewedAt && <small>{new Date(item.reviewedAt).toLocaleString()}</small>}</td>
+                      <td>{pending ? <div className='admin-user-actions'><button className='primary compact-action' type='button' onClick={() => reviewWithdrawal(item.id, 'paid')}>Mark paid</button><button className='ghost compact-action' type='button' onClick={() => reviewWithdrawal(item.id, 'rejected')}>Reject + refund</button></div> : <small>Completed</small>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!withdrawals.withdrawals.length && <div className='empty-state'>No cash-out requests yet.</div>}
+          </div>
+        </section>
+      )}
       {activeSection === 'policies' && policies && (
         <section className='admin-workspace'>
           <div className='admin-section-heading'>
             <div><p className='eyebrow'>Platform controls</p><h2>Rules and policies</h2><p>These values are enforced by the backend, not only displayed in the browser.</p></div>
           </div>
           <form className='admin-form-card' onSubmit={savePolicies}>
-            <label className='rights-check'><input type='checkbox' checked={policies.registrationEnabled} onChange={(event) => setPolicies({ ...policies, registrationEnabled: event.target.checked })} /><span>Allow new account registration</span></label>
-            <div className='admin-form-grid policy-form-grid'>
-              <label className='field'>Minimum signup age<input type='number' min='0' max='120' value={policies.minimumSignupAge} onChange={(event) => setPolicies({ ...policies, minimumSignupAge: Number(event.target.value) })} /><small>0 disables the age requirement</small></label>
-              <label className='field'>Minimum password length<input type='number' min='8' max='64' value={policies.minimumPasswordLength} onChange={(event) => setPolicies({ ...policies, minimumPasswordLength: Number(event.target.value) })} /></label>
-              <label className='field'>Minimum listing price<input type='number' min='1' step='10' value={policies.minimumMarketplacePriceMcoins} onChange={(event) => setPolicies({ ...policies, minimumMarketplacePriceMcoins: Number(event.target.value) })} /><small>Mcoins; rounded to a valid 10-Mcoin price</small></label>
-              <label className='field'>Minimum withdrawal<input type='number' min='1' value={policies.minimumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, minimumWithdrawalMcoins: Number(event.target.value) })} /><small>Mcoins</small></label>
-              <label className='field'>Welcome balance<input type='number' min='0' value={policies.welcomeMcoins} onChange={(event) => setPolicies({ ...policies, welcomeMcoins: Number(event.target.value) })} /><small>Applied only to new accounts</small></label>
-              <label className='field'>Support email<input type='email' value={policies.supportEmail} onChange={(event) => setPolicies({ ...policies, supportEmail: event.target.value })} /></label>
-              <label className='field'>Terms URL<input type='url' placeholder='https://' value={policies.termsUrl} onChange={(event) => setPolicies({ ...policies, termsUrl: event.target.value })} /></label>
-              <label className='field'>Privacy URL<input type='url' placeholder='https://' value={policies.privacyUrl} onChange={(event) => setPolicies({ ...policies, privacyUrl: event.target.value })} /></label>
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Accounts and registration</h3><p>Control who can register and the weakest password the backend accepts.</p></div></div>
+              <label className='rights-check'><input type='checkbox' checked={policies.registrationEnabled} onChange={(event) => setPolicies({ ...policies, registrationEnabled: event.target.checked })} /><span>Allow new account registration</span></label>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum signup age<input type='number' min='0' max='120' value={policies.minimumSignupAge} onChange={(event) => setPolicies({ ...policies, minimumSignupAge: Number(event.target.value) })} /><small>0 disables the age requirement</small></label>
+                <label className='field'>Minimum password length<input type='number' min='1' max='256' value={policies.minimumPasswordLength} onChange={(event) => setPolicies({ ...policies, minimumPasswordLength: Number(event.target.value) })} /><small>1 is allowed. Under 8 is easy to attack.</small></label>
+                <label className='field'>Welcome balance<input type='number' min='0' max='1000000000' step='0.01' value={policies.welcomeMcoins} onChange={(event) => setPolicies({ ...policies, welcomeMcoins: Number(event.target.value) })} /><small>Applied only to new accounts</small></label>
+              </div>
             </div>
-            <label className='field'>Registration notice<textarea rows='4' value={policies.policyNotice} onChange={(event) => setPolicies({ ...policies, policyNotice: event.target.value })} placeholder='Short rules shown before signup.' /></label>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Composers marketplace</h3><p>Listings can be sold, free, or pay each listener a reward funded by the composer.</p></div></div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum sale price<input type='number' min='0' max='1000000000' step='0.01' value={policies.minimumMarketplacePriceMcoins} onChange={(event) => setPolicies({ ...policies, minimumMarketplacePriceMcoins: Number(event.target.value) })} /><small>0 allows zero-price sales</small></label>
+                <label className='field'>Maximum sale price<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumMarketplacePriceMcoins} onChange={(event) => setPolicies({ ...policies, maximumMarketplacePriceMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Marketplace fee<input type='number' min='0' max='100' step='0.01' value={policies.marketplaceFeePercent} onChange={(event) => setPolicies({ ...policies, marketplaceFeePercent: Number(event.target.value) })} /><small>Percentage charged on new sale listings</small></label>
+                <label className='field'>Maximum reward per listener<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumListenerRewardMcoins} onChange={(event) => setPolicies({ ...policies, maximumListenerRewardMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Maximum reward outflow per listing<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumRewardOutflowPerListingMcoins} onChange={(event) => setPolicies({ ...policies, maximumRewardOutflowPerListingMcoins: Number(event.target.value) })} /><small>Total composer-funded rewards; 0 means unlimited</small></label>
+              </div>
+              <label className='rights-check'><input type='checkbox' checked={policies.listenerRewardsEnabled} onChange={(event) => setPolicies({ ...policies, listenerRewardsEnabled: event.target.checked })} /><span>Allow composers to pay people to claim and listen to their songs</span></label>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Cash-out and maximum outflow</h3><p>Limit individual requests, each account’s daily requests, and the platform’s combined pending payout exposure.</p></div></div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum withdrawal<input type='number' min='0' max='1000000000' step='0.01' value={policies.minimumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, minimumWithdrawalMcoins: Number(event.target.value) })} /><small>0 removes the policy minimum; requests must still exceed 0</small></label>
+                <label className='field'>Maximum per withdrawal<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, maximumWithdrawalMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Daily limit per account<input type='number' min='0' max='1000000000' step='0.01' value={policies.dailyWithdrawalLimitMcoins} onChange={(event) => setPolicies({ ...policies, dailyWithdrawalLimitMcoins: Number(event.target.value) })} /><small>Gross requested Mcoins; 0 means unlimited</small></label>
+                <label className='field'>Maximum pending platform outflow<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumPendingWithdrawalOutflowMcoins} onChange={(event) => setPolicies({ ...policies, maximumPendingWithdrawalOutflowMcoins: Number(event.target.value) })} /><small>Combined net pending payouts; 0 means unlimited</small></label>
+                <label className='field'>Cash-out fee<input type='number' min='0' max='100' step='0.01' value={policies.withdrawalFeePercent} onChange={(event) => setPolicies({ ...policies, withdrawalFeePercent: Number(event.target.value) })} /><small>Percentage retained by the platform</small></label>
+              </div>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Published policy details</h3><p>Support contacts and links shown to users.</p></div></div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Support email<input type='email' value={policies.supportEmail} onChange={(event) => setPolicies({ ...policies, supportEmail: event.target.value })} /></label>
+                <label className='field'>Terms URL<input type='url' placeholder='https://' value={policies.termsUrl} onChange={(event) => setPolicies({ ...policies, termsUrl: event.target.value })} /></label>
+                <label className='field'>Privacy URL<input type='url' placeholder='https://' value={policies.privacyUrl} onChange={(event) => setPolicies({ ...policies, privacyUrl: event.target.value })} /></label>
+              </div>
+              <label className='field'>Registration notice<textarea rows='4' value={policies.policyNotice} onChange={(event) => setPolicies({ ...policies, policyNotice: event.target.value })} placeholder='Short rules shown before signup.' /></label>
+            </div>
             <button className='primary' type='submit'>Save rules and policies</button>
           </form>
         </section>

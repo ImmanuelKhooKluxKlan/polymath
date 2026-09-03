@@ -10,13 +10,21 @@ const EXTENSIONS = {
   PDF: 'pdf',
 };
 
-function EditableListing({ listing, onSaved }) {
+function listingOfferLabel(listing) {
+  if (listing.listingMode === 'listener-reward') return `Pays ${Number(listing.listenerRewardMcoins || 0).toLocaleString()} Mcoins per listener`;
+  if (listing.listingMode === 'free') return 'Free';
+  return `${Number(listing.priceMcoins || 0).toLocaleString()} Mcoins`;
+}
+
+function EditableListing({ listing, policies, onSaved }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     artist: listing.artist,
     title: listing.title,
     instrument: listing.instrument,
+    listingMode: listing.listingMode || 'sale',
     priceMcoins: listing.priceMcoins,
+    listenerRewardMcoins: listing.listenerRewardMcoins || 1,
     description: listing.description || '',
   });
   const [status, setStatus] = useState('');
@@ -27,7 +35,7 @@ function EditableListing({ listing, onSaved }) {
     try {
       await apiRequest(`/api/listings/${listing.id}`, {
         method: 'PUT',
-        body: JSON.stringify({ ...form, priceMcoins: Number(form.priceMcoins) }),
+        body: JSON.stringify({ ...form, priceMcoins: Number(form.priceMcoins), listenerRewardMcoins: Number(form.listenerRewardMcoins) }),
       });
       setEditing(false);
       setStatus('Listing updated.');
@@ -47,7 +55,9 @@ function EditableListing({ listing, onSaved }) {
             {INSTRUMENTS.map((instrument) => <option key={instrument.id} value={instrument.id}>{instrument.label}</option>)}
           </select>
         </label>
-        <label className="field">Price in Mcoins<input type="number" min="10" max="100000" step="10" value={form.priceMcoins} onChange={(event) => setForm({ ...form, priceMcoins: event.target.value })} required /></label>
+        <label className="field">Listing type<select value={form.listingMode} onChange={(event) => setForm({ ...form, listingMode: event.target.value })}><option value="sale">Sell</option><option value="free">Free</option>{policies.listenerRewardsEnabled && <option value="listener-reward">Reward listeners</option>}</select></label>
+        {form.listingMode === 'sale' && <label className="field">Price in Mcoins<input type="number" min={policies.minimumMarketplacePriceMcoins || 0} max={policies.maximumMarketplacePriceMcoins || undefined} step="0.01" value={form.priceMcoins} onChange={(event) => setForm({ ...form, priceMcoins: event.target.value })} required /></label>}
+        {form.listingMode === 'listener-reward' && <label className="field">Pay each listener<input type="number" min="0.01" max={policies.maximumListenerRewardMcoins || undefined} step="0.01" value={form.listenerRewardMcoins} onChange={(event) => setForm({ ...form, listenerRewardMcoins: event.target.value })} required /></label>}
         <label className="field library-description-field">Description<textarea rows="3" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
         <div className="button-row">
           <button className="primary" type="submit">Save changes</button>
@@ -66,7 +76,8 @@ function EditableListing({ listing, onSaved }) {
         <span>{listing.artist} · {listing.format}</span>
       </div>
       <div className="seller-song-price">
-        <strong>{Number(listing.priceMcoins).toLocaleString()} Mcoins</strong>
+        <strong>{listingOfferLabel(listing)}</strong>
+        {listing.listingMode === 'listener-reward' && <small>{Number(listing.rewardPaidMcoins || 0).toLocaleString()} Mcoins paid so far</small>}
         <small>{listing.updatedAt ? `Updated ${new Date(listing.updatedAt).toLocaleDateString()}` : 'Published listing'}</small>
       </div>
       <button className="ghost" type="button" onClick={() => setEditing(true)}>Amend listing</button>
@@ -77,6 +88,7 @@ function EditableListing({ listing, onSaved }) {
 
 export default function YourSongsPage({ user, onNavigate }) {
   const [library, setLibrary] = useState({ personalSongs: [], purchasedSongs: [], sellingSongs: [] });
+  const [policies, setPolicies] = useState({ minimumMarketplacePriceMcoins: 0, maximumMarketplacePriceMcoins: 100000, listenerRewardsEnabled: true, maximumListenerRewardMcoins: 100 });
   const [status, setStatus] = useState('');
 
   const loadLibrary = useCallback(async () => {
@@ -95,6 +107,9 @@ export default function YourSongsPage({ user, onNavigate }) {
   }, [user]);
 
   useEffect(() => { loadLibrary(); }, [loadLibrary]);
+  useEffect(() => {
+    apiRequest('/api/catalog').then((data) => setPolicies((current) => ({ ...current, ...(data.policies || {}) }))).catch(() => {});
+  }, []);
 
   async function download(song) {
     try {
@@ -208,7 +223,7 @@ export default function YourSongsPage({ user, onNavigate }) {
           <span className="library-count">{library.sellingSongs.length}</span>
         </div>
         <div className="seller-song-list">
-          {library.sellingSongs.map((listing) => <EditableListing key={listing.id} listing={listing} onSaved={loadLibrary} />)}
+          {library.sellingSongs.map((listing) => <EditableListing key={listing.id} listing={listing} policies={policies} onSaved={loadLibrary} />)}
           {!library.sellingSongs.length && (
             <div className="empty-state">
               <p>You have not published any songs yet.</p>

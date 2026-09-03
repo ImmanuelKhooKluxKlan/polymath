@@ -1170,6 +1170,11 @@ button { -webkit-tap-highlight-color: transparent; }
 .database-table thead th { color: var(--muted); background: rgba(255,255,255,0.04); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; }
 .database-table tbody tr:hover { background: rgba(88,240,255,0.035); }
 .database-table tfoot th { border-bottom: 0; background: rgba(88,240,255,0.08); }
+.database-table td small { display: block; margin-top: 4px; color: var(--muted); }
+.payout-summary-grid article { display: grid; gap: 5px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); }
+.payout-summary-grid span { color: var(--muted); font-size: 0.76rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
+.payout-summary-grid strong { color: var(--gold); font-size: 1.25rem; }
+.payout-table { min-width: 1120px; }
 .amount-cell { color: var(--gold); font-weight: 900; white-space: nowrap; }
 .database-total { display: inline-block; margin-right: 18px; color: var(--gold); font-size: 1rem; }
 .status-pill { padding: 5px 9px; border-radius: 999px; background: rgba(87,229,151,0.12); color: #77efaa; font-size: 0.7rem; font-weight: 900; }
@@ -1194,7 +1199,7 @@ button { -webkit-tap-highlight-color: transparent; }
   top: 72px;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 7px;
   padding: 7px;
   border: 1px solid var(--line);
@@ -1259,6 +1264,17 @@ button { -webkit-tap-highlight-color: transparent; }
 .admin-form-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 13px; }
 .admin-form-card > .primary { justify-self: start; }
 .policy-form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.policy-control-group {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(139, 116, 255, 0.22);
+  border-radius: 18px;
+  background: rgba(139, 116, 255, 0.045);
+}
+.policy-control-heading h3,
+.policy-control-heading p { margin: 0; }
+.policy-control-heading p { margin-top: 5px; color: var(--muted); line-height: 1.45; }
 .promotion-list { display: grid; gap: 8px; }
 .promotion-row {
   display: grid;
