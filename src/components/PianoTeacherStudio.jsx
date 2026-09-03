@@ -19,6 +19,7 @@ function targetSentence(targets, showHands) {
 
 export default function PianoTeacherStudio({
   profiles = TEACHER_PROFILES,
+  performanceTier = 'balanced',
   teacherId,
   onTeacherChange,
   showHands,
@@ -84,7 +85,7 @@ export default function PianoTeacherStudio({
       </header>
 
       <div className="piano-teacher-workspace human-teacher-workspace">
-        <PoseableTeacherStage teacher={teacher} targetSummary={targetSentence(targets, showHands)} />
+        <PoseableTeacherStage teacher={teacher} targetSummary={targetSentence(targets, showHands)} performanceTier={performanceTier} />
 
         <div className="teacher-chat-panel">
           <div className="teacher-chat-heading">

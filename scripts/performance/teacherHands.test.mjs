@@ -15,6 +15,11 @@ import {
   teacherPoseById,
   TEACHER_POSES,
 } from '../../src/engine/teacherAvatarControls.js';
+import {
+  canonicalTeacherBone,
+  draggedJointRotation,
+  teacherRigPose,
+} from '../../src/engine/teacherRig.js';
 
 test('explicit metadata wins and pitch provides a safe fallback', () => {
   assert.equal(teacherHandForEvent({ note: 'C5', hand: 'left' }), 'left');
@@ -93,4 +98,20 @@ test('teacher pose controls remain bounded and always have a safe fallback', () 
   assert.deepEqual(clampTeacherOffset({ x: 900, y: -900 }, { maximumX: 120, maximumY: 80 }), { x: 120, y: -80 });
   assert.equal(clampTeacherDepth(9), 1.45);
   assert.equal(clampTeacherDepth(-2), 0.7);
+});
+
+test('3D teacher rigs recognise common human skeleton names', () => {
+  assert.equal(canonicalTeacherBone('mixamorigLeftArm'), 'upperArmL');
+  assert.equal(canonicalTeacherBone('mixamorigRightForeArm'), 'lowerArmR');
+  assert.equal(canonicalTeacherBone('LeftUpLeg'), 'upperLegL');
+  assert.equal(canonicalTeacherBone('RightFoot'), 'footR');
+  assert.equal(canonicalTeacherBone('Hips'), 'hips');
+});
+
+test('3D teacher joint dragging and pose fallback stay anatomically bounded', () => {
+  const rotation = draggedJointRotation('head', { x: 0, y: 0, z: 0 }, 20, -20);
+  assert.equal(rotation.x, -0.75);
+  assert.equal(rotation.y, 1.05);
+  assert.equal(teacherRigPose('kneel').joints.lowerLegL.x, 2.08);
+  assert.equal(teacherRigPose('unknown'), teacherRigPose('ready'));
 });

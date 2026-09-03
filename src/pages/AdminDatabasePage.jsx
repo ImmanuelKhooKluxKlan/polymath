@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiAssetUrl, apiRequest } from '../services/api.js';
 import { normalizeTeacherImage } from '../utils/teacherImage.js';
+import { validateTeacherGlbFile } from '../utils/teacherModel.js';
 import ModelLabPage from './ModelLabPage.jsx';
 
 const ADMIN_SECTIONS = [
@@ -131,6 +132,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [characterDraft, setCharacterDraft] = useState(EMPTY_CHARACTER);
   const [characterImage, setCharacterImage] = useState(null);
   const [characterImagePreview, setCharacterImagePreview] = useState('');
+  const [characterModel, setCharacterModel] = useState(null);
   const [characterBusy, setCharacterBusy] = useState(false);
   const [characterUploadVersion, setCharacterUploadVersion] = useState(0);
 
@@ -259,6 +261,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     const body = new FormData();
     Object.entries(characterDraft).forEach(([key, value]) => body.append(key, String(value)));
     body.append('image', characterImage, characterImage.name);
+    if (characterModel) body.append('model', characterModel, characterModel.name);
     setCharacterBusy(true);
     setStatus(`Publishing ${characterDraft.name || 'character'}...`);
     try {
@@ -268,6 +271,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       setCharacterDraft(EMPTY_CHARACTER);
       setCharacterImage(null);
       setCharacterImagePreview('');
+      setCharacterModel(null);
       setCharacterUploadVersion((current) => current + 1);
       window.dispatchEvent(new window.CustomEvent('polymath:virtual-teachers-changed'));
       setStatus(data.message);
@@ -278,9 +282,29 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     }
   }
 
+  async function chooseCharacterModel(event) {
+    const source = event.target.files?.[0];
+    if (!source) {
+      setCharacterModel(null);
+      return;
+    }
+    setCharacterBusy(true);
+    setStatus('Checking the 3D skeleton file...');
+    try {
+      setCharacterModel(await validateTeacherGlbFile(source));
+      setStatus('GLB header is valid. The backend will verify its human skeleton when you publish.');
+    } catch (error) {
+      setCharacterModel(null);
+      setStatus(error.message);
+      event.target.value = '';
+    } finally {
+      setCharacterBusy(false);
+    }
+  }
+
   async function deleteCharacter(character) {
     const confirmed = window.confirm(
-      `Delete ${character.name}?\n\nThis permanently removes the character and its uploaded image. This cannot be undone.`,
+      `Delete ${character.name}?\n\nThis permanently removes the character, portrait, and rigged model. This cannot be undone.`,
     );
     if (!confirmed) return;
     setCharacterBusy(true);
@@ -603,6 +627,14 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 </label>
                 <small>Images are contained, centred, and resized to 768 x 960 without stretching.</small>
               </div>
+              <div className='admin-character-model-upload'>
+                <div><strong>Optional articulated 3D body</strong><small>Upload a rigged binary glTF 2.0 model with named human bones. Maximum 25 MB.</small></div>
+                <label className='ghost admin-character-file-button'>
+                  {characterModel ? 'Replace GLB' : 'Choose rigged GLB'}
+                  <input key={`model-${characterUploadVersion}`} type='file' accept='.glb,model/gltf-binary' onChange={chooseCharacterModel} disabled={characterBusy} />
+                </label>
+                {characterModel && <span>{characterModel.name} · {(characterModel.size / 1048576).toFixed(1)} MB</span>}
+              </div>
               <div className='admin-form-grid'>
                 <label className='field'>Character name<input maxLength='50' value={characterDraft.name} onChange={(event) => setCharacterDraft({ ...characterDraft, name: event.target.value })} placeholder='Nova' required /></label>
                 <label className='field'>Teacher role<input maxLength='80' value={characterDraft.title} onChange={(event) => setCharacterDraft({ ...characterDraft, title: event.target.value })} placeholder='Performance coach' required /></label>
@@ -623,7 +655,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 {characters.map((character) => (
                   <article className='admin-character-row' key={character.id}>
                     <div className='admin-character-row-image'><img src={apiAssetUrl(character.imagePath)} alt={`${character.name} preview`} loading='lazy' /></div>
-                    <div><strong>{character.name}</strong><span>{character.title}</span><small>{character.description}</small>{character.requiresAdultConfirmation && <b>18+ confirmation</b>}</div>
+                    <div><strong>{character.name}</strong><span>{character.title}</span><small>{character.description}</small><div className='admin-character-badges'><b>{character.modelPath ? `Rigged 3D · ${character.rig?.jointCount || '?'} joints` : 'Procedural 3D body'}</b>{character.requiresAdultConfirmation && <b>18+ confirmation</b>}</div></div>
                     <button className='admin-character-delete' type='button' disabled={characterBusy} onClick={() => deleteCharacter(character)}>Delete</button>
                   </article>
                 ))}

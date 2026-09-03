@@ -106,6 +106,7 @@ const MAX_MEDIA_SECONDS = 10 * 60;
 const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS || 0)));
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
 const VIRTUAL_TEACHER_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const VIRTUAL_TEACHER_MODEL_MAX_BYTES = 25 * 1024 * 1024;
 const BUILT_IN_VIRTUAL_TEACHER_IDS = new Set(['nova', 'anakin', 'taylor', 'mace']);
 const MUSCRIPTOR_ENABLED = String(process.env.MUSCRIPTOR_ENABLED || 'false').trim().toLowerCase() === 'true';
 const MUSCRIPTOR_ADMIN_ONLY = String(
@@ -1838,20 +1839,28 @@ const mediaUpload = multer({
   },
 });
 
-const virtualTeacherImageUpload = multer({
+const virtualTeacherUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    files: 1,
+    files: 2,
     fields: 8,
-    fileSize: VIRTUAL_TEACHER_IMAGE_MAX_BYTES,
+    fileSize: VIRTUAL_TEACHER_MODEL_MAX_BYTES,
   },
   fileFilter(req, file, callback) {
-    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp']);
-    if (allowed.has(String(file.mimetype || '').toLowerCase())) {
+    const mimetype = String(file.mimetype || '').toLowerCase();
+    const extension = path.extname(String(file.originalname || '')).toLowerCase();
+    const isImage = file.fieldname === 'image'
+      && ['image/png', 'image/jpeg', 'image/webp'].includes(mimetype);
+    const isModel = file.fieldname === 'model'
+      && extension === '.glb'
+      && ['model/gltf-binary', 'application/octet-stream'].includes(mimetype);
+    if (isImage || isModel) {
       callback(null, true);
       return;
     }
-    const error = new Error('Upload a PNG, JPEG, or WebP character image.');
+    const error = new Error(file.fieldname === 'model'
+      ? 'The optional 3D model must be a binary glTF 2.0 (.glb) file.'
+      : 'Upload a PNG, JPEG, or WebP character image.');
     error.status = 400;
     callback(error);
   },
@@ -1868,6 +1877,59 @@ function virtualTeacherImageContentType(bytes) {
   return '';
 }
 
+function inspectVirtualTeacherGlb(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if (buffer.length < 20 || buffer.subarray(0, 4).toString('ascii') !== 'glTF') {
+    throw Object.assign(new Error('The uploaded model is not a valid binary glTF file.'), { status: 400 });
+  }
+  const version = buffer.readUInt32LE(4);
+  const declaredLength = buffer.readUInt32LE(8);
+  if (version !== 2 || declaredLength !== buffer.length) {
+    throw Object.assign(new Error('The character model must use binary glTF 2.0.'), { status: 400 });
+  }
+  const jsonLength = buffer.readUInt32LE(12);
+  const jsonType = buffer.readUInt32LE(16);
+  if (jsonType !== 0x4e4f534a || jsonLength < 2 || 20 + jsonLength > buffer.length) {
+    throw Object.assign(new Error('The GLB is missing its required JSON scene data.'), { status: 400 });
+  }
+  let document;
+  try {
+    document = JSON.parse(buffer.subarray(20, 20 + jsonLength).toString('utf8').trim());
+  } catch {
+    throw Object.assign(new Error('The GLB contains invalid scene data.'), { status: 400 });
+  }
+  if (String(document?.asset?.version || '') !== '2.0') {
+    throw Object.assign(new Error('The character model must declare glTF 2.0.'), { status: 400 });
+  }
+  const nodes = Array.isArray(document.nodes) ? document.nodes : [];
+  const skins = Array.isArray(document.skins) ? document.skins : [];
+  const meshes = Array.isArray(document.meshes) ? document.meshes : [];
+  if (nodes.length > 2500 || skins.length > 50 || meshes.length > 200 || (document.accessors || []).length > 5000) {
+    throw Object.assign(new Error('The GLB rig is too complex for safe browser playback.'), { status: 400 });
+  }
+  const externalResources = [
+    ...(Array.isArray(document.buffers) ? document.buffers : []),
+    ...(Array.isArray(document.images) ? document.images : []),
+  ].some((resource) => typeof resource?.uri === 'string' && resource.uri.trim());
+  if (externalResources) {
+    throw Object.assign(new Error('The GLB must contain all geometry and textures internally; external links are not allowed.'), { status: 400 });
+  }
+  const jointIndexes = new Set(skins.flatMap((skin) => Array.isArray(skin.joints) ? skin.joints : []));
+  if (!skins.length || !meshes.length || jointIndexes.size < 6) {
+    throw Object.assign(new Error('The GLB needs a skinned human rig with at least 6 joints and a mesh.'), { status: 400 });
+  }
+  const recognisedPatterns = [
+    /hip|pelvis/i, /spine|chest/i, /head/i, /(left|[_ .-]l).*arm|arm.*(left|[_ .-]l)/i,
+    /(right|[_ .-]r).*arm|arm.*(right|[_ .-]r)/i, /(left|right).*leg|leg.*(left|right)/i,
+  ];
+  const names = [...jointIndexes].map((index) => String(nodes[index]?.name || '')).filter(Boolean);
+  const recognised = recognisedPatterns.filter((pattern) => names.some((name) => pattern.test(name))).length;
+  if (recognised < 4) {
+    throw Object.assign(new Error('Use a human GLB rig with named hips, spine, head, arms, and legs.'), { status: 400 });
+  }
+  return { version, jointCount: jointIndexes.size, nodeCount: nodes.length, meshCount: meshes.length };
+}
+
 function publicVirtualTeacherCharacter(character) {
   return {
     id: character.id,
@@ -1878,6 +1940,10 @@ function publicVirtualTeacherCharacter(character) {
     armTone: character.armTone === 'dark' ? 'dark' : 'light',
     requiresAdultConfirmation: Boolean(character.requiresAdultConfirmation),
     imagePath: `/api/virtual-teachers/${encodeURIComponent(character.id)}/image?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`,
+    modelPath: character.modelKey
+      ? `/api/virtual-teachers/${encodeURIComponent(character.id)}/model?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`
+      : '',
+    rig: character.rig || null,
     custom: true,
     createdAt: character.createdAt,
     updatedAt: character.updatedAt || character.createdAt,
@@ -2496,6 +2562,25 @@ app.get('/api/virtual-teachers/:characterId/image', async (req, res, next) => {
   }
 });
 
+app.get('/api/virtual-teachers/:characterId/model', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const character = db.virtualTeacherCharacters.find((item) => item.id === req.params.characterId);
+    if (!character?.modelKey) return res.status(404).json({ error: 'Rigged character model not found.' });
+    const bytes = await ARTIFACT_STORE.getBuffer(character.modelKey);
+    res.setHeader('Content-Type', 'model/gltf-binary');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Rigged character model not found.' });
+    }
+    return next(error);
+  }
+});
+
 app.get('/api/admin/virtual-teachers', requireAuth, requireAdmin, async (req, res) => {
   res.json({
     characters: req.db.virtualTeacherCharacters
@@ -2509,9 +2594,13 @@ app.post(
   '/api/admin/virtual-teachers',
   requireAuth,
   requireAdmin,
-  virtualTeacherImageUpload.single('image'),
+  virtualTeacherUpload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'model', maxCount: 1 },
+  ]),
   async (req, res, next) => {
     let imageKey = '';
+    let modelKey = '';
     try {
       const name = String(req.body.name || '').trim().slice(0, 50);
       const title = String(req.body.title || '').trim().slice(0, 80);
@@ -2523,14 +2612,24 @@ app.post(
       if (title.length < 2) return res.status(400).json({ error: 'Add a short role or title.' });
       if (description.length < 5) return res.status(400).json({ error: 'Add a short character description.' });
       if (voice.length < 2) return res.status(400).json({ error: 'Describe the character voice or teaching style.' });
-      if (!req.file?.buffer?.length) return res.status(400).json({ error: 'Choose a character image.' });
-      const contentType = virtualTeacherImageContentType(req.file.buffer);
+      const imageFile = req.files?.image?.[0];
+      const modelFile = req.files?.model?.[0];
+      if (!imageFile?.buffer?.length) return res.status(400).json({ error: 'Choose a character image.' });
+      if (imageFile.buffer.length > VIRTUAL_TEACHER_IMAGE_MAX_BYTES) {
+        return res.status(400).json({ error: 'The character image must be 8 MB or smaller.' });
+      }
+      const contentType = virtualTeacherImageContentType(imageFile.buffer);
       if (!contentType) return res.status(400).json({ error: 'The uploaded file is not a valid PNG, JPEG, or WebP image.' });
+      const rig = modelFile?.buffer?.length ? inspectVirtualTeacherGlb(modelFile.buffer) : null;
 
       const characterId = id('virtual_teacher');
       const extension = contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp';
       imageKey = artifactKey(`virtual-teachers/${characterId}`, `portrait-${characterId}.${extension}`);
-      await ARTIFACT_STORE.putBuffer(imageKey, req.file.buffer, contentType);
+      await ARTIFACT_STORE.putBuffer(imageKey, imageFile.buffer, contentType);
+      if (modelFile?.buffer?.length) {
+        modelKey = artifactKey(`virtual-teachers/${characterId}`, `rig-${characterId}.glb`);
+        await ARTIFACT_STORE.putBuffer(modelKey, modelFile.buffer, 'model/gltf-binary');
+      }
       const now = new Date().toISOString();
       const character = {
         id: characterId,
@@ -2542,6 +2641,8 @@ app.post(
         requiresAdultConfirmation,
         imageKey,
         contentType,
+        modelKey,
+        rig,
         createdBy: req.user.id,
         createdAt: now,
         updatedAt: now,
@@ -2554,6 +2655,7 @@ app.post(
       });
     } catch (error) {
       if (imageKey) await safeRemoveArtifact(imageKey).catch(() => {});
+      if (modelKey) await safeRemoveArtifact(modelKey).catch(() => {});
       return next(error);
     }
   },
@@ -2572,6 +2674,11 @@ app.delete('/api/admin/virtual-teachers/:characterId', requireAuth, requireAdmin
     if (character.imageKey) {
       await safeRemoveArtifact(character.imageKey).catch((error) => {
         console.error(`Could not remove deleted virtual teacher artifact ${character.imageKey}:`, error);
+      });
+    }
+    if (character.modelKey) {
+      await safeRemoveArtifact(character.modelKey).catch((error) => {
+        console.error(`Could not remove deleted virtual teacher model ${character.modelKey}:`, error);
       });
     }
     return res.json({ id: character.id, message: `${character.name} was deleted.` });
@@ -6206,7 +6313,7 @@ if (IS_PRODUCTION) {
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     const message = error.code === 'LIMIT_FILE_SIZE'
-      ? 'The character image must be 8 MB or smaller.'
+      ? 'The upload is too large. Images may be 8 MB and rigged GLB models may be 25 MB.'
       : 'The character upload form was not accepted. Choose one image and try again.';
     return res.status(400).json({ error: message, code: error.code });
   }

@@ -192,6 +192,7 @@ export default function App() {
     ...customTeacherProfiles.map((profile) => ({
       ...profile,
       image: apiAssetUrl(profile.imagePath),
+      modelUrl: profile.modelPath ? apiAssetUrl(profile.modelPath) : '',
       armImage: profile.armTone === 'dark'
         ? '/teachers/arm-dark-full-v1.webp'
         : '/teachers/arm-light-full-v1.webp',
@@ -1131,6 +1132,7 @@ export default function App() {
             {teachingMode === 'learn' && (
               <PianoTeacherStudio
                 profiles={teacherProfiles}
+                performanceTier={performanceTier}
                 teacherId={pianoTeacher.id}
                 onTeacherChange={setPianoTeacherId}
                 showHands={teacherHandsEnabled}

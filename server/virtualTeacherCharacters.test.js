@@ -15,6 +15,37 @@ process.env.ARTIFACT_S3_BUCKET = '';
 
 const { app } = require('./server');
 
+function testRiggedGlb() {
+  const document = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [
+      { name: 'Hips', mesh: 0, skin: 0, children: [1, 3, 4, 5, 6] },
+      { name: 'Spine', children: [2] },
+      { name: 'Head' },
+      { name: 'LeftArm' },
+      { name: 'RightArm' },
+      { name: 'LeftUpLeg' },
+      { name: 'RightUpLeg' },
+    ],
+    skins: [{ joints: [0, 1, 2, 3, 4, 5, 6] }],
+    meshes: [{ primitives: [] }],
+  };
+  const source = Buffer.from(JSON.stringify(document));
+  const paddedLength = Math.ceil(source.length / 4) * 4;
+  const json = Buffer.alloc(paddedLength, 0x20);
+  source.copy(json);
+  const glb = Buffer.alloc(20 + json.length);
+  glb.write('glTF', 0, 'ascii');
+  glb.writeUInt32LE(2, 4);
+  glb.writeUInt32LE(glb.length, 8);
+  glb.writeUInt32LE(json.length, 12);
+  glb.writeUInt32LE(0x4e4f534a, 16);
+  json.copy(glb, 20);
+  return glb;
+}
+
 test('administrators can publish and delete durable custom virtual teachers', async (context) => {
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -68,6 +99,8 @@ test('administrators can publish and delete durable custom virtual teachers', as
   form.append('armTone', 'dark');
   form.append('requiresAdultConfirmation', 'false');
   form.append('image', new Blob([onePixelPng], { type: 'image/png' }), 'aria.png');
+  const riggedGlb = testRiggedGlb();
+  form.append('model', new Blob([riggedGlb], { type: 'model/gltf-binary' }), 'aria.glb');
   const createdResponse = await fetch(`${baseUrl}/api/admin/virtual-teachers`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
@@ -77,6 +110,8 @@ test('administrators can publish and delete durable custom virtual teachers', as
   assert.equal(createdResponse.status, 201);
   assert.equal(created.character.name, 'Aria');
   assert.equal(created.character.armTone, 'dark');
+  assert.equal(created.character.rig.jointCount, 7);
+  assert.match(created.character.modelPath, /\/model\?/);
 
   const publicList = await jsonApi('/api/virtual-teachers');
   assert.equal(publicList.status, 200);
@@ -85,6 +120,10 @@ test('administrators can publish and delete durable custom virtual teachers', as
   assert.equal(imageResponse.status, 200);
   assert.equal(imageResponse.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), onePixelPng);
+  const modelResponse = await fetch(`${baseUrl}${created.character.modelPath}`);
+  assert.equal(modelResponse.status, 200);
+  assert.equal(modelResponse.headers.get('content-type'), 'model/gltf-binary');
+  assert.deepEqual(Buffer.from(await modelResponse.arrayBuffer()), riggedGlb);
 
   const builtInDelete = await jsonApi('/api/admin/virtual-teachers/anakin', { method: 'DELETE', token });
   assert.equal(builtInDelete.status, 403);
@@ -95,5 +134,6 @@ test('administrators can publish and delete durable custom virtual teachers', as
   assert.deepEqual(emptyList.data.characters, []);
   const deletedImage = await fetch(`${baseUrl}${created.character.imagePath}`);
   assert.equal(deletedImage.status, 404);
+  const deletedModel = await fetch(`${baseUrl}${created.character.modelPath}`);
+  assert.equal(deletedModel.status, 404);
 });
-

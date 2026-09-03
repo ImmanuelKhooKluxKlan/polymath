@@ -5,6 +5,7 @@ import {
   teacherPoseById,
   TEACHER_POSES,
 } from '../engine/teacherAvatarControls.js';
+import ArticulatedTeacherCanvas from './ArticulatedTeacherCanvas.jsx';
 
 const INITIAL_POSITION = Object.freeze({ x: 0, y: 0 });
 
@@ -81,62 +82,23 @@ function TeacherJoystick({ onMove, onReset }) {
   );
 }
 
-export default function PoseableTeacherStage({ teacher, targetSummary }) {
+export default function PoseableTeacherStage({ teacher, targetSummary, performanceTier = 'balanced' }) {
   const stageRef = useRef(null);
-  const dragRef = useRef(null);
   const [poseId, setPoseId] = useState('ready');
   const [motionKey, setMotionKey] = useState(0);
   const [position, setPosition] = useState(INITIAL_POSITION);
   const [depth, setDepth] = useState(1);
-  const [dragging, setDragging] = useState(false);
   const pose = teacherPoseById(poseId);
 
   useEffect(() => {
     setPoseId('ready');
     setPosition(INITIAL_POSITION);
     setDepth(1);
-    setDragging(false);
   }, [teacher.id]);
 
   function selectPose(nextPoseId) {
     setPoseId(nextPoseId);
     setMotionKey((current) => current + 1);
-  }
-
-  function beginTeacherDrag(event) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      position,
-    };
-    setDragging(true);
-  }
-
-  function moveTeacherDrag(event) {
-    const drag = dragRef.current;
-    const stage = stageRef.current;
-    if (!drag || drag.pointerId !== event.pointerId || !stage) return;
-    const bounds = stage.getBoundingClientRect();
-    setPosition(clampTeacherOffset({
-      x: drag.position.x + event.clientX - drag.clientX,
-      y: drag.position.y + event.clientY - drag.clientY,
-    }, {
-      maximumX: Math.max(0, bounds.width * 0.36),
-      maximumY: Math.max(0, bounds.height * 0.27),
-    }));
-  }
-
-  function endTeacherDrag(event) {
-    if (dragRef.current?.pointerId !== event.pointerId) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    dragRef.current = null;
-    setDragging(false);
   }
 
   function moveWithJoystick({ horizontal = 0, depth: depthChange = 0 }) {
@@ -166,32 +128,15 @@ export default function PoseableTeacherStage({ teacher, targetSummary }) {
         aria-label={`${teacher.name} interactive teacher stage`}
       >
         <div className="poseable-teacher-stage-glow" />
-        <div className="poseable-teacher-instruction">Touch and drag {teacher.name}</div>
-        <div
-          key={`${teacher.id}-${pose.id}-${motionKey}`}
-          className={`poseable-teacher-rig is-pose-${pose.id} ${dragging ? 'is-dragging' : ''}`}
-          style={{
-            '--teacher-x': `${position.x}px`,
-            '--teacher-y': `${position.y}px`,
-            '--teacher-pose-y': pose.translateY || '0%',
-            '--teacher-rotation': `${pose.rotation}deg`,
-            '--teacher-scale-x': Number(pose.scaleX || pose.scale || 1) * depth,
-            '--teacher-scale-y': Number(pose.scaleY || pose.scale || 1) * depth,
-          }}
-          role="img"
-          aria-label={`${teacher.name}, draggable virtual piano teacher`}
-          onPointerDown={beginTeacherDrag}
-          onPointerMove={moveTeacherDrag}
-          onPointerUp={endTeacherDrag}
-          onPointerCancel={endTeacherDrag}
-        >
-          <img
-            className="poseable-teacher-body"
-            src={teacher.image}
-            alt=""
-            draggable="false"
-          />
-        </div>
+        <div className="poseable-teacher-instruction">Touch a limb and drag</div>
+        <ArticulatedTeacherCanvas
+          teacher={teacher}
+          poseId={pose.id}
+          motionKey={motionKey}
+          position={position}
+          depth={depth}
+          performanceTier={performanceTier}
+        />
         <div className="poseable-teacher-caption">
           <strong>{teacher.name}</strong>
           <span>{teacher.description}</span>
