@@ -10,6 +10,7 @@ import { getSongDuration, normalizeSong } from '../engine/scheduler.js';
 import { parseUploadedSongFile } from '../utils/songParser.js';
 import { apiRequest, fetchProtectedFile } from '../services/api.js';
 import { analyzeLearningSections } from '../utils/learningSections.js';
+import { downloadSongJson } from '../utils/exporters.js';
 
 const LOOKAHEAD_SECONDS = 0.16;
 const SCHEDULER_INTERVAL_MS = 25;
@@ -519,6 +520,9 @@ export default function EnsemblePage({ user, setUser, onNavigate }) {
                 {availableSongs.map((candidate) => <option key={candidate.title} value={candidate.title}>{candidate.title}</option>)}
               </select>
             </label>
+            <button className="ghost song-download" type="button" onClick={() => downloadSongJson(song)}>
+              Download song
+            </button>
           </MusicChoiceDisclosure>
 
           <div className="teacher-mode-badge">

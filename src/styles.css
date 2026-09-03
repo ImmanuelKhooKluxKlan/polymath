@@ -2619,6 +2619,10 @@ html, body, #root { width: 100%; max-width: 100%; overflow-x: clip; }
   min-height: 48px;
   font-size: 0.96rem;
 }
+.song-download {
+  width: 100%;
+  min-height: 44px;
+}
 .player-settings {
   margin-top: 8px;
   padding: 12px 14px;

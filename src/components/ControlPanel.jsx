@@ -1,4 +1,5 @@
 import MusicChoiceDisclosure from './MusicChoiceDisclosure.jsx';
+import { downloadSongJson } from '../utils/exporters.js';
 
 function songLabel(song) {
   const artist = String(song?.artist || song?.composer || '').trim();
@@ -32,6 +33,9 @@ export default function ControlPanel({
 
         <button className="primary song-play-now" type="button" onClick={onPlayNow}>
           Play now
+        </button>
+        <button className="ghost song-download" type="button" onClick={() => downloadSongJson(song)}>
+          Download song
         </button>
       </MusicChoiceDisclosure>
     </aside>

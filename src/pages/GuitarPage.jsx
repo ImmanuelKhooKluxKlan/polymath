@@ -9,6 +9,7 @@ import { assignNotesToStrings } from '../engine/guitarVoicing.js';
 import { parseUploadedSongFile } from '../utils/songParser.js';
 import { apiRequest, fetchProtectedFile } from '../services/api.js';
 import { analyzeLearningSections } from '../utils/learningSections.js';
+import { downloadSongJson } from '../utils/exporters.js';
 
 const AUDIO_LOOKAHEAD_SECONDS = 0.14;
 const SCHEDULER_INTERVAL_MS = 25;
@@ -660,6 +661,9 @@ export default function GuitarPage({ user, setUser, onNavigate }) {
 
             <button className="primary song-play-now" type="button" onClick={focusGuitarPlayer}>
               Play now
+            </button>
+            <button className="ghost song-download" type="button" onClick={() => downloadSongJson(lesson)}>
+              Download song
             </button>
           </MusicChoiceDisclosure>
         </aside>
