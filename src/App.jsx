@@ -908,14 +908,6 @@ export default function App() {
         )}
 
         <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''}`}>
-          <div className='mobile-flow-guide mobile-source-guide'>
-            <span>1</span>
-            <div>
-              <strong>Choose what to play</strong>
-              <small>Play an available song or upload a music sheet, audio file, or video.</small>
-            </div>
-          </div>
-
           <ControlPanel
             song={song}
             songs={songs}
@@ -927,14 +919,6 @@ export default function App() {
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
           />
-
-          <div className='mobile-flow-guide mobile-player-guide'>
-            <span>2</span>
-            <div>
-              <strong>Play and learn</strong>
-              <small>Follow the falling notes, then use the keyboard and controls below.</small>
-            </div>
-          </div>
           <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
             <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} performanceTier={performanceTier} />
             <div className="piano-scroll-wrap">

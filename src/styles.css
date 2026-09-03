@@ -4240,8 +4240,7 @@ details[open] > summary {
 .form-status,
 .translation-footnote,
 .muscriptor-license-note,
-.media-rights-check span,
-.mobile-flow-guide small {
+.media-rights-check span {
   max-width: 100%;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -4291,8 +4290,6 @@ details[open] > summary {
     font-size: 0.69rem;
   }
 
-  .mobile-flow-guide strong { font-size: 0.82rem; }
-  .mobile-flow-guide small { font-size: 0.68rem; line-height: 1.3; }
   .control-panel .muted,
   .uploader-card .muted { font-size: 0.74rem; }
 }
@@ -4712,8 +4709,7 @@ details[open] > summary {
   }
 }
 
-/* Guided song-first flow for phones and tablets. */
-.mobile-flow-guide,
+/* Song-first flow for phones and tablets. */
 .mobile-player-anchor { display: none; }
 
 /* Tablet and half-screen navigation must remain one clean row. Account actions
@@ -4743,35 +4739,8 @@ details[open] > summary {
 @media (max-width: 1100px) {
   .studio-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
 
-  .mobile-flow-guide {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 13px 14px;
-    border: 1px solid rgba(88, 240, 255, 0.24);
-    border-radius: 16px;
-    color: var(--text);
-    background: linear-gradient(135deg, rgba(88, 240, 255, 0.08), rgba(166, 107, 255, 0.1));
-  }
-  .mobile-flow-guide > span {
-    display: grid;
-    flex: 0 0 34px;
-    width: 34px;
-    height: 34px;
-    place-items: center;
-    border-radius: 50%;
-    color: #071021;
-    background: linear-gradient(135deg, var(--cyan), #9fc7ff);
-    font-weight: 950;
-  }
-  .mobile-flow-guide > div { display: grid; gap: 2px; min-width: 0; }
-  .mobile-flow-guide strong { font-size: 0.92rem; }
-  .mobile-flow-guide small { color: var(--muted); line-height: 1.35; }
-
-  .mobile-source-guide { order: 0; }
   .control-panel { order: 1; }
   .uploader-card { order: 2; }
-  .mobile-player-guide { order: 3; margin-top: 4px; }
   .mobile-player-anchor {
     display: block;
     order: 4;
@@ -4787,8 +4756,6 @@ details[open] > summary {
 }
 
 @media (max-width: 720px) {
-  .mobile-flow-guide { padding: 12px; border-radius: 14px; }
-  .mobile-flow-guide > span { width: 31px; height: 31px; flex-basis: 31px; }
   .mobile-player-anchor { scroll-margin-top: 62px; }
   .visual-stack { scroll-margin-top: 62px; }
   .guitar-visual-stack { scroll-margin-top: 62px; }
@@ -4837,7 +4804,6 @@ details[open] > summary {
 .app-root button > small,
 .upload-mode-option > strong,
 .upload-mode-option > small,
-.mobile-flow-guide small,
 .form-status {
   min-width: 0;
   max-width: 100%;
@@ -4856,8 +4822,7 @@ details[open] > summary {
   .learn-mode-panel,
   .control-panel,
   .uploader-card,
-  .visual-stack,
-  .mobile-flow-guide {
+  .visual-stack {
     width: 100%;
     min-width: 0;
     max-width: 100%;
@@ -4876,8 +4841,6 @@ details[open] > summary {
 @media (max-width: 390px) {
   .nav-links > button,
   .nav-more > summary { padding-inline: 6px; font-size: 0.69rem; }
-  .mobile-flow-guide strong { font-size: 0.82rem; }
-  .mobile-flow-guide small { font-size: 0.68rem; line-height: 1.3; }
   .dock-progress {
     grid-template-columns: 34px minmax(0, 1fr) 34px;
     gap: 5px;
