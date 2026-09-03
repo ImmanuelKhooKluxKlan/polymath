@@ -12,6 +12,7 @@
     "align:notes": "node scripts/alignment/noteCoordinateAligner.mjs",
     "test:alignment": "node --test scripts/alignment/noteCoordinateAligner.test.mjs",
     "test:performance": "node --test scripts/performance/devicePerformance.test.mjs",
+    "test:teacher-hands": "node --test scripts/performance/teacherHands.test.mjs",
     "test:guitar-voicing": "node --test scripts/performance/guitarVoicing.test.mjs",
     "test:auth-phone": "node --test scripts/auth/phoneNumbers.test.mjs",
     "test:omr": "python -m unittest discover -s server/omr/tests -p test_*.py",

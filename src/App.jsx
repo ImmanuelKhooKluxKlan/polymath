@@ -7,6 +7,7 @@ import PianoKeyboard, { keyboardMap } from './components/PianoKeyboard.jsx';
 import SongUploader from './components/SongUploader.jsx';
 import TransportDock from './components/TransportDock.jsx';
 import LearnModePanel from './components/LearnModePanel.jsx';
+import PianoTeacherStudio from './components/PianoTeacherStudio.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import {
@@ -1060,6 +1061,14 @@ export default function App() {
                 </label>
               </div>
             </details>
+            {teachingMode === 'learn' && (
+              <PianoTeacherStudio
+                song={teachingSong}
+                currentTime={currentTime}
+                isPlaying={isPlaying}
+                handMode={pianoHandMode}
+              />
+            )}
           </div>
 
           <SongUploader
