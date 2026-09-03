@@ -34,11 +34,66 @@ class PianoLegatoTests(unittest.TestCase):
             if arranged['arrangementRole'] == 'harmony'
         ]
 
-        self.assertEqual(result['pianoArrangement']['version'], 3)
+        self.assertEqual(result['pianoArrangement']['version'], 4)
         self.assertGreater(result['pianoArrangement']['legatoExtendedNotes'], 0)
         self.assertEqual(result['performance']['defaultAutoplayReleaseSeconds'], 0.62)
         self.assertTrue(any(arranged['duration'] >= 0.4 for arranged in harmony))
         self.assertGreaterEqual(len(harmony), 8)
+
+    def test_places_melody_in_front_and_softens_left_hand(self):
+        notes = []
+        for index in range(36):
+            onset = index * 0.24
+            notes.extend(
+                [
+                    note(43, onset, 'electric_bass', duration=0.5, velocity=0.78),
+                    note(55, onset, 'clean_electric_guitar', duration=0.35, velocity=0.78),
+                    note(64, onset, 'clean_electric_guitar', duration=0.35, velocity=0.78),
+                    note(72 + index % 3, onset, 'voice', duration=0.42, velocity=0.78),
+                ]
+            )
+
+        result = arrange_payload({'title': 'Melody balance fixture', 'notes': notes}, 'full')
+        melody = [item for item in result['notes'] if item['arrangementRole'] == 'melody']
+        bass = [item for item in result['notes'] if item['arrangementRole'] == 'bass']
+        left = [item for item in result['notes'] if item['midi'] < 60]
+        right = [item for item in result['notes'] if item['midi'] >= 60]
+        expression = result['pianoArrangement']['expression']
+
+        self.assertTrue(melody)
+        self.assertTrue(bass)
+        self.assertGreater(min(item['velocity'] for item in melody), max(item['velocity'] for item in bass))
+        self.assertGreater(
+            sum(item['velocity'] for item in right) / len(right),
+            sum(item['velocity'] for item in left) / len(left),
+        )
+        self.assertGreater(expression['rightToLeftVelocityRatio'], 1.2)
+        self.assertTrue(result['performance']['melodyForwardDynamics'])
+        self.assertEqual(result['performance']['profile'], 'polymath-piano-arranger-v4')
+        self.assertEqual(result['arrangementProfile'], 'piano-reduction-with-midi-phrasing-v4')
+
+    def test_preserved_piano_gets_register_balance_without_clipping(self):
+        notes = []
+        for index in range(60):
+            onset = index * 0.18
+            notes.extend(
+                [
+                    note(48 + index % 4, onset, 'acoustic_piano', duration=0.45, velocity=0.99),
+                    note(67 + index % 5, onset, 'acoustic_piano', duration=0.38, velocity=0.99),
+                ]
+            )
+
+        result = arrange_payload({'title': 'Piano register fixture', 'notes': notes}, 'full')
+        left = [item for item in result['notes'] if item['hand'] == 'left']
+        right = [item for item in result['notes'] if item['hand'] == 'right']
+
+        self.assertEqual(result['pianoArrangement']['profile'], 'acoustic-piano-preserve')
+        self.assertGreater(min(item['velocity'] for item in right), max(item['velocity'] for item in left))
+        self.assertLess(max(item['velocity'] for item in right), 1.0)
+        self.assertGreater(
+            result['pianoArrangement']['expression']['rightToLeftVelocityRatio'],
+            1.2,
+        )
 
 
 class PianoArrangerTests(unittest.TestCase):

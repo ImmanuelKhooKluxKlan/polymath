@@ -36,6 +36,19 @@ MAX_DIRECT_PIANO_NOTES_PER_SECOND = 12
 MAX_HARMONY_PITCH_CLASSES = 4
 MAX_DIRECT_CLEANUP_PRESSURE = 0.18
 
+# A piano reduction needs orchestration dynamics, not only the model's raw
+# confidence velocity.  Full mixes frequently arrive with every event at the
+# same (or almost the same) velocity, and pushing the melody to 1.0 only makes
+# the browser compressor flatten the whole arrangement.  These deliberately
+# separated bands leave headroom while keeping the sung/top line in front.
+MELODY_VELOCITY_RANGE = (0.84, 0.96)
+RIGHT_HAND_VELOCITY_RANGE = (0.60, 0.76)
+LEFT_HAND_VELOCITY_RANGE = (0.40, 0.57)
+BASS_VELOCITY_RANGE = (0.34, 0.50)
+SOURCE_RIGHT_VELOCITY_RANGE = (0.64, 0.86)
+SOURCE_LEFT_VELOCITY_RANGE = (0.42, 0.59)
+EXPRESSION_ONSET_WINDOW_SECONDS = 0.055
+
 PIANO_INSTRUMENTS = {"acoustic_piano", "electric_piano"}
 PERCUSSION_INSTRUMENTS = {"drums", "timpani"}
 BASS_INSTRUMENTS = {"acoustic_bass", "electric_bass", "contrabass"}
@@ -180,6 +193,144 @@ def grouped_by_window(
     for note in notes:
         groups[round(note["time"] / window_seconds)].append(note)
     return [groups[index] for index in sorted(groups)]
+
+
+def quantile(values: list[float], fraction: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = int(round((len(ordered) - 1) * clamp(fraction, 0.0, 1.0)))
+    return ordered[position]
+
+
+def average(values: Iterable[float]) -> float:
+    numbers = list(values)
+    return sum(numbers) / len(numbers) if numbers else 0.0
+
+
+def expression_role(note: dict[str, Any]) -> str:
+    role = note.get("arrangementRole")
+    if role == "melody":
+        return "melody"
+    if role == "bass":
+        return "bass"
+    if note["midi"] < 60:
+        return "source_left" if role == "source_piano" else "left_hand"
+    return "source_right" if role == "source_piano" else "right_hand"
+
+
+def shape_melody_forward_expression(
+    notes: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Make the sung/top line clear without clipping or flattening dynamics.
+
+    MuScriptor's velocities are useful confidence/evidence, but a separated
+    full mix can give nearly every event the same value.  We retain any real
+    source contour, mix in a small duration accent, and place each musical
+    role into a non-overlapping performance band.  The highest right-hand note
+    at an onset receives a subtle top-voice accent; explicit vocal melody gets
+    the strongest band automatically.
+    """
+    if not notes:
+        return notes, {
+            "profile": "melody-forward-v1",
+            "shapedNotes": 0,
+            "rightHandMeanVelocity": 0.0,
+            "leftHandMeanVelocity": 0.0,
+            "rightToLeftVelocityRatio": 0.0,
+        }
+
+    shaped = [dict(note) for note in notes]
+    source_velocities = [note["velocity"] for note in shaped]
+    quiet = quantile(source_velocities, 0.10)
+    loud = quantile(source_velocities, 0.90)
+    useful_source_range = loud - quiet >= 0.06
+
+    top_voice_ids: set[int] = set()
+    for group in grouped_by_window(shaped, EXPRESSION_ONSET_WINDOW_SECONDS):
+        right_hand = [note for note in group if note["midi"] >= 60]
+        if right_hand:
+            top = max(
+                right_hand,
+                key=lambda note: (
+                    note.get("arrangementRole") == "melody",
+                    note["midi"],
+                    note["duration"],
+                ),
+            )
+            top_voice_ids.add(id(top))
+
+    velocity_ranges = {
+        "melody": MELODY_VELOCITY_RANGE,
+        "right_hand": RIGHT_HAND_VELOCITY_RANGE,
+        "left_hand": LEFT_HAND_VELOCITY_RANGE,
+        "bass": BASS_VELOCITY_RANGE,
+        "source_right": SOURCE_RIGHT_VELOCITY_RANGE,
+        "source_left": SOURCE_LEFT_VELOCITY_RANGE,
+    }
+    role_velocities: dict[str, list[float]] = defaultdict(list)
+    original_velocities: list[float] = []
+
+    for note in shaped:
+        original = note["velocity"]
+        original_velocities.append(original)
+        if useful_source_range:
+            source_contour = clamp((original - quiet) / (loud - quiet), 0.0, 1.0)
+        else:
+            source_contour = 0.50
+
+        # Longer notes normally carry more lyrical weight.  This is a small
+        # accent only; it cannot override the melody/accompaniment hierarchy.
+        duration_accent = clamp(
+            (math.sqrt(note["duration"]) - math.sqrt(MIN_NOTE_SECONDS))
+            / (math.sqrt(1.6) - math.sqrt(MIN_NOTE_SECONDS)),
+            0.0,
+            1.0,
+        )
+        expression = 0.72 * source_contour + 0.28 * duration_accent
+        role = expression_role(note)
+        minimum, maximum = velocity_ranges[role]
+        velocity = minimum + (maximum - minimum) * expression
+
+        # Bring out a chord's upper voice without treating every high harmony
+        # tone as if it were the singer.
+        if id(note) in top_voice_ids and role in {"right_hand", "source_right"}:
+            velocity += 0.035
+
+        note["velocity"] = round_number(clamp(velocity, minimum, maximum), 3)
+        note["hand"] = "left" if note["midi"] < 60 else "right"
+        role_velocities[role].append(note["velocity"])
+
+    right_velocities = [
+        note["velocity"] for note in shaped if note["midi"] >= 60
+    ]
+    left_velocities = [
+        note["velocity"] for note in shaped if note["midi"] < 60
+    ]
+    right_mean = average(right_velocities)
+    left_mean = average(left_velocities)
+    return shaped, {
+        "profile": "melody-forward-v1",
+        "shapedNotes": len(shaped),
+        "sourceVelocityRangeWasUsable": useful_source_range,
+        "sourceVelocityP10": round_number(quiet, 3),
+        "sourceVelocityP90": round_number(loud, 3),
+        "inputMeanVelocity": round_number(average(original_velocities), 3),
+        "rightHandMeanVelocity": round_number(right_mean, 3),
+        "leftHandMeanVelocity": round_number(left_mean, 3),
+        "rightToLeftVelocityRatio": round_number(
+            right_mean / left_mean if left_mean else 0.0,
+            3,
+        ),
+        "roleMeanVelocities": {
+            role: round_number(average(values), 3)
+            for role, values in sorted(role_velocities.items())
+        },
+        "velocityBands": {
+            role: [minimum, maximum]
+            for role, (minimum, maximum) in velocity_ranges.items()
+        },
+    }
 
 
 def arranged_note(
@@ -550,6 +701,8 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
             density_limited
         )
 
+    arranged_notes, expression = shape_melody_forward_expression(arranged_notes)
+
     vocal_melody_notes = sum(
         1
         for note in arranged_notes
@@ -561,6 +714,7 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
     output["notes"] = arranged_notes
     output["instrumentGroups"] = ["acoustic_piano"]
     output["vocalMelodyIncluded"] = vocal_melody_notes > 0
+    output["arrangementProfile"] = "piano-reduction-with-midi-phrasing-v4"
     output["performance"] = {
         **(payload.get("performance") or {}),
         "profile": "polymath-piano-arranger-v1",
@@ -602,13 +756,15 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
         "arrangerProfile": arranger_profile,
         "arrangedNotesPerSecond": round_number(notes_per_second(arranged_notes), 3),
     }
-    output['performance']['profile'] = 'polymath-piano-arranger-v3'
+    output['performance']['profile'] = 'polymath-piano-arranger-v4'
     output['performance']['defaultAutoplayReleaseSeconds'] = 0.62
-    output['pianoArrangement']['version'] = 3
+    output['performance']['melodyForwardDynamics'] = True
+    output['pianoArrangement']['version'] = 4
     output['pianoArrangement']['maximumHarmonyPitchClasses'] = (
         MAX_HARMONY_PITCH_CLASSES
     )
     output['pianoArrangement']['legatoExtendedNotes'] = legato_extended
+    output['pianoArrangement']['expression'] = expression
     return output
 
 
