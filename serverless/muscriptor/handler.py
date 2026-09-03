@@ -36,7 +36,7 @@ BOOTSTRAP_REVISION = os.environ.get(
 ).strip()
 
 if not MODEL_SOURCE_VALUE and MODEL_NAME not in VALID_MODELS:
-    raise RuntimeError(f'Unsupported MuScriptor model: {MODEL_NAME}')
+    raise RuntimeError(f'Unsupported Polymath model: {MODEL_NAME}')
 
 if MODEL_SOURCE_VALUE:
     if MODEL_SOURCE_VALUE.startswith('hf://'):
@@ -47,25 +47,25 @@ if MODEL_SOURCE_VALUE:
     else:
         MODEL_SOURCE = Path(MODEL_SOURCE_VALUE).expanduser().resolve()
         if MODEL_SOURCE.suffix.lower() != '.safetensors':
-            raise RuntimeError('Custom MuScriptor weights must be a .safetensors file')
+            raise RuntimeError('Custom Polymath weights must be a .safetensors file')
         if not MODEL_SOURCE.is_file():
-            raise RuntimeError(f'Custom MuScriptor weights were not found: {MODEL_SOURCE}')
+            raise RuntimeError(f'Custom Polymath weights were not found: {MODEL_SOURCE}')
         if not MODEL_SOURCE.with_name('config.json').is_file():
-            raise RuntimeError('Custom MuScriptor weights require config.json in the same folder')
+            raise RuntimeError('Custom Polymath weights require config.json in the same folder')
         MODEL_LABEL = f'custom volume model ({MODEL_SOURCE.name})'
     MODEL_SOURCE_ID = 'muscriptor-custom-runpod-serverless'
-    MODEL_PROVIDER = 'Custom MuScriptor on RunPod Serverless GPU'
+    MODEL_PROVIDER = 'Custom Polymath model on RunPod Serverless GPU'
 else:
     MODEL_SOURCE = MODEL_NAME
     MODEL_LABEL = MODEL_NAME.title()
     MODEL_SOURCE_ID = f'muscriptor-{MODEL_NAME}-runpod-serverless'
-    MODEL_PROVIDER = f'MuScriptor {MODEL_NAME.title()} on RunPod Serverless GPU'
+    MODEL_PROVIDER = f'Polymath {MODEL_NAME.title()} on RunPod Serverless GPU'
 
 
 def load_model() -> TranscriptionModel:
-    print(f'Loading MuScriptor {MODEL_LABEL} into GPU memory', flush=True)
+    print(f'Loading Polymath {MODEL_LABEL} into GPU memory', flush=True)
     loaded = TranscriptionModel.load_model(MODEL_SOURCE)
-    print(f'MuScriptor {MODEL_LABEL} is ready', flush=True)
+    print(f'Polymath {MODEL_LABEL} is ready', flush=True)
     return loaded
 
 
@@ -101,7 +101,7 @@ def bootstrap_model_copies(job: dict[str, Any], job_input: dict[str, Any]) -> di
     if not re.fullmatch(r'v\d{3,}', version):
         raise ValueError('Bootstrap version must look like v001, v002, and so on')
 
-    runpod.serverless.progress_update(job, 'Locating cached MuScriptor Large weights')
+    runpod.serverless.progress_update(job, 'Locating cached Polymath Large weights')
     weights = Path(hf_hub_download(
         repo_id=BOOTSTRAP_REPO,
         filename='model.safetensors',
@@ -390,11 +390,11 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
 
     notes.sort(key=lambda note: (note['time'], note['midi'], note['instrument']))
     if not notes:
-        raise RuntimeError('MuScriptor could not detect playable notes in this recording')
+        raise RuntimeError('Polymath could not detect playable notes in this recording')
 
     return {
         'title': str(job_input.get('title') or 'Uploaded recording')[:120],
-        'composer': 'MuScriptor transcription',
+        'composer': 'Polymath transcription',
         'instrument': str(job_input.get('instrument') or 'band'),
         'bpm': 120,
         'notes': notes,

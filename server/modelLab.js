@@ -453,7 +453,7 @@ function createModelLab(environment = process.env, options = {}) {
       adminOnly: true,
       localOnly,
       rawModelOutput: true,
-      model: 'MuScriptor Large',
+      model: 'Polymath Large',
       checkpoint: String(environment.MODEL_LAB_MODEL_VERSION || 'muscriptor-tester/v001'),
       storageTargets: runpod.storageTargetCount,
       maximumSeconds,
@@ -605,7 +605,7 @@ function createModelLab(environment = process.env, options = {}) {
           job.stage = state === 'IN_QUEUE'
             ? 'Waiting for a RunPod GPU worker'
             : state === 'IN_PROGRESS'
-              ? 'MuScriptor is detecting instruments and notes'
+              ? 'Polymath is detecting instruments and notes'
               : `RunPod status: ${state || 'working'}`;
           job.progress = state === 'IN_QUEUE' ? 20 : state === 'IN_PROGRESS' ? 55 : job.progress;
         },
@@ -874,7 +874,7 @@ function createModelLab(environment = process.env, options = {}) {
       } else {
         const sourceJob = jobs.get(String(metadata.jobId || ''));
         if (!sourceJob || sourceJob.status !== 'completed') {
-          throw new Error('Upload a raw MuScriptor MIDI/JSON file or finish a Model Lab transcription first.');
+          throw new Error('Upload a raw Polymath MIDI/JSON file or finish a Model Lab transcription first.');
         }
         observedNotes = extractRawNotes(sourceJob.result?.raw);
         observedFilename = `${sourceJob.title || sourceJob.filename}-raw-model-output.json`;

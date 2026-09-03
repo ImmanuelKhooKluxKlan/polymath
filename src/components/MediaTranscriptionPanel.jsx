@@ -64,7 +64,7 @@ export default function MediaTranscriptionPanel({
         return;
       }
       if (data.job.status === 'failed') {
-        setStatus(data.job.error || 'MuScriptor could not transcribe this recording.');
+        setStatus(data.job.error || 'Polymath could not transcribe this recording.');
         clearPolling();
         return;
       }
@@ -125,7 +125,7 @@ export default function MediaTranscriptionPanel({
       setCapability(data.capability);
       if (data.user && setUser) setUser(data.user);
       setJob(data.job);
-      setStatus('MuScriptor is preparing your recording.');
+      setStatus('Polymath is preparing your recording.');
       clearPolling();
       pollTimer.current = window.setTimeout(() => refreshJob(data.job.id), 1500);
     } catch (error) {
@@ -143,7 +143,7 @@ export default function MediaTranscriptionPanel({
     try {
       const readyFile = await fetchProtectedFile(
         `/api/media-transcriptions/${readyJob.id}/download`,
-        readyJob.outputFilename || 'muscriptor-ready-to-play.json',
+        readyJob.outputFilename || 'polymath-ready-to-play.json',
       );
       await onReadyFile(readyFile);
       setStatus('Loaded into the studio and ready to play.');
@@ -169,14 +169,14 @@ export default function MediaTranscriptionPanel({
     <div className="media-transcription-panel">
       {capability && !capability.enabled && (
         <div className="quota-warning">
-          <strong>MuScriptor is not enabled on this server.</strong>
+          <strong>Polymath transcription is not enabled on this server.</strong>
           <span>{capability.reason}</span>
         </div>
       )}
 
       {capability?.enabled && capability.adminOnly && !user.admin && (
         <div className={'quota-warning'}>
-          <strong>MuScriptor model testing is restricted.</strong>
+          <strong>Polymath model testing is restricted.</strong>
           <span>Administrator access is required during the trial-and-error testing phase.</span>
         </div>
       )}
@@ -295,7 +295,7 @@ export default function MediaTranscriptionPanel({
 
       {status && <p className="form-status">{status}</p>}
       <small className="muscriptor-license-note">
-        MuScriptor model weights: CC BY-NC 4.0, non-commercial use only. Large may take much longer on a CPU-only server.
+        Foundation-model licence: CC BY-NC 4.0, non-commercial use only. Large models may take much longer on a CPU-only server.
       </small>
     </div>
   );

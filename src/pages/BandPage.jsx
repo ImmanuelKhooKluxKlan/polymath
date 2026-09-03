@@ -958,7 +958,7 @@ export default function BandPage({ user, setUser, onNavigate }) {
                         {selectedBand.generalScore ? 'Replace general sheet' : 'Upload JSON / MIDI'}
                       </label>
                       <details className="band-media-transcription">
-                        <summary>Transcribe MP3 / Music Video with MuScriptor</summary>
+                        <summary>Transcribe MP3 / Music Video with Polymath</summary>
                         <MediaTranscriptionPanel
                           user={user}
                           setUser={setUser}

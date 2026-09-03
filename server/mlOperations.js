@@ -7,7 +7,7 @@ const TERMINAL_FAILURES = new Set(['CANCELLED', 'FAILED', 'TIMED_OUT']);
 const RIGHTS_ACKNOWLEDGEMENT = 'I_HAVE_TRAINING_RIGHTS';
 
 const TOKEN_SYSTEM = {
-  name: 'MuScriptor/MT3-style event vocabulary',
+  name: 'Polymath event vocabulary',
   modelCardinality: 1395,
   sequenceLimit: 2000,
   timeResolutionHz: 100,

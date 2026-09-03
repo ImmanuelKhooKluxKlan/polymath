@@ -1638,11 +1638,11 @@ function muscriptorAvailability() {
   const workerExists = fs.existsSync(MUSCRIPTOR_WORKER);
   let reason = '';
   if (!MUSCRIPTOR_ENABLED) {
-    reason = 'MuScriptor is disabled. Enable it only for use permitted by the model license.';
+    reason = 'Polymath transcription is disabled. Enable it only for use permitted by the model licence.';
   } else if (!serverlessConfigured && !remoteConfigured && !pythonExists) {
-    reason = 'The MuScriptor Python environment was not found.';
+    reason = 'The Polymath transcription environment was not found.';
   } else if (!serverlessConfigured && !remoteConfigured && !workerExists) {
-    reason = 'The Polymath MuScriptor worker was not found.';
+    reason = 'The Polymath transcription worker was not found.';
   } else if (!ffmpegExists) {
     reason = 'FFmpeg is unavailable for audio and video preparation.';
   }
@@ -1722,7 +1722,7 @@ let mediaProgressWriteQueue = Promise.resolve();
 function queueMediaTranscriptionUpdate(jobId, changes) {
   mediaProgressWriteQueue = mediaProgressWriteQueue
     .then(() => updateMediaTranscriptionJob(jobId, changes))
-    .catch((error) => console.error('MuScriptor progress update failed:', error));
+    .catch((error) => console.error('Polymath progress update failed:', error));
 }
 
 function safeRemoveUpload(filePath) {
@@ -1835,13 +1835,13 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     if (error.name === 'AbortError') {
       throw new Error(`Music transcription took longer than the ${Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000)}-minute processing limit.`);
     }
-    throw new Error(`Could not reach the RunPod MuScriptor worker: ${error.message}`);
+    throw new Error(`Could not reach the RunPod Polymath worker: ${error.message}`);
   }
 
   if (!response.ok || !response.body) {
     clearTimeout(timer);
     const details = (await response.text().catch(() => '')).trim().slice(0, 1000);
-    throw new Error(`RunPod MuScriptor returned HTTP ${response.status}${details ? `: ${details}` : ''}`);
+    throw new Error(`RunPod Polymath returned HTTP ${response.status}${details ? `: ${details}` : ''}`);
   }
 
   const collector = createMuscriptorEventCollector({
@@ -1897,11 +1897,11 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
   }
 
   const { notes, progress, beatGrid, diagnostics } = collector.finish();
-  if (!notes.length) throw new Error('MuScriptor could not detect playable notes in this recording.');
+  if (!notes.length) throw new Error('Polymath could not detect playable notes in this recording.');
 
   const payload = {
     title: job.title || 'Uploaded recording',
-    composer: 'MuScriptor transcription',
+    composer: 'Polymath transcription',
     instrument: job.instrument,
     bpm: beatGrid?.bpm || 120,
     beatsPerBar: beatGrid?.beatsPerBar || 4,
@@ -1910,7 +1910,7 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     instrumentGroups: [...new Set(notes.map((note) => note.instrument))].sort(),
     sourceType: 'muscriptor-audio-transcription',
     readyToPlayFormat: 'polymath-musician-json-v1',
-    transcriptionProvider: `MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`,
+    transcriptionProvider: `Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`,
     modelLicense: 'CC-BY-NC-4.0',
     progress,
     transcriptionDiagnostics: diagnostics,
@@ -1933,7 +1933,7 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
         });
       } else if (state === 'IN_PROGRESS') {
         queueMediaTranscriptionUpdate(job.id, {
-          stage: String(remote.progress || 'MuScriptor is detecting notes and instruments'),
+          stage: String(remote.progress || 'Polymath is detecting notes and instruments'),
           progress: 55,
         });
       }
@@ -1942,7 +1942,7 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
   const payload = {
     ...raw,
     title: raw.title || job.title || 'Uploaded recording',
-    composer: raw.composer || 'MuScriptor transcription',
+    composer: raw.composer || 'Polymath transcription',
     instrument: raw.instrument || job.instrument || 'band',
     bpm: Number(raw.bpm) || 120,
     notes: Array.isArray(raw.notes) ? raw.notes : [],
@@ -1951,11 +1951,11 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
       : [...new Set((raw.notes || []).map((note) => note.instrument).filter(Boolean))].sort(),
     sourceType: raw.sourceType || 'muscriptor-audio-transcription',
     readyToPlayFormat: raw.readyToPlayFormat || 'polymath-musician-json-v1',
-    transcriptionProvider: raw.transcriptionProvider || `MuScriptor ${MUSCRIPTOR_MODEL} on RunPod Serverless`,
+    transcriptionProvider: raw.transcriptionProvider || `Polymath ${MUSCRIPTOR_MODEL} on RunPod Serverless`,
     modelLicense: raw.modelLicense || 'CC-BY-NC-4.0',
   };
   if (!payload.notes.length) {
-    throw new Error('RunPod Serverless completed without playable MuScriptor notes.');
+    throw new Error('RunPod Serverless completed without playable Polymath notes.');
   }
   fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
   return payload;
@@ -1992,10 +1992,10 @@ async function processMediaTranscriptionJob(jobId) {
     });
     await updateMediaTranscriptionJob(jobId, {
       stage: execution === 'runpod-serverless'
-        ? `Submitting MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} to RunPod Serverless`
+        ? `Submitting Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} to RunPod Serverless`
         : execution === 'remote-gpu'
-          ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
-          : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
+          ? `Connecting to Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
+          : `Loading Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
       progress: 20,
     });
     const constraints = muscriptorConstraints(job.instrument, job.playbackMode);
@@ -2081,7 +2081,7 @@ async function processMediaTranscriptionJob(jobId) {
       outputPath,
       'application/json',
     );
-    job.outputFilename = `${sanitizeFilename(job.title || 'muscriptor-transcription')}.json`;
+    job.outputFilename = `${sanitizeFilename(job.title || 'polymath-transcription')}.json`;
     job.vocalMelodyNoteCount = Number(result.transcriptionCleanup?.vocalMelodyNotes || 0);
     job.noteCount = Array.isArray(result.notes) ? result.notes.length : 0;
     job.instrumentGroups = Array.isArray(result.instrumentGroups) ? result.instrumentGroups : [];
@@ -2097,7 +2097,7 @@ async function processMediaTranscriptionJob(jobId) {
     db = await readDb();
     job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
     if (job && job.status === 'processing') {
-      refundTranslationJob(db, job, error.message || 'MuScriptor could not transcribe this recording.');
+      refundTranslationJob(db, job, error.message || 'Polymath could not transcribe this recording.');
       await writeDb(db);
     }
     safeRemoveUpload(sourcePath);
@@ -2114,7 +2114,7 @@ let mediaTranscriptionQueue = Promise.resolve();
 function enqueueMediaTranscription(jobId) {
   mediaTranscriptionQueue = mediaTranscriptionQueue
     .then(() => processMediaTranscriptionJob(jobId))
-    .catch((error) => console.error('MuScriptor queue error:', error));
+    .catch((error) => console.error('Polymath queue error:', error));
   return mediaTranscriptionQueue;
 }
 
@@ -4984,7 +4984,7 @@ app.post('/api/artifact-upload-intents', requireAuth, async (req, res) => {
     if (!capability.enabled) return res.status(503).json({ error: capability.reason, capability });
     if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
       return res.status(403).json({
-        error: 'MuScriptor is currently available only to administrators for model testing.',
+        error: 'Polymath is currently available only to administrators for model testing.',
         capability,
       });
     }
@@ -5025,7 +5025,7 @@ async function submitMediaTranscription(req, res, {
     return cleanupAndReject(503, capability.reason, { capability });
   }
   if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
-    return cleanupAndReject(403, 'MuScriptor is currently available only to administrators for model testing.', { capability });
+    return cleanupAndReject(403, 'Polymath is currently available only to administrators for model testing.', { capability });
   }
 
   const extension = path.extname(originalName || '').toLowerCase();
@@ -5096,11 +5096,11 @@ async function submitMediaTranscription(req, res, {
     paymentMethod,
     allowanceBucket,
     costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
-    model: `muscriptor-${MUSCRIPTOR_MODEL}`,
+    model: `polymath-${MUSCRIPTOR_MODEL}`,
     modelLicense: 'CC-BY-NC-4.0',
     sourcePath: persistedSourceKey,
     status: 'processing',
-    stage: 'Queued for MuScriptor',
+    stage: 'Queued for Polymath',
     progress: 5,
     startedAt: new Date().toISOString(),
   };
@@ -5206,7 +5206,7 @@ app.get('/api/media-transcriptions/:jobId/download', requireAuth, async (req, re
   return ARTIFACT_STORE.sendDownload(
     res,
     job.outputPath,
-    job.outputFilename || 'muscriptor-ready-to-play.json',
+    job.outputFilename || 'polymath-ready-to-play.json',
     'application/json',
   );
 });

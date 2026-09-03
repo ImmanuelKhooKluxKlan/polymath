@@ -153,7 +153,7 @@ export default function SupervisedTrainingWorkbench({ job, raw, initialAlignment
   async function createAlignment() {
     if (!referenceFile || busy) return;
     if (!raw && !observedFile) {
-      setStatus('Upload the current MuScriptor MIDI/JSON, or run the raw model test above first.');
+      setStatus('Upload the current Polymath MIDI/JSON, or run the raw model test above first.');
       return;
     }
     setBusy(true);
@@ -250,7 +250,7 @@ export default function SupervisedTrainingWorkbench({ job, raw, initialAlignment
 
       <div className="supervision-input-grid">
         <label className="supervision-file-input"><span>1. Desired / ideal piano labels</span><input type="file" accept={NOTE_ACCEPT} onChange={(event) => { setReferenceFile(event.target.files?.[0] || null); setAlignment(null); }} /><strong>{referenceFile?.name || 'Choose MIDI or note JSON'}</strong></label>
-        <label className="supervision-file-input"><span>2. Current model output</span><input type="file" accept={NOTE_ACCEPT} onChange={(event) => { setObservedFile(event.target.files?.[0] || null); setAlignment(null); }} /><strong>{observedFile?.name || (raw ? 'Use the raw Model Lab result above' : 'Choose MuScriptor MIDI or JSON')}</strong></label>
+        <label className="supervision-file-input"><span>2. Current model output</span><input type="file" accept={NOTE_ACCEPT} onChange={(event) => { setObservedFile(event.target.files?.[0] || null); setAlignment(null); }} /><strong>{observedFile?.name || (raw ? 'Use the raw Model Lab result above' : 'Choose Polymath MIDI or JSON')}</strong></label>
         <label className="supervision-duration"><span>3. Original source length (seconds)</span><input type="number" min="1" step="0.01" value={sourceDurationSeconds} onChange={(event) => setSourceDurationSeconds(event.target.value)} placeholder="Auto from uploaded video" /><small>This bounds labels to the video; it does not stretch labels to fill the ending.</small></label>
         <button type="button" className="primary" disabled={!referenceFile || (!raw && !observedFile) || busy} onClick={createAlignment}>{busy ? 'Analysing patterns…' : 'Build supervision analysis'}</button>
       </div>

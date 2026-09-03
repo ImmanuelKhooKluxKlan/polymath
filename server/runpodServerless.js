@@ -212,7 +212,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
         onProgress({ state, progress: status.progress, delayTime: status.delayTime });
         if (state === 'COMPLETED') {
           if (!status.output || !Array.isArray(status.output.notes)) {
-            throw new Error(status.output?.error || 'RunPod completed without a MuScriptor note result.');
+            throw new Error(status.output?.error || 'RunPod completed without a Polymath note result.');
           }
           return status.output;
         }

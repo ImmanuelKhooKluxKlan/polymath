@@ -210,7 +210,7 @@ function analyzeTranscription(payload = {}) {
     schema: 'polymath-model-lab-analysis-v1',
     generatedAt: new Date().toISOString(),
     model: {
-      provider: String(payload.transcriptionProvider || 'MuScriptor'),
+      provider: String(payload.transcriptionProvider || 'Polymath'),
       sourceType: String(payload.sourceType || 'muscriptor-audio-transcription'),
       license: String(payload.modelLicense || 'CC-BY-NC-4.0'),
       rawOutput: true,
@@ -256,7 +256,7 @@ function analyzeTranscription(payload = {}) {
     warnings,
     limitations: [
       'Instrument labels are model predictions, not verified ground truth.',
-      'This MuScriptor worker does not expose a per-note confidence probability.',
+      'This Polymath worker does not expose a per-note confidence probability.',
       'The worker currently reports 120 BPM as a placeholder; tempo is not measured in this raw test.',
       'Velocity values are synthetic defaults and must not be interpreted as detected loudness.',
       'MIDI program numbers are not exposed by this checkpoint wrapper; instrument-group labels are shown instead.',

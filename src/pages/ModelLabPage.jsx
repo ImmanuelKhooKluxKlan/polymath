@@ -15,6 +15,10 @@ function displayName(value) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+function displayCheckpoint(value) {
+  return String(value || 'Checking…').replaceAll('muscriptor-tester', 'polymath-tester');
+}
+
 function seconds(value) {
   const number = Number(value) || 0;
   if (number < 1) return `${Math.round(number * 1000)} ms`;
@@ -171,8 +175,8 @@ export default function ModelLabPage({ onNavigate, embedded = false }) {
       <section className="model-lab-upload-card">
         <div className="model-lab-checkpoint">
           <span>Checkpoint</span>
-          <strong>{capability?.checkpoint || 'Checking…'}</strong>
-          <small>Raw MuScriptor Large · no arrangement or duplicate-note cleanup</small>
+          <strong>{displayCheckpoint(capability?.checkpoint)}</strong>
+          <small>Raw Polymath Large · no arrangement or duplicate-note cleanup</small>
         </div>
         <label className="upload-box">
           <input
