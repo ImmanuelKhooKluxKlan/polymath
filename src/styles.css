@@ -6813,27 +6813,85 @@ details[open] > summary {
   transform: translate(calc(-50% + var(--teacher-x)), calc(-50% + var(--teacher-y))) rotate(var(--teacher-rotation)) scale(var(--teacher-scale));
   transform-origin: 50% 58%;
   transition: transform 260ms cubic-bezier(.22, .75, .3, 1), filter 180ms ease;
-  cursor: grab;
+  cursor: default;
   touch-action: none;
   user-select: none;
   will-change: transform;
 }
 
-.poseable-teacher-rig:active {
-  cursor: grabbing;
-  filter: brightness(1.04);
-}
-
-.poseable-teacher-body {
+.poseable-teacher-body-part {
+  --part-x: 0px;
+  --part-y: 0px;
   position: absolute;
-  z-index: 2;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
   object-position: center bottom;
-  filter: drop-shadow(0 20px 24px rgba(0, 0, 0, .5));
+  transform: translate(var(--part-x), var(--part-y));
+  transition: transform 140ms ease-out, filter 120ms ease;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.poseable-teacher-body-part:active,
+.poseable-teacher-arm:active { cursor: grabbing; }
+
+.poseable-teacher-lower {
+  z-index: 2;
+  clip-path: polygon(5% 57%, 95% 57%, 100% 100%, 0 100%);
+}
+
+.poseable-teacher-torso {
+  z-index: 3;
+  clip-path: polygon(16% 25%, 84% 25%, 80% 66%, 20% 66%);
+}
+
+.poseable-teacher-head {
+  z-index: 4;
+  clip-path: polygon(20% 0, 80% 0, 78% 34%, 22% 34%);
+}
+
+.poseable-teacher-arm.is-selected {
+  z-index: 7;
+  filter: drop-shadow(0 0 4px rgba(94, 234, 255, .95)) drop-shadow(0 0 13px rgba(141, 103, 255, .72));
+}
+
+.poseable-teacher-part-highlight {
+  --part-x: 0px;
+  --part-y: 0px;
+  position: absolute;
+  z-index: 8;
+  border: 2px solid rgba(94, 234, 255, .8);
+  border-radius: 45%;
+  transform: translate(var(--part-x), var(--part-y));
+  box-shadow: 0 0 0 3px rgba(108, 102, 255, .16), 0 0 18px rgba(77, 218, 255, .38);
+  background: rgba(87, 217, 255, .035);
   pointer-events: none;
+}
+
+.poseable-teacher-part-highlight.is-head {
+  top: 4%;
+  left: 34%;
+  width: 32%;
+  height: 29%;
+}
+
+.poseable-teacher-part-highlight.is-torso {
+  top: 27%;
+  left: 26%;
+  width: 48%;
+  height: 39%;
+  border-radius: 36% 36% 28% 28%;
+}
+
+.poseable-teacher-part-highlight.is-lower {
+  top: 58%;
+  left: 18%;
+  width: 64%;
+  height: 40%;
+  border-radius: 30% 30% 18% 18%;
 }
 
 .poseable-teacher-arm {
@@ -6853,7 +6911,12 @@ details[open] > summary {
   pointer-events: none;
 }
 
-.poseable-teacher-rig.has-custom-arms .poseable-teacher-arm { opacity: 1; }
+.poseable-teacher-rig.has-custom-arms .poseable-teacher-arm {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
 
 .poseable-teacher-arm-left {
   left: 22%;
@@ -6928,7 +6991,14 @@ details[open] > summary {
   gap: 7px;
 }
 
+.teacher-part-buttons {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
 .teacher-pose-buttons button,
+.teacher-part-buttons button,
 .teacher-reset-pose {
   min-width: 0;
   min-height: 38px;
@@ -6943,37 +7013,47 @@ details[open] > summary {
 }
 
 .teacher-pose-buttons button:hover,
-.teacher-pose-buttons button.is-selected {
+.teacher-pose-buttons button.is-selected,
+.teacher-part-buttons button:hover,
+.teacher-part-buttons button.is-selected {
   border-color: rgba(181, 151, 255, .72);
   color: white;
   background: linear-gradient(135deg, rgba(105, 77, 215, .78), rgba(173, 69, 157, .7));
 }
 
-.teacher-arm-sliders {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
-  align-items: end;
-  gap: 9px;
-}
-
-.teacher-arm-sliders label {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  color: #bbb3d8;
-  font-size: .66rem;
-  font-weight: 800;
-}
-
-.teacher-arm-sliders input {
-  width: 100%;
-  min-width: 0;
-  accent-color: #a886ff;
+.teacher-part-buttons button.is-selected {
+  border-color: rgba(90, 232, 255, .82);
+  box-shadow: inset 0 0 0 1px rgba(110, 231, 255, .18), 0 0 14px rgba(94, 202, 255, .12);
 }
 
 .human-teacher-workspace .teacher-chat-panel {
   min-height: 310px;
 }
+
+.teacher-age-gate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid rgba(223, 172, 255, .42);
+  border-radius: 17px;
+  background: linear-gradient(145deg, rgba(65, 42, 111, .72), rgba(18, 18, 48, .92));
+  box-shadow: 0 15px 35px rgba(4, 4, 20, .28);
+}
+
+.teacher-age-gate > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.teacher-age-gate > div:first-child > span { display: grid; gap: 3px; min-width: 0; }
+.teacher-age-gate strong { color: #fff; font-size: .86rem; }
+.teacher-age-gate small { color: #c9c1df; font-size: .68rem; line-height: 1.4; }
+.teacher-age-gate-actions { display: flex; gap: 7px; }
+.teacher-age-gate-actions button { min-height: 39px; padding: 8px 11px; }
 
 @media (max-width: 700px) {
   .poseable-teacher-stage {
@@ -6994,13 +7074,16 @@ details[open] > summary {
   }
   .poseable-teacher-caption span { display: none; }
   .teacher-pose-buttons { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .teacher-arm-sliders { grid-template-columns: minmax(0, 1fr); }
+  .teacher-part-buttons { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .teacher-reset-pose { width: 100%; }
   .human-teacher-workspace .teacher-chat-panel { min-height: 270px; }
+  .teacher-age-gate { grid-template-columns: minmax(0, 1fr); }
+  .teacher-age-gate-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .poseable-teacher-rig,
-  .poseable-teacher-arm { transition: none; }
+  .poseable-teacher-arm,
+  .poseable-teacher-body-part { transition: none; }
   .poseable-teacher-rig.is-pose-jump { animation: none; }
 }

@@ -2,15 +2,16 @@ import { clamp, midiToNote, parseNote } from './noteMath.js';
 
 export const TEACHER_PROFILES = Object.freeze([
   {
-    id: 'padme',
-    name: 'Padme',
+    id: 'nova',
+    name: 'Nova',
     title: 'Performance coach',
     description: 'Warm, precise, and focused on expressive melody.',
     voice: 'Encouraging',
-    image: '/teachers/padme-human-v1.webp',
+    image: '/teachers/nova-human-v1.webp',
     armImage: '/teachers/arm-light-full-v1.webp',
     palette: { skin: '#d9a07f', skinShadow: '#a96e54', hair: '#24192a', primary: '#7857d8', secondary: '#cf5eaa' },
     look: 'athletic',
+    requiresAdultConfirmation: true,
   },
   {
     id: 'anakin',

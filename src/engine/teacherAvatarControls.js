@@ -6,6 +6,14 @@ export const TEACHER_POSES = Object.freeze([
   { id: 'jump', label: 'Jump', rotation: 0, scale: 1 },
 ]);
 
+export const TEACHER_BODY_PARTS = Object.freeze([
+  { id: 'head', label: 'Head' },
+  { id: 'torso', label: 'Torso' },
+  { id: 'leftArm', label: 'Left arm' },
+  { id: 'rightArm', label: 'Right arm' },
+  { id: 'lower', label: 'Lower body' },
+]);
+
 export function teacherPoseById(poseId) {
   return TEACHER_POSES.find((pose) => pose.id === poseId) || TEACHER_POSES[0];
 }
@@ -21,4 +29,8 @@ export function clampTeacherOffset(offset, bounds = {}) {
 
 export function normalizeTeacherArmAngle(value) {
   return Math.max(-110, Math.min(110, Math.round(Number(value) || 0)));
+}
+
+export function teacherBodyPartById(partId) {
+  return TEACHER_BODY_PARTS.find((part) => part.id === partId) || TEACHER_BODY_PARTS[1];
 }

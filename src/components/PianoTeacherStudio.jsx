@@ -26,11 +26,30 @@ export default function PianoTeacherStudio({
 }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
-  const teacher = TEACHER_PROFILES.find((profile) => profile.id === teacherId) || TEACHER_PROFILES[0];
+  const [adultConfirmed, setAdultConfirmed] = useState(
+    () => window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true',
+  );
+  const [pendingAdultTeacher, setPendingAdultTeacher] = useState(null);
+  const teacher = TEACHER_PROFILES.find((profile) => profile.id === teacherId)
+    || TEACHER_PROFILES.find((profile) => profile.id === 'anakin')
+    || TEACHER_PROFILES[0];
 
   function chooseTeacher(profile) {
+    if (profile.requiresAdultConfirmation && !adultConfirmed) {
+      setPendingAdultTeacher(profile);
+      return;
+    }
     onTeacherChange(profile.id);
     setMessages([{ from: 'teacher', text: `${profile.name} selected. I’m ready at the main piano.` }]);
+  }
+
+  function confirmAdultTeacher() {
+    if (!pendingAdultTeacher) return;
+    window.localStorage.setItem('polymath-teacher-adult-confirmed', 'true');
+    setAdultConfirmed(true);
+    onTeacherChange(pendingAdultTeacher.id);
+    setMessages([{ from: 'teacher', text: `${pendingAdultTeacher.name} selected. I’m ready at the main piano.` }]);
+    setPendingAdultTeacher(null);
   }
 
   function submitChat(event) {
@@ -95,10 +114,29 @@ export default function PianoTeacherStudio({
             onClick={() => chooseTeacher(profile)}
           >
             <TeacherPortrait teacher={profile} />
-            <span><strong>{profile.name}</strong><small>{profile.title}</small></span>
+            <span>
+              <strong>{profile.name}</strong>
+              <small>{profile.title}{profile.requiresAdultConfirmation && !adultConfirmed ? ' · 18+' : ''}</small>
+            </span>
           </button>
         ))}
       </div>
+
+      {pendingAdultTeacher && (
+        <div className="teacher-age-gate" role="dialog" aria-modal="true" aria-labelledby="teacher-age-gate-title">
+          <div>
+            <TeacherPortrait teacher={pendingAdultTeacher} />
+            <span>
+              <strong id="teacher-age-gate-title">Confirm you are 18+</strong>
+              <small>Nova is an adult-only optional character. This confirmation is stored on this device.</small>
+            </span>
+          </div>
+          <div className="teacher-age-gate-actions">
+            <button type="button" onClick={() => setPendingAdultTeacher(null)}>Cancel</button>
+            <button type="button" className="primary" onClick={confirmAdultTeacher}>I am 18 or older</button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

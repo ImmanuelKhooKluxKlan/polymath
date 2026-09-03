@@ -125,7 +125,12 @@ export default function App() {
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
   const [pianoHandMode, setPianoHandMode] = useState('left');
-  const [pianoTeacherId, setPianoTeacherId] = useState(() => window.localStorage.getItem('polymath-piano-teacher') || 'padme');
+  const [pianoTeacherId, setPianoTeacherId] = useState(() => {
+    const savedTeacher = window.localStorage.getItem('polymath-piano-teacher');
+    const adultConfirmed = window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true';
+    if (!savedTeacher || savedTeacher === 'padme' || (savedTeacher === 'nova' && !adultConfirmed)) return 'anakin';
+    return savedTeacher;
+  });
   const [teacherHandsEnabled, setTeacherHandsEnabled] = useState(() => window.localStorage.getItem('polymath-teacher-hands') === 'true');
   const [portraitDevice, setPortraitDevice] = useState(() => (
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
@@ -182,7 +187,9 @@ export default function App() {
   ), [song, teachingMode, pianoHandMode]);
   const teachingSong = useMemo(() => ({ ...song, notes: playbackNotes }), [song, playbackNotes]);
   const pianoTeacher = useMemo(
-    () => TEACHER_PROFILES.find((profile) => profile.id === pianoTeacherId) || TEACHER_PROFILES[0],
+    () => TEACHER_PROFILES.find((profile) => profile.id === pianoTeacherId)
+      || TEACHER_PROFILES.find((profile) => profile.id === 'anakin')
+      || TEACHER_PROFILES[0],
     [pianoTeacherId],
   );
   const teacherHandTimeline = useMemo(

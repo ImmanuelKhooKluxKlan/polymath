@@ -12,7 +12,9 @@ import {
 import {
   clampTeacherOffset,
   normalizeTeacherArmAngle,
+  teacherBodyPartById,
   teacherPoseById,
+  TEACHER_BODY_PARTS,
   TEACHER_POSES,
 } from '../../src/engine/teacherAvatarControls.js';
 
@@ -71,11 +73,12 @@ test('the prepared timeline sorts once and can be reused during playback', () =>
 });
 
 test('the four human teachers have deployable image assets', () => {
-  assert.deepEqual(TEACHER_PROFILES.map((teacher) => teacher.id), ['padme', 'anakin', 'taylor', 'mace']);
+  assert.deepEqual(TEACHER_PROFILES.map((teacher) => teacher.id), ['nova', 'anakin', 'taylor', 'mace']);
   for (const teacher of TEACHER_PROFILES) {
     assert.match(teacher.image, /^\/teachers\/.+\.webp$/);
     assert.match(teacher.armImage, /^\/teachers\/arm-.+\.webp$/);
   }
+  assert.equal(TEACHER_PROFILES[0].requiresAdultConfirmation, true);
 });
 
 test('Mace stays stern and does not give empty praise', () => {
@@ -92,4 +95,7 @@ test('teacher pose controls remain bounded and always have a safe fallback', () 
   assert.deepEqual(clampTeacherOffset({ x: 900, y: -900 }, { maximumX: 120, maximumY: 80 }), { x: 120, y: -80 });
   assert.equal(normalizeTeacherArmAngle(500), 110);
   assert.equal(normalizeTeacherArmAngle(-500), -110);
+  assert.equal(TEACHER_BODY_PARTS.length, 5);
+  assert.equal(teacherBodyPartById('leftArm').label, 'Left arm');
+  assert.equal(teacherBodyPartById('not-real').id, 'torso');
 });
