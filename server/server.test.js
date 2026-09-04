@@ -624,12 +624,14 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
       welcomeMcoins: 25,
       policyNotice: 'Adults only during this test.',
       supportEmail: 'support@example.test',
+      supportPhone: '+65 6123 4567',
     },
   });
   assert.equal(policyUpdate.status, 200);
   assert.equal(policyUpdate.data.policies.minimumSignupAge, 18);
   assert.equal(policyUpdate.data.policies.minimumPasswordLength, 1);
   assert.equal(policyUpdate.data.policies.maximumRewardOutflowPerListingMcoins, 5);
+  assert.equal(policyUpdate.data.policies.supportPhone, '+65 6123 4567');
 
   const oneCharacterPasswordRegistration = await register('/api/auth/register', {
     method: 'POST',

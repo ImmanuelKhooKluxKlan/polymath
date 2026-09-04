@@ -6,8 +6,9 @@ import FallingNotes from './components/FallingNotes.jsx';
 import PianoKeyboard, { keyboardMap } from './components/PianoKeyboard.jsx';
 import SongUploader from './components/SongUploader.jsx';
 import TransportDock from './components/TransportDock.jsx';
-import LearnModePanel from './components/LearnModePanel.jsx';
+import PianoLearnJourney from './components/PianoLearnJourney.jsx';
 import PianoTeacherStudio from './components/PianoTeacherStudio.jsx';
+import SupportAssistant from './components/SupportAssistant.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import {
@@ -24,6 +25,16 @@ import {
   visualFrameInterval,
 } from './engine/devicePerformance.js';
 import { buildAdaptivePianoLayout, buildLearningHandLayout } from './engine/grandPianoLayout.js';
+import {
+  analyzePracticeAttempt,
+  buildLearningArrangement,
+  learningLevelById,
+  learningSessionById,
+  readLearningProgress,
+  recordLearningAttempt,
+  writeLearningProgress,
+} from './engine/learningCoach.js';
+import { midiToNote } from './engine/noteMath.js';
 import {
   buildTeacherHandTargets,
   prepareTeacherHandTimeline,
@@ -48,6 +59,7 @@ const EnsemblePage = lazy(() => import('./pages/EnsemblePage.jsx'));
 const MarketplacePage = lazy(() => import('./pages/MarketplacePage.jsx'));
 const TeacherMarketplacePage = lazy(() => import('./pages/TeacherMarketplacePage.jsx'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage.jsx'));
+const CommunityPage = lazy(() => import('./pages/CommunityPage.jsx'));
 const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
 const BandPage = lazy(() => import('./pages/BandPage.jsx'));
 const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
@@ -120,19 +132,32 @@ export default function App() {
   const [openMusicChooser, setOpenMusicChooser] = useState(null);
   const [playbackEpoch, setPlaybackEpoch] = useState(0);
   const [teachingMode, setTeachingMode] = useState('regular');
-  const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(15);
+  const [learningLevel, setLearningLevel] = useState(() => learningLevelById(window.localStorage.getItem('polymath-learning-level')).id);
+  const [learningSession, setLearningSession] = useState(() => learningSessionById(window.localStorage.getItem('polymath-learning-session')).id);
+  const [learningAttemptStatus, setLearningAttemptStatus] = useState('idle');
+  const [learningReport, setLearningReport] = useState(null);
+  const [learningProgress, setLearningProgress] = useState(() => readLearningProgress(window.localStorage, 'guest'));
+  const [midiInput, setMidiInput] = useState(() => ({
+    supported: typeof navigator !== 'undefined' && typeof navigator.requestMIDIAccess === 'function',
+    status: 'idle',
+    name: '',
+    error: '',
+  }));
+  const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(() => learningSessionById(window.localStorage.getItem('polymath-learning-session')).partSeconds);
   const [selectedSectionIndex, setSelectedSectionIndex] = useState(0);
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
-  const [pianoHandMode, setPianoHandMode] = useState('left');
+  const [pianoHandMode, setPianoHandMode] = useState('both');
   const [pianoTeacherId, setPianoTeacherId] = useState(() => {
-    const savedTeacher = window.localStorage.getItem('polymath-piano-teacher');
+    const savedTeacher = window.localStorage.getItem('polymath-piano-teacher-v2');
     const adultConfirmed = window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true';
-    if (!savedTeacher || savedTeacher === 'padme' || (savedTeacher === 'nova' && !adultConfirmed)) return 'anakin';
+    if (savedTeacher === 'padme') return adultConfirmed ? 'nova' : 'aria';
+    if (!savedTeacher || (savedTeacher === 'nova' && !adultConfirmed)) return 'aria';
     return savedTeacher;
   });
   const [customTeacherProfiles, setCustomTeacherProfiles] = useState([]);
-  const [teacherHandsEnabled, setTeacherHandsEnabled] = useState(() => window.localStorage.getItem('polymath-teacher-hands') === 'true');
+  const [teacherHandsEnabled, setTeacherHandsEnabled] = useState(() => window.localStorage.getItem('polymath-teacher-hands-v2') !== 'false');
+  const [teacherDemonstration, setTeacherDemonstration] = useState(null);
   const [portraitDevice, setPortraitDevice] = useState(() => (
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
   ));
@@ -160,6 +185,11 @@ export default function App() {
   const keyboardReadyRef = useRef(false);
   const keyboardPreparationPromise = useRef(null);
   const performanceTierRef = useRef(performanceTier);
+  const playbackSpeedRef = useRef(speed);
+  const songDurationRef = useRef(0);
+  const practicePlaybackModeRef = useRef('listen');
+  const learningCaptureRef = useRef({ status: 'idle', notes: [], activeNotes: new Map(), pedals: [] });
+  const midiAccessRef = useRef(null);
   const calibrationRef = useRef(null);
   const runtimePerformanceRef = useRef({
     lastFrame: 0,
@@ -175,17 +205,23 @@ export default function App() {
     () => songs.find((candidate) => songLibraryId(candidate) === songSelectionId) || songs[0],
     [songs, songSelectionId],
   );
+  playbackSpeedRef.current = speed;
+  songDurationRef.current = getSongDuration(song);
+  const learningArrangement = useMemo(
+    () => teachingMode === 'learn' ? buildLearningArrangement(song.notes, learningLevel) : song.notes,
+    [song, teachingMode, learningLevel],
+  );
   const pianoLayout = useMemo(
     () => teachingMode === 'learn'
-      ? buildLearningHandLayout(song, pianoHandMode)
+      ? buildLearningHandLayout({ ...song, notes: learningArrangement }, pianoHandMode)
       : buildAdaptivePianoLayout(song),
-    [song, teachingMode, pianoHandMode],
+    [song, learningArrangement, teachingMode, pianoHandMode],
   );
   const playbackNotes = useMemo(() => (
     teachingMode === 'learn' && pianoHandMode !== 'both'
-      ? song.notes.filter((event) => pianoHandForEvent(event) === pianoHandMode)
-      : song.notes
-  ), [song, teachingMode, pianoHandMode]);
+      ? learningArrangement.filter((event) => pianoHandForEvent(event) === pianoHandMode)
+      : learningArrangement
+  ), [learningArrangement, teachingMode, pianoHandMode]);
   const teachingSong = useMemo(() => ({ ...song, notes: playbackNotes }), [song, playbackNotes]);
   const teacherProfiles = useMemo(() => [
     ...TEACHER_PROFILES,
@@ -196,12 +232,15 @@ export default function App() {
       armImage: profile.armTone === 'dark'
         ? '/teachers/arm-dark-full-v1.webp'
         : '/teachers/arm-light-full-v1.webp',
+      handCameraImage: profile.armTone === 'dark'
+        ? '/teachers/pianist-hands-overhead-dark-v1.webp'
+        : '/teachers/pianist-hands-overhead-v1.webp',
       look: 'custom',
     })),
   ], [customTeacherProfiles]);
   const pianoTeacher = useMemo(
     () => teacherProfiles.find((profile) => profile.id === pianoTeacherId)
-      || teacherProfiles.find((profile) => profile.id === 'anakin')
+      || teacherProfiles.find((profile) => profile.id === 'aria')
       || teacherProfiles[0],
     [pianoTeacherId, teacherProfiles],
   );
@@ -214,9 +253,16 @@ export default function App() {
     [teacherHandTimeline, currentTime, pianoHandMode],
   );
   const learningSections = useMemo(
-    () => analyzeLearningSections(song.notes, getSongDuration(song), preferredSectionSeconds),
-    [song, preferredSectionSeconds],
+    () => analyzeLearningSections(learningArrangement, getSongDuration(song), preferredSectionSeconds),
+    [song, learningArrangement, preferredSectionSeconds],
   );
+  const activeLearningRange = useMemo(() => {
+    if (learningSession === 'full') {
+      const duration = getSongDuration(song);
+      return { id: 'full-song', name: 'Full song', start: 0, end: duration, duration };
+    }
+    return learningSections[selectedSectionIndex] || learningSections[0] || null;
+  }, [learningSession, learningSections, selectedSectionIndex, song]);
 
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', '#studio');
@@ -249,12 +295,29 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem('polymath-piano-teacher', pianoTeacher.id);
+    window.localStorage.setItem('polymath-piano-teacher-v2', pianoTeacher.id);
   }, [pianoTeacher.id]);
 
   useEffect(() => {
-    window.localStorage.setItem('polymath-teacher-hands', String(teacherHandsEnabled));
+    window.localStorage.setItem('polymath-teacher-hands-v2', String(teacherHandsEnabled));
   }, [teacherHandsEnabled]);
+
+  useEffect(() => {
+    const learnerId = user?.user_id || 'guest';
+    setLearningProgress(readLearningProgress(window.localStorage, learnerId));
+  }, [user?.user_id]);
+
+  useEffect(() => {
+    if (selectedSectionIndex < learningSections.length) return;
+    setSelectedSectionIndex(Math.max(0, learningSections.length - 1));
+  }, [learningSections.length, selectedSectionIndex]);
+
+  useEffect(() => () => {
+    const access = midiAccessRef.current;
+    if (!access) return;
+    access.onstatechange = null;
+    access.inputs.forEach((input) => { input.onmidimessage = null; });
+  }, []);
 
   useEffect(() => {
     function checkOrientation() {
@@ -382,7 +445,7 @@ export default function App() {
     return Math.max(
       0,
       Math.min(
-        getSongDuration(song),
+        songDurationRef.current,
         Number(value) || 0,
       ),
     );
@@ -398,10 +461,53 @@ export default function App() {
     }, 120);
   }
 
-  function setSustainPedal(nextState) {
+  function learningCaptureTime(now = performance.now()) {
+    const capture = learningCaptureRef.current;
+    if (capture.status !== 'running') return clampSongTime(currentTime);
+    return clampSongTime(getSongTimeFromPerformanceClock(now));
+  }
+
+  function finishCapturedNote(key, endTime = learningCaptureTime()) {
+    const capture = learningCaptureRef.current;
+    const started = capture.activeNotes.get(key);
+    if (!started) return;
+    capture.activeNotes.delete(key);
+    capture.notes.push({
+      ...started,
+      end: endTime,
+      duration: Math.max(0.035, endTime - started.start),
+    });
+  }
+
+  function finishAllCapturedNotes(endTime = learningCaptureTime()) {
+    [...learningCaptureRef.current.activeNotes.keys()].forEach((key) => finishCapturedNote(key, endTime));
+  }
+
+  function captureNoteStart(note, velocity, playbackOptions = {}) {
+    const capture = learningCaptureRef.current;
+    if (capture.status !== 'running') return;
+    const key = manualVoiceKey(note, playbackOptions);
+    const start = learningCaptureTime();
+    finishCapturedNote(key, start);
+    capture.activeNotes.set(key, {
+      note,
+      start,
+      velocity: Math.max(0.02, Math.min(1, Number(velocity) || 0.85)),
+      inputType: playbackOptions.inputType || playbackOptions.pointerType || 'screen',
+      dynamicCapable: playbackOptions.inputType === 'midi'
+        || (playbackOptions.pointerType === 'pen' && Number(playbackOptions.pressure) > 0),
+    });
+  }
+
+  function setSustainPedal(nextState, source = 'manual') {
     const down = Boolean(nextState);
     pianoAudio.setSustainPedal(down);
     setPedalDown(down);
+    const capture = learningCaptureRef.current;
+    if (source === 'manual' && capture.status === 'running') {
+      const previous = capture.pedals[capture.pedals.length - 1];
+      if (!previous || previous.down !== down) capture.pedals.push({ time: learningCaptureTime(), down });
+    }
   }
 
   function applyPerformanceTier(nextTier, measurements = {}, preserveSampleSet = keyboardReadyRef.current) {
@@ -496,6 +602,7 @@ export default function App() {
     if (!voice) return null;
     addActiveNote(note, true);
     if (source === 'manual' && duration === null) {
+      captureNoteStart(note, velocity, playbackOptions);
       manualVoices.current.set(
         manualVoiceKey(note, playbackOptions),
         voice
@@ -506,6 +613,7 @@ export default function App() {
 
   function releaseNote(note, interaction = {}) {
     const key = manualVoiceKey(note, interaction);
+    finishCapturedNote(key);
     const manualVoice = manualVoices.current.get(key);
     if (manualVoice && typeof pianoAudio.releaseVoice === 'function') {
       pianoAudio.releaseVoice(manualVoice);
@@ -544,13 +652,17 @@ export default function App() {
   }
 
   function stopPlayback() {
+    if (learningCaptureRef.current.status === 'running' || learningCaptureRef.current.status === 'paused') {
+      resetLearningCapture('idle');
+      practicePlaybackModeRef.current = 'listen';
+    }
     setIsPlaying(false);
     setCurrentTime(0);
     resetPlaybackState();
   }
 
   async function startPlaybackAt(position, speedOverride = speed) {
-    if (!keyboardReadyRef.current && !(await prepareKeyboard())) return;
+    if (!keyboardReadyRef.current && !(await prepareKeyboard())) return false;
     const target = clampSongTime(position);
     const playbackSpeed = Math.max(0.2, Math.min(2, Number(speedOverride) || 1));
 
@@ -558,30 +670,69 @@ export default function App() {
     playbackRunId.current = requestedRunId;
     pianoAudio.setToneMode(toneMode);
     await pianoAudio.preloadSongNotes(song, { startTime: target });
-    if (playbackRunId.current !== requestedRunId) return;
+    if (playbackRunId.current !== requestedRunId) return false;
 
     pauseOffset.current = target;
     nextEventIndex.current = findStartIndex(playbackNotes, Math.max(0, target - 0.0005));
     nextPedalIndex.current = findStartIndex(song.pedals || [], target + 0.0001);
-    setSustainPedal(getPedalStateAt(song.pedals, target));
+    // An attempt starts with the learner's pedal released. Guide playback may
+    // restore the score's pedal state, but that state must never be recorded as
+    // if the learner pressed the pedal themselves.
+    const initialPedalState = practicePlaybackModeRef.current === 'attempt'
+      ? false
+      : getPedalStateAt(song.pedals, target);
+    setSustainPedal(initialPedalState, 'guide');
+    playbackSpeedRef.current = playbackSpeed;
     startStamp.current = performance.now() - (target * 1000) / playbackSpeed;
     setCurrentTime(target);
     setIsPlaying(true);
     setPlaybackEpoch((value) => value + 1);
+    return true;
+  }
+
+  function pauseLearningCapture(position = currentTime) {
+    if (learningCaptureRef.current.status !== 'running') return false;
+    finishAllCapturedNotes(clampSongTime(position));
+    learningCaptureRef.current.status = 'paused';
+    setLearningAttemptStatus('paused');
+    return true;
+  }
+
+  async function resumePlaybackAt(position, speedOverride = speed) {
+    const resumesAttempt = learningCaptureRef.current.status === 'paused';
+    if (resumesAttempt) {
+      learningCaptureRef.current.status = 'preparing';
+      setLearningAttemptStatus('preparing');
+      practicePlaybackModeRef.current = 'attempt';
+    }
+    let started = false;
+    try {
+      started = await startPlaybackAt(position, speedOverride);
+    } catch (error) {
+      console.error('Playback could not resume:', error);
+    } finally {
+      if (resumesAttempt) {
+        learningCaptureRef.current.status = started ? 'running' : 'paused';
+        setLearningAttemptStatus(started ? 'running' : 'paused');
+      }
+    }
+    return started;
   }
 
   async function togglePlayPause() {
     if (isPlaying) {
+      pauseLearningCapture(currentTime);
       silencePlayback(currentTime);
       setIsPlaying(false);
       return;
     }
 
-    await startPlaybackAt(pauseOffset.current);
+    await resumePlaybackAt(pauseOffset.current);
   }
 
   function beginSeek() {
     seekWasPlaying.current = isPlaying;
+    pauseLearningCapture(currentTime);
     silencePlayback(currentTime);
     setIsPlaying(false);
   }
@@ -599,19 +750,20 @@ export default function App() {
     previewSeek(target);
 
     if (shouldResume) {
-      await startPlaybackAt(target);
+      await resumePlaybackAt(target);
     }
   }
 
   async function jumpBy(seconds) {
     const shouldResume = isPlaying;
     const target = clampSongTime(currentTime + seconds);
+    pauseLearningCapture(currentTime);
     silencePlayback(currentTime);
     setIsPlaying(false);
     previewSeek(target);
 
     if (shouldResume) {
-      await startPlaybackAt(target);
+      await resumePlaybackAt(target);
     }
   }
 
@@ -622,6 +774,7 @@ export default function App() {
     const position = currentTime;
 
     if (shouldResume) {
+      pauseLearningCapture(position);
       silencePlayback(position);
       setIsPlaying(false);
     }
@@ -629,7 +782,7 @@ export default function App() {
     setSpeed(safeSpeed);
 
     if (shouldResume) {
-      await startPlaybackAt(position, safeSpeed);
+      await resumePlaybackAt(position, safeSpeed);
     }
   }
 
@@ -637,6 +790,7 @@ export default function App() {
     stopPlayback();
     setPracticeRange(null);
     setSelectedSectionIndex(0);
+    setLearningReport(null);
     setSongSelectionId(libraryId);
   }
 
@@ -646,6 +800,7 @@ export default function App() {
     stopPlayback();
     setPracticeRange(null);
     setSelectedSectionIndex(0);
+    setLearningReport(null);
     setSongs((previous) => [normalized, ...previous.filter((candidate) => songLibraryId(candidate) !== libraryId)]);
     setSongSelectionId(libraryId);
     setOpenMusicChooser(null);
@@ -687,8 +842,137 @@ export default function App() {
     }
   }
 
+  function connectMidiMessages(access) {
+    const available = [...access.inputs.values()];
+    available.forEach((input) => {
+      input.onmidimessage = (event) => {
+        const [status = 0, data1 = 0, data2 = 0] = event.data || [];
+        const command = status & 0xf0;
+        const channel = status & 0x0f;
+        if (command === 0x90 && data2 > 0) {
+          const note = midiToNote(data1);
+          pressNote(note, data2 / 127, null, 'manual', {
+            pointerId: `midi:${input.id}:${channel}:${data1}`,
+            inputType: 'midi',
+          });
+        } else if (command === 0x80 || (command === 0x90 && data2 === 0)) {
+          releaseNote(midiToNote(data1), { pointerId: `midi:${input.id}:${channel}:${data1}` });
+        } else if (command === 0xb0 && data1 === 64) {
+          setSustainPedal(data2 >= 64, 'manual');
+        }
+      };
+    });
+    const connected = available.filter((input) => input.state === 'connected');
+    setMidiInput((current) => ({
+      ...current,
+      status: connected.length ? 'connected' : 'waiting',
+      name: connected.map((input) => input.name || input.manufacturer || 'MIDI piano').join(', '),
+      error: connected.length ? '' : 'No MIDI keyboard was found. Connect one, then tap Connect MIDI again.',
+    }));
+  }
+
+  async function connectMidiInput() {
+    if (typeof navigator.requestMIDIAccess !== 'function') {
+      setMidiInput({ supported: false, status: 'unsupported', name: '', error: 'This browser does not provide Web MIDI. Screen and computer keys still work.' });
+      return;
+    }
+    setMidiInput((current) => ({ ...current, status: 'connecting', error: '' }));
+    try {
+      const access = await navigator.requestMIDIAccess({ sysex: false });
+      midiAccessRef.current = access;
+      access.onstatechange = () => connectMidiMessages(access);
+      connectMidiMessages(access);
+    } catch (error) {
+      setMidiInput((current) => ({
+        ...current,
+        status: 'error',
+        error: error?.name === 'SecurityError'
+          ? 'MIDI permission was blocked by this browser.'
+          : 'The MIDI keyboard could not be connected.',
+      }));
+    }
+  }
+
+  function resetLearningCapture(status = 'idle') {
+    learningCaptureRef.current = { status, notes: [], activeNotes: new Map(), pedals: [] };
+    setLearningAttemptStatus(status);
+  }
+
+  function prepareLearningRange(range) {
+    if (!range) return false;
+    silencePlayback(range.start);
+    setIsPlaying(false);
+    const index = learningSections.findIndex((candidate) => candidate.id === range.id);
+    if (index >= 0) setSelectedSectionIndex(index);
+    setPracticeRange(range);
+    setCurrentTime(range.start);
+    return true;
+  }
+
+  async function listenToLearningRange(range) {
+    if (!prepareLearningRange(range)) return;
+    practicePlaybackModeRef.current = 'listen';
+    resetLearningCapture('idle');
+    await startPlaybackAt(range.start);
+    focusMobilePlayer(true);
+  }
+
+  async function startLearningAttempt(range) {
+    if (!range) return;
+    if (!keyboardReadyRef.current && !(await prepareKeyboard())) return;
+    prepareLearningRange(range);
+    practicePlaybackModeRef.current = 'attempt';
+    setRepeatSection(false);
+    resetLearningCapture('preparing');
+    let started = false;
+    try {
+      started = await startPlaybackAt(range.start);
+    } catch (error) {
+      console.error('The learning attempt could not start:', error);
+    }
+    if (!started) {
+      resetLearningCapture('idle');
+      practicePlaybackModeRef.current = 'listen';
+      return;
+    }
+    learningCaptureRef.current = {
+      status: 'running',
+      notes: [],
+      activeNotes: new Map(),
+      pedals: [],
+      range,
+      songId: songLibraryId(song),
+      levelId: learningLevel,
+    };
+    setLearningAttemptStatus('running');
+    focusMobilePlayer(true);
+  }
+
+  function completeLearningAttempt(endTime) {
+    const capture = learningCaptureRef.current;
+    if (capture.status !== 'running') return;
+    finishAllCapturedNotes(endTime);
+    capture.status = 'complete';
+    const report = analyzePracticeAttempt({
+      expectedNotes: playbackNotes,
+      playedNotes: capture.notes,
+      expectedPedals: song.pedals || [],
+      playedPedals: capture.pedals,
+      range: capture.range,
+      levelId: capture.levelId,
+    });
+    setLearningAttemptStatus('complete');
+    setLearningReport(report);
+    const learnerId = user?.user_id || 'guest';
+    setLearningProgress((current) => {
+      const next = recordLearningAttempt(current, capture.songId, report);
+      writeLearningProgress(window.localStorage, learnerId, next);
+      return next;
+    });
+  }
+
   function getSongTimeFromPerformanceClock(now = performance.now()) {
-    return ((now - startStamp.current) / 1000) * speed;
+    return ((now - startStamp.current) / 1000) * playbackSpeedRef.current;
   }
 
   function scheduleVisualStrike(event, delaySeconds, visualDuration, runId) {
@@ -714,7 +998,7 @@ export default function App() {
       const note = keyboardMap[event.key.toLowerCase()];
       if (!note) return;
       event.preventDefault();
-      pressNote(note, 0.85, null, 'manual');
+      pressNote(note, 0.85, null, 'manual', { inputType: 'computer' });
     }
 
     function up(event) {
@@ -736,7 +1020,7 @@ export default function App() {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
     };
-  }, [toneMode]);
+  }, [toneMode, speed, song]);
 
   useEffect(() => {
     if (!isPlaying) return undefined;
@@ -828,11 +1112,13 @@ export default function App() {
       while (nextPedalIndex.current < (song.pedals?.length || 0) && song.pedals[nextPedalIndex.current].time <= lookAheadSongTime && song.pedals[nextPedalIndex.current].time < duration) {
         const event = song.pedals[nextPedalIndex.current];
         nextPedalIndex.current += 1;
-        const delaySeconds = Math.max(0, (event.time - songNow) / speed);
-        const timer = window.setTimeout(() => {
-          if (playbackRunId.current === runId) setSustainPedal(event.down);
-        }, delaySeconds * 1000);
-        pedalTimers.current.push(timer);
+        if (practicePlaybackModeRef.current !== 'attempt') {
+          const delaySeconds = Math.max(0, (event.time - songNow) / speed);
+          const timer = window.setTimeout(() => {
+            if (playbackRunId.current === runId) setSustainPedal(event.down, 'guide');
+          }, delaySeconds * 1000);
+          pedalTimers.current.push(timer);
+        }
       }
 
       while (nextEventIndex.current < playbackNotes.length && playbackNotes[nextEventIndex.current].time <= lookAheadSongTime && playbackNotes[nextEventIndex.current].time < duration) {
@@ -849,16 +1135,24 @@ export default function App() {
         const visualDuration = Math.max(0.035, (event.visualDuration ?? event.duration) / speed);
         const eventVelocity = Math.max(0.02, Math.min(1.15, Number(event.velocity ?? 0.7) * autoplayVolume));
 
-        pianoAudio.playAt(event.note, eventVelocity, noteDuration, audioStartAt, {
-          source: 'autoplay',
-          retriggerSameNote: true,
-          releaseSeconds: event.releaseSeconds,
-        });
+        if (practicePlaybackModeRef.current !== 'attempt') {
+          pianoAudio.playAt(event.note, eventVelocity, noteDuration, audioStartAt, {
+            source: 'autoplay',
+            retriggerSameNote: true,
+            releaseSeconds: event.releaseSeconds,
+          });
+        }
         scheduleVisualStrike(event, delaySeconds, visualDuration, runId);
       }
 
       if (songNow >= duration) {
-        if (teachingMode === 'learn' && practiceRange && repeatSection) {
+        if (practicePlaybackModeRef.current === 'attempt' && learningCaptureRef.current.status === 'running') {
+          completeLearningAttempt(duration);
+          practicePlaybackModeRef.current = 'listen';
+          silencePlayback(practiceRange?.start || 0);
+          setIsPlaying(false);
+          setCurrentTime(duration);
+        } else if (teachingMode === 'learn' && practiceRange && repeatSection) {
           const restartAt = practiceRange.start;
           silencePlayback(restartAt);
           setIsPlaying(false);
@@ -919,12 +1213,81 @@ export default function App() {
     setCurrentTime(section.start);
   }
 
-  async function practiseLearningSection(section) {
-    const index = learningSections.findIndex((candidate) => candidate.id === section.id);
-    selectLearningSection(index < 0 ? 0 : index);
-    setPracticeRange(section);
-    await startPlaybackAt(section.start);
+  function changeLearningLevel(levelId) {
+    const level = learningLevelById(levelId);
+    stopPlayback();
+    setLearningLevel(level.id);
+    setPianoHandMode(level.handMode);
+    setSpeed(level.speed);
+    setPracticeRange(null);
+    setSelectedSectionIndex(0);
+    setLearningReport(null);
+    window.localStorage.setItem('polymath-learning-level', level.id);
   }
+
+  function changeLearningSession(sessionId) {
+    const session = learningSessionById(sessionId);
+    stopPlayback();
+    setLearningSession(session.id);
+    setPreferredSectionSeconds(session.partSeconds);
+    setPracticeRange(null);
+    setSelectedSectionIndex(0);
+    setLearningReport(null);
+    window.localStorage.setItem('polymath-learning-session', session.id);
+  }
+
+  function changeLearningHand(hand) {
+    stopPlayback();
+    setPianoHandMode(hand);
+    setPracticeRange(null);
+    setLearningReport(null);
+  }
+
+  function openLearningMusicChoice(choice) {
+    setOpenMusicChooser(choice);
+    window.setTimeout(() => {
+      const selector = choice === 'upload' ? '.uploader-card' : '.control-panel';
+      document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+  }
+
+  function openVirtualTeacher() {
+    setTeacherHandsEnabled(true);
+    window.setTimeout(() => document.querySelector('.piano-teacher-studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }
+
+  function requestVirtualTeacherDemonstration(action) {
+    if (action?.type !== 'demonstrate_range') return;
+    stopPlayback();
+    setTeacherHandsEnabled(true);
+    setRepeatSection(false);
+    if (['left', 'right', 'both'].includes(action.hand)) setPianoHandMode(action.hand);
+    if (action.speed !== null && action.speed !== undefined && Number.isFinite(Number(action.speed))) {
+      setSpeed(Math.max(0.2, Math.min(2, Number(action.speed))));
+    }
+    setTeacherDemonstration({ ...action, requestId: Date.now() });
+  }
+
+  useEffect(() => {
+    if (!teacherDemonstration) return;
+    const songDuration = getSongDuration(song);
+    if (songDuration <= 0) {
+      setTeacherDemonstration(null);
+      return;
+    }
+    const start = Math.max(0, Math.min(Math.max(0, songDuration - 0.5), Number(teacherDemonstration.startSeconds) || 0));
+    const requestedEnd = Number(teacherDemonstration.endSeconds) || start + 5;
+    const end = Math.min(songDuration, Math.max(start + 0.5, requestedEnd));
+    const range = {
+      id: `teacher-demo-${teacherDemonstration.requestId}`,
+      name: 'Teacher demonstration',
+      start,
+      end,
+      duration: end - start,
+    };
+    setTeacherDemonstration(null);
+    void listenToLearningRange(range);
+  }, [teacherDemonstration]);
 
   const paymentProductId = route.params.get('productId') || 'polymath-chill-monthly';
   const messageUserId = route.params.get('userId');
@@ -969,6 +1332,7 @@ export default function App() {
       return <BandPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
     if (route.page === 'published-songs') return <MarketplacePage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'community') return <CommunityPage user={user} onNavigate={navigate} />;
     if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} onNavigate={navigate} />;
     if (route.page === 'your-songs') return <YourSongsPage user={user} onNavigate={navigate} />;
     if (route.page === 'admin-database') return <AdminDatabasePage user={user} onNavigate={navigate} />;
@@ -996,55 +1360,51 @@ export default function App() {
     }
 
     return (
-      <section className="studio-page">
-        <LearnModePanel
+      <section className={`studio-page ${teachingMode === 'learn' ? 'is-learning-journey' : ''}`}>
+        <PianoLearnJourney
           mode={teachingMode}
           locked={!user?.admin && !user?.access?.learn}
           onUpgrade={() => navigate('payment', { productId: 'polymath-musician-monthly' })}
           onModeChange={(mode) => {
             stopPlayback();
             setTeachingMode(mode);
-            if (mode === 'regular') setPracticeRange(null);
+            if (mode === 'regular') {
+              setPracticeRange(null);
+              resetLearningCapture('idle');
+              practicePlaybackModeRef.current = 'listen';
+            }
           }}
+          song={song}
+          songKey={songLibraryId(song)}
+          levelId={learningLevel}
+          onLevelChange={changeLearningLevel}
+          sessionId={learningSession}
+          onSessionChange={changeLearningSession}
           sections={learningSections}
           selectedIndex={selectedSectionIndex}
           onSelectSection={selectLearningSection}
-          onPracticeSection={practiseLearningSection}
+          activeRange={activeLearningRange}
           repeatSection={repeatSection}
           onRepeatChange={setRepeatSection}
-          preferredSeconds={preferredSectionSeconds}
-          onPreferredSecondsChange={(value) => setPreferredSectionSeconds(Math.max(5, Math.min(60, value || 15)))}
+          handMode={pianoHandMode}
+          onHandModeChange={changeLearningHand}
+          onChooseMusic={openLearningMusicChoice}
+          onPrepare={prepareKeyboard}
+          preparationStatus={keyboardPreparationStatus}
+          preparationProgress={keyboardPreparationProgress}
+          preparationStage={keyboardPreparationStage}
+          midi={midiInput}
+          onConnectMidi={connectMidiInput}
+          onListen={listenToLearningRange}
+          onStartAttempt={startLearningAttempt}
+          attemptStatus={learningAttemptStatus}
+          report={learningReport}
+          progress={learningProgress}
+          onOpenTeacher={openVirtualTeacher}
+          onFindTeacher={() => navigate('find-teacher')}
+          onOpenBand={() => navigate('band')}
+          onFocusPlayer={() => focusMobilePlayer(true)}
         />
-
-        {teachingMode === 'learn' && (
-          <section className="piano-hand-selector" aria-label="Choose piano hands to practise">
-            <div>
-              <p className="eyebrow">Hand progression</p>
-              <h3>Build each hand, then combine them.</h3>
-            </div>
-            <div className="piano-hand-options" role="group" aria-label="Piano hand selection">
-              {[
-                ['left', '1. Left hand', 'Bass and accompaniment'],
-                ['right', '2. Right hand', 'Melody and upper voice'],
-                ['both', '3. Both hands', 'Standard double layer'],
-              ].map(([value, label, description]) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={pianoHandMode === value ? 'active' : ''}
-                  onClick={() => {
-                    silencePlayback(currentTime);
-                    setIsPlaying(false);
-                    setPianoHandMode(value);
-                  }}
-                >
-                  <strong>{label}</strong>
-                  <small>{description}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
 
         <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''}`}>
           <ControlPanel
@@ -1070,12 +1430,14 @@ export default function App() {
                 activeNotes={activeNotes}
                 strikeVersions={strikeVersions}
                 showKeyNotes={showKeyNotes}
-                onPress={(note, interaction) => pressNote(
+                onPress={(note, interaction = {}) => pressNote(
                   note,
-                  0.85,
+                  interaction.pointerType === 'pen' && Number(interaction.pressure) > 0
+                    ? Math.max(0.12, Math.min(1, Number(interaction.pressure)))
+                    : 0.85,
                   null,
                   'manual',
-                  interaction
+                  { ...interaction, inputType: interaction.pointerType || 'screen' }
                 )}
                 onRelease={releaseNote}
                 preparationStatus={keyboardPreparationStatus}
@@ -1084,10 +1446,10 @@ export default function App() {
                 performanceTier={performanceTier}
                 deviceClass={deviceClass}
                 onPrepare={prepareKeyboard}
-                teacher={teachingMode === 'learn' && teacherHandsEnabled ? pianoTeacher : null}
+                teacher={pianoTeacher}
                 teacherTargets={teacherHandTargets}
+                showTeacherHands={teachingMode === 'learn' && teacherHandsEnabled}
                 teacherHandMode={pianoHandMode}
-                teacherIsPlaying={isPlaying}
               />
             </div>
             <TransportDock
@@ -1132,7 +1494,6 @@ export default function App() {
             {teachingMode === 'learn' && (
               <PianoTeacherStudio
                 profiles={teacherProfiles}
-                performanceTier={performanceTier}
                 teacherId={pianoTeacher.id}
                 onTeacherChange={setPianoTeacherId}
                 showHands={teacherHandsEnabled}
@@ -1143,6 +1504,23 @@ export default function App() {
                   }
                 }}
                 targets={teacherHandTargets}
+                isPlaying={isPlaying}
+                practiceReport={learningReport}
+                lessonContext={{
+                  title: song?.title || 'Selected song',
+                  composer: song?.composer || song?.artist || '',
+                  bpm: song?.bpm || null,
+                  level: learningLevel,
+                  session: learningSession,
+                  hand: pianoHandMode,
+                  currentTime,
+                  duration: getSongDuration(song),
+                  activeRange: activeLearningRange,
+                }}
+                user={user}
+                setUser={setUser}
+                onNavigate={navigate}
+                onDemonstrate={requestVirtualTeacherDemonstration}
               />
             )}
           </div>
@@ -1188,6 +1566,7 @@ export default function App() {
           {content}
         </Suspense>
       </main>
+      {user && <SupportAssistant user={user} />}
     </div>
   );
 }

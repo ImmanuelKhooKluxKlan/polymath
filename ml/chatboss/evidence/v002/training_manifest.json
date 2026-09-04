@@ -1,0 +1,22 @@
+{
+  "schema": "polymath-chatboss-training-v1",
+  "status": "candidate-not-approved",
+  "baseModel": "Qwen/Qwen3.5-35B-A3B",
+  "revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",
+  "trainExamples": 114,
+  "validationExamples": 34,
+  "loraRank": 16,
+  "loraAlpha": 32,
+  "quantization": "4-bit NF4 double-quant",
+  "metrics": {
+    "train_runtime": 442.4104,
+    "train_samples_per_second": 0.515,
+    "train_steps_per_second": 0.036,
+    "total_flos": 5341468422041280.0,
+    "train_loss": 2.6242167949676514,
+    "eval_loss": 2.3892645835876465,
+    "eval_runtime": 12.2446,
+    "eval_samples_per_second": 2.777,
+    "eval_steps_per_second": 2.777
+  }
+}

@@ -17,6 +17,39 @@ const { createJobQueue } = require('./jobQueue');
 const { createModelLab } = require('./modelLab');
 const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
+const { createPolymathAssistant } = require('./polymathAssistant');
+const {
+  refundSupportQuestion,
+  reserveSupportQuestion,
+  supportQuestionAllowance,
+} = require('./supportUsage');
+const {
+  activeVirtualLesson,
+  appendSessionMessage,
+  createVirtualLesson,
+  DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
+  endVirtualLesson,
+  expireVirtualLessons,
+  lessonCatalog,
+  lessonQuote,
+  normalizeClientRequestId,
+  normalizeConversationMode,
+  parseTeacherDemonstration,
+  publicVirtualLesson,
+  sessionIsActive,
+  updateSessionMemory,
+} = require('./virtualLessons');
+const {
+  GLOBAL_ROOM_ID,
+  canReadRoom,
+  canWriteRoom,
+  cleanCommunityText,
+  ensureGlobalRoom,
+  membershipFor,
+  publicMessage,
+  publicRoom,
+  trimRoomMessages,
+} = require('./communityChat');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -37,8 +70,36 @@ if (!IS_PRODUCTION) {
   CLIENT_ORIGINS.add('http://127.0.0.1:5174');
 }
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
+const POLYMATH_ASSISTANT = createPolymathAssistant(process.env);
 const PROCESS_INSTANCE_ID = crypto.randomUUID();
 const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
+const BUILT_IN_VIRTUAL_TEACHERS = Object.freeze({
+  aria: Object.freeze({
+    id: 'aria', name: 'Aria', title: 'Piano performance teacher',
+    style: 'Calm, warm, precise, and focused on posture, phrasing, and connected movement.',
+    voice: 'Warm and precise', voiceType: 'feminine', requiresAdultConfirmation: false,
+  }),
+  nova: Object.freeze({
+    id: 'nova', name: 'Padme', title: 'Expressive performance coach',
+    style: 'Warm, confident, affectionate, and focused on expressive melody.',
+    voice: 'Warm, expressive, and playfully flirtatious', voiceType: 'feminine', requiresAdultConfirmation: true,
+  }),
+  anakin: Object.freeze({
+    id: 'anakin', name: 'Anakin', title: 'Technique coach',
+    style: 'Direct, energetic, and focused on timing, power, and confident movement.',
+    voice: 'Focused and assured', voiceType: 'masculine', requiresAdultConfirmation: false,
+  }),
+  taylor: Object.freeze({
+    id: 'taylor', name: 'Taylor', title: 'Songwriting coach',
+    style: 'Friendly and thoughtful, with strong melody, phrasing, and storytelling guidance.',
+    voice: 'Thoughtful and expressive', voiceType: 'feminine', requiresAdultConfirmation: false,
+  }),
+  mace: Object.freeze({
+    id: 'mace', name: 'Mace Windu', title: 'Piano master',
+    style: 'Disciplined, exact, concise, and demanding without empty praise.',
+    voice: 'Deep, calm, and exact', voiceType: 'masculine', requiresAdultConfirmation: false,
+  }),
+});
 
 const PAYPAL_ENV = String(process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
 const PAYPAL_API_BASE = PAYPAL_ENV === 'sandbox'
@@ -358,10 +419,12 @@ const DEFAULT_SITE_POLICIES = Object.freeze({
   maximumPendingWithdrawalOutflowMcoins: 0,
   withdrawalFeePercent: WITHDRAWAL_FEE_RATE * 100,
   welcomeMcoins: WELCOME_MCOINS,
+  virtualLessonPricePer30MinutesMcoins: DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
   policyNotice: '',
   termsUrl: '',
   privacyUrl: '',
   supportEmail: '',
+  supportPhone: '',
 });
 
 function ensureStorage() {
@@ -423,9 +486,21 @@ function ensureStorage() {
       listingReviews: [],
       composerFollows: [],
       messages: [],
+      communityRooms: [{
+        id: GLOBAL_ROOM_ID,
+        name: 'Polymath Free Flow',
+        topic: 'Meet musicians, share ideas, and talk about what matters to you.',
+        visibility: 'global',
+        ownerId: 'platform',
+        createdAt: now,
+      }],
+      communityMemberships: [],
+      communityMessages: [],
+      communityReports: [],
       teacherProfiles: [],
       teacherReviews: [],
       virtualTeacherCharacters: [],
+      virtualLessonSessions: [],
       withdrawals: [],
       paymentOrders: [],
       subscriptions: [],
@@ -494,9 +569,14 @@ function normalizeDb(db) {
     'listingReviews',
     'composerFollows',
     'messages',
+    'communityRooms',
+    'communityMemberships',
+    'communityMessages',
+    'communityReports',
     'teacherProfiles',
     'teacherReviews',
     'virtualTeacherCharacters',
+    'virtualLessonSessions',
     'withdrawals',
     'paymentOrders',
     'subscriptions',
@@ -559,6 +639,7 @@ function normalizeDb(db) {
     normalized.settings.minimumWithdrawalMcoins = 20;
     normalized.settings.minimumWithdrawal20MigrationApplied = true;
   }
+  ensureGlobalRoom(normalized);
   return normalized;
 }
 
@@ -812,10 +893,22 @@ function sitePolicies(db) {
     maximumPendingWithdrawalOutflowMcoins: clampDecimal(raw.maximumPendingWithdrawalOutflowMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumPendingWithdrawalOutflowMcoins),
     withdrawalFeePercent: clampDecimal(raw.withdrawalFeePercent, 0, 100, DEFAULT_SITE_POLICIES.withdrawalFeePercent),
     welcomeMcoins: clampDecimal(raw.welcomeMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.welcomeMcoins),
+    virtualLessonPricePer30MinutesMcoins: clampDecimal(
+      raw.virtualLessonPricePer30MinutesMcoins,
+      0,
+      1000000000,
+      clampDecimal(
+        raw.virtualLessonPricesMcoins?.[30],
+        0,
+        1000000000,
+        DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
+      ),
+    ),
     policyNotice: String(raw.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(raw.termsUrl || '').trim().slice(0, 500),
     privacyUrl: String(raw.privacyUrl || '').trim().slice(0, 500),
     supportEmail: String(raw.supportEmail || '').trim().toLowerCase().slice(0, 254),
+    supportPhone: String(raw.supportPhone || '').trim().replace(/[^+\d() .-]/g, '').slice(0, 40),
     updatedAt: raw.updatedAt || null,
     updatedBy: raw.updatedBy || null,
   };
@@ -1087,11 +1180,13 @@ function safeUser(user) {
     translationAllowance: translationAllowance(user),
     readySheetAllowance: readySheetAllowance(user),
     readySheetUploadCostMcoins: readySheetUploadCost(user),
+    adultCompanionConfirmed: Boolean(user.adultCompanionConfirmedAt),
     admin: administrator,
     access: {
       regular: true,
       learn: administrator || subscriptionTier === 'musician',
       band: administrator || subscriptionTier === 'musician',
+      community: administrator || subscriptionTier !== 'free',
     },
     mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,
@@ -1443,6 +1538,19 @@ function validateMarketplaceAsset(format, filename, bytes) {
   }
 }
 
+function requireSubscriber(req, res, next) {
+  return requireAuth(req, res, () => {
+    if (!isAdministrator(req.user) && activeSubscriptionTier(req.user) === 'free') {
+      res.status(403).json({
+        error: 'Community chat is included with Chill and Musician subscriptions.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      });
+      return;
+    }
+    next();
+  });
+}
+
 function readySheetFormat(filename) {
   const extension = path.extname(String(filename || '')).toLowerCase();
   if (extension === '.json') return 'JSON';
@@ -1463,6 +1571,13 @@ function readySheetMetadata(bytes, format, fallback = {}) {
   return {
     title: String(fallback.title || parsed?.title || '').trim(),
     artist: String(fallback.artist || parsed?.artist || parsed?.composer || '').trim(),
+  };
+}
+
+function publicSupportContact(policies) {
+  return {
+    email: String(policies?.supportEmail || ''),
+    phone: String(policies?.supportPhone || ''),
   };
 }
 
@@ -1937,6 +2052,7 @@ function publicVirtualTeacherCharacter(character) {
     title: character.title,
     description: character.description,
     voice: character.voice,
+    voiceType: ['feminine', 'masculine'].includes(character.voiceType) ? character.voiceType : 'neutral',
     armTone: character.armTone === 'dark' ? 'dark' : 'light',
     requiresAdultConfirmation: Boolean(character.requiresAdultConfirmation),
     imagePath: `/api/virtual-teachers/${encodeURIComponent(character.id)}/image?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`,
@@ -1947,6 +2063,22 @@ function publicVirtualTeacherCharacter(character) {
     custom: true,
     createdAt: character.createdAt,
     updatedAt: character.updatedAt || character.createdAt,
+  };
+}
+
+function resolvedVirtualLessonTeacher(db, candidate) {
+  const requestedId = String(candidate?.id || '').trim().replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+  const builtIn = BUILT_IN_VIRTUAL_TEACHERS[requestedId] || BUILT_IN_VIRTUAL_TEACHERS.aria;
+  const custom = (db?.virtualTeacherCharacters || []).find((character) => character.id === requestedId);
+  if (!custom) return builtIn;
+  return {
+    id: custom.id,
+    name: String(custom.name || 'Virtual teacher').trim().slice(0, 80),
+    title: String(custom.title || 'Polymath music teacher').trim().slice(0, 120),
+    style: String(custom.description || custom.voice || 'Clear, patient, and precise').trim().slice(0, 280),
+    voice: String(custom.voice || 'Natural and expressive').trim().slice(0, 100),
+    voiceType: ['feminine', 'masculine'].includes(custom.voiceType) ? custom.voiceType : 'neutral',
+    requiresAdultConfirmation: Boolean(custom.requiresAdultConfirmation),
   };
 }
 
@@ -2480,6 +2612,30 @@ async function runQueuedJob(message) {
   throw new Error('Unknown background job type.');
 }
 
+const ASSISTANT_REQUEST_TIMES = new Map();
+const COMMUNITY_REQUEST_TIMES = new Map();
+const SUPPORT_REQUEST_INTERVAL_MS = Number.isFinite(Number(process.env.SUPPORT_REQUEST_INTERVAL_MS))
+  ? Math.max(0, Number(process.env.SUPPORT_REQUEST_INTERVAL_MS))
+  : 1400;
+
+function requestIntervalAllowed(store, key, minimumIntervalMs) {
+  const now = Date.now();
+  const previous = Number(store.get(key) || 0);
+  if (now - previous < minimumIntervalMs) return false;
+  store.set(key, now);
+  if (store.size > 10000) {
+    for (const [candidate, timestamp] of store.entries()) {
+      if (now - timestamp > 24 * 60 * 60 * 1000) store.delete(candidate);
+    }
+    while (store.size > 10000) {
+      const oldestKey = store.keys().next().value;
+      if (oldestKey === undefined) break;
+      store.delete(oldestKey);
+    }
+  }
+  return true;
+}
+
 app.use(cors({
   origin(origin, callback) {
     const normalizedOrigin = String(origin || '').replace(/\/+$/, '');
@@ -2534,6 +2690,314 @@ app.get('/api/test', async (req, res) => res.json({
   environment: PAYPAL_ENV,
   scoreTranslation: localOmrAvailability(),
 }));
+
+app.get('/api/assistant/capabilities', requireAuth, async (req, res) => {
+  const policies = sitePolicies(req.db);
+  res.json({
+    ...POLYMATH_ASSISTANT.capabilities(),
+    support: {
+      ...supportQuestionAllowance(req.user, { unlimited: isAdministrator(req.user) }),
+      contact: publicSupportContact(policies),
+    },
+  });
+});
+
+app.post('/api/assistant/support', requireAuth, async (req, res) => {
+  const policies = sitePolicies(req.db);
+  const supportContact = publicSupportContact(policies);
+  const unlimited = isAdministrator(req.user);
+  const currentAllowance = supportQuestionAllowance(req.user, { unlimited });
+  if (!currentAllowance.unlimited && currentAllowance.remainingQuestions <= 0) {
+    return res.status(429).json({
+      error: 'You have used today\'s 7 Help questions. Contact the Polymath helpline or return after the daily reset.',
+      code: 'SUPPORT_DAILY_LIMIT_REACHED',
+      support: { ...currentAllowance, contact: supportContact },
+    });
+  }
+  if (!requestIntervalAllowed(ASSISTANT_REQUEST_TIMES, `${req.user.id}:support`, SUPPORT_REQUEST_INTERVAL_MS)) {
+    res.set('Retry-After', '2');
+    return res.status(429).json({
+      error: 'Give Polymath Support a moment to finish the previous reply.',
+      code: 'SUPPORT_REPLY_IN_PROGRESS',
+      support: { ...currentAllowance, contact: supportContact },
+    });
+  }
+  const reservation = reserveSupportQuestion(req.user, { unlimited });
+  try {
+    if (reservation.reserved) await writeDb(req.db);
+    const safe = safeUser(req.user);
+    const answer = await POLYMATH_ASSISTANT.supportChat({
+      messages: req.body?.messages,
+      accountContext: {
+        tier: safe.subscriptionTier,
+        admin: safe.admin,
+        translationAllowance: safe.translationAllowance,
+        readySheetAllowance: safe.readySheetAllowance,
+      },
+    });
+    return res.json({
+      ...answer,
+      support: {
+        ...supportQuestionAllowance(req.user, { unlimited }),
+        contact: supportContact,
+      },
+    });
+  } catch (error) {
+    if (refundSupportQuestion(req.user, reservation)) {
+      try {
+        await writeDb(req.db);
+      } catch (refundError) {
+        console.error('Polymath support quota refund failed:', refundError);
+      }
+    }
+    const unavailable = error?.code === 'ASSISTANT_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_ASSISTANT_REQUEST';
+    console.error('Polymath support failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : error?.name === 'AbortError' ? 504 : 502).json({
+      error: unavailable || invalid
+        ? error.message
+        : 'Polymath Support could not reply. Please try again.',
+      support: {
+        ...supportQuestionAllowance(req.user, { unlimited }),
+        contact: supportContact,
+      },
+    });
+  }
+});
+
+app.get('/api/virtual-lessons', requireAuth, async (req, res) => {
+  const changed = expireVirtualLessons(req.db);
+  if (changed) await writeDb(req.db);
+  return res.json({
+    catalog: lessonCatalog(sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins),
+    assistantAvailable: POLYMATH_ASSISTANT.capabilities().available,
+    session: publicVirtualLesson(activeVirtualLesson(req.db, req.user.id)),
+    user: safeUser(req.user),
+  });
+});
+
+app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
+  const clientRequestId = normalizeClientRequestId(req.body?.clientRequestId);
+  if (!clientRequestId) {
+    return res.status(400).json({ error: 'A valid lesson checkout reference is required.' });
+  }
+  const existing = req.db.virtualLessonSessions.find((session) => (
+    session.userId === req.user.id && session.clientRequestId === clientRequestId
+  ));
+  if (existing) {
+    return res.json({
+      duplicate: true,
+      session: publicVirtualLesson(existing),
+      user: safeUser(req.user),
+    });
+  }
+  if (!POLYMATH_ASSISTANT.capabilities().available) {
+    return res.status(503).json({
+      error: 'Virtual lessons are not available on this server yet. Nothing was charged.',
+      code: 'VIRTUAL_TEACHER_UNAVAILABLE',
+    });
+  }
+  const quote = lessonQuote(
+    req.body?.durationMinutes,
+    sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+  );
+  if (!quote) {
+    return res.status(400).json({ error: 'Enter a valid private-session duration.' });
+  }
+  const active = activeVirtualLesson(req.db, req.user.id);
+  if (active) {
+    return res.status(409).json({
+      error: 'Resume or end your current lesson before starting another one.',
+      session: publicVirtualLesson(active),
+    });
+  }
+  const administrator = isAdministrator(req.user);
+  const conversationMode = normalizeConversationMode(req.body?.conversationMode);
+  const teacher = resolvedVirtualLessonTeacher(req.db, req.body?.teacher);
+  const adultConfirmed = req.body?.adultConfirmed === true;
+  const companionConsent = req.body?.companionConsent === true;
+  if (conversationMode === 'adult-companion') {
+    if (!teacher.requiresAdultConfirmation) {
+      return res.status(400).json({
+        error: 'Choose an adult-eligible character for companion mode.',
+        code: 'ADULT_COMPANION_TEACHER_REQUIRED',
+      });
+    }
+    if (!adultConfirmed || !companionConsent) {
+      return res.status(403).json({
+        error: 'Confirm that you are 18+ and opt in before starting companion mode.',
+        code: 'ADULT_COMPANION_CONFIRMATION_REQUIRED',
+      });
+    }
+  }
+  const priceMcoins = administrator ? 0 : quote.priceMcoins;
+  if (!administrator && Number(req.user.mcoins || 0) < priceMcoins) {
+    return res.status(402).json({
+      error: `You need ${priceMcoins} Mcoins for this ${quote.durationMinutes}-minute lesson.`,
+      requiredMcoins: priceMcoins,
+      availableMcoins: Number(req.user.mcoins || 0),
+    });
+  }
+
+  if (!administrator) {
+    req.user.mcoins = Number((Number(req.user.mcoins || 0) - priceMcoins).toFixed(2));
+  }
+  const session = createVirtualLesson({
+    id: id('virtual_lesson'),
+    userId: req.user.id,
+    clientRequestId,
+    durationMinutes: quote.durationMinutes,
+    priceMcoins,
+    teacher,
+    conversationMode,
+    conversationPreferences: req.body?.conversationPreferences,
+    adultConfirmed,
+    companionConsent,
+    studentName: req.user.name,
+  });
+  if (conversationMode === 'adult-companion') {
+    req.user.adultCompanionConfirmedAt = session.adultConfirmedAt;
+  }
+  req.db.virtualLessonSessions.push(session);
+  addLedger(
+    req.db,
+    req.user.id,
+    -priceMcoins,
+    administrator ? 'admin_virtual_lesson' : 'virtual_lesson',
+    `${quote.durationMinutes}-minute private ${conversationMode === 'adult-companion' ? 'adult companion session' : 'virtual music lesson'} with ${session.teacher.name}`,
+  );
+  await writeDb(req.db);
+  return res.status(201).json({
+    session: publicVirtualLesson(session),
+    user: safeUser(req.user),
+    chargedMcoins: priceMcoins,
+  });
+});
+
+app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, res) => {
+  if (!requestIntervalAllowed(ASSISTANT_REQUEST_TIMES, `${req.user.id}:teacher`, 1400)) {
+    res.set('Retry-After', '2');
+    return res.status(429).json({ error: 'Give your teacher a moment to finish the previous reply.' });
+  }
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+  if (!sessionIsActive(session)) {
+    if (session.status === 'active') {
+      expireVirtualLessons(req.db);
+      await writeDb(req.db);
+    }
+    return res.status(410).json({
+      error: 'This virtual lesson has ended. Choose a new duration to continue.',
+      session: publicVirtualLesson(session),
+    });
+  }
+  const userText = String(req.body?.message || '').trim().slice(0, 1600);
+  if (!userText) return res.status(400).json({ error: 'Say or type a message first.' });
+  const requestedAt = new Date();
+  const lessonContext = req.body?.lessonContext;
+  const observations = req.body?.observations;
+  const action = parseTeacherDemonstration(
+    userText,
+    lessonContext,
+    session.memory?.lastDemonstration,
+  );
+  appendSessionMessage(session, {
+    id: id('lesson_message'),
+    role: 'user',
+    text: userText,
+    createdAt: requestedAt.toISOString(),
+  }, requestedAt);
+
+  try {
+    let result;
+    if (action) {
+      const start = Math.floor(action.startSeconds / 60) + ':' + String(Math.floor(action.startSeconds % 60)).padStart(2, '0');
+      const end = Math.floor(action.endSeconds / 60) + ':' + String(Math.floor(action.endSeconds % 60)).padStart(2, '0');
+      const hand = action.hand === 'both' ? 'both hands' : `the ${action.hand} hand`;
+      const speed = action.speed ? ` at ${Math.round(action.speed * 100)}% speed` : '';
+      result = {
+        reply: `${req.user.name?.split(' ')[0] || 'Ready'}, watch ${hand} from ${start} to ${end}${speed}. Notice where each fingertip lands, then copy only this short phrase once.` ,
+        provider: 'polymath-demonstration-engine',
+        role: 'piano-teacher',
+      };
+    } else {
+      result = await POLYMATH_ASSISTANT.teacherChat({
+        messages: session.messages.map((message) => ({
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          content: message.text,
+        })),
+        teacher: session.teacher,
+        conversationMode: session.conversationMode,
+        conversationPreferences: session.conversationPreferences,
+        accountContext: {
+          studentName: req.user.name,
+          sessionMemory: session.memory,
+          sessionEndsAt: session.expiresAt,
+        },
+        lessonContext,
+        observations,
+      });
+    }
+    updateSessionMemory(session, {
+      studentName: req.user.name,
+      userMessage: userText,
+      lessonContext,
+      practiceReport: observations?.practiceReport,
+      action,
+    });
+    const repliedAt = new Date();
+    appendSessionMessage(session, {
+      id: id('lesson_message'),
+      role: 'assistant',
+      text: result.reply,
+      createdAt: repliedAt.toISOString(),
+    }, repliedAt);
+    await writeDb(req.db);
+    return res.json({
+      ...result,
+      action,
+      session: publicVirtualLesson(session, repliedAt),
+    });
+  } catch (error) {
+    const unavailable = error?.code === 'ASSISTANT_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_ASSISTANT_REQUEST';
+    console.error('Polymath teacher chat failed:', error);
+    // Paid time should not disappear while a GPU reply fails. Restore the
+    // failed request time plus a small recovery allowance.
+    const recoverySeconds = Math.min(120, Math.max(15, Math.ceil((Date.now() - requestedAt.getTime()) / 1000) + 10));
+    session.expiresAt = new Date(new Date(session.expiresAt).getTime() + recoverySeconds * 1000).toISOString();
+    session.messages.pop();
+    session.aiFailureCount = Number(session.aiFailureCount || 0) + 1;
+    session.lastFailureAt = new Date().toISOString();
+    await writeDb(req.db);
+    return res.status(unavailable ? 503 : invalid ? 400 : error?.name === 'AbortError' ? 504 : 502).json({
+      error: unavailable || invalid
+        ? error.message
+        : 'Your virtual teacher could not reply. Please try again.',
+      session: publicVirtualLesson(session),
+      recoveredSeconds: recoverySeconds,
+    });
+  }
+});
+
+app.post('/api/virtual-lessons/:sessionId/end', requireAuth, async (req, res) => {
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+  if (session.status === 'active') endVirtualLesson(session);
+  await writeDb(req.db);
+  return res.json({ session: publicVirtualLesson(session), user: safeUser(req.user) });
+});
+
+app.post('/api/assistant/teacher', requireAuth, async (req, res) => {
+  return res.status(410).json({
+    error: 'Teacher chat now runs inside a timed private virtual lesson.',
+    code: 'VIRTUAL_LESSON_REQUIRED',
+  });
+});
 
 app.get('/api/virtual-teachers', async (req, res) => {
   const db = await readDb();
@@ -2606,6 +3070,9 @@ app.post(
       const title = String(req.body.title || '').trim().slice(0, 80);
       const description = String(req.body.description || '').trim().slice(0, 240);
       const voice = String(req.body.voice || '').trim().slice(0, 50);
+      const voiceType = ['feminine', 'masculine'].includes(String(req.body.voiceType || '').trim().toLowerCase())
+        ? String(req.body.voiceType).trim().toLowerCase()
+        : 'neutral';
       const armTone = req.body.armTone === 'dark' ? 'dark' : 'light';
       const requiresAdultConfirmation = String(req.body.requiresAdultConfirmation || '').toLowerCase() === 'true';
       if (name.length < 2) return res.status(400).json({ error: 'Character name must contain at least 2 characters.' });
@@ -2637,6 +3104,7 @@ app.post(
         title,
         description,
         voice,
+        voiceType,
         armTone,
         requiresAdultConfirmation,
         imageKey,
@@ -3729,6 +4197,181 @@ app.get('/api/listings/:listingId/download', requireAuth, async (req, res) => {
   );
 });
 
+app.get('/api/community/rooms', requireSubscriber, async (req, res) => {
+  const rooms = req.db.communityRooms
+    .filter((room) => canReadRoom(req.db, room, req.user.id))
+    .map((room) => publicRoom(room, req.db, req.user.id, isAdministrator(req.user)))
+    .sort((a, b) => {
+      if (a.id === GLOBAL_ROOM_ID) return -1;
+      if (b.id === GLOBAL_ROOM_ID) return 1;
+      return String(b.lastMessageAt || '').localeCompare(String(a.lastMessageAt || ''));
+    });
+  return res.json({ rooms, access: 'subscriber' });
+});
+
+app.post('/api/community/rooms', requireSubscriber, async (req, res) => {
+  const name = cleanCommunityText(req.body?.name, 60);
+  const topic = cleanCommunityText(req.body?.topic, 180);
+  const visibility = req.body?.visibility === 'private' ? 'private' : 'public';
+  if (name.length < 2) return res.status(400).json({ error: 'Give the group a name with at least 2 characters.' });
+  const ownedCount = req.db.communityRooms.filter((room) => room.ownerId === req.user.id).length;
+  if (!isAdministrator(req.user) && ownedCount >= 12) {
+    return res.status(400).json({ error: 'You can own up to 12 community groups.' });
+  }
+  const now = new Date().toISOString();
+  const room = {
+    id: id('community_room'),
+    name,
+    topic,
+    visibility,
+    ownerId: req.user.id,
+    inviteCode: crypto.randomBytes(5).toString('hex').toUpperCase(),
+    createdAt: now,
+  };
+  req.db.communityRooms.push(room);
+  req.db.communityMemberships.push({
+    id: id('community_member'),
+    roomId: room.id,
+    userId: req.user.id,
+    role: 'owner',
+    joinedAt: now,
+  });
+  await writeDb(req.db);
+  return res.status(201).json({ room: publicRoom(room, req.db, req.user.id, isAdministrator(req.user)) });
+});
+
+app.post('/api/community/rooms/join', requireSubscriber, async (req, res) => {
+  const inviteCode = cleanCommunityText(req.body?.inviteCode, 20).toUpperCase();
+  const roomId = cleanCommunityText(req.body?.roomId, 100);
+  const room = inviteCode
+    ? req.db.communityRooms.find((candidate) => candidate.inviteCode === inviteCode)
+    : req.db.communityRooms.find((candidate) => candidate.id === roomId);
+  if (!room || room.id === GLOBAL_ROOM_ID) return res.status(404).json({ error: 'That community group was not found.' });
+  if (room.visibility === 'private' && !inviteCode) {
+    return res.status(403).json({ error: 'Enter this private group’s invite code.' });
+  }
+  if (!membershipFor(req.db, room.id, req.user.id)) {
+    req.db.communityMemberships.push({
+      id: id('community_member'),
+      roomId: room.id,
+      userId: req.user.id,
+      role: 'member',
+      joinedAt: new Date().toISOString(),
+    });
+    await writeDb(req.db);
+  }
+  return res.json({ room: publicRoom(room, req.db, req.user.id, isAdministrator(req.user)) });
+});
+
+app.delete('/api/community/rooms/:roomId/membership', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || room.id === GLOBAL_ROOM_ID) return res.status(404).json({ error: 'That community group was not found.' });
+  if (room.ownerId === req.user.id) return res.status(400).json({ error: 'The group owner can delete the group instead of leaving it.' });
+  req.db.communityMemberships = req.db.communityMemberships.filter(
+    (membership) => !(membership.roomId === room.id && membership.userId === req.user.id),
+  );
+  await writeDb(req.db);
+  return res.status(204).end();
+});
+
+app.delete('/api/community/rooms/:roomId', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || room.id === GLOBAL_ROOM_ID) return res.status(404).json({ error: 'That community group was not found.' });
+  if (room.ownerId !== req.user.id && !isAdministrator(req.user)) {
+    return res.status(403).json({ error: 'Only the group owner or an administrator can delete this group.' });
+  }
+  req.db.communityRooms = req.db.communityRooms.filter((candidate) => candidate.id !== room.id);
+  req.db.communityMemberships = req.db.communityMemberships.filter((membership) => membership.roomId !== room.id);
+  req.db.communityMessages = req.db.communityMessages.filter((message) => message.roomId !== room.id);
+  await writeDb(req.db);
+  return res.status(204).end();
+});
+
+app.get('/api/community/rooms/:roomId/messages', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || !canReadRoom(req.db, room, req.user.id)) {
+    return res.status(404).json({ error: 'That community group was not found.' });
+  }
+  const since = String(req.query.since || '');
+  const messages = req.db.communityMessages
+    .filter((message) => message.roomId === room.id && (!since || String(message.createdAt) > since))
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .slice(-250)
+    .map((message) => publicMessage(message, req.db, req.user.id, room, isAdministrator(req.user)));
+  return res.json({
+    room: publicRoom(room, req.db, req.user.id, isAdministrator(req.user)),
+    messages,
+  });
+});
+
+app.post('/api/community/rooms/:roomId/messages', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || !canReadRoom(req.db, room, req.user.id)) {
+    return res.status(404).json({ error: 'That community group was not found.' });
+  }
+  if (!canWriteRoom(req.db, room, req.user.id)) {
+    return res.status(403).json({ error: 'Join this group before sending a message.' });
+  }
+  if (!requestIntervalAllowed(COMMUNITY_REQUEST_TIMES, req.user.id, 700)) {
+    res.set('Retry-After', '1');
+    return res.status(429).json({ error: 'Please wait a moment before sending another message.' });
+  }
+  const text = cleanCommunityText(req.body?.text);
+  if (!text) return res.status(400).json({ error: 'Write a message first.' });
+  const message = {
+    id: id('community_message'),
+    roomId: room.id,
+    userId: req.user.id,
+    text,
+    createdAt: new Date().toISOString(),
+  };
+  req.db.communityMessages.push(message);
+  trimRoomMessages(req.db, room.id, room.id === GLOBAL_ROOM_ID ? 1500 : 750);
+  await writeDb(req.db);
+  return res.status(201).json({ message: publicMessage(message, req.db, req.user.id, room, isAdministrator(req.user)) });
+});
+
+app.delete('/api/community/rooms/:roomId/messages/:messageId', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  const message = req.db.communityMessages.find(
+    (candidate) => candidate.id === req.params.messageId && candidate.roomId === req.params.roomId,
+  );
+  if (!room || !message) return res.status(404).json({ error: 'That message was not found.' });
+  const membership = membershipFor(req.db, room.id, req.user.id);
+  const canDelete = isAdministrator(req.user)
+    || message.userId === req.user.id
+    || room.ownerId === req.user.id
+    || membership?.role === 'moderator';
+  if (!canDelete) return res.status(403).json({ error: 'You cannot remove that message.' });
+  req.db.communityMessages = req.db.communityMessages.filter((candidate) => candidate.id !== message.id);
+  await writeDb(req.db);
+  return res.status(204).end();
+});
+
+app.post('/api/community/messages/:messageId/report', requireSubscriber, async (req, res) => {
+  const message = req.db.communityMessages.find((candidate) => candidate.id === req.params.messageId);
+  if (!message) return res.status(404).json({ error: 'That message was not found.' });
+  const room = req.db.communityRooms.find((candidate) => candidate.id === message.roomId);
+  if (!room || !canReadRoom(req.db, room, req.user.id)) return res.status(404).json({ error: 'That message was not found.' });
+  if (message.userId === req.user.id) return res.status(400).json({ error: 'You do not need to report your own message.' });
+  const existing = req.db.communityReports.find(
+    (report) => report.messageId === message.id && report.reporterUserId === req.user.id,
+  );
+  if (!existing) {
+    req.db.communityReports.push({
+      id: id('community_report'),
+      messageId: message.id,
+      roomId: room.id,
+      reporterUserId: req.user.id,
+      reason: cleanCommunityText(req.body?.reason, 300) || 'Community safety review requested.',
+      status: 'open',
+      createdAt: new Date().toISOString(),
+    });
+    await writeDb(req.db);
+  }
+  return res.status(201).json({ message: 'Report sent privately to the moderation queue.' });
+});
+
 app.get('/api/bands', requireMusician, async (req, res) => {
   const visible = req.db.bands
     .filter((band) => band.accessMode !== 'invite')
@@ -4104,6 +4747,43 @@ app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, async (req, 
   });
 });
 
+app.get('/api/admin/community/reports', requireAuth, requireAdmin, async (req, res) => {
+  const reports = req.db.communityReports
+    .slice()
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map((report) => {
+      const message = req.db.communityMessages.find((candidate) => candidate.id === report.messageId);
+      const room = req.db.communityRooms.find((candidate) => candidate.id === report.roomId);
+      const reporter = req.db.users.find((candidate) => candidate.id === report.reporterUserId);
+      const author = message && req.db.users.find((candidate) => candidate.id === message.userId);
+      return {
+        id: report.id,
+        status: report.status,
+        reason: report.reason,
+        createdAt: report.createdAt,
+        resolvedAt: report.resolvedAt || null,
+        room: { id: report.roomId, name: room?.name || 'Deleted group' },
+        message: message ? { id: message.id, text: message.text, author: author?.name || 'Former member' } : null,
+        reporter: reporter?.name || 'Former member',
+      };
+    });
+  return res.json({ reports, openCount: reports.filter((report) => report.status === 'open').length });
+});
+
+app.patch('/api/admin/community/reports/:reportId', requireAuth, requireAdmin, async (req, res) => {
+  const report = req.db.communityReports.find((candidate) => candidate.id === req.params.reportId);
+  if (!report) return res.status(404).json({ error: 'Community report not found.' });
+  const status = ['resolved', 'dismissed'].includes(req.body?.status) ? req.body.status : 'resolved';
+  if (req.body?.removeMessage) {
+    req.db.communityMessages = req.db.communityMessages.filter((message) => message.id !== report.messageId);
+  }
+  report.status = status;
+  report.resolvedAt = new Date().toISOString();
+  report.resolvedBy = req.user.id;
+  await writeDb(req.db);
+  return res.json({ report: { id: report.id, status: report.status, resolvedAt: report.resolvedAt } });
+});
+
 app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   const customers = req.db.users.filter((user) => user.id !== 'platform');
   const rows = customers.map((user) => {
@@ -4371,10 +5051,17 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
     withdrawalFeePercent: clampDecimal(req.body.withdrawalFeePercent, 0, 100, current.withdrawalFeePercent),
     minimumWithdrawal20MigrationApplied: true,
     welcomeMcoins: clampDecimal(req.body.welcomeMcoins, 0, 1000000000, current.welcomeMcoins),
+    virtualLessonPricePer30MinutesMcoins: clampDecimal(
+      req.body.virtualLessonPricePer30MinutesMcoins,
+      0,
+      1000000000,
+      current.virtualLessonPricePer30MinutesMcoins,
+    ),
     policyNotice: String(req.body.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(req.body.termsUrl || '').trim().slice(0, 500),
     privacyUrl: String(req.body.privacyUrl || '').trim().slice(0, 500),
     supportEmail: String(req.body.supportEmail || '').trim().toLowerCase().slice(0, 254),
+    supportPhone: String(req.body.supportPhone || '').trim().slice(0, 40),
     updatedAt: new Date().toISOString(),
     updatedBy: req.user.id,
   };
@@ -4386,6 +5073,12 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   }
   if (next.supportEmail && !/^\S+@\S+\.\S+$/.test(next.supportEmail)) {
     return res.status(400).json({ error: 'Enter a valid support email or leave it blank.' });
+  }
+  if (next.supportPhone) {
+    const phoneDigits = next.supportPhone.replace(/\D/g, '');
+    if (!/^\+?[\d() .-]+$/.test(next.supportPhone) || phoneDigits.length < 7 || phoneDigits.length > 18) {
+      return res.status(400).json({ error: 'Enter a valid helpline number or leave it blank.' });
+    }
   }
   for (const [label, value] of [['Terms', next.termsUrl], ['Privacy', next.privacyUrl]]) {
     if (value && !/^https?:\/\//i.test(value)) {
@@ -6348,6 +7041,26 @@ async function resumePendingMediaTranscriptionJobs() {
   }
 }
 
+let virtualLessonExpiryTimer = null;
+let virtualLessonExpirySweepRunning = false;
+
+function startVirtualLessonExpirySweep() {
+  if (virtualLessonExpiryTimer) return;
+  virtualLessonExpiryTimer = setInterval(async () => {
+    if (virtualLessonExpirySweepRunning) return;
+    virtualLessonExpirySweepRunning = true;
+    try {
+      const db = await readDb();
+      if (expireVirtualLessons(db)) await writeDb(db);
+    } catch (error) {
+      console.error('Virtual lesson expiry sweep failed:', error.message);
+    } finally {
+      virtualLessonExpirySweepRunning = false;
+    }
+  }, 30000);
+  virtualLessonExpiryTimer.unref?.();
+}
+
 async function startServer() {
   ensureStorage();
   await bootstrapAdminAccounts();
@@ -6357,6 +7070,7 @@ async function startServer() {
   }
   await resumePendingTranslationJobs();
   await resumePendingMediaTranscriptionJobs();
+  startVirtualLessonExpirySweep();
   return app.listen(PORT, () => {
     console.log(
       `Polymath Musician backend running on http://localhost:${PORT} `

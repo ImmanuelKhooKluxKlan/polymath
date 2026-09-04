@@ -7,6 +7,7 @@ const PRIMARY_ITEMS = [
 
 export default function AppNav({ route, onNavigate, user }) {
   const moreItems = [
+    ['community', 'Community'],
     ['find-teacher', 'Find Teacher'],
     ['band', 'Band'],
     ...(user ? [['your-songs', 'Your Songs']] : []),

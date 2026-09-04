@@ -202,7 +202,20 @@ export function buildAdaptivePianoLayout(songOrNotes = null) {
 }
 
 export function buildLearningHandLayout(songOrNotes = null, hand = 'both') {
-  if (hand === 'both') return buildAdaptivePianoLayout(songOrNotes);
+  if (hand === 'both') {
+    const row = buildRow('main', 'Teacher grand piano', GRAND_START_MIDI, GRAND_END_MIDI);
+    return {
+      mode: 'learn-grand-single',
+      isTwoStorey: false,
+      learningHand: hand,
+      songRange: getSongMidiRange(songOrNotes),
+      rows: [row],
+      rangeLabel: `${GRAND_START_NOTE}-${GRAND_END_NOTE}`,
+      getPosition(noteOrMidi) {
+        return row.getPosition(noteOrMidi);
+      },
+    };
+  }
 
   const isLeft = hand === 'left';
   const row = isLeft

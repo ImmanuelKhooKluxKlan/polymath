@@ -9,6 +9,7 @@ const ADMIN_SECTIONS = [
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
   ['characters', 'Virtual teachers', 'Upload, publish, and delete custom characters'],
+  ['community', 'Community safety', 'Review reported messages and moderation actions'],
   ['promotions', 'Discounts', 'Create percentage or fixed-Mcoin codes'],
   ['withdrawals', 'Payouts', 'Review pending cash-outs and platform outflow'],
   ['policies', 'Rules & policies', 'Security, marketplace, rewards, fees, and outflow limits'],
@@ -31,7 +32,7 @@ const DEVICE_PRESETS = [
 
 const PREVIEW_PAGES = [
   ['studio', 'Piano Studio'], ['guitar', 'Guitar Studio'], ['ensemble', 'Instrument Studio'],
-  ['band', 'Band'], ['find-teacher', 'Find Teacher'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
+  ['band', 'Band'], ['community', 'Community'], ['find-teacher', 'Find Teacher'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
   ['payment', 'Payments'], ['account', 'Account'],
 ];
 
@@ -63,6 +64,7 @@ const EMPTY_CHARACTER = {
   title: '',
   description: '',
   voice: '',
+  voiceType: 'neutral',
   armTone: 'light',
   requiresAdultConfirmation: false,
 };
@@ -129,6 +131,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [customViewport, setCustomViewport] = useState({ width: 390, height: 844 });
   const [phoneReviews, setPhoneReviews] = useState(loadPhoneReviews);
   const [characters, setCharacters] = useState([]);
+  const [communityReports, setCommunityReports] = useState({ reports: [], openCount: 0 });
   const [characterDraft, setCharacterDraft] = useState(EMPTY_CHARACTER);
   const [characterImage, setCharacterImage] = useState(null);
   const [characterImagePreview, setCharacterImagePreview] = useState('');
@@ -137,18 +140,34 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [characterUploadVersion, setCharacterUploadVersion] = useState(0);
 
   async function loadConsole() {
-    const [usersData, policiesData, promotionsData, withdrawalsData, charactersData] = await Promise.all([
+    const [usersData, policiesData, promotionsData, withdrawalsData, charactersData, communityData] = await Promise.all([
       apiRequest('/api/admin/users'),
       apiRequest('/api/admin/policies'),
       apiRequest('/api/admin/promotions'),
       apiRequest('/api/admin/withdrawals'),
       apiRequest('/api/admin/virtual-teachers'),
+      apiRequest('/api/admin/community/reports'),
     ]);
     setDatabase(usersData);
     setPolicies(policiesData.policies);
     setPromotions(promotionsData.promotions);
     setWithdrawals(withdrawalsData);
     setCharacters(Array.isArray(charactersData.characters) ? charactersData.characters : []);
+    setCommunityReports(communityData);
+  }
+
+  async function reviewCommunityReport(report, statusValue, removeMessage = false) {
+    try {
+      await apiRequest(`/api/admin/community/reports/${report.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: statusValue, removeMessage }),
+      });
+      const refreshed = await apiRequest('/api/admin/community/reports');
+      setCommunityReports(refreshed);
+      setStatus(removeMessage ? 'Message removed and report resolved.' : `Report ${statusValue}.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
   }
 
   useEffect(() => {
@@ -636,9 +655,10 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 {characterModel && <span>{characterModel.name} · {(characterModel.size / 1048576).toFixed(1)} MB</span>}
               </div>
               <div className='admin-form-grid'>
-                <label className='field'>Character name<input maxLength='50' value={characterDraft.name} onChange={(event) => setCharacterDraft({ ...characterDraft, name: event.target.value })} placeholder='Nova' required /></label>
+                <label className='field'>Character name<input maxLength='50' value={characterDraft.name} onChange={(event) => setCharacterDraft({ ...characterDraft, name: event.target.value })} placeholder='Lyra' required /></label>
                 <label className='field'>Teacher role<input maxLength='80' value={characterDraft.title} onChange={(event) => setCharacterDraft({ ...characterDraft, title: event.target.value })} placeholder='Performance coach' required /></label>
                 <label className='field'>Voice / style<input maxLength='50' value={characterDraft.voice} onChange={(event) => setCharacterDraft({ ...characterDraft, voice: event.target.value })} placeholder='Encouraging' required /></label>
+                <label className='field'>Voice type<select value={characterDraft.voiceType} onChange={(event) => setCharacterDraft({ ...characterDraft, voiceType: event.target.value })}><option value='neutral'>Neutral / automatic</option><option value='feminine'>Feminine</option><option value='masculine'>Masculine</option></select></label>
                 <label className='field'>Teacher hand tone<select value={characterDraft.armTone} onChange={(event) => setCharacterDraft({ ...characterDraft, armTone: event.target.value })}><option value='light'>Light</option><option value='dark'>Dark</option></select></label>
               </div>
               <label className='field'>Short description<textarea rows='3' maxLength='240' value={characterDraft.description} onChange={(event) => setCharacterDraft({ ...characterDraft, description: event.target.value })} placeholder='How this teacher helps a student.' required /></label>
@@ -649,7 +669,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             <div className='admin-character-library'>
               <article className='admin-character-protection-note'>
                 <strong>Built-in teachers are protected</strong>
-                <span>Nova, Anakin, Taylor, and Mace cannot be deleted here. Only administrator uploads can be removed.</span>
+                <span>Padme, Anakin, Taylor, and Mace cannot be deleted here. Only administrator uploads can be removed.</span>
               </article>
               <div className='admin-character-list'>
                 {characters.map((character) => (
@@ -662,6 +682,25 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 {!characters.length && <div className='empty-state'>No custom characters yet. Upload the first one on the left.</div>}
               </div>
             </div>
+          </div>
+        </section>
+      )}
+      {activeSection === 'community' && (
+        <section className='admin-workspace admin-community-safety'>
+          <div className='admin-section-heading'>
+            <div><p className='eyebrow'>Community moderation</p><h2>Reported messages</h2><p>Review context before removing content. Reports stay private from the message author.</p></div>
+            <span className='status-pill'>{communityReports.openCount || 0} open</span>
+          </div>
+          <div className='admin-community-report-list'>
+            {(communityReports.reports || []).map((report) => (
+              <article key={report.id} className={`admin-community-report is-${report.status}`}>
+                <header><div><strong>{report.room.name}</strong><small>Reported by {report.reporter} · {new Date(report.createdAt).toLocaleString()}</small></div><span className='status-pill'>{report.status}</span></header>
+                <blockquote>{report.message ? <><b>{report.message.author}</b><span>{report.message.text}</span></> : <span>Message was already removed.</span>}</blockquote>
+                <p>{report.reason}</p>
+                {report.status === 'open' && <div className='button-row'><button type='button' className='primary' disabled={!report.message} onClick={() => reviewCommunityReport(report, 'resolved', true)}>Remove message</button><button type='button' className='ghost' onClick={() => reviewCommunityReport(report, 'dismissed')}>Keep message</button></div>}
+              </article>
+            ))}
+            {!communityReports.reports?.length && <div className='empty-state'>No community reports. Free Flow is clear.</div>}
           </div>
         </section>
       )}
@@ -760,6 +799,18 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             </div>
 
             <div className='policy-control-group'>
+              <div className='policy-control-heading'>
+                <div>
+                  <h3>Private voice lessons</h3>
+                  <p>Sessions use 30-minute blocks. Set one block price; longer lessons scale automatically.</p>
+                </div>
+              </div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Price per 30 minutes<input type='number' min='0' max='1000000000' step='0.01' value={policies.virtualLessonPricePer30MinutesMcoins ?? 5} onChange={(event) => setPolicies({ ...policies, virtualLessonPricePer30MinutesMcoins: Number(event.target.value) })} /><small>Mcoins / US dollars; 0 makes private sessions free</small></label>
+              </div>
+            </div>
+
+            <div className='policy-control-group'>
               <div className='policy-control-heading'><div><h3>Composers marketplace</h3><p>Listings can be sold, free, or pay each listener a reward funded by the composer.</p></div></div>
               <div className='admin-form-grid policy-form-grid'>
                 <label className='field'>Minimum sale price<input type='number' min='0' max='1000000000' step='0.01' value={policies.minimumMarketplacePriceMcoins} onChange={(event) => setPolicies({ ...policies, minimumMarketplacePriceMcoins: Number(event.target.value) })} /><small>0 allows zero-price sales</small></label>
@@ -786,6 +837,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
               <div className='policy-control-heading'><div><h3>Published policy details</h3><p>Support contacts and links shown to users.</p></div></div>
               <div className='admin-form-grid policy-form-grid'>
                 <label className='field'>Support email<input type='email' value={policies.supportEmail} onChange={(event) => setPolicies({ ...policies, supportEmail: event.target.value })} /></label>
+                <label className='field'>Helpline phone<input type='tel' placeholder='+65 6123 4567' value={policies.supportPhone || ''} onChange={(event) => setPolicies({ ...policies, supportPhone: event.target.value })} /><small>Shown after a user reaches the daily Help limit</small></label>
                 <label className='field'>Terms URL<input type='url' placeholder='https://' value={policies.termsUrl} onChange={(event) => setPolicies({ ...policies, termsUrl: event.target.value })} /></label>
                 <label className='field'>Privacy URL<input type='url' placeholder='https://' value={policies.privacyUrl} onChange={(event) => setPolicies({ ...policies, privacyUrl: event.target.value })} /></label>
               </div>

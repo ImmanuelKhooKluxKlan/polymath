@@ -2,12 +2,33 @@ import { clamp, midiToNote, parseNote } from './noteMath.js';
 
 export const TEACHER_PROFILES = Object.freeze([
   {
+    id: 'aria',
+    name: 'Aria',
+    title: 'Piano performance teacher',
+    description: 'Calm demonstrations with clear posture, phrasing, and connected movement.',
+    voice: 'Warm and precise',
+    voiceType: 'feminine',
+    image: '/teachers/polymath-teacher-studio-v1.jpg',
+    stageImage: '/teachers/polymath-teacher-studio-v1.jpg',
+    portraitPosition: '48% 20%',
+    handCameraImage: '/teachers/pianist-hands-overhead-v1.webp',
+    pressedHandCameraImage: '/teachers/pianist-hands-pressed-v2.webp',
+    stageShoulders: { left: [442, 265], right: [589, 270] },
+    palette: { skin: '#d5a078', skinShadow: '#986047', hair: '#4a2d24', primary: '#4c477f', secondary: '#9c70c8' },
+    look: 'professional',
+  },
+  {
     id: 'nova',
-    name: 'Nova',
-    title: 'Performance coach',
-    description: 'Warm, precise, and focused on expressive melody.',
-    voice: 'Encouraging',
-    image: '/teachers/nova-human-v1.webp',
+    name: 'Padme',
+    title: 'Expressive performance coach',
+    description: 'Warm, confident, and focused on expressive melody.',
+    voice: 'Warm and expressive',
+    voiceType: 'feminine',
+    image: '/teachers/padme-teacher-studio-v1.jpg',
+    stageImage: '/teachers/padme-teacher-studio-v1.jpg',
+    portraitPosition: '35% 20%',
+    handCameraImage: '/teachers/pianist-hands-overhead-v1.webp',
+    pressedHandCameraImage: '/teachers/pianist-hands-pressed-v2.webp',
     armImage: '/teachers/arm-light-full-v1.webp',
     palette: { skin: '#d9a07f', skinShadow: '#a96e54', hair: '#24192a', primary: '#7857d8', secondary: '#cf5eaa' },
     look: 'athletic',
@@ -19,7 +40,12 @@ export const TEACHER_PROFILES = Object.freeze([
     title: 'Technique coach',
     description: 'Direct coaching for timing, power, and confident movement.',
     voice: 'Focused',
-    image: '/teachers/anakin-human-v1.webp',
+    voiceType: 'masculine',
+    image: '/teachers/anakin-teacher-studio-v2.jpg',
+    stageImage: '/teachers/anakin-teacher-studio-v2.jpg',
+    portraitPosition: '35% 17%',
+    handCameraImage: '/teachers/pianist-hands-overhead-male-v1.webp',
+    pressedHandCameraImage: '/teachers/pianist-hands-pressed-male-v2.webp',
     armImage: '/teachers/arm-light-full-v1.webp',
     palette: { skin: '#d3a27f', skinShadow: '#9c654a', hair: '#543524', primary: '#2b3152', secondary: '#8ca1d8' },
     look: 'athletic-male',
@@ -30,7 +56,12 @@ export const TEACHER_PROFILES = Object.freeze([
     title: 'Songwriting coach',
     description: 'Friendly guidance for melody, phrasing, and storytelling.',
     voice: 'Thoughtful',
-    image: '/teachers/taylor-human-v1.webp',
+    voiceType: 'feminine',
+    image: '/teachers/taylor-teacher-studio-v1.jpg',
+    stageImage: '/teachers/taylor-teacher-studio-v1.jpg',
+    portraitPosition: '35% 18%',
+    handCameraImage: '/teachers/pianist-hands-overhead-v1.webp',
+    pressedHandCameraImage: '/teachers/pianist-hands-pressed-v2.webp',
     armImage: '/teachers/arm-light-full-v1.webp',
     palette: { skin: '#e2b39e', skinShadow: '#ae7868', hair: '#d4bd9d', primary: '#b77c98', secondary: '#e4b5cf' },
     look: 'songwriter',
@@ -41,7 +72,12 @@ export const TEACHER_PROFILES = Object.freeze([
     title: 'Piano master',
     description: 'Clear, disciplined guidance for difficult passages.',
     voice: 'Exact',
-    image: '/teachers/mace-human-v1.webp',
+    voiceType: 'masculine',
+    image: '/teachers/mace-teacher-studio-v1.jpg',
+    stageImage: '/teachers/mace-teacher-studio-v1.jpg',
+    portraitPosition: '34% 18%',
+    handCameraImage: '/teachers/pianist-hands-overhead-dark-v1.webp',
+    pressedHandCameraImage: '/teachers/pianist-hands-pressed-dark-v2.webp',
     armImage: '/teachers/arm-dark-full-v1.webp',
     palette: { skin: '#75452f', skinShadow: '#4d2a1d', hair: '#20191b', primary: '#4c347a', secondary: '#c4b8ea' },
     look: 'master',
@@ -74,13 +110,67 @@ export function pianoPercentForMidi(midi) {
   return clamp(((Number(midi) - GRAND_START_MIDI) / (GRAND_END_MIDI - GRAND_START_MIDI)) * 100, 2, 98);
 }
 
+export function teacherRowHandPlacement(target, row, side, showAtRest = false) {
+  const notes = (target?.notes || [])
+    .map((note) => ({ ...note, position: row?.getPosition?.(note.midi) }))
+    .filter((note) => note.position?.rowId === row?.id);
+  if (!notes.length && !showAtRest) return null;
+
+  const fallbackCenter = side === 'left' ? 36 : 64;
+  const centers = notes.map((note) => note.position.centerPercent);
+  const centerPercent = centers.length
+    ? centers.reduce((sum, value) => sum + value, 0) / centers.length
+    : fallbackCenter;
+  const spread = centers.length > 1 ? Math.max(...centers) - Math.min(...centers) : 0;
+  const blackNotes = notes.filter((note) => note.position.isBlack).length;
+  const blackKeyBias = notes.length > 0 && blackNotes >= Math.ceil(notes.length / 2);
+  const distanceFromHome = centerPercent - fallbackCenter;
+  const chordSize = Math.min(5, notes.length);
+
+  return {
+    notes,
+    centerPercent: clamp(centerPercent, 1.5, 98.5),
+    // Keep the visual guide compact enough that learners can still see the
+    // neighbouring keys. Wider chords may open the pose slightly, but never
+    // restore the oversized hand crop used by the first prototype.
+    widthPercent: clamp(21 + spread * 0.55, 21, 33),
+    horizontalScale: 0.9,
+    // Anchor the photographic fingertips inside the playable key bed. The
+    // source image includes a full palm and forearm, so placing its anchor
+    // near the front of a white key made the hands appear to hover below the
+    // instrument. Black notes sit farther back; white notes and the relaxed
+    // home position sit just in front of them.
+    fingerDepthPercent: blackKeyBias ? 13 : 25,
+    // A pianist leads lateral travel from the wrist instead of sliding a
+    // rigid hand-shaped sticker. These small, bounded pose changes keep the
+    // photographic hand natural without ever twisting it beyond a plausible
+    // neutral playing posture.
+    wristTiltDegrees: clamp(
+      distanceFromHome * 0.085 + (side === 'left' ? -0.8 : 0.8),
+      -4.5,
+      4.5,
+    ),
+    verticalFlex: clamp(1 - chordSize * 0.004 - (blackKeyBias ? 0.012 : 0), 0.965, 1),
+    approachLiftPixels: clamp(7 - chordSize * 0.45, 4.75, 7),
+    pressDepthPixels: blackKeyBias ? 2.25 : 4,
+  };
+}
+
 export function fingerForMidi(midi, hand, handNotes = []) {
   const uniqueMidis = [...new Set(handNotes.map((note) => midiForEvent(note)).filter(Number.isFinite))]
     .sort((a, b) => a - b)
     .slice(0, 5);
   const index = Math.max(0, uniqueMidis.indexOf(Number(midi)));
-  if (hand === 'left') return Math.max(1, 5 - index);
-  return Math.min(5, index + 1);
+  const rightPlans = {
+    1: [3],
+    2: [1, 5],
+    3: [1, 3, 5],
+    4: [1, 2, 3, 5],
+    5: [1, 2, 3, 4, 5],
+  };
+  const right = rightPlans[uniqueMidis.length] || rightPlans[5];
+  const plan = hand === 'left' ? [...right].reverse() : right;
+  return plan[Math.min(index, plan.length - 1)] || 3;
 }
 
 function targetForHand(hand, relevant, currentTime) {
@@ -194,13 +284,17 @@ export function buildTeacherHandTargets(notesOrTimeline = [], currentTime = 0, o
   };
 }
 
-export function teacherReply(teacher, message, targets) {
+export function teacherReply(teacher, message, targets, practiceReport = null) {
   const text = String(message || '').trim().toLowerCase();
   const played = [...(targets?.left?.notes || []), ...(targets?.right?.notes || [])];
   const noteSummary = played.length
     ? played.map((note) => `${note.note} (finger ${note.finger})`).join(', ')
     : 'the next falling notes';
   const name = teacher?.name || 'Your teacher';
+
+  if (/feedback|progress|score|improve|mistake|again/.test(text) && practiceReport) {
+    return `${practiceReport.headline}. Focus on ${practiceReport.focus.toLowerCase()}: ${practiceReport.nextAction}`;
+  }
 
   if (teacher?.id === 'mace') {
     if (/hello|hi|hey/.test(text)) return 'Sit properly. Wrists level. Begin when the timing line reaches the keys.';

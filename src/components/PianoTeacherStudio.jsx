@@ -1,39 +1,42 @@
 import { useState } from 'react';
-import { teacherReply, TEACHER_PROFILES } from '../engine/teacherHands.js';
-import PoseableTeacherStage from './PoseableTeacherStage.jsx';
+import { TEACHER_PROFILES } from '../engine/teacherHands.js';
+import VirtualLessonPanel from './VirtualLessonPanel.jsx';
 
 function TeacherPortrait({ teacher }) {
   return (
     <span className="teacher-human-portrait" aria-hidden="true">
-      <img src={teacher.image} alt="" loading="lazy" draggable="false" />
+      <img
+        src={teacher.image}
+        alt=""
+        loading="lazy"
+        draggable="false"
+        style={teacher.portraitPosition ? { objectPosition: teacher.portraitPosition } : undefined}
+      />
     </span>
   );
 }
 
-function targetSentence(targets, showHands) {
-  if (!showHands) return 'Choose a teacher, then place their hands on the main keyboard.';
-  const notes = [...(targets?.left?.notes || []), ...(targets?.right?.notes || [])];
-  if (!notes.length) return 'The teacher’s hands are resting until the next note.';
-  return notes.map((note) => `${note.hand} ${note.note} · finger ${note.finger}`).join('  |  ');
-}
-
 export default function PianoTeacherStudio({
   profiles = TEACHER_PROFILES,
-  performanceTier = 'balanced',
   teacherId,
   onTeacherChange,
   showHands,
   onShowHandsChange,
   targets,
+  isPlaying = false,
+  practiceReport = null,
+  lessonContext = null,
+  user = null,
+  setUser,
+  onNavigate,
+  onDemonstrate,
 }) {
-  const [messages, setMessages] = useState([]);
-  const [draft, setDraft] = useState('');
   const [adultConfirmed, setAdultConfirmed] = useState(
     () => window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true',
   );
   const [pendingAdultTeacher, setPendingAdultTeacher] = useState(null);
   const teacher = profiles.find((profile) => profile.id === teacherId)
-    || profiles.find((profile) => profile.id === 'anakin')
+    || profiles.find((profile) => profile.id === 'aria')
     || profiles[0];
 
   function chooseTeacher(profile) {
@@ -42,7 +45,6 @@ export default function PianoTeacherStudio({
       return;
     }
     onTeacherChange(profile.id);
-    setMessages([{ from: 'teacher', text: `${profile.name} selected. I’m ready at the main piano.` }]);
   }
 
   function confirmAdultTeacher() {
@@ -50,29 +52,16 @@ export default function PianoTeacherStudio({
     window.localStorage.setItem('polymath-teacher-adult-confirmed', 'true');
     setAdultConfirmed(true);
     onTeacherChange(pendingAdultTeacher.id);
-    setMessages([{ from: 'teacher', text: `${pendingAdultTeacher.name} selected. I’m ready at the main piano.` }]);
     setPendingAdultTeacher(null);
-  }
-
-  function submitChat(event) {
-    event.preventDefault();
-    const message = draft.trim();
-    if (!message) return;
-    setMessages((current) => [
-      ...current,
-      { from: 'student', text: message },
-      { from: 'teacher', text: teacherReply(teacher, message, targets) },
-    ].slice(-6));
-    setDraft('');
   }
 
   return (
     <section className="piano-teacher-studio" aria-labelledby="piano-teacher-title">
       <header className="piano-teacher-header">
         <div>
-          <p className="eyebrow">Virtual piano teacher</p>
-          <h3 id="piano-teacher-title">Learn with {teacher.name}</h3>
-          <p>{teacher.title} · {teacher.voice}</p>
+          <p className="eyebrow">Teacher controls</p>
+          <h3 id="piano-teacher-title">{teacher.name} plays your main piano</h3>
+          <p>The hands above follow this lesson on the same keys as the falling notes.</p>
         </div>
         <button
           type="button"
@@ -80,48 +69,74 @@ export default function PianoTeacherStudio({
           aria-pressed={showHands}
           onClick={() => onShowHandsChange(!showHands)}
         >
-          {showHands ? 'Remove teacher from piano' : 'Show teacher on main piano'}
+          {showHands ? 'Hide hands' : 'Show hands'}
         </button>
       </header>
 
       <div className="piano-teacher-workspace human-teacher-workspace">
-        <PoseableTeacherStage teacher={teacher} targetSummary={targetSentence(targets, showHands)} performanceTier={performanceTier} />
-
-        <div className="teacher-chat-panel">
-          <div className="teacher-chat-heading">
+        {showHands ? (
+          <div className="teacher-main-piano-status" role="status">
             <TeacherPortrait teacher={teacher} />
-            <span><strong>Chat with {teacher.name}</strong><small>Lesson-aware text coach</small></span>
-          </div>
-          <div className="teacher-chat-messages" aria-live="polite">
-            {!messages.length && <p className="teacher-chat-empty">Ask which hand, finger, note, or speed to practise.</p>}
-            {messages.map((message, index) => (
-              <p key={`${message.from}-${index}`} className={`teacher-message teacher-message-${message.from}`}>{message.text}</p>
-            ))}
-          </div>
-          <form className="teacher-chat-form" onSubmit={submitChat}>
-            <label className="sr-only" htmlFor="piano-teacher-message">Message {teacher.name}</label>
-            <input id="piano-teacher-message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength="280" placeholder={`Ask ${teacher.name}…`} />
-            <button type="submit" className="primary">Send</button>
-          </form>
-        </div>
-      </div>
-
-      <div className="teacher-roster" role="group" aria-label="Choose a virtual piano teacher">
-        {profiles.map((profile) => (
-          <button
-            type="button"
-            key={profile.id}
-            className={profile.id === teacher.id ? 'teacher-choice is-selected' : 'teacher-choice'}
-            aria-pressed={profile.id === teacher.id}
-            onClick={() => chooseTeacher(profile)}
-          >
-            <TeacherPortrait teacher={profile} />
             <span>
-              <strong>{profile.name}</strong>
-              <small>{profile.title}{profile.requiresAdultConfirmation && !adultConfirmed ? ' · 18+' : ''}</small>
+              <strong>{isPlaying ? `${teacher.name} is demonstrating on the main piano` : `${teacher.name} is ready on the main piano`}</strong>
+              <small>{[...(targets?.left?.notes || []), ...(targets?.right?.notes || [])].map((note) => note.note).join(', ') || 'Press Play to follow the teacher hands above.'}</small>
+            </span>
+          </div>
+        ) : (
+          <button type="button" className="teacher-stage-placeholder" onClick={() => onShowHandsChange(true)}>
+            <TeacherPortrait teacher={teacher} />
+            <span>
+              <strong>Show {teacher.name}'s hands</strong>
+              <small>The hands will appear directly on the main piano above.</small>
             </span>
           </button>
-        ))}
+        )}
+
+        <details className="teacher-studio-disclosure">
+          <summary>Private voice session · Choose time and style</summary>
+          <VirtualLessonPanel
+            user={user}
+            setUser={setUser}
+            teacher={teacher}
+            onTeacherChange={onTeacherChange}
+            lessonContext={lessonContext}
+            observations={{
+              practiceReport,
+              upcomingKeys: [...(targets?.left?.notes || []), ...(targets?.right?.notes || [])]
+                .sort((left, right) => Number(left.time || 0) - Number(right.time || 0))
+                .slice(0, 14)
+                .map((target) => ({
+                  note: target.note,
+                  hand: target.hand,
+                  time: target.time,
+                  duration: target.duration,
+                })),
+            }}
+            onDemonstrate={onDemonstrate}
+            onNavigate={onNavigate}
+          />
+        </details>
+
+        <details className="teacher-studio-disclosure">
+          <summary>Choose another teacher</summary>
+          <div className="teacher-roster" role="group" aria-label="Choose a virtual piano teacher">
+            {profiles.map((profile) => (
+              <button
+                type="button"
+                key={profile.id}
+                className={profile.id === teacher.id ? 'teacher-choice is-selected' : 'teacher-choice'}
+                aria-pressed={profile.id === teacher.id}
+                onClick={() => chooseTeacher(profile)}
+              >
+                <TeacherPortrait teacher={profile} />
+                <span>
+                  <strong>{profile.name}</strong>
+                  <small>{profile.title}{profile.requiresAdultConfirmation && !adultConfirmed ? ' · 18+' : ''}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </details>
       </div>
 
       {pendingAdultTeacher && (

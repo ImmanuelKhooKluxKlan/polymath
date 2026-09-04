@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { BLACK_KEY_WIDTH_RATIO } from '../engine/grandPianoLayout.js';
 import { noteToDisplayName } from '../engine/noteMath.js';
-import { TeacherKeyboardPresence, TeacherRowHands } from './TeacherKeyboardOverlay.jsx';
+import { TeacherRowHands } from './TeacherKeyboardOverlay.jsx';
 
 // QWERTY keys cover useful center notes; click/touch covers the full adaptive piano.
 const keyboardMap = {
@@ -63,9 +63,21 @@ function strikeVersionFor(strikeVersions, note) {
   return strikeVersions?.get?.(note) || 0;
 }
 
+function teacherPressedClass(midi, targets) {
+  const pressedBy = (side) => Boolean(
+    targets?.[side]?.isPressing
+    && targets[side].notes?.some((note) => Number(note.midi) === Number(midi)),
+  );
+  const left = pressedBy('left');
+  const right = pressedBy('right');
+  if (left && right) return 'teacher-pressed-both';
+  if (left) return 'teacher-pressed-left';
+  if (right) return 'teacher-pressed-right';
+  return '';
+}
+
 function PianoRow({
   row,
-  rowIndex,
   activeNotes,
   strikeVersions,
   onPress,
@@ -74,7 +86,9 @@ function PianoRow({
   showKeyNotes,
   teacher,
   teacherTargets,
+  showTeacherHands,
   teacherHandMode,
+  showTeacherHandsAtRest,
 }) {
   return (
     <div
@@ -89,7 +103,7 @@ function PianoRow({
             return (
               <button
                 key={key.note}
-                className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''}`}
+                className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''} ${teacherPressedClass(key.midi, teacherTargets)}`}
                 disabled={disabled}
                 {...(disabled ? {} : pointerHandlers(key.note, onPress, onRelease))}
               >
@@ -107,7 +121,7 @@ function PianoRow({
             return (
               <button
                 key={key.note}
-                className={`piano-key black ${activeNotes.has(key.note) ? 'active' : ''}`}
+                className={`piano-key black ${activeNotes.has(key.note) ? 'active' : ''} ${teacherPressedClass(key.midi, teacherTargets)}`}
                 style={{
                   left: `calc(${key.position.leftEdgeWhiteUnits} * (100% / var(--white-count)))`,
                 }}
@@ -121,13 +135,14 @@ function PianoRow({
             );
           })}
         </div>
-        {teacher && (
+
+        {showTeacherHands && (
           <TeacherRowHands
             teacher={teacher}
             targets={teacherTargets}
             row={row}
             handMode={teacherHandMode}
-            showAtRest={rowIndex === 0 && !teacherTargets?.hasTargets}
+            showAtRest={showTeacherHandsAtRest}
           />
         )}
       </div>
@@ -150,8 +165,8 @@ export default function PianoKeyboard({
   onPrepare,
   teacher = null,
   teacherTargets = null,
+  showTeacherHands = false,
   teacherHandMode = 'both',
-  teacherIsPlaying = false,
 }) {
   useEffect(() => () => {
     activePointers.clear();
@@ -165,23 +180,27 @@ export default function PianoKeyboard({
       ? 'Tablet'
       : 'Computer';
   const liteWarning = performanceTier === 'lite';
+  const teacherHandsVisible = Boolean(showTeacherHands && teacher && teacherTargets);
+  const layoutLabel = layout.mode === 'learn-grand-single'
+    ? 'Single-row A0-C8 teacher grand piano'
+    : layout.isTwoStorey
+      ? 'Two-storey A0-C8 grand piano'
+      : 'Polymath Musician A1-C7 row';
   return (
     <section
-      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'} ${teacher ? 'has-main-teacher' : ''}`}
+      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'} ${teacherHandsVisible ? 'has-teacher-hands' : ''}`}
       aria-label={`Playable piano section, ${layout.rangeLabel}`}
     >
       <div className="piano-mode-label">
-        <span>{layout.isTwoStorey ? 'Two-storey A0-C8 grand piano' : 'Polymath Musician A1-C7 row'} • Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
+        <span>{layoutLabel} · Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
         <small className="performance-tier-badge">{deviceLabel} · {performanceTier}</small>
       </div>
       <div className="piano-glow" />
-      {teacher && <TeacherKeyboardPresence teacher={teacher} isPlaying={teacherIsPlaying} />}
       <div className="piano-rows">
-        {layout.rows.map((row, rowIndex) => (
+        {layout.rows.map((row, index) => (
           <PianoRow
             key={row.id}
             row={row}
-            rowIndex={rowIndex}
             activeNotes={activeNotes}
             strikeVersions={strikeVersions}
             onPress={onPress}
@@ -190,7 +209,9 @@ export default function PianoKeyboard({
             showKeyNotes={showKeyNotes}
             teacher={teacher}
             teacherTargets={teacherTargets}
+            showTeacherHands={teacherHandsVisible}
             teacherHandMode={teacherHandMode}
+            showTeacherHandsAtRest={!layout.isTwoStorey && index === 0}
           />
         ))}
       </div>

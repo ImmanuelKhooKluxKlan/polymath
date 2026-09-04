@@ -1,94 +1,94 @@
-import { noteToDisplayName } from '../engine/noteMath.js';
+import { useEffect, useRef } from 'react';
+import { teacherRowHandPlacement } from '../engine/teacherHands.js';
 
-function positionedNotes(target, row) {
-  return (target?.notes || [])
-    .map((note) => ({ ...note, position: row.getPosition(note.midi) }))
-    .filter((note) => note.position?.rowId === row.id);
+function boundedTravelDuration(previousCenter, nextCenter) {
+  if (!Number.isFinite(previousCenter)) return 165;
+  const distance = Math.abs(nextCenter - previousCenter);
+  return Math.round(Math.max(135, Math.min(300, 135 + distance * 5.5)));
 }
 
-function HandAndArm({ side, target, row, teacher, visible, showAtRest }) {
-  const notes = positionedNotes(target, row);
-  if (!visible || (!notes.length && !showAtRest)) return null;
+const PRESSED_POSE_FOR_BASE_IMAGE = Object.freeze({
+  '/teachers/pianist-hands-overhead-v1.webp': '/teachers/pianist-hands-pressed-v2.webp',
+  '/teachers/pianist-hands-overhead-male-v1.webp': '/teachers/pianist-hands-pressed-male-v2.webp',
+  '/teachers/pianist-hands-overhead-dark-v1.webp': '/teachers/pianist-hands-pressed-dark-v2.webp',
+});
 
-  const defaultPercent = side === 'left' ? 38 : 62;
-  const centerPercent = notes.length
-    ? notes.reduce((sum, note) => sum + note.position.centerPercent, 0) / notes.length
-    : defaultPercent;
-  const centerX = centerPercent * 10;
-  const shoulderX = side === 'left' ? 458 : 542;
-  const fingertipY = target?.isPressing ? 105 : 94;
-  const isActive = notes.length > 0;
-  const verticalReach = 176;
-  const reach = Math.hypot(centerX - shoulderX, verticalReach);
-  const angle = Math.atan2(shoulderX - centerX, verticalReach) * (180 / Math.PI);
-  const armWidth = 82;
-  const armX = centerX - (armWidth / 2);
-  const armY = fingertipY - reach;
-  const armMirror = side === 'left' ? `translate(${centerX * 2} 0) scale(-1 1)` : undefined;
-  const shoulderMaskId = `teacher-arm-mask-${teacher.id}-${row.id}-${side}`;
+function PhotographicHand({ side, target, row, teacher, visible, showAtRest }) {
+  const placement = visible ? teacherRowHandPlacement(target, row, side, showAtRest) : null;
+  const previousCenter = useRef(placement?.centerPercent);
+  const travelDuration = placement
+    ? boundedTravelDuration(previousCenter.current, placement.centerPercent)
+    : 165;
 
-  return (
-    <g className={`main-teacher-limb main-teacher-limb-${side} ${target?.isPressing ? 'is-pressing' : ''} ${isActive ? 'has-target' : 'at-rest'}`}>
-      <defs>
-        <linearGradient id={`${shoulderMaskId}-fade`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="black" />
-          <stop offset=".13" stopColor="white" />
-          <stop offset="1" stopColor="white" />
-        </linearGradient>
-        <mask id={shoulderMaskId} maskUnits="objectBoundingBox" maskContentUnits="objectBoundingBox">
-          <rect x="0" y="0" width="1" height="1" fill={`url(#${shoulderMaskId}-fade)`} />
-        </mask>
-      </defs>
-      <g transform={`rotate(${angle} ${centerX} ${fingertipY})`}>
-        <g transform={armMirror}>
-          <image
-            className="main-teacher-human-arm"
-            href={teacher.armImage}
-            x={armX}
-            y={armY}
-            width={armWidth}
-            height={reach}
-            preserveAspectRatio="none"
-            mask={`url(#${shoulderMaskId})`}
-          />
-        </g>
-      </g>
-      {notes.map((note) => {
-        const endX = note.position.centerPercent * 10;
-        const endY = fingertipY;
-        return (
-          <g key={`${note.id}-${note.finger}`} className="main-teacher-fingertip">
-            <circle cx={endX} cy={endY} r="12" />
-            <text x={endX} y={endY + 4} textAnchor="middle">{note.finger}</text>
-            <title>{`${teacher.name}: ${side} finger ${note.finger} on ${noteToDisplayName(note.midi, true)}`}</title>
-          </g>
-        );
-      })}
-    </g>
-  );
-}
+  useEffect(() => {
+    if (placement) previousCenter.current = placement.centerPercent;
+  }, [placement?.centerPercent]);
 
-export function TeacherKeyboardPresence({ teacher, isPlaying }) {
-  return (
-    <div className="main-teacher-presence" aria-label={`${teacher.name} is seated behind the main piano`}>
-      <div className="main-teacher-aura" />
-      <img src={teacher.image} alt={`${teacher.name}, virtual piano teacher`} draggable="false" />
-      <span className={isPlaying ? 'main-teacher-status is-live' : 'main-teacher-status'}>
-        <i />{isPlaying ? `${teacher.name} is playing` : `${teacher.name} is ready`}
-      </span>
-    </div>
-  );
-}
+  if (!placement) return null;
 
-export function TeacherRowHands({ teacher, targets, row, handMode = 'both', showAtRest = false }) {
+  const image = teacher?.handCameraImage || '/teachers/pianist-hands-overhead-v1.webp';
+  const pressedImage = teacher?.pressedHandCameraImage
+    || PRESSED_POSE_FOR_BASE_IMAGE[image]
+    || '';
+  const sourceViewBox = side === 'left' ? '0 0 768 900' : '768 0 768 900';
+  const state = target?.isPressing ? 'is-pressing' : target?.isUpcoming ? 'is-upcoming' : 'at-rest';
+
   return (
     <svg
-      className="main-teacher-hands-overlay"
-      viewBox="0 0 1000 150"
+      className={`teacher-main-hand-photo teacher-main-hand-${side} ${state}`}
+      style={{
+        '--teacher-hand-center': `${placement.centerPercent}%`,
+        '--teacher-hand-width': `${placement.widthPercent}%`,
+        '--teacher-hand-narrow': placement.horizontalScale,
+        '--teacher-finger-depth': `${placement.fingerDepthPercent}%`,
+        '--teacher-hand-tilt': `${placement.wristTiltDegrees}deg`,
+        '--teacher-hand-flex': placement.verticalFlex,
+        '--teacher-hand-lift': `${placement.approachLiftPixels}px`,
+        '--teacher-hand-press': `${placement.pressDepthPixels}px`,
+        '--teacher-hand-travel-ms': `${travelDuration}ms`,
+      }}
+      viewBox={sourceViewBox}
       preserveAspectRatio="none"
+      focusable="false"
       aria-hidden="true"
     >
-      <HandAndArm
+      <image
+        className="teacher-hand-pose teacher-hand-pose-relaxed"
+        href={image}
+        x="0"
+        y="0"
+        width="1536"
+        height="1024"
+        transform="rotate(180 768 512)"
+        preserveAspectRatio="none"
+      />
+      {pressedImage && pressedImage !== image && (
+        <image
+          className="teacher-hand-pose teacher-hand-pose-pressed"
+          href={pressedImage}
+          x="0"
+          y="0"
+          width="1536"
+          height="1024"
+          transform="rotate(180 768 512)"
+          preserveAspectRatio="none"
+        />
+      )}
+    </svg>
+  );
+}
+
+export function TeacherRowHands({
+  teacher,
+  targets,
+  row,
+  handMode = 'both',
+  showAtRest = false,
+}) {
+  if (!teacher || !targets || !row) return null;
+  return (
+    <div className="teacher-row-hands" aria-hidden="true">
+      <PhotographicHand
         side="left"
         target={targets.left}
         row={row}
@@ -96,7 +96,7 @@ export function TeacherRowHands({ teacher, targets, row, handMode = 'both', show
         visible={handMode === 'both' || handMode === 'left'}
         showAtRest={showAtRest}
       />
-      <HandAndArm
+      <PhotographicHand
         side="right"
         target={targets.right}
         row={row}
@@ -104,6 +104,6 @@ export function TeacherRowHands({ teacher, targets, row, handMode = 'both', show
         visible={handMode === 'both' || handMode === 'right'}
         showAtRest={showAtRest}
       />
-    </svg>
+    </div>
   );
 }

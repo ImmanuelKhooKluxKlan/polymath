@@ -1,0 +1,16 @@
+{
+  "schema": "polymath-chatboss-prompt-completion-v1",
+  "sourceExamples": 274,
+  "duplicatesRemoved": 0,
+  "trainExamples": 204,
+  "validationExamples": 70,
+  "roles": {
+    "support": 128,
+    "teacher": 146
+  },
+  "inputs": [
+    "ml\\chatboss\\data\\seed_examples.jsonl",
+    "ml\\chatboss\\data\\candidate_examples_v001.jsonl",
+    "ml\\chatboss\\data\\candidate_examples_v003.jsonl"
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "schema": "polymath-chatboss-volume-upload-v2",
+  "version": "v002",
+  "uploads": [
+    {
+      "volumeId": "ccppo4yp9l",
+      "region": "US-KS-2",
+      "files": [
+        {
+          "key": "chatboss/datasets/v002/manifest.json",
+          "bytes": 350,
+          "sha256": "14fbae760ccf91de070d91dbcd498bf9a918169e393211ea1a12ba2175bee709"
+        },
+        {
+          "key": "chatboss/datasets/v002/train.jsonl",
+          "bytes": 85758,
+          "sha256": "beacd5e3c1f5d75bef0f8831186d20fbdfa4a518991814418033251fee842fec"
+        },
+        {
+          "key": "chatboss/datasets/v002/validation.jsonl",
+          "bytes": 25376,
+          "sha256": "470388c6f7fbd528135dd931ec15573f82f3bef98328c389dea18680f180fde6"
+        }
+      ]
+    },
+    {
+      "volumeId": "at2r2dl32w",
+      "region": "US-CA-2",
+      "files": [
+        {
+          "key": "chatboss/datasets/v002/manifest.json",
+          "bytes": 350,
+          "sha256": "14fbae760ccf91de070d91dbcd498bf9a918169e393211ea1a12ba2175bee709"
+        },
+        {
+          "key": "chatboss/datasets/v002/train.jsonl",
+          "bytes": 85758,
+          "sha256": "beacd5e3c1f5d75bef0f8831186d20fbdfa4a518991814418033251fee842fec"
+        },
+        {
+          "key": "chatboss/datasets/v002/validation.jsonl",
+          "bytes": 25376,
+          "sha256": "470388c6f7fbd528135dd931ec15573f82f3bef98328c389dea18680f180fde6"
+        }
+      ]
+    }
+  ]
+}

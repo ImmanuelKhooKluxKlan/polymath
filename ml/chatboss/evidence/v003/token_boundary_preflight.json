@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-chatboss-token-boundary-check-v1",
+  "model": "Qwen/Qwen3.5-35B-A3B",
+  "revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",
+  "examplesChecked": 274,
+  "mismatches": 0,
+  "inputs": [
+    {
+      "path": "/runpod-volume/chatboss/datasets/v003/train.jsonl",
+      "sha256": "b07ddb8a49943003c5a8b72eaa5f3af5f00685b9964df6013a98742c8d77955d"
+    },
+    {
+      "path": "/runpod-volume/chatboss/datasets/v003/validation.jsonl",
+      "sha256": "b5a3abb0e64346f8d8d7aa92eb32326722dc7cb16dbeec582c387b89e90f3c0e"
+    }
+  ],
+  "failures": []
+}

@@ -1,0 +1,88 @@
+{
+  "schema": "polymath-chatboss-training-bundle-v1",
+  "version": "v003",
+  "uploads": [
+    {
+      "volumeId": "ccppo4yp9l",
+      "region": "US-KS-2",
+      "files": [
+        {
+          "key": "chatboss/training/v003/requirements.txt",
+          "bytes": 174,
+          "sha256": "b5a55873eecf6b81f3fb2633559d304d3b532d011ef91ac455fd81b52a6799e6"
+        },
+        {
+          "key": "chatboss/training/v003/train_lora.py",
+          "bytes": 5683,
+          "sha256": "44dca9c9c0f3abe833b33db05ce90f8386a46a7199a3706a9c04cde72cd11197"
+        },
+        {
+          "key": "chatboss/training/v003/evaluate_adapter.py",
+          "bytes": 7610,
+          "sha256": "3b293fed6edfc498351aa0663a74d14803af22f68554e73790a37a27d243b1be"
+        },
+        {
+          "key": "chatboss/training/v003/compare_evaluations.py",
+          "bytes": 3192,
+          "sha256": "f3b1c09f37265c210de5d61f5b3211b02949bdd23f83f8a09d2120955df2836b"
+        },
+        {
+          "key": "chatboss/training/v003/run_candidate.py",
+          "bytes": 9062,
+          "sha256": "9bfcf75a4b7a7493ebf105bffcbaac5b616edea672afad5e7637fab46b79a1f8"
+        },
+        {
+          "key": "chatboss/training/v003/verify_chat_boundaries.py",
+          "bytes": 2885,
+          "sha256": "ce596303d24117b92fd1663680646a5bb888f200dcda49ebb3694a9474ab8612"
+        },
+        {
+          "key": "chatboss/training/v003/behavior_holdout_v002.jsonl",
+          "bytes": 21115,
+          "sha256": "41720e1e289d4dbc9b4abebee5cf5918ca5e3871b1049d9b9c50cc71f5d69c51"
+        }
+      ]
+    },
+    {
+      "volumeId": "at2r2dl32w",
+      "region": "US-CA-2",
+      "files": [
+        {
+          "key": "chatboss/training/v003/requirements.txt",
+          "bytes": 174,
+          "sha256": "b5a55873eecf6b81f3fb2633559d304d3b532d011ef91ac455fd81b52a6799e6"
+        },
+        {
+          "key": "chatboss/training/v003/train_lora.py",
+          "bytes": 5683,
+          "sha256": "44dca9c9c0f3abe833b33db05ce90f8386a46a7199a3706a9c04cde72cd11197"
+        },
+        {
+          "key": "chatboss/training/v003/evaluate_adapter.py",
+          "bytes": 7610,
+          "sha256": "3b293fed6edfc498351aa0663a74d14803af22f68554e73790a37a27d243b1be"
+        },
+        {
+          "key": "chatboss/training/v003/compare_evaluations.py",
+          "bytes": 3192,
+          "sha256": "f3b1c09f37265c210de5d61f5b3211b02949bdd23f83f8a09d2120955df2836b"
+        },
+        {
+          "key": "chatboss/training/v003/run_candidate.py",
+          "bytes": 9062,
+          "sha256": "9bfcf75a4b7a7493ebf105bffcbaac5b616edea672afad5e7637fab46b79a1f8"
+        },
+        {
+          "key": "chatboss/training/v003/verify_chat_boundaries.py",
+          "bytes": 2885,
+          "sha256": "ce596303d24117b92fd1663680646a5bb888f200dcda49ebb3694a9474ab8612"
+        },
+        {
+          "key": "chatboss/training/v003/behavior_holdout_v002.jsonl",
+          "bytes": 21115,
+          "sha256": "41720e1e289d4dbc9b4abebee5cf5918ca5e3871b1049d9b9c50cc71f5d69c51"
+        }
+      ]
+    }
+  ]
+}
