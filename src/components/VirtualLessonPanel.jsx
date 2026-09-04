@@ -3,6 +3,7 @@ import { apiRequest } from '../services/api.js';
 import {
   selectTeacherVoice,
   speechSegments,
+  teacherSpeechErrorMessage,
   teacherVoiceProfile,
 } from '../engine/teacherVoice.js';
 import {
@@ -127,6 +128,8 @@ export default function VirtualLessonPanel({
   const [now, setNow] = useState(Date.now());
   const [listening, setListening] = useState(false);
   const [voiceOutput, setVoiceOutput] = useState(true);
+  const [voiceUnlocked, setVoiceUnlocked] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState('');
   const [conversationMode, setConversationMode] = useState('music-coach');
   const [companionStyle, setCompanionStyle] = useState('playful');
   const [adultConfirmed, setAdultConfirmed] = useState(() => Boolean(
@@ -146,7 +149,13 @@ export default function VirtualLessonPanel({
   const speechRunRef = useRef(0);
   const speechTrackRef = useRef(null);
   const speechAnimationTimerRef = useRef(0);
-  const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const speechUtteranceRef = useRef(null);
+  const voiceOutputRef = useRef(true);
+  const voiceUnlockedRef = useRef(false);
+  const lastTeacherReplyRef = useRef('');
+  const speechSupported = typeof window !== 'undefined'
+    && 'speechSynthesis' in window
+    && typeof window.SpeechSynthesisUtterance === 'function';
   const recognitionSupported = typeof window !== 'undefined' && Boolean(recognitionEngine());
   const messages = session?.messages || [];
   const secondsLeft = remainingSeconds(session, now);
@@ -296,6 +305,7 @@ export default function VirtualLessonPanel({
   function cancelTeacherSpeech() {
     speechRunRef.current += 1;
     window.speechSynthesis?.cancel();
+    speechUtteranceRef.current = null;
     stopSpeechAnimation();
   }
 
@@ -344,11 +354,23 @@ export default function VirtualLessonPanel({
     refreshSpeechAnimation();
   }
 
-  function speakTeacher(text) {
-    if (!voiceOutput || !speechSupported || !text) return;
+  function speakTeacher(text, { unlockAttempt = false, remember = true } = {}) {
+    const spokenText = String(text || '').trim();
+    if (remember && spokenText) lastTeacherReplyRef.current = spokenText;
+    if (!voiceOutputRef.current || !speechSupported || !spokenText) return false;
+    if (!voiceUnlockedRef.current && !unlockAttempt) {
+      setSpeechStatus('Tap Enable teacher voice once so this browser can play spoken replies.');
+      return false;
+    }
     cancelTeacherSpeech();
-    const segments = speechSegments(text);
-    if (!segments.length) return;
+    const segments = speechSegments(spokenText);
+    if (!segments.length) return false;
+    if (unlockAttempt) {
+      // Queueing speech inside the user's tap is the browser audio handshake.
+      // Keep a synchronous ref because React state updates after this function.
+      voiceUnlockedRef.current = true;
+      setVoiceUnlocked(true);
+    }
     const run = speechRunRef.current + 1;
     speechRunRef.current = run;
     const settings = teacherVoiceProfile(sessionTeacher);
@@ -371,13 +393,55 @@ export default function VirtualLessonPanel({
       utterance.pitch = settings.pitch;
       utterance.lang = voice?.lang || language;
       if (voice) utterance.voice = voice;
-      utterance.onstart = () => beginSpeechAnimation(segment, settings.rate, run);
+      utterance.volume = 1;
+      utterance.onstart = () => {
+        voiceUnlockedRef.current = true;
+        setVoiceUnlocked(true);
+        setSpeechStatus('');
+        beginSpeechAnimation(segment, settings.rate, run);
+      };
       utterance.onboundary = (event) => synchronizeSpeechBoundary(event, segment, settings.rate, run);
-      utterance.onend = () => speakSegment(index + 1);
-      utterance.onerror = () => stopSpeechAnimation(run);
-      window.speechSynthesis.speak(utterance);
+      utterance.onend = () => {
+        speechUtteranceRef.current = null;
+        speakSegment(index + 1);
+      };
+      utterance.onerror = (event) => {
+        speechUtteranceRef.current = null;
+        stopSpeechAnimation(run);
+        const message = teacherSpeechErrorMessage(event.error);
+        if (!message) return;
+        voiceUnlockedRef.current = false;
+        setVoiceUnlocked(false);
+        setSpeechStatus(message);
+      };
+      speechUtteranceRef.current = utterance;
+      try {
+        window.speechSynthesis.resume();
+        window.speechSynthesis.speak(utterance);
+      } catch (error) {
+        speechUtteranceRef.current = null;
+        stopSpeechAnimation(run);
+        voiceUnlockedRef.current = false;
+        setVoiceUnlocked(false);
+        setSpeechStatus(teacherSpeechErrorMessage(error?.name || 'synthesis-failed'));
+      }
     };
     speakSegment(0);
+    return true;
+  }
+
+  function unlockTeacherVoice({ replayLatest = false } = {}) {
+    voiceOutputRef.current = true;
+    setVoiceOutput(true);
+    if (!speechSupported) {
+      setSpeechStatus('Spoken replies are unavailable in this browser. Text chat still works.');
+      return false;
+    }
+    const replay = replayLatest ? lastTeacherReplyRef.current : '';
+    return speakTeacher(
+      replay || `${sessionTeacher.name}'s voice is ready.`,
+      { unlockAttempt: true, remember: false },
+    );
   }
 
   async function startLesson() {
@@ -390,6 +454,7 @@ export default function VirtualLessonPanel({
       setStatus('Confirm 18+ and opt in to the AI companion roleplay first.');
       return;
     }
+    if (voiceOutputRef.current && !voiceUnlockedRef.current) unlockTeacherVoice();
     setWaiting(true);
     setDurationMinutes(selectedQuote.durationMinutes);
     setStatus('Securing your private lesson...');
@@ -440,6 +505,7 @@ export default function VirtualLessonPanel({
   async function sendMessage(rawMessage) {
     const message = String(rawMessage || '').trim();
     if (!message || waiting || !session || secondsLeft <= 0) return;
+    if (voiceOutputRef.current && !voiceUnlockedRef.current) unlockTeacherVoice();
     setDraft('');
     setWaiting(true);
     setStatus('');
@@ -710,16 +776,23 @@ export default function VirtualLessonPanel({
         </button>
         <button
           type="button"
-          className={voiceOutput ? 'is-on' : ''}
-          aria-pressed={voiceOutput}
+          className={voiceOutput && voiceUnlocked ? 'is-on' : ''}
+          aria-pressed={voiceOutput && voiceUnlocked}
           disabled={!speechSupported}
           onClick={() => {
-            const enabled = !voiceOutput;
-            setVoiceOutput(enabled);
-            if (!enabled) cancelTeacherSpeech();
+            if (!voiceOutput || !voiceUnlocked) {
+              unlockTeacherVoice({ replayLatest: true });
+              return;
+            }
+            voiceOutputRef.current = false;
+            setVoiceOutput(false);
+            setSpeechStatus('Teacher voice is off.');
+            cancelTeacherSpeech();
           }}
         >
-          {voiceOutput ? 'Teacher voice on' : 'Teacher voice off'}
+          {!voiceUnlocked
+            ? 'Enable teacher voice'
+            : (voiceOutput ? 'Teacher voice on' : 'Teacher voice off')}
         </button>
       </div>
 
@@ -746,7 +819,10 @@ export default function VirtualLessonPanel({
         </details>
       )}
 
-      {!recognitionSupported && <p className="virtual-lesson-browser-note">Voice recognition is unavailable in this browser. Text chat and spoken teacher replies still work.</p>}
+      {!speechSupported && <p className="virtual-lesson-browser-note">Spoken replies are unavailable in this browser. Text chat still works.</p>}
+      {speechSupported && !voiceUnlocked && <p className="virtual-lesson-browser-note">Tap Enable teacher voice once. Phones require this tap before they allow spoken replies.</p>}
+      {!recognitionSupported && <p className="virtual-lesson-browser-note">Voice input is unavailable in this browser. You can still type to your teacher.</p>}
+      {speechStatus && <p className="virtual-lesson-browser-note" role="status">{speechStatus}</p>}
 
       <div className="teacher-chat-messages virtual-lesson-messages" aria-live="polite">
         {!messages.length && (

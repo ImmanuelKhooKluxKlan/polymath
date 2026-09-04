@@ -94,7 +94,17 @@ async function main() {
       body: JSON.stringify({ identifier: email, password }),
     });
     const login = await loginResponse.json();
-    if (loginResponse.ok) token = login.token;
+    if (loginResponse.ok) {
+      token = login.token;
+      if (login.user?.mustChangePassword) {
+        const passwordResponse = await fetch(`${qaApi}/api/auth/change-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ password }),
+        });
+        if (!passwordResponse.ok) throw new Error('QA administrator password setup failed.');
+      }
+    }
     else {
       const challengeResponse = await fetch(`${qaApi}/api/auth/register/otp`, {
         method: 'POST',
@@ -132,6 +142,7 @@ async function main() {
   const requestedTeacher = String(args.teacher || '').trim();
   const requestedConversationMode = String(args['conversation-mode'] || '').trim();
   const startSession = args['start-session'] === 'true';
+  const voiceOnly = args['voice-only'] === 'true';
   const output = path.resolve(args.output || 'qa-teacher-hands.png');
   const profile = await fsp.mkdtemp(path.join(os.tmpdir(), 'polymath-teacher-qa-'));
   const child = spawn(chrome, [
@@ -154,6 +165,27 @@ async function main() {
     await session.connect();
     await session.send('Page.enable');
     await session.send('Runtime.enable');
+    if (qaApi) {
+      await session.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: `(() => {
+          const qaApi = ${JSON.stringify(qaApi)};
+          window.__polymathQaApi = qaApi;
+          const nativeFetch = window.fetch.bind(window);
+          window.fetch = (input, init) => {
+            const original = typeof input === 'string' ? input : input?.url;
+            if (!original) return nativeFetch(input, init);
+            let parsed;
+            try { parsed = new URL(original, window.location.href); } catch { return nativeFetch(input, init); }
+            const isolatedRoutes = ['/api/auth/', '/api/virtual-lessons', '/api/virtual-teachers'];
+            if (!isolatedRoutes.some((prefix) => parsed.pathname.startsWith(prefix))) {
+              return nativeFetch(input, init);
+            }
+            const redirected = new URL(qaApi + parsed.pathname + parsed.search);
+            return nativeFetch(typeof input === 'string' ? redirected.href : new Request(redirected.href, input), init);
+          };
+        })();`,
+      });
+    }
     await session.send('Emulation.setDeviceMetricsOverride', {
       width,
       height,
@@ -242,28 +274,30 @@ async function main() {
       });
       await delay(300);
     }
-    const preparation = await session.send('Runtime.evaluate', {
-      expression: `(async () => {
-        const unlock = [...document.querySelectorAll('button')]
-          .find((item) => /unlock keyboard|try keyboard again/i.test(item.textContent));
-        unlock?.click();
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        const deadline = Date.now() + 15000;
-        while (Date.now() < deadline) {
-          const shell = document.querySelector('.piano-shell');
-          if (shell?.classList.contains('is-ready')) return { ready: true };
-          const retry = [...(shell?.querySelectorAll('.piano-preparation button') || [])]
-            .find((item) => /try keyboard again/i.test(item.textContent));
-          if (retry) return { ready: false, error: true };
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        return { ready: false, timeout: true };
-      })()`,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (!preparation.result?.value?.ready) {
-      throw new Error(`The real keyboard preparation did not complete: ${JSON.stringify(preparation.result?.value)}`);
+    if (!voiceOnly) {
+      const preparation = await session.send('Runtime.evaluate', {
+        expression: `(async () => {
+          const unlock = [...document.querySelectorAll('button')]
+            .find((item) => /unlock keyboard|try keyboard again/i.test(item.textContent));
+          unlock?.click();
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const deadline = Date.now() + 15000;
+          while (Date.now() < deadline) {
+            const shell = document.querySelector('.piano-shell');
+            if (shell?.classList.contains('is-ready')) return { ready: true };
+            const retry = [...(shell?.querySelectorAll('.piano-preparation button') || [])]
+              .find((item) => /try keyboard again/i.test(item.textContent));
+            if (retry) return { ready: false, error: true };
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          return { ready: false, timeout: true };
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (!preparation.result?.value?.ready) {
+        throw new Error(`The real keyboard preparation did not complete: ${JSON.stringify(preparation.result?.value)}`);
+      }
     }
     await session.send('Runtime.evaluate', {
       expression: surface === 'lesson'
@@ -303,21 +337,38 @@ async function main() {
       }
     }
     if (surface === 'lesson' && startSession) {
-      const start = await session.send('Runtime.evaluate', {
-        expression: `(() => {
-          const button = [...document.querySelectorAll('.virtual-lesson-purchase-row button')]
-            .find((item) => /start private/i.test(item.textContent));
-          if (!button || button.disabled) return { found: Boolean(button), disabled: Boolean(button?.disabled) };
-          button.click();
-          return { found: true, disabled: false };
-        })()`,
-        returnByValue: true,
-      });
-      if (!start.result?.value?.found || start.result?.value?.disabled) {
-        throw new Error(`Private session could not start: ${JSON.stringify(start.result?.value)}`);
+      const startDeadline = Date.now() + 5000;
+      let startResult = null;
+      while (Date.now() < startDeadline && !startResult?.found && !startResult?.active) {
+        const start = await session.send('Runtime.evaluate', {
+          expression: `(() => {
+            if (document.querySelector('.virtual-lesson-room')) return { active: true };
+            const button = [...document.querySelectorAll('.virtual-lesson-purchase-row button')]
+              .find((item) => /start private/i.test(item.textContent));
+            if (!button || button.disabled) return {
+              found: Boolean(button),
+              disabled: Boolean(button?.disabled),
+              panel: document.querySelector('.virtual-lesson-checkout, .virtual-lesson-gate, .virtual-lesson-loading')?.className || '',
+              studio: Boolean(document.querySelector('.piano-teacher-studio')),
+              modeButtons: [...document.querySelectorAll('.learn-mode-tabs button')].map((item) => item.textContent.trim()),
+              location: window.location.hash,
+              qaApi: window.__polymathQaApi || '',
+              tokenLength: (localStorage.getItem('polymath_musician_auth_token') || '').length,
+              body: document.body.innerText.slice(0, 600),
+            };
+            button.click();
+            return { found: true, disabled: false };
+          })()`,
+          returnByValue: true,
+        });
+        startResult = start.result?.value || null;
+        if (!startResult?.found && !startResult?.active) await delay(100);
+      }
+      if (!startResult?.active && (!startResult?.found || startResult?.disabled)) {
+        throw new Error(`Private session could not start: ${JSON.stringify(startResult)}`);
       }
       const deadline = Date.now() + 5000;
-      let active = false;
+      let active = Boolean(startResult?.active);
       while (Date.now() < deadline && !active) {
         await delay(100);
         const result = await session.send('Runtime.evaluate', {
@@ -328,6 +379,18 @@ async function main() {
       }
       if (!active) throw new Error('The server did not activate the private session.');
       await delay(250);
+      if (voiceOnly) {
+        await session.send('Runtime.evaluate', {
+          expression: `(() => {
+            const button = [...document.querySelectorAll('.virtual-lesson-actions button')]
+              .find((item) => /enable teacher voice/i.test(item.textContent));
+            button?.click();
+            return Boolean(button);
+          })()`,
+          returnByValue: true,
+        });
+        await delay(150);
+      }
     }
     if (surface === 'lesson' && demonstrate) {
       const command = await session.send('Runtime.evaluate', {
@@ -404,6 +467,8 @@ async function main() {
           liveTeacherStageId: document.querySelector('.virtual-teacher-live-stage')?.dataset.teacherId || '',
           speechMouthLayer: Boolean(document.querySelector('.teacher-speech-mouth-window')),
           songSyncedHandCamera: Boolean(document.querySelector('.virtual-teacher-live-stage .teacher-hand-camera')),
+          voiceControl: [...document.querySelectorAll('.virtual-lesson-actions button')]
+            .find((item) => /teacher voice/i.test(item.textContent))?.textContent.trim() || '',
           speedLabel: document.querySelector('.dock-speed span')?.textContent?.trim() || '',
           supportOpen: Boolean(document.querySelector('.support-assistant-panel')),
           supportAllowance: document.querySelector('.support-assistant-panel header small')?.textContent?.trim() || '',
@@ -412,7 +477,7 @@ async function main() {
       })()`,
       returnByValue: true,
     });
-    if (!visualAudit.result?.value?.bothHandsOverlapMainKeyboard) {
+    if (!voiceOnly && !visualAudit.result?.value?.bothHandsOverlapMainKeyboard) {
       throw new Error(`Teacher hands failed main-keyboard overlap audit: ${JSON.stringify(visualAudit.result?.value)}`);
     }
     if (demonstrate && !visualAudit.result?.value?.demonstrationPlaying) {
@@ -430,6 +495,9 @@ async function main() {
       || visualAudit.result?.value?.lockedTeacherId !== visualAudit.result?.value?.liveTeacherStageId
     )) {
       throw new Error(`Paid teacher identity or synchronized stage audit failed: ${JSON.stringify(visualAudit.result?.value)}`);
+    }
+    if (startSession && !/teacher voice on|enable teacher voice/i.test(visualAudit.result?.value?.voiceControl || '')) {
+      throw new Error(`Teacher voice recovery control was not available: ${JSON.stringify(visualAudit.result?.value)}`);
     }
     if (openHelp && (!visualAudit.result?.value?.supportOpen || !/\d+\/7 left today|Unlimited Help/.test(visualAudit.result?.value?.supportAllowance || ''))) {
       throw new Error(`Signed-in Help allowance was not visible: ${JSON.stringify(visualAudit.result?.value)}`);

@@ -96,3 +96,24 @@ export function speechSegments(value, maximumCharacters = 220) {
   }
   return segments;
 }
+
+export function teacherSpeechErrorMessage(errorCode) {
+  const code = String(errorCode || '').trim().toLowerCase();
+  if (['canceled', 'interrupted'].includes(code)) return '';
+  if (['not-allowed', 'service-not-allowed'].includes(code)) {
+    return 'Your browser blocked spoken audio. Tap Enable teacher voice, then turn up your media volume.';
+  }
+  if (['audio-busy', 'audio-hardware'].includes(code)) {
+    return 'Your device audio is busy. Close other audio apps, then tap Enable teacher voice again.';
+  }
+  if (code === 'network') {
+    return 'This device voice needs a network connection. Check your connection or choose an offline device voice.';
+  }
+  if (['voice-unavailable', 'language-unavailable'].includes(code)) {
+    return 'That voice is unavailable on this device. Choose another voice and try again.';
+  }
+  if (['synthesis-unavailable', 'synthesis-failed'].includes(code)) {
+    return 'Spoken replies could not start on this browser. Text chat still works.';
+  }
+  return 'The teacher voice stopped unexpectedly. Tap Enable teacher voice to retry.';
+}

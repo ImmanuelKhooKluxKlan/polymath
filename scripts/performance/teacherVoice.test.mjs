@@ -4,6 +4,7 @@ import {
   selectTeacherVoice,
   speechReadyText,
   speechSegments,
+  teacherSpeechErrorMessage,
   teacherVoiceProfile,
   teacherVoiceScore,
 } from '../../src/engine/teacherVoice.js';
@@ -20,6 +21,13 @@ test('selects a natural voice matching the teacher and language', () => {
   assert.equal(selectTeacherVoice(voices, { id: 'nova' }, 'en-US').voiceURI, 'aria-natural');
   assert.equal(selectTeacherVoice(voices, { id: 'mace' }, 'en-US').voiceURI, 'guy-natural');
   assert.equal(teacherVoiceScore(voices[0], { id: 'nova' }, 'en-US') < 0, true);
+});
+
+test('turns browser speech failures into useful recovery instructions', () => {
+  assert.equal(teacherSpeechErrorMessage('canceled'), '');
+  assert.match(teacherSpeechErrorMessage('not-allowed'), /Tap Enable teacher voice/);
+  assert.match(teacherSpeechErrorMessage('voice-unavailable'), /Choose another voice/);
+  assert.match(teacherSpeechErrorMessage('unexpected'), /retry/);
 });
 
 test('honours an explicit device voice and keeps teacher prosody', () => {
