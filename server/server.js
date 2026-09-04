@@ -2659,6 +2659,7 @@ app.get('/api/health', async (req, res) => res.json({
   storage: STATE_STORE.provider,
   artifacts: ARTIFACT_STORE.provider,
   queue: JOB_QUEUE.enabled ? 'sqs' : 'in-process',
+  virtualLessons: POLYMATH_ASSISTANT.capabilities().available ? 'configured' : 'unconfigured',
   region: process.env.APP_REGION || 'local',
 }));
 app.get('/api/health/state', async (req, res) => {

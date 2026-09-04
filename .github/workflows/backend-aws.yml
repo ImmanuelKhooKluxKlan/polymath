@@ -82,14 +82,30 @@ jobs:
           ECS_SERVICE: ${{ matrix.service }}
           TASK_FAMILY: ${{ matrix.task_family }}
           RUNPOD_S3_REPLICAS: ${{ vars.RUNPOD_S3_REPLICAS }}
+          RUNPOD_CHAT_BOSS_ENDPOINT_ID: ${{ vars.RUNPOD_CHAT_BOSS_ENDPOINT_ID }}
+          RUNPOD_CHAT_BOSS_MODEL: ${{ vars.RUNPOD_CHAT_BOSS_MODEL }}
+          RUNPOD_CHAT_BOSS_TIMEOUT_MS: ${{ vars.RUNPOD_CHAT_BOSS_TIMEOUT_MS }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition > current-task.json
-          jq --arg image $IMAGE --arg runpodReplicas "$RUNPOD_S3_REPLICAS" '
+          jq \
+            --arg image "$IMAGE" \
+            --arg runpodReplicas "$RUNPOD_S3_REPLICAS" \
+            --arg chatBossEndpointId "$RUNPOD_CHAT_BOSS_ENDPOINT_ID" \
+            --arg chatBossModel "$RUNPOD_CHAT_BOSS_MODEL" \
+            --arg chatBossTimeoutMs "$RUNPOD_CHAT_BOSS_TIMEOUT_MS" '
             .containerDefinitions[0].image = $image
             | .containerDefinitions[0].environment = (
                 (.containerDefinitions[0].environment // [])
-                | map(select(.name != "RUNPOD_S3_REPLICAS"))
-                + [{ name: "RUNPOD_S3_REPLICAS", value: $runpodReplicas }]
+                | map(select(.name != "RUNPOD_S3_REPLICAS"
+                  and .name != "RUNPOD_CHAT_BOSS_ENDPOINT_ID"
+                  and .name != "RUNPOD_CHAT_BOSS_MODEL"
+                  and .name != "RUNPOD_CHAT_BOSS_TIMEOUT_MS"))
+                + [
+                    { name: "RUNPOD_S3_REPLICAS", value: $runpodReplicas },
+                    { name: "RUNPOD_CHAT_BOSS_ENDPOINT_ID", value: $chatBossEndpointId },
+                    { name: "RUNPOD_CHAT_BOSS_MODEL", value: $chatBossModel },
+                    { name: "RUNPOD_CHAT_BOSS_TIMEOUT_MS", value: $chatBossTimeoutMs }
+                  ]
               )
             | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
           ' current-task.json > next-task.json

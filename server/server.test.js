@@ -339,6 +339,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     storage: 'atomic-json',
     artifacts: 'local-disk',
     queue: 'in-process',
+    virtualLessons: 'unconfigured',
     region: 'local',
   });
 
