@@ -46,7 +46,7 @@ function testRiggedGlb() {
   return glb;
 }
 
-test('administrators can publish and delete durable custom virtual teachers', async (context) => {
+test('administrators can create, edit, price, age-gate, hide, restore, and delete virtual teachers', async (context) => {
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -87,17 +87,28 @@ test('administrators can publish and delete durable custom virtual teachers', as
   assert.equal(registration.data.user.admin, true);
   const token = registration.data.token;
 
+  const initialAdminCatalog = await jsonApi('/api/admin/virtual-teachers', { token });
+  assert.equal(initialAdminCatalog.status, 200);
+  assert.equal(initialAdminCatalog.data.catalogVersion, 2);
+  assert.deepEqual(
+    initialAdminCatalog.data.catalog.filter((character) => character.builtIn).map((character) => character.id).sort(),
+    ['anakin', 'aria', 'mace', 'nova', 'taylor'],
+  );
+  assert.equal(initialAdminCatalog.data.catalog.find((character) => character.id === 'nova').adultCompanionEnabled, true);
+
   const onePixelPng = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64',
   );
   const form = new FormData();
-  form.append('name', 'Aria');
+  form.append('name', 'Lyra');
   form.append('title', 'Rhythm coach');
   form.append('description', 'Keeps practice sessions steady and clear.');
   form.append('voice', 'Calm');
   form.append('armTone', 'dark');
-  form.append('requiresAdultConfirmation', 'false');
+  form.append('minimumAge', '16');
+  form.append('pricePer30MinutesMcoins', '7.5');
+  form.append('active', 'true');
   form.append('image', new Blob([onePixelPng], { type: 'image/png' }), 'aria.png');
   const riggedGlb = testRiggedGlb();
   form.append('model', new Blob([riggedGlb], { type: 'model/gltf-binary' }), 'aria.glb');
@@ -108,14 +119,21 @@ test('administrators can publish and delete durable custom virtual teachers', as
   });
   const created = await createdResponse.json();
   assert.equal(createdResponse.status, 201);
-  assert.equal(created.character.name, 'Aria');
+  assert.equal(created.character.name, 'Lyra');
   assert.equal(created.character.armTone, 'dark');
+  assert.equal(created.character.minimumAge, 16);
+  assert.equal(created.character.requiresAdultConfirmation, false);
+  assert.equal(created.character.adultCompanionEnabled, false);
+  assert.equal(created.character.pricePer30MinutesMcoins, 7.5);
+  assert.equal(created.character.effectivePricePer30MinutesMcoins, 7.5);
   assert.equal(created.character.rig.jointCount, 7);
   assert.match(created.character.modelPath, /\/model\?/);
 
   const publicList = await jsonApi('/api/virtual-teachers');
   assert.equal(publicList.status, 200);
-  assert.deepEqual(publicList.data.characters.map((character) => character.name), ['Aria']);
+  assert.equal(publicList.data.catalogVersion, 2);
+  assert.deepEqual(publicList.data.characters.map((character) => character.name), ['Lyra']);
+  assert.equal(publicList.data.catalog.length, 6);
   const imageResponse = await fetch(`${baseUrl}${created.character.imagePath}`);
   assert.equal(imageResponse.status, 200);
   assert.equal(imageResponse.headers.get('content-type'), 'image/png');
@@ -125,8 +143,56 @@ test('administrators can publish and delete durable custom virtual teachers', as
   assert.equal(modelResponse.headers.get('content-type'), 'model/gltf-binary');
   assert.deepEqual(Buffer.from(await modelResponse.arrayBuffer()), riggedGlb);
 
+  const customUpdateForm = new FormData();
+  customUpdateForm.append('name', 'Lyra Renamed');
+  customUpdateForm.append('minimumAge', '21');
+  customUpdateForm.append('pricePer30MinutesMcoins', '12.25');
+  const customUpdateResponse = await fetch(`${baseUrl}/api/admin/virtual-teachers/${created.character.id}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}` },
+    body: customUpdateForm,
+  });
+  const customUpdate = await customUpdateResponse.json();
+  assert.equal(customUpdateResponse.status, 200);
+  assert.equal(customUpdate.character.name, 'Lyra Renamed');
+  assert.equal(customUpdate.character.minimumAge, 21);
+  assert.equal(customUpdate.character.requiresAdultConfirmation, true);
+  assert.equal(customUpdate.character.pricePer30MinutesMcoins, 12.25);
+
+  const builtInUpdateForm = new FormData();
+  builtInUpdateForm.append('name', 'Anakin Prime');
+  builtInUpdateForm.append('minimumAge', '13');
+  builtInUpdateForm.append('pricePer30MinutesMcoins', '2.25');
+  const builtInUpdateResponse = await fetch(`${baseUrl}/api/admin/virtual-teachers/anakin`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}` },
+    body: builtInUpdateForm,
+  });
+  const builtInUpdate = await builtInUpdateResponse.json();
+  assert.equal(builtInUpdateResponse.status, 200);
+  assert.equal(builtInUpdate.character.name, 'Anakin Prime');
+  assert.equal(builtInUpdate.character.minimumAge, 13);
+  assert.equal(builtInUpdate.character.adultCompanionEnabled, false);
+  assert.equal(builtInUpdate.character.pricePer30MinutesMcoins, 2.25);
+
   const builtInDelete = await jsonApi('/api/admin/virtual-teachers/anakin', { method: 'DELETE', token });
-  assert.equal(builtInDelete.status, 403);
+  assert.equal(builtInDelete.status, 200);
+  assert.equal(builtInDelete.data.disabled, true);
+  const hiddenPublicList = await jsonApi('/api/virtual-teachers');
+  assert.equal(hiddenPublicList.data.catalog.some((character) => character.id === 'anakin'), false);
+  const hiddenAdminList = await jsonApi('/api/admin/virtual-teachers', { token });
+  assert.equal(hiddenAdminList.data.catalog.find((character) => character.id === 'anakin').active, false);
+
+  const restoreForm = new FormData();
+  restoreForm.append('active', 'true');
+  const restoreResponse = await fetch(`${baseUrl}/api/admin/virtual-teachers/anakin`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}` },
+    body: restoreForm,
+  });
+  assert.equal(restoreResponse.status, 200);
+  const restoredPublicList = await jsonApi('/api/virtual-teachers');
+  assert.equal(restoredPublicList.data.catalog.find((character) => character.id === 'anakin').name, 'Anakin Prime');
 
   const deleted = await jsonApi(`/api/admin/virtual-teachers/${created.character.id}`, { method: 'DELETE', token });
   assert.equal(deleted.status, 200);

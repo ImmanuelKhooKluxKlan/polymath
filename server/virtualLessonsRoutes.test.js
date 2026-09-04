@@ -187,6 +187,40 @@ test('virtual lessons charge once, remember the session, demonstrate exact range
   assert.equal(pricedLesson.data.chargedMcoins, 3.99);
   assert.equal(pricedLesson.data.session.durationMinutes, 30);
 
+  const characterPricing = await api('/api/admin/virtual-teachers/aria', {
+    method: 'PATCH',
+    token: administrator.token,
+    body: {
+      minimumAge: 16,
+      pricePer30MinutesMcoins: 1.25,
+    },
+  });
+  assert.equal(characterPricing.status, 200);
+  assert.equal(characterPricing.data.character.minimumAge, 16);
+  assert.equal(characterPricing.data.character.pricePer30MinutesMcoins, 1.25);
+  const ageGatedStudent = await register('Age Gated Student', 'age-gated@example.test');
+  const ageGatedDb = await readDb();
+  ageGatedDb.users.find((user) => user.id === ageGatedStudent.user.user_id).mcoins = 10;
+  await writeDb(ageGatedDb);
+  const ageGatedCheckout = {
+    ...checkout,
+    durationMinutes: 30,
+    clientRequestId: 'checkout_age_gate_1',
+  };
+  const ageRejected = await api('/api/virtual-lessons', {
+    method: 'POST', token: ageGatedStudent.token, body: ageGatedCheckout,
+  });
+  assert.equal(ageRejected.status, 403);
+  assert.equal(ageRejected.data.minimumAge, 16);
+  const ageConfirmed = await api('/api/virtual-lessons', {
+    method: 'POST',
+    token: ageGatedStudent.token,
+    body: { ...ageGatedCheckout, clientRequestId: 'checkout_age_gate_2', confirmedAge: 16 },
+  });
+  assert.equal(ageConfirmed.status, 201);
+  assert.equal(ageConfirmed.data.chargedMcoins, 1.25);
+  assert.equal(ageConfirmed.data.user.mcoins, 8.75);
+
   const companionStudent = await register('Adult Companion Student', 'companion@example.test');
   const companionDb = await readDb();
   companionDb.users.find((user) => user.id === companionStudent.user.user_id).mcoins = 10;

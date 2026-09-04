@@ -95,6 +95,16 @@ function sanitizeConversationPreferences(value = {}) {
 }
 
 function sanitizeTeacher(teacher) {
+  const requestedMinimumAge = Number(teacher?.minimumAge);
+  const minimumAge = Number.isFinite(requestedMinimumAge)
+    ? Math.min(99, Math.max(0, Math.floor(requestedMinimumAge)))
+    : (teacher?.requiresAdultConfirmation ? 18 : 0);
+  const requestedPrice = teacher?.pricePer30MinutesMcoins;
+  const pricePer30MinutesMcoins = requestedPrice === null
+    || requestedPrice === undefined
+    || String(requestedPrice).trim() === ''
+    ? null
+    : normalizeLessonBlockPrice(requestedPrice);
   return {
     id: cleanText(teacher?.id, 64).replace(/[^a-z0-9_-]/gi, '') || 'aria',
     name: cleanText(teacher?.name, 80) || 'Aria',
@@ -104,7 +114,10 @@ function sanitizeTeacher(teacher) {
     voiceType: ['feminine', 'masculine'].includes(cleanText(teacher?.voiceType, 20).toLowerCase())
       ? cleanText(teacher?.voiceType, 20).toLowerCase()
       : 'neutral',
-    requiresAdultConfirmation: Boolean(teacher?.requiresAdultConfirmation),
+    minimumAge,
+    requiresAdultConfirmation: minimumAge >= 18,
+    adultCompanionEnabled: Boolean(teacher?.adultCompanionEnabled),
+    pricePer30MinutesMcoins,
   };
 }
 

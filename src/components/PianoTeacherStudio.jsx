@@ -16,6 +16,12 @@ function TeacherPortrait({ teacher }) {
   );
 }
 
+function teacherMinimumAge(profile) {
+  const configured = Number(profile?.minimumAge);
+  if (Number.isFinite(configured) && configured > 0) return Math.min(99, Math.floor(configured));
+  return profile?.requiresAdultConfirmation ? 18 : 0;
+}
+
 export default function PianoTeacherStudio({
   profiles = TEACHER_PROFILES,
   teacherId,
@@ -31,28 +37,33 @@ export default function PianoTeacherStudio({
   onNavigate,
   onDemonstrate,
 }) {
-  const [adultConfirmed, setAdultConfirmed] = useState(
-    () => window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true',
-  );
-  const [pendingAdultTeacher, setPendingAdultTeacher] = useState(null);
+  const [confirmedAge, setConfirmedAge] = useState(() => {
+    const stored = Number(window.localStorage.getItem('polymath-teacher-confirmed-age') || 0);
+    const legacyAdult = window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true' ? 18 : 0;
+    return Math.max(Number.isFinite(stored) ? stored : 0, legacyAdult);
+  });
+  const [pendingAgeTeacher, setPendingAgeTeacher] = useState(null);
   const teacher = profiles.find((profile) => profile.id === teacherId)
     || profiles.find((profile) => profile.id === 'aria')
     || profiles[0];
 
   function chooseTeacher(profile) {
-    if (profile.requiresAdultConfirmation && !adultConfirmed) {
-      setPendingAdultTeacher(profile);
+    if (teacherMinimumAge(profile) > confirmedAge) {
+      setPendingAgeTeacher(profile);
       return;
     }
     onTeacherChange(profile.id);
   }
 
-  function confirmAdultTeacher() {
-    if (!pendingAdultTeacher) return;
-    window.localStorage.setItem('polymath-teacher-adult-confirmed', 'true');
-    setAdultConfirmed(true);
-    onTeacherChange(pendingAdultTeacher.id);
-    setPendingAdultTeacher(null);
+  function confirmTeacherAge() {
+    if (!pendingAgeTeacher) return;
+    const minimumAge = teacherMinimumAge(pendingAgeTeacher);
+    const nextConfirmedAge = Math.max(confirmedAge, minimumAge);
+    window.localStorage.setItem('polymath-teacher-confirmed-age', String(nextConfirmedAge));
+    if (nextConfirmedAge >= 18) window.localStorage.setItem('polymath-teacher-adult-confirmed', 'true');
+    setConfirmedAge(nextConfirmedAge);
+    onTeacherChange(pendingAgeTeacher.id);
+    setPendingAgeTeacher(null);
   }
 
   return (
@@ -131,7 +142,13 @@ export default function PianoTeacherStudio({
                 <TeacherPortrait teacher={profile} />
                 <span>
                   <strong>{profile.name}</strong>
-                  <small>{profile.title}{profile.requiresAdultConfirmation && !adultConfirmed ? ' · 18+' : ''}</small>
+                  <small>
+                    {profile.title}
+                    {teacherMinimumAge(profile) > 0 ? ` · ${teacherMinimumAge(profile)}+` : ''}
+                    {profile.effectivePricePer30MinutesMcoins !== null && profile.effectivePricePer30MinutesMcoins !== undefined
+                      ? ` · ${Number(profile.effectivePricePer30MinutesMcoins).toFixed(2)} Mcoins / 30 min`
+                      : ''}
+                  </small>
                 </span>
               </button>
             ))}
@@ -139,18 +156,18 @@ export default function PianoTeacherStudio({
         </details>
       </div>
 
-      {pendingAdultTeacher && (
+      {pendingAgeTeacher && (
         <div className="teacher-age-gate" role="dialog" aria-modal="true" aria-labelledby="teacher-age-gate-title">
           <div>
-            <TeacherPortrait teacher={pendingAdultTeacher} />
+            <TeacherPortrait teacher={pendingAgeTeacher} />
             <span>
-              <strong id="teacher-age-gate-title">Confirm you are 18+</strong>
-              <small>{pendingAdultTeacher.name} is an adult-only optional character. This confirmation is stored on this device.</small>
+              <strong id="teacher-age-gate-title">Confirm you are {teacherMinimumAge(pendingAgeTeacher)}+</strong>
+              <small>{pendingAgeTeacher.name} has an administrator-set age requirement. This confirmation is stored on this device.</small>
             </span>
           </div>
           <div className="teacher-age-gate-actions">
-            <button type="button" onClick={() => setPendingAdultTeacher(null)}>Cancel</button>
-            <button type="button" className="primary" onClick={confirmAdultTeacher}>I am 18 or older</button>
+            <button type="button" onClick={() => setPendingAgeTeacher(null)}>Cancel</button>
+            <button type="button" className="primary" onClick={confirmTeacherAge}>I am {teacherMinimumAge(pendingAgeTeacher)} or older</button>
           </div>
         </div>
       )}

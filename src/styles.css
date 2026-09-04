@@ -8370,6 +8370,20 @@ details[open] > summary {
 }
 
 .admin-character-form { gap: 14px; }
+.admin-character-form .admin-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.admin-character-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(172, 151, 238, .15);
+}
+
+.admin-character-editor-heading > div { display: grid; gap: 3px; min-width: 0; }
+.admin-character-editor-heading strong { color: #f0ebff; font-size: .92rem; overflow-wrap: anywhere; }
+.admin-character-editor-heading small { color: var(--muted); font-size: .67rem; line-height: 1.4; }
 
 .admin-character-upload {
   display: grid;
@@ -8481,7 +8495,14 @@ details[open] > summary {
   background: rgba(8, 10, 31, .62);
 }
 
+.admin-character-row.is-hidden {
+  border-style: dashed;
+  opacity: .64;
+}
+
 .admin-character-row-image {
+  display: grid;
+  place-items: center;
   width: 76px;
   aspect-ratio: 4 / 5;
   overflow: hidden;
@@ -8489,11 +8510,13 @@ details[open] > summary {
   background: rgba(116, 85, 208, .12);
 }
 
+.admin-character-row-image > span { color: #bca8f5; font-size: 1.5rem; }
+
 .admin-character-row-image img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  object-position: center bottom;
+  object-fit: cover;
+  object-position: center;
 }
 
 .admin-character-row > div:nth-child(2) {
@@ -8507,6 +8530,21 @@ details[open] > summary {
 .admin-character-row small { color: var(--muted); font-size: .65rem; line-height: 1.4; overflow-wrap: anywhere; }
 .admin-character-row b { width: max-content; padding: 3px 6px; border-radius: 999px; color: #ffe4a6; background: rgba(207, 148, 54, .13); font-size: .58rem; }
 .admin-character-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.admin-character-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 190px;
+}
+
+.admin-character-row-actions button {
+  min-width: 58px;
+  min-height: 36px;
+  padding: 6px 9px;
+  font-size: .66rem;
+}
 
 .admin-character-delete {
   min-height: 38px;
@@ -8529,11 +8567,14 @@ details[open] > summary {
 }
 
 @media (max-width: 520px) {
+  .admin-character-form .admin-form-grid { grid-template-columns: minmax(0, 1fr); }
   .admin-character-model-upload { grid-template-columns: minmax(0, 1fr); }
   .admin-character-model-upload .admin-character-file-button { width: 100%; }
   .admin-character-row { grid-template-columns: 64px minmax(0, 1fr); }
   .admin-character-row-image { width: 64px; }
-  .admin-character-delete { grid-column: 1 / -1; width: 100%; }
+  .admin-character-row-actions { grid-column: 1 / -1; width: 100%; max-width: none; }
+  .admin-character-row-actions button { flex: 1 1 80px; }
+  .admin-character-editor-heading { align-items: stretch; flex-direction: column; }
 }
 
 .admin-community-report-list { display: grid; gap: 12px; }

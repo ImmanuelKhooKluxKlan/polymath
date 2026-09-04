@@ -111,6 +111,39 @@ function songLibraryId(song) {
     || `${song?.libraryType || 'song'}:${song?.title || 'Untitled Song'}:${song?.composer || song?.artist || 'Unknown'}`;
 }
 
+function materializeTeacherProfile(profile, base = {}) {
+  const armTone = profile.armTone || base.armTone || 'light';
+  const image = profile.imagePath ? apiAssetUrl(profile.imagePath) : base.image;
+  return {
+    ...base,
+    ...profile,
+    image,
+    stageImage: image || base.stageImage,
+    portraitPosition: base.portraitPosition || '50% 18%',
+    armImage: base.armImage || (armTone === 'dark'
+      ? '/teachers/arm-dark-full-v1.webp'
+      : '/teachers/arm-light-full-v1.webp'),
+    handCameraImage: base.handCameraImage || (armTone === 'dark'
+      ? '/teachers/pianist-hands-overhead-dark-v1.webp'
+      : '/teachers/pianist-hands-overhead-v1.webp'),
+    pressedHandCameraImage: base.pressedHandCameraImage || (armTone === 'dark'
+      ? '/teachers/pianist-hands-pressed-dark-v2.webp'
+      : '/teachers/pianist-hands-pressed-v2.webp'),
+    modelUrl: profile.modelPath ? apiAssetUrl(profile.modelPath) : base.modelUrl || '',
+    minimumAge: Math.max(0, Number(profile.minimumAge || 0)),
+    requiresAdultConfirmation: Number(profile.minimumAge || 0) >= 18
+      || Boolean(profile.requiresAdultConfirmation),
+    adultCompanionEnabled: Boolean(
+      profile.adultCompanionEnabled
+        ?? base.adultCompanionEnabled
+        ?? profile.requiresAdultConfirmation,
+    ),
+    pricePer30MinutesMcoins: profile.pricePer30MinutesMcoins ?? null,
+    effectivePricePer30MinutesMcoins: profile.effectivePricePer30MinutesMcoins ?? null,
+    look: base.look || 'custom',
+  };
+}
+
 export default function App() {
   const [route, setRoute] = useState(readRoute);
   const [user, setUser] = useState(null);
@@ -155,7 +188,7 @@ export default function App() {
     if (!savedTeacher || (savedTeacher === 'nova' && !adultConfirmed)) return 'aria';
     return savedTeacher;
   });
-  const [customTeacherProfiles, setCustomTeacherProfiles] = useState([]);
+  const [remoteTeacherDirectory, setRemoteTeacherDirectory] = useState(null);
   const [teacherHandsEnabled, setTeacherHandsEnabled] = useState(() => window.localStorage.getItem('polymath-teacher-hands-v2') !== 'false');
   const [teacherDemonstration, setTeacherDemonstration] = useState(null);
   const [portraitDevice, setPortraitDevice] = useState(() => (
@@ -223,21 +256,19 @@ export default function App() {
       : learningArrangement
   ), [learningArrangement, teachingMode, pianoHandMode]);
   const teachingSong = useMemo(() => ({ ...song, notes: playbackNotes }), [song, playbackNotes]);
-  const teacherProfiles = useMemo(() => [
-    ...TEACHER_PROFILES,
-    ...customTeacherProfiles.map((profile) => ({
-      ...profile,
-      image: apiAssetUrl(profile.imagePath),
-      modelUrl: profile.modelPath ? apiAssetUrl(profile.modelPath) : '',
-      armImage: profile.armTone === 'dark'
-        ? '/teachers/arm-dark-full-v1.webp'
-        : '/teachers/arm-light-full-v1.webp',
-      handCameraImage: profile.armTone === 'dark'
-        ? '/teachers/pianist-hands-overhead-dark-v1.webp'
-        : '/teachers/pianist-hands-overhead-v1.webp',
-      look: 'custom',
-    })),
-  ], [customTeacherProfiles]);
+  const teacherProfiles = useMemo(() => {
+    const baseById = new Map(TEACHER_PROFILES.map((profile) => [profile.id, profile]));
+    if (!remoteTeacherDirectory) return TEACHER_PROFILES;
+    if (remoteTeacherDirectory.authoritative) {
+      return remoteTeacherDirectory.profiles.map((profile) => (
+        materializeTeacherProfile(profile, baseById.get(profile.id) || {})
+      ));
+    }
+    return [
+      ...TEACHER_PROFILES,
+      ...remoteTeacherDirectory.profiles.map((profile) => materializeTeacherProfile(profile)),
+    ];
+  }, [remoteTeacherDirectory]);
   const pianoTeacher = useMemo(
     () => teacherProfiles.find((profile) => profile.id === pianoTeacherId)
       || teacherProfiles.find((profile) => profile.id === 'aria')
@@ -282,7 +313,12 @@ export default function App() {
     const loadVirtualTeachers = () => {
       apiRequest('/api/virtual-teachers')
         .then((data) => {
-          if (!cancelled) setCustomTeacherProfiles(Array.isArray(data.characters) ? data.characters : []);
+          if (cancelled) return;
+          const authoritative = Number(data.catalogVersion || 0) >= 2 && Array.isArray(data.catalog);
+          setRemoteTeacherDirectory({
+            authoritative,
+            profiles: authoritative ? data.catalog : (Array.isArray(data.characters) ? data.characters : []),
+          });
         })
         .catch((error) => console.error('Custom virtual teachers could not be loaded:', error));
     };

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiAssetUrl, apiRequest } from '../services/api.js';
+import { TEACHER_PROFILES } from '../engine/teacherHands.js';
 import { normalizeTeacherImage } from '../utils/teacherImage.js';
 import { validateTeacherGlbFile } from '../utils/teacherModel.js';
 import ModelLabPage from './ModelLabPage.jsx';
@@ -8,7 +9,7 @@ const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
-  ['characters', 'Virtual teachers', 'Upload, publish, and delete custom characters'],
+  ['characters', 'Virtual teachers', 'Create, price, edit, restrict, hide, and delete characters'],
   ['community', 'Community safety', 'Review reported messages and moderation actions'],
   ['promotions', 'Discounts', 'Create percentage or fixed-Mcoin codes'],
   ['withdrawals', 'Payouts', 'Review pending cash-outs and platform outflow'],
@@ -66,8 +67,16 @@ const EMPTY_CHARACTER = {
   voice: '',
   voiceType: 'neutral',
   armTone: 'light',
-  requiresAdultConfirmation: false,
+  minimumAge: 0,
+  adultCompanionEnabled: false,
+  pricePer30MinutesMcoins: '',
+  active: true,
 };
+
+function characterImageUrl(character) {
+  if (character?.imagePath) return apiAssetUrl(character.imagePath);
+  return TEACHER_PROFILES.find((profile) => profile.id === character?.id)?.image || '';
+}
 
 function normalizedDigits(value) {
   return String(value || '').replace(/\D/g, '');
@@ -133,6 +142,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [characters, setCharacters] = useState([]);
   const [communityReports, setCommunityReports] = useState({ reports: [], openCount: 0 });
   const [characterDraft, setCharacterDraft] = useState(EMPTY_CHARACTER);
+  const [editingCharacterId, setEditingCharacterId] = useState('');
   const [characterImage, setCharacterImage] = useState(null);
   const [characterImagePreview, setCharacterImagePreview] = useState('');
   const [characterModel, setCharacterModel] = useState(null);
@@ -152,7 +162,9 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     setPolicies(policiesData.policies);
     setPromotions(promotionsData.promotions);
     setWithdrawals(withdrawalsData);
-    setCharacters(Array.isArray(charactersData.characters) ? charactersData.characters : []);
+    setCharacters(Array.isArray(charactersData.catalog)
+      ? charactersData.catalog
+      : (Array.isArray(charactersData.characters) ? charactersData.characters : []));
     setCommunityReports(communityData);
   }
 
@@ -184,7 +196,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   }, [phoneReviews]);
 
   useEffect(() => () => {
-    if (characterImagePreview) URL.revokeObjectURL(characterImagePreview);
+    if (characterImagePreview.startsWith('blob:')) URL.revokeObjectURL(characterImagePreview);
   }, [characterImagePreview]);
 
   const spendingUsers = useMemo(
@@ -261,7 +273,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       const normalized = await normalizeTeacherImage(source);
       setCharacterImage(normalized);
       setCharacterImagePreview(URL.createObjectURL(normalized));
-      setStatus('Image fitted to the teacher frame. Add the character details and publish.');
+      setStatus('Image fitted to 768 × 960 without stretching. Save when the details look right.');
     } catch (error) {
       setCharacterImage(null);
       setCharacterImagePreview('');
@@ -271,27 +283,66 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     }
   }
 
-  async function createCharacter(event) {
+  function resetCharacterEditor() {
+    setEditingCharacterId('');
+    setCharacterDraft(EMPTY_CHARACTER);
+    setCharacterImage(null);
+    setCharacterImagePreview('');
+    setCharacterModel(null);
+    setCharacterUploadVersion((current) => current + 1);
+  }
+
+  function editCharacter(character) {
+    setEditingCharacterId(character.id);
+    setCharacterDraft({
+      name: character.name || '',
+      title: character.title || '',
+      description: character.description || '',
+      voice: character.voice || '',
+      voiceType: character.voiceType || 'neutral',
+      armTone: character.armTone || 'light',
+      minimumAge: Number(character.minimumAge || 0),
+      adultCompanionEnabled: Boolean(character.adultCompanionEnabled),
+      pricePer30MinutesMcoins: character.pricePer30MinutesMcoins ?? '',
+      active: character.active !== false,
+    });
+    setCharacterImage(null);
+    setCharacterImagePreview(characterImageUrl(character));
+    setCharacterModel(null);
+    setCharacterUploadVersion((current) => current + 1);
+    setStatus(`Editing ${character.name}. Existing image and 3D model stay unless you replace them.`);
+    window.setTimeout(() => document.querySelector('.admin-character-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function updateCharacterInList(character) {
+    setCharacters((current) => {
+      const withoutCurrent = current.filter((candidate) => candidate.id !== character.id);
+      return [...withoutCurrent, character]
+        .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' }));
+    });
+  }
+
+  async function saveCharacter(event) {
     event.preventDefault();
-    if (!characterImage) {
+    if (!editingCharacterId && !characterImage) {
       setStatus('Choose a character image first.');
       return;
     }
     const body = new FormData();
     Object.entries(characterDraft).forEach(([key, value]) => body.append(key, String(value)));
-    body.append('image', characterImage, characterImage.name);
+    if (characterImage) body.append('image', characterImage, characterImage.name);
     if (characterModel) body.append('model', characterModel, characterModel.name);
     setCharacterBusy(true);
-    setStatus(`Publishing ${characterDraft.name || 'character'}...`);
+    setStatus(`${editingCharacterId ? 'Saving' : 'Publishing'} ${characterDraft.name || 'character'}...`);
     try {
-      const data = await apiRequest('/api/admin/virtual-teachers', { method: 'POST', body });
-      setCharacters((current) => [...current, data.character]
-        .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' })));
-      setCharacterDraft(EMPTY_CHARACTER);
-      setCharacterImage(null);
-      setCharacterImagePreview('');
-      setCharacterModel(null);
-      setCharacterUploadVersion((current) => current + 1);
+      const data = await apiRequest(
+        editingCharacterId
+          ? `/api/admin/virtual-teachers/${encodeURIComponent(editingCharacterId)}`
+          : '/api/admin/virtual-teachers',
+        { method: editingCharacterId ? 'PATCH' : 'POST', body },
+      );
+      updateCharacterInList(data.character);
+      resetCharacterEditor();
       window.dispatchEvent(new window.CustomEvent('polymath:virtual-teachers-changed'));
       setStatus(data.message);
     } catch (error) {
@@ -322,6 +373,10 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   }
 
   async function deleteCharacter(character) {
+    if (character.builtIn) {
+      await setCharacterAvailability(character, false);
+      return;
+    }
     const confirmed = window.confirm(
       `Delete ${character.name}?\n\nThis permanently removes the character, portrait, and rigged model. This cannot be undone.`,
     );
@@ -331,6 +386,31 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     try {
       const data = await apiRequest(`/api/admin/virtual-teachers/${encodeURIComponent(character.id)}`, { method: 'DELETE' });
       setCharacters((current) => current.filter((candidate) => candidate.id !== character.id));
+      if (editingCharacterId === character.id) resetCharacterEditor();
+      window.dispatchEvent(new window.CustomEvent('polymath:virtual-teachers-changed'));
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCharacterBusy(false);
+    }
+  }
+
+  async function setCharacterAvailability(character, active) {
+    if (!window.confirm(`${active ? 'Enable' : 'Hide'} ${character.name} in the public teacher library?`)) return;
+    const body = new FormData();
+    body.append('active', String(active));
+    setCharacterBusy(true);
+    setStatus(`${active ? 'Enabling' : 'Hiding'} ${character.name}...`);
+    try {
+      const data = await apiRequest(`/api/admin/virtual-teachers/${encodeURIComponent(character.id)}`, {
+        method: 'PATCH',
+        body,
+      });
+      updateCharacterInList(data.character);
+      if (editingCharacterId === character.id) {
+        setCharacterDraft((current) => ({ ...current, active }));
+      }
       window.dispatchEvent(new window.CustomEvent('polymath:virtual-teachers-changed'));
       setStatus(data.message);
     } catch (error) {
@@ -627,13 +707,17 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             <div>
               <p className='eyebrow'>Virtual teacher library</p>
               <h2>Create and manage characters</h2>
-              <p>Upload one full-body portrait. Polymath fits it to every teacher frame before publishing it.</p>
+              <p>Control each teacher’s identity, portrait, age gate, visibility, and private-session rate.</p>
             </div>
-            <span className='status-pill'>{characters.length} custom</span>
+            <span className='status-pill'>{characters.filter((character) => character.active !== false).length} active</span>
           </div>
 
           <div className='admin-character-workspace'>
-            <form className='admin-form-card admin-character-form' onSubmit={createCharacter}>
+            <form className='admin-form-card admin-character-form' onSubmit={saveCharacter}>
+              <header className='admin-character-editor-heading'>
+                <div><strong>{editingCharacterId ? `Edit ${characterDraft.name}` : 'Create a character'}</strong><small>{editingCharacterId ? 'Only the fields you save are changed.' : 'Start with a full-body portrait and a clear teaching identity.'}</small></div>
+                {editingCharacterId && <button type='button' className='ghost' onClick={resetCharacterEditor} disabled={characterBusy}>Cancel edit</button>}
+              </header>
               <div className='admin-character-upload'>
                 <div className='admin-character-preview'>
                   {characterImagePreview
@@ -641,7 +725,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                     : <span><strong>Full-body image</strong><small>PNG, JPEG, or WebP</small></span>}
                 </div>
                 <label className='primary admin-character-file-button'>
-                  {characterImage ? 'Replace image' : 'Choose image'}
+                  {characterImagePreview ? 'Replace image' : 'Choose image'}
                   <input key={characterUploadVersion} type='file' accept='image/png,image/jpeg,image/webp' onChange={chooseCharacterImage} disabled={characterBusy} />
                 </label>
                 <small>Images are contained, centred, and resized to 768 x 960 without stretching.</small>
@@ -660,26 +744,48 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 <label className='field'>Voice / style<input maxLength='50' value={characterDraft.voice} onChange={(event) => setCharacterDraft({ ...characterDraft, voice: event.target.value })} placeholder='Encouraging' required /></label>
                 <label className='field'>Voice type<select value={characterDraft.voiceType} onChange={(event) => setCharacterDraft({ ...characterDraft, voiceType: event.target.value })}><option value='neutral'>Neutral / automatic</option><option value='feminine'>Feminine</option><option value='masculine'>Masculine</option></select></label>
                 <label className='field'>Teacher hand tone<select value={characterDraft.armTone} onChange={(event) => setCharacterDraft({ ...characterDraft, armTone: event.target.value })}><option value='light'>Light</option><option value='dark'>Dark</option></select></label>
+                <label className='field'>Minimum age<input type='number' inputMode='numeric' min='0' max='99' step='1' value={characterDraft.minimumAge} onChange={(event) => setCharacterDraft({ ...characterDraft, minimumAge: event.target.value })} /><small>0 means all ages; use 18 for 18+.</small></label>
+                <label className='field'>Price per 30 minutes<input type='number' inputMode='decimal' min='0' max='1000000000' step='0.01' value={characterDraft.pricePer30MinutesMcoins} onChange={(event) => setCharacterDraft({ ...characterDraft, pricePer30MinutesMcoins: event.target.value })} placeholder={`Global rate · ${Number(policies?.virtualLessonPricePer30MinutesMcoins ?? 5).toFixed(2)}`} /><small>Blank uses the global rate; 0 makes this teacher free.</small></label>
               </div>
               <label className='field'>Short description<textarea rows='3' maxLength='240' value={characterDraft.description} onChange={(event) => setCharacterDraft({ ...characterDraft, description: event.target.value })} placeholder='How this teacher helps a student.' required /></label>
-              <label className='rights-check'><input type='checkbox' checked={characterDraft.requiresAdultConfirmation} onChange={(event) => setCharacterDraft({ ...characterDraft, requiresAdultConfirmation: event.target.checked })} /><span>Require an 18+ confirmation before this optional character is shown</span></label>
-              <button className='primary' type='submit' disabled={characterBusy || !characterImage}>{characterBusy ? 'Working...' : 'Publish character'}</button>
+              <label className='rights-check'><input type='checkbox' checked={characterDraft.adultCompanionEnabled} onChange={(event) => setCharacterDraft({ ...characterDraft, adultCompanionEnabled: event.target.checked, minimumAge: event.target.checked ? Math.max(18, Number(characterDraft.minimumAge || 0)) : characterDraft.minimumAge })} /><span>Allow optional 18+ companion conversation for this character</span></label>
+              <label className='rights-check'><input type='checkbox' checked={characterDraft.active} onChange={(event) => setCharacterDraft({ ...characterDraft, active: event.target.checked })} /><span>Show this character in the public teacher library</span></label>
+              <div className='button-row'>
+                <button className='primary' type='submit' disabled={characterBusy || (!editingCharacterId && !characterImage)}>{characterBusy ? 'Working...' : editingCharacterId ? 'Save character' : 'Publish character'}</button>
+                {editingCharacterId && <button className='ghost' type='button' onClick={resetCharacterEditor} disabled={characterBusy}>Cancel</button>}
+              </div>
             </form>
 
             <div className='admin-character-library'>
               <article className='admin-character-protection-note'>
-                <strong>Built-in teachers are protected</strong>
-                <span>Padme, Anakin, Taylor, and Mace cannot be deleted here. Only administrator uploads can be removed.</span>
+                <strong>One focused control centre</strong>
+                <span>Edit any teacher. Built-ins can be hidden and restored; uploaded characters can also be permanently deleted.</span>
               </article>
               <div className='admin-character-list'>
                 {characters.map((character) => (
-                  <article className='admin-character-row' key={character.id}>
-                    <div className='admin-character-row-image'><img src={apiAssetUrl(character.imagePath)} alt={`${character.name} preview`} loading='lazy' /></div>
-                    <div><strong>{character.name}</strong><span>{character.title}</span><small>{character.description}</small><div className='admin-character-badges'><b>{character.modelPath ? `Rigged 3D · ${character.rig?.jointCount || '?'} joints` : 'Procedural 3D body'}</b>{character.requiresAdultConfirmation && <b>18+ confirmation</b>}</div></div>
-                    <button className='admin-character-delete' type='button' disabled={characterBusy} onClick={() => deleteCharacter(character)}>Delete</button>
+                  <article className={`admin-character-row${character.active === false ? ' is-hidden' : ''}`} key={character.id}>
+                    <div className='admin-character-row-image'>{characterImageUrl(character) ? <img src={characterImageUrl(character)} alt={`${character.name} preview`} loading='lazy' /> : <span aria-hidden='true'>♪</span>}</div>
+                    <div>
+                      <strong>{character.name}</strong>
+                      <span>{character.title}</span>
+                      <small>{character.description}</small>
+                      <div className='admin-character-badges'>
+                        <b>{character.builtIn ? 'Built-in' : 'Uploaded'}</b>
+                        <b>{character.modelPath ? `Rigged 3D · ${character.rig?.jointCount || '?'} joints` : 'Procedural 3D body'}</b>
+                        {Number(character.minimumAge || 0) > 0 && <b>{Number(character.minimumAge)}+</b>}
+                        {character.adultCompanionEnabled && <b>Adult companion</b>}
+                        <b>{character.pricePer30MinutesMcoins === null || character.pricePer30MinutesMcoins === undefined ? `Global · ${Number(character.effectivePricePer30MinutesMcoins || 0).toFixed(2)}` : `${Number(character.pricePer30MinutesMcoins).toFixed(2)} Mcoins / 30 min`}</b>
+                        {character.active === false && <b>Hidden</b>}
+                      </div>
+                    </div>
+                    <div className='admin-character-row-actions'>
+                      <button className='ghost' type='button' disabled={characterBusy} onClick={() => editCharacter(character)}>Edit</button>
+                      <button className='ghost' type='button' disabled={characterBusy} onClick={() => setCharacterAvailability(character, character.active === false)}>{character.active === false ? 'Enable' : 'Hide'}</button>
+                      {!character.builtIn && <button className='admin-character-delete' type='button' disabled={characterBusy} onClick={() => deleteCharacter(character)}>Delete</button>}
+                    </div>
                   </article>
                 ))}
-                {!characters.length && <div className='empty-state'>No custom characters yet. Upload the first one on the left.</div>}
+                {!characters.length && <div className='empty-state'>No characters are configured yet. Create the first one on the left.</div>}
               </div>
             </div>
           </div>

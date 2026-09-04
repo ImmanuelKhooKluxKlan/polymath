@@ -77,27 +77,32 @@ const BUILT_IN_VIRTUAL_TEACHERS = Object.freeze({
   aria: Object.freeze({
     id: 'aria', name: 'Aria', title: 'Piano performance teacher',
     style: 'Calm, warm, precise, and focused on posture, phrasing, and connected movement.',
-    voice: 'Warm and precise', voiceType: 'feminine', requiresAdultConfirmation: false,
+    voice: 'Warm and precise', voiceType: 'feminine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
   }),
   nova: Object.freeze({
     id: 'nova', name: 'Padme', title: 'Expressive performance coach',
     style: 'Warm, confident, affectionate, and focused on expressive melody.',
-    voice: 'Warm, expressive, and playfully flirtatious', voiceType: 'feminine', requiresAdultConfirmation: true,
+    voice: 'Warm, expressive, and playfully flirtatious', voiceType: 'feminine', minimumAge: 18,
+    requiresAdultConfirmation: true, adultCompanionEnabled: true,
   }),
   anakin: Object.freeze({
     id: 'anakin', name: 'Anakin', title: 'Technique coach',
     style: 'Direct, energetic, and focused on timing, power, and confident movement.',
-    voice: 'Focused and assured', voiceType: 'masculine', requiresAdultConfirmation: false,
+    voice: 'Focused and assured', voiceType: 'masculine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
   }),
   taylor: Object.freeze({
     id: 'taylor', name: 'Taylor', title: 'Songwriting coach',
     style: 'Friendly and thoughtful, with strong melody, phrasing, and storytelling guidance.',
-    voice: 'Thoughtful and expressive', voiceType: 'feminine', requiresAdultConfirmation: false,
+    voice: 'Thoughtful and expressive', voiceType: 'feminine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
   }),
   mace: Object.freeze({
     id: 'mace', name: 'Mace Windu', title: 'Piano master',
     style: 'Disciplined, exact, concise, and demanding without empty praise.',
-    voice: 'Deep, calm, and exact', voiceType: 'masculine', requiresAdultConfirmation: false,
+    voice: 'Deep, calm, and exact', voiceType: 'masculine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
   }),
 });
 
@@ -168,7 +173,7 @@ const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS 
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
 const VIRTUAL_TEACHER_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const VIRTUAL_TEACHER_MODEL_MAX_BYTES = 25 * 1024 * 1024;
-const BUILT_IN_VIRTUAL_TEACHER_IDS = new Set(['nova', 'anakin', 'taylor', 'mace']);
+const BUILT_IN_VIRTUAL_TEACHER_IDS = new Set(Object.keys(BUILT_IN_VIRTUAL_TEACHERS));
 const MUSCRIPTOR_ENABLED = String(process.env.MUSCRIPTOR_ENABLED || 'false').trim().toLowerCase() === 'true';
 const MUSCRIPTOR_ADMIN_ONLY = String(
   process.env.MUSCRIPTOR_ADMIN_ONLY || (IS_PRODUCTION ? 'true' : 'false'),
@@ -1549,6 +1554,22 @@ function requireSubscriber(req, res, next) {
     }
     next();
   });
+  normalized.virtualTeacherCharacters.forEach((character) => {
+    character.builtIn = BUILT_IN_VIRTUAL_TEACHER_IDS.has(String(character.id || ''));
+    character.active = character.active !== false;
+    character.adultCompanionEnabled = Boolean(
+      character.adultCompanionEnabled ?? character.requiresAdultConfirmation,
+    );
+    character.minimumAge = normalizeVirtualTeacherMinimumAge(
+      character.minimumAge,
+      character.requiresAdultConfirmation,
+    );
+    if (character.adultCompanionEnabled) character.minimumAge = Math.max(18, character.minimumAge);
+    character.requiresAdultConfirmation = character.minimumAge >= 18;
+    character.pricePer30MinutesMcoins = normalizeVirtualTeacherPrice(
+      character.pricePer30MinutesMcoins,
+    );
+  });
 }
 
 function readySheetFormat(filename) {
@@ -2045,40 +2066,192 @@ function inspectVirtualTeacherGlb(bytes) {
   return { version, jointCount: jointIndexes.size, nodeCount: nodes.length, meshCount: meshes.length };
 }
 
-function publicVirtualTeacherCharacter(character) {
+function normalizeVirtualTeacherMinimumAge(value, legacyAdultConfirmation = false) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return legacyAdultConfirmation ? 18 : 0;
+  }
+  return clampInteger(value, 0, 99, legacyAdultConfirmation ? 18 : 0);
+}
+
+function normalizeVirtualTeacherPrice(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Number(Math.min(1000000000, Math.max(0, number)).toFixed(2));
+}
+
+function virtualTeacherInput(body = {}, fallback = {}) {
+  const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
+  const text = (key, maximum) => String(has(key) ? body[key] : fallback[key] || '').trim().slice(0, maximum);
+  const name = text('name', 50);
+  const title = text('title', 80);
+  const description = text('description', 240);
+  const voice = text('voice', 50);
+  const requestedVoiceType = String(has('voiceType') ? body.voiceType : fallback.voiceType || '').trim().toLowerCase();
+  const voiceType = ['feminine', 'masculine'].includes(requestedVoiceType) ? requestedVoiceType : 'neutral';
+  const armTone = String(has('armTone') ? body.armTone : fallback.armTone || '').trim().toLowerCase() === 'dark'
+    ? 'dark'
+    : 'light';
+  const legacyAdult = has('requiresAdultConfirmation')
+    ? String(body.requiresAdultConfirmation).trim().toLowerCase() === 'true'
+    : Boolean(fallback.requiresAdultConfirmation);
+  const adultCompanionEnabled = has('adultCompanionEnabled')
+    ? String(body.adultCompanionEnabled).trim().toLowerCase() === 'true'
+    : Boolean(fallback.adultCompanionEnabled ?? legacyAdult);
+  const ageValue = has('minimumAge') ? body.minimumAge : fallback.minimumAge;
+  if (ageValue !== null && ageValue !== undefined && String(ageValue).trim() !== '') {
+    const parsedAge = Number(ageValue);
+    if (!Number.isInteger(parsedAge) || parsedAge < 0 || parsedAge > 99) {
+      throw Object.assign(new Error('Character minimum age must be a whole number from 0 to 99.'), { status: 400 });
+    }
+  }
+  const minimumAge = Math.max(
+    adultCompanionEnabled ? 18 : 0,
+    normalizeVirtualTeacherMinimumAge(ageValue, legacyAdult),
+  );
+  const priceValue = has('pricePer30MinutesMcoins')
+    ? body.pricePer30MinutesMcoins
+    : fallback.pricePer30MinutesMcoins;
+  if (priceValue !== null && priceValue !== undefined && String(priceValue).trim() !== '') {
+    const parsedPrice = Number(priceValue);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0 || parsedPrice > 1000000000) {
+      throw Object.assign(new Error('Character price must be between 0 and 1,000,000,000 Mcoins per 30 minutes.'), { status: 400 });
+    }
+  }
+  if (name.length < 2) throw Object.assign(new Error('Character name must contain at least 2 characters.'), { status: 400 });
+  if (title.length < 2) throw Object.assign(new Error('Add a short role or title.'), { status: 400 });
+  if (description.length < 5) throw Object.assign(new Error('Add a short character description.'), { status: 400 });
+  if (voice.length < 2) throw Object.assign(new Error('Describe the character voice or teaching style.'), { status: 400 });
+  return {
+    name,
+    title,
+    description,
+    voice,
+    voiceType,
+    armTone,
+    minimumAge,
+    requiresAdultConfirmation: minimumAge >= 18,
+    adultCompanionEnabled,
+    pricePer30MinutesMcoins: normalizeVirtualTeacherPrice(priceValue),
+    active: has('active') ? String(body.active).trim().toLowerCase() !== 'false' : fallback.active !== false,
+  };
+}
+
+function mergedVirtualTeacher(character, fallback = null) {
+  const source = character || {};
+  const base = fallback || {};
+  const adultCompanionEnabled = Boolean(
+    source.adultCompanionEnabled
+      ?? base.adultCompanionEnabled
+      ?? source.requiresAdultConfirmation
+      ?? base.requiresAdultConfirmation,
+  );
+  const minimumAge = Math.max(
+    adultCompanionEnabled ? 18 : 0,
+    normalizeVirtualTeacherMinimumAge(
+      source.minimumAge ?? base.minimumAge,
+      source.requiresAdultConfirmation ?? base.requiresAdultConfirmation,
+    ),
+  );
+  return {
+    ...base,
+    ...source,
+    id: String(source.id || base.id || '').trim(),
+    name: String(source.name || base.name || 'Virtual teacher').trim().slice(0, 80),
+    title: String(source.title || base.title || 'Polymath music teacher').trim().slice(0, 120),
+    description: String(source.description || source.style || base.description || base.style || 'Clear, patient, and precise').trim().slice(0, 280),
+    style: String(source.description || source.style || base.description || base.style || 'Clear, patient, and precise').trim().slice(0, 280),
+    voice: String(source.voice || base.voice || 'Natural and expressive').trim().slice(0, 100),
+    voiceType: ['feminine', 'masculine'].includes(String(source.voiceType || base.voiceType || '').toLowerCase())
+      ? String(source.voiceType || base.voiceType).toLowerCase()
+      : 'neutral',
+    armTone: (source.armTone || base.armTone) === 'dark' ? 'dark' : 'light',
+    minimumAge,
+    requiresAdultConfirmation: minimumAge >= 18,
+    adultCompanionEnabled,
+    pricePer30MinutesMcoins: normalizeVirtualTeacherPrice(
+      source.pricePer30MinutesMcoins ?? base.pricePer30MinutesMcoins,
+    ),
+    active: source.active !== false,
+    builtIn: Boolean(source.builtIn || base.builtIn),
+  };
+}
+
+function virtualTeacherCatalog(db, { includeInactive = false } = {}) {
+  const records = Array.isArray(db?.virtualTeacherCharacters) ? db.virtualTeacherCharacters : [];
+  const overrideById = new Map(
+    records
+      .filter((character) => BUILT_IN_VIRTUAL_TEACHER_IDS.has(String(character.id || '')))
+      .map((character) => [character.id, character]),
+  );
+  const builtIns = Object.values(BUILT_IN_VIRTUAL_TEACHERS).map((teacher) => mergedVirtualTeacher(
+    overrideById.get(teacher.id),
+    { ...teacher, description: teacher.style, builtIn: true, active: true },
+  ));
+  const custom = records
+    .filter((character) => !BUILT_IN_VIRTUAL_TEACHER_IDS.has(String(character.id || '')))
+    .map((character) => mergedVirtualTeacher(character));
+  return [...builtIns, ...custom]
+    .filter((character) => includeInactive || character.active)
+    .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' }));
+}
+
+function publicVirtualTeacherCharacter(character, globalPricePer30MinutesMcoins) {
+  const pricePer30MinutesMcoins = normalizeVirtualTeacherPrice(character.pricePer30MinutesMcoins);
+  const effectivePricePer30MinutesMcoins = pricePer30MinutesMcoins === null
+    ? clampDecimal(
+      globalPricePer30MinutesMcoins,
+      0,
+      1000000000,
+      DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
+    )
+    : pricePer30MinutesMcoins;
   return {
     id: character.id,
     name: character.name,
     title: character.title,
-    description: character.description,
+    description: character.description || character.style,
     voice: character.voice,
     voiceType: ['feminine', 'masculine'].includes(character.voiceType) ? character.voiceType : 'neutral',
     armTone: character.armTone === 'dark' ? 'dark' : 'light',
-    requiresAdultConfirmation: Boolean(character.requiresAdultConfirmation),
-    imagePath: `/api/virtual-teachers/${encodeURIComponent(character.id)}/image?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`,
+    minimumAge: normalizeVirtualTeacherMinimumAge(character.minimumAge, character.requiresAdultConfirmation),
+    requiresAdultConfirmation: normalizeVirtualTeacherMinimumAge(character.minimumAge, character.requiresAdultConfirmation) >= 18,
+    adultCompanionEnabled: Boolean(character.adultCompanionEnabled),
+    pricePer30MinutesMcoins,
+    effectivePricePer30MinutesMcoins,
+    active: character.active !== false,
+    builtIn: Boolean(character.builtIn),
+    imagePath: character.imageKey
+      ? `/api/virtual-teachers/${encodeURIComponent(character.id)}/image?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`
+      : '',
     modelPath: character.modelKey
       ? `/api/virtual-teachers/${encodeURIComponent(character.id)}/model?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`
       : '',
     rig: character.rig || null,
-    custom: true,
-    createdAt: character.createdAt,
-    updatedAt: character.updatedAt || character.createdAt,
+    custom: !character.builtIn,
+    createdAt: character.createdAt || null,
+    updatedAt: character.updatedAt || character.createdAt || null,
   };
 }
 
 function resolvedVirtualLessonTeacher(db, candidate) {
   const requestedId = String(candidate?.id || '').trim().replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
-  const builtIn = BUILT_IN_VIRTUAL_TEACHERS[requestedId] || BUILT_IN_VIRTUAL_TEACHERS.aria;
-  const custom = (db?.virtualTeacherCharacters || []).find((character) => character.id === requestedId);
-  if (!custom) return builtIn;
+  const catalog = virtualTeacherCatalog(db);
+  const teacher = requestedId
+    ? catalog.find((character) => character.id === requestedId) || null
+    : catalog.find((character) => character.id === 'aria') || catalog[0] || null;
+  if (!teacher) return null;
   return {
-    id: custom.id,
-    name: String(custom.name || 'Virtual teacher').trim().slice(0, 80),
-    title: String(custom.title || 'Polymath music teacher').trim().slice(0, 120),
-    style: String(custom.description || custom.voice || 'Clear, patient, and precise').trim().slice(0, 280),
-    voice: String(custom.voice || 'Natural and expressive').trim().slice(0, 100),
-    voiceType: ['feminine', 'masculine'].includes(custom.voiceType) ? custom.voiceType : 'neutral',
-    requiresAdultConfirmation: Boolean(custom.requiresAdultConfirmation),
+    id: teacher.id,
+    name: teacher.name,
+    title: teacher.title,
+    style: teacher.style || teacher.description,
+    voice: teacher.voice,
+    voiceType: teacher.voiceType,
+    minimumAge: teacher.minimumAge,
+    requiresAdultConfirmation: teacher.requiresAdultConfirmation,
+    adultCompanionEnabled: teacher.adultCompanionEnabled,
+    pricePer30MinutesMcoins: teacher.pricePer30MinutesMcoins,
   };
 }
 
@@ -2798,9 +2971,30 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
       code: 'VIRTUAL_TEACHER_UNAVAILABLE',
     });
   }
+  const administrator = isAdministrator(req.user);
+  const conversationMode = normalizeConversationMode(req.body?.conversationMode);
+  const teacher = resolvedVirtualLessonTeacher(req.db, req.body?.teacher);
+  if (!teacher) {
+    return res.status(409).json({
+      error: 'That virtual teacher is no longer available. Choose another active teacher.',
+      code: 'VIRTUAL_TEACHER_NOT_ACTIVE',
+    });
+  }
+  const confirmedAge = Math.max(
+    req.body?.adultConfirmed === true ? 18 : 0,
+    clampInteger(req.body?.confirmedAge, 0, 99, 0),
+  );
+  if (!administrator && teacher.minimumAge > confirmedAge) {
+    return res.status(403).json({
+      error: `Confirm that you are at least ${teacher.minimumAge} before choosing ${teacher.name}.`,
+      code: 'VIRTUAL_TEACHER_AGE_CONFIRMATION_REQUIRED',
+      minimumAge: teacher.minimumAge,
+    });
+  }
+  const globalLessonPrice = sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins;
   const quote = lessonQuote(
     req.body?.durationMinutes,
-    sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+    teacher.pricePer30MinutesMcoins ?? globalLessonPrice,
   );
   if (!quote) {
     return res.status(400).json({ error: 'Enter a valid private-session duration.' });
@@ -2812,13 +3006,10 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
       session: publicVirtualLesson(active),
     });
   }
-  const administrator = isAdministrator(req.user);
-  const conversationMode = normalizeConversationMode(req.body?.conversationMode);
-  const teacher = resolvedVirtualLessonTeacher(req.db, req.body?.teacher);
   const adultConfirmed = req.body?.adultConfirmed === true;
   const companionConsent = req.body?.companionConsent === true;
   if (conversationMode === 'adult-companion') {
-    if (!teacher.requiresAdultConfirmation) {
+    if (!teacher.adultCompanionEnabled) {
       return res.status(400).json({
         error: 'Choose an adult-eligible character for companion mode.',
         code: 'ADULT_COMPANION_TEACHER_REQUIRED',
@@ -3002,10 +3193,14 @@ app.post('/api/assistant/teacher', requireAuth, async (req, res) => {
 
 app.get('/api/virtual-teachers', async (req, res) => {
   const db = await readDb();
-  const characters = db.virtualTeacherCharacters
-    .map(publicVirtualTeacherCharacter)
+  const globalPrice = sitePolicies(db).virtualLessonPricePer30MinutesMcoins;
+  const characters = virtualTeacherCatalog(db)
+    .filter((character) => !character.builtIn)
+    .map((character) => publicVirtualTeacherCharacter(character, globalPrice))
     .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' }));
-  res.json({ characters });
+  const catalog = virtualTeacherCatalog(db)
+    .map((character) => publicVirtualTeacherCharacter(character, globalPrice));
+  res.json({ characters, catalog, catalogVersion: 2 });
 });
 
 app.get('/api/virtual-teachers/:characterId/image', async (req, res, next) => {
@@ -3047,10 +3242,15 @@ app.get('/api/virtual-teachers/:characterId/model', async (req, res, next) => {
 });
 
 app.get('/api/admin/virtual-teachers', requireAuth, requireAdmin, async (req, res) => {
+  const globalPrice = sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins;
   res.json({
     characters: req.db.virtualTeacherCharacters
-      .map(publicVirtualTeacherCharacter)
+      .filter((character) => !BUILT_IN_VIRTUAL_TEACHER_IDS.has(character.id))
+      .map((character) => publicVirtualTeacherCharacter(character, globalPrice))
       .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' })),
+    catalog: virtualTeacherCatalog(req.db, { includeInactive: true })
+      .map((character) => publicVirtualTeacherCharacter(character, globalPrice)),
+    catalogVersion: 2,
     builtInCharacterIds: [...BUILT_IN_VIRTUAL_TEACHER_IDS],
   });
 });
@@ -3067,19 +3267,7 @@ app.post(
     let imageKey = '';
     let modelKey = '';
     try {
-      const name = String(req.body.name || '').trim().slice(0, 50);
-      const title = String(req.body.title || '').trim().slice(0, 80);
-      const description = String(req.body.description || '').trim().slice(0, 240);
-      const voice = String(req.body.voice || '').trim().slice(0, 50);
-      const voiceType = ['feminine', 'masculine'].includes(String(req.body.voiceType || '').trim().toLowerCase())
-        ? String(req.body.voiceType).trim().toLowerCase()
-        : 'neutral';
-      const armTone = req.body.armTone === 'dark' ? 'dark' : 'light';
-      const requiresAdultConfirmation = String(req.body.requiresAdultConfirmation || '').toLowerCase() === 'true';
-      if (name.length < 2) return res.status(400).json({ error: 'Character name must contain at least 2 characters.' });
-      if (title.length < 2) return res.status(400).json({ error: 'Add a short role or title.' });
-      if (description.length < 5) return res.status(400).json({ error: 'Add a short character description.' });
-      if (voice.length < 2) return res.status(400).json({ error: 'Describe the character voice or teaching style.' });
+      const fields = virtualTeacherInput(req.body);
       const imageFile = req.files?.image?.[0];
       const modelFile = req.files?.model?.[0];
       if (!imageFile?.buffer?.length) return res.status(400).json({ error: 'Choose a character image.' });
@@ -3101,13 +3289,8 @@ app.post(
       const now = new Date().toISOString();
       const character = {
         id: characterId,
-        name,
-        title,
-        description,
-        voice,
-        voiceType,
-        armTone,
-        requiresAdultConfirmation,
+        ...fields,
+        builtIn: false,
         imageKey,
         contentType,
         modelKey,
@@ -3119,8 +3302,11 @@ app.post(
       req.db.virtualTeacherCharacters.push(character);
       await writeDb(req.db);
       return res.status(201).json({
-        character: publicVirtualTeacherCharacter(character),
-        message: `${name} is now available in the virtual teacher library.`,
+        character: publicVirtualTeacherCharacter(
+          character,
+          sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+        ),
+        message: `${fields.name} is now available in the virtual teacher library.`,
       });
     } catch (error) {
       if (imageKey) await safeRemoveArtifact(imageKey).catch(() => {});
@@ -3130,11 +3316,159 @@ app.post(
   },
 );
 
+app.patch(
+  '/api/admin/virtual-teachers/:characterId',
+  requireAuth,
+  requireAdmin,
+  virtualTeacherUpload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'model', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    let newImageKey = '';
+    let newModelKey = '';
+    try {
+      const characterId = String(req.params.characterId || '').trim();
+      const builtIn = BUILT_IN_VIRTUAL_TEACHER_IDS.has(characterId);
+      const currentIndex = req.db.virtualTeacherCharacters.findIndex((item) => item.id === characterId);
+      const currentRecord = currentIndex >= 0 ? req.db.virtualTeacherCharacters[currentIndex] : null;
+      if (!builtIn && !currentRecord) return res.status(404).json({ error: 'Character not found.' });
+
+      const builtInDefault = builtIn
+        ? {
+          ...BUILT_IN_VIRTUAL_TEACHERS[characterId],
+          description: BUILT_IN_VIRTUAL_TEACHERS[characterId].style,
+          builtIn: true,
+          active: true,
+        }
+        : null;
+      const current = mergedVirtualTeacher(currentRecord, builtInDefault);
+      const fields = virtualTeacherInput(req.body, current);
+      const imageFile = req.files?.image?.[0];
+      const modelFile = req.files?.model?.[0];
+      const removeImage = String(req.body.removeImage || '').trim().toLowerCase() === 'true';
+      const removeModel = String(req.body.removeModel || '').trim().toLowerCase() === 'true';
+      let contentType = currentRecord?.contentType || '';
+
+      if (imageFile?.buffer?.length) {
+        if (imageFile.buffer.length > VIRTUAL_TEACHER_IMAGE_MAX_BYTES) {
+          return res.status(400).json({ error: 'The character image must be 8 MB or smaller.' });
+        }
+        contentType = virtualTeacherImageContentType(imageFile.buffer);
+        if (!contentType) return res.status(400).json({ error: 'The uploaded file is not a valid PNG, JPEG, or WebP image.' });
+        const extension = contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp';
+        newImageKey = artifactKey(
+          `virtual-teachers/${characterId}`,
+          `portrait-${characterId}-${Date.now()}.${extension}`,
+        );
+        await ARTIFACT_STORE.putBuffer(newImageKey, imageFile.buffer, contentType);
+      }
+      if (modelFile?.buffer?.length) {
+        const rig = inspectVirtualTeacherGlb(modelFile.buffer);
+        newModelKey = artifactKey(
+          `virtual-teachers/${characterId}`,
+          `rig-${characterId}-${Date.now()}.glb`,
+        );
+        await ARTIFACT_STORE.putBuffer(newModelKey, modelFile.buffer, 'model/gltf-binary');
+        current.rig = rig;
+      }
+
+      const imageKey = newImageKey || (removeImage && builtIn ? '' : currentRecord?.imageKey || '');
+      if (!builtIn && !imageKey) {
+        throw Object.assign(new Error('A custom character must keep a portrait image.'), { status: 400 });
+      }
+      const modelKey = newModelKey || (removeModel ? '' : currentRecord?.modelKey || '');
+      const now = new Date().toISOString();
+      const character = {
+        ...(currentRecord || {}),
+        id: characterId,
+        ...fields,
+        builtIn,
+        imageKey,
+        contentType: imageKey ? contentType : '',
+        modelKey,
+        rig: modelKey ? current.rig || currentRecord?.rig || null : null,
+        createdBy: currentRecord?.createdBy || req.user.id,
+        createdAt: currentRecord?.createdAt || now,
+        updatedBy: req.user.id,
+        updatedAt: now,
+      };
+      const nextRecords = [...req.db.virtualTeacherCharacters];
+      if (currentIndex >= 0) nextRecords[currentIndex] = character;
+      else nextRecords.push(character);
+      const previewDb = { ...req.db, virtualTeacherCharacters: nextRecords };
+      if (!virtualTeacherCatalog(previewDb).length) {
+        throw Object.assign(new Error('Keep at least one virtual teacher active.'), { status: 409 });
+      }
+      req.db.virtualTeacherCharacters = nextRecords;
+      await writeDb(req.db);
+
+      if (currentRecord?.imageKey && currentRecord.imageKey !== imageKey) {
+        await safeRemoveArtifact(currentRecord.imageKey).catch((error) => {
+          console.error(`Could not remove replaced virtual teacher image ${currentRecord.imageKey}:`, error);
+        });
+      }
+      if (currentRecord?.modelKey && currentRecord.modelKey !== modelKey) {
+        await safeRemoveArtifact(currentRecord.modelKey).catch((error) => {
+          console.error(`Could not remove replaced virtual teacher model ${currentRecord.modelKey}:`, error);
+        });
+      }
+      return res.json({
+        character: publicVirtualTeacherCharacter(
+          character,
+          sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+        ),
+        message: `${fields.name} was updated.`,
+      });
+    } catch (error) {
+      if (newImageKey) await safeRemoveArtifact(newImageKey).catch(() => {});
+      if (newModelKey) await safeRemoveArtifact(newModelKey).catch(() => {});
+      return next(error);
+    }
+  },
+);
+
 app.delete('/api/admin/virtual-teachers/:characterId', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const characterId = String(req.params.characterId || '');
     if (BUILT_IN_VIRTUAL_TEACHER_IDS.has(characterId)) {
-      return res.status(403).json({ error: 'Built-in teachers are protected and cannot be deleted.' });
+      const currentIndex = req.db.virtualTeacherCharacters.findIndex((item) => item.id === characterId);
+      const currentRecord = currentIndex >= 0 ? req.db.virtualTeacherCharacters[currentIndex] : null;
+      const teacher = mergedVirtualTeacher(currentRecord, {
+        ...BUILT_IN_VIRTUAL_TEACHERS[characterId],
+        description: BUILT_IN_VIRTUAL_TEACHERS[characterId].style,
+        builtIn: true,
+        active: true,
+      });
+      const disabled = {
+        ...(currentRecord || {}),
+        ...teacher,
+        id: characterId,
+        builtIn: true,
+        active: false,
+        createdBy: currentRecord?.createdBy || req.user.id,
+        createdAt: currentRecord?.createdAt || new Date().toISOString(),
+        updatedBy: req.user.id,
+        updatedAt: new Date().toISOString(),
+      };
+      const nextRecords = [...req.db.virtualTeacherCharacters];
+      if (currentIndex >= 0) nextRecords[currentIndex] = disabled;
+      else nextRecords.push(disabled);
+      const previewDb = { ...req.db, virtualTeacherCharacters: nextRecords };
+      if (!virtualTeacherCatalog(previewDb).length) {
+        return res.status(409).json({ error: 'Keep at least one virtual teacher active.' });
+      }
+      req.db.virtualTeacherCharacters = nextRecords;
+      await writeDb(req.db);
+      return res.json({
+        id: disabled.id,
+        disabled: true,
+        character: publicVirtualTeacherCharacter(
+          disabled,
+          sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+        ),
+        message: `${disabled.name} was removed from the public teacher library. You can enable the character again from Edit.`,
+      });
     }
     const index = req.db.virtualTeacherCharacters.findIndex((item) => item.id === characterId);
     if (index < 0) return res.status(404).json({ error: 'Character not found.' });

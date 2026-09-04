@@ -126,7 +126,7 @@ async function main() {
   const width = Math.max(360, Number(args.width) || 1440);
   const height = Math.max(500, Number(args.height) || 1000);
   const playSeconds = Math.max(0, Number(args['play-seconds']) || 0);
-  const surface = args.surface === 'lesson' ? 'lesson' : 'keyboard';
+  const surface = ['lesson', 'admin-characters'].includes(args.surface) ? args.surface : 'keyboard';
   const demonstrate = args.demonstrate === 'true';
   const openHelp = args['open-help'] === 'true';
   const requestedTeacher = String(args.teacher || '').trim();
@@ -166,6 +166,51 @@ async function main() {
       expression: `localStorage.setItem('polymath_musician_auth_token', ${JSON.stringify(token)}); localStorage.setItem('polymath-teacher-hands-v2', 'true'); location.reload();`,
     });
     await delay(1800);
+    if (surface === 'admin-characters') {
+      await session.send('Runtime.evaluate', {
+        expression: `location.hash = 'admin-database'`,
+      });
+      await delay(1100);
+      const opened = await session.send('Runtime.evaluate', {
+        expression: `(() => {
+          const button = [...document.querySelectorAll('.admin-section-nav button')]
+            .find((item) => /virtual teachers/i.test(item.textContent));
+          button?.click();
+          return Boolean(button);
+        })()`,
+        returnByValue: true,
+      });
+      if (!opened.result?.value) throw new Error('The Virtual teachers admin section was not found.');
+      await delay(650);
+      await session.send('Runtime.evaluate', {
+        expression: `document.querySelector('.admin-character-manager')?.scrollIntoView({ block: 'start' })`,
+      });
+      await delay(250);
+      const adminAudit = await session.send('Runtime.evaluate', {
+        expression: `(() => ({
+          documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          characterRows: document.querySelectorAll('.admin-character-row').length,
+          hasMinimumAge: [...document.querySelectorAll('.admin-character-form label')].some((item) => /minimum age/i.test(item.textContent)),
+          hasCharacterPrice: [...document.querySelectorAll('.admin-character-form label')].some((item) => /price per 30 minutes/i.test(item.textContent)),
+          hasImageUpload: Boolean(document.querySelector('.admin-character-file-button input[type="file"]')),
+          clippedButtons: [...document.querySelectorAll('.admin-character-row-actions button')].filter((button) => button.scrollWidth > button.clientWidth + 1).length,
+        }))()`,
+        returnByValue: true,
+      });
+      const audit = adminAudit.result?.value || {};
+      if (audit.documentOverflow || audit.characterRows < 5 || !audit.hasMinimumAge || !audit.hasCharacterPrice || !audit.hasImageUpload || audit.clippedButtons) {
+        throw new Error(`Virtual teacher admin audit failed: ${JSON.stringify(audit)}`);
+      }
+      const screenshot = await session.send('Page.captureScreenshot', {
+        format: 'png',
+        captureBeyondViewport: false,
+        fromSurface: true,
+      });
+      await fsp.mkdir(path.dirname(output), { recursive: true });
+      await fsp.writeFile(output, Buffer.from(screenshot.data, 'base64'));
+      process.stdout.write(`${JSON.stringify({ output, width, height, surface, audit }, null, 2)}\n`);
+      return;
+    }
     await session.send('Runtime.evaluate', {
       expression: `(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent.trim() === 'Learn'); button?.click(); return Boolean(button); })()`,
       returnByValue: true,

@@ -57,6 +57,17 @@ function remainingSeconds(session, now = Date.now()) {
   return Math.max(0, Math.ceil((new Date(session.expiresAt).getTime() - now) / 1000));
 }
 
+function storedTeacherAge(user) {
+  const stored = Number(window.localStorage.getItem('polymath-teacher-confirmed-age') || 0);
+  return Math.max(
+    Number.isFinite(stored) ? stored : 0,
+    user?.adultCompanionConfirmed
+      || window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true'
+      ? 18
+      : 0,
+  );
+}
+
 export function formatLessonTime(seconds) {
   const safe = Math.max(0, Math.floor(Number(seconds) || 0));
   const hours = Math.floor(safe / 3600);
@@ -112,6 +123,7 @@ export default function VirtualLessonPanel({
     user?.adultCompanionConfirmed
     || window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true',
   ));
+  const [confirmedAge, setConfirmedAge] = useState(() => storedTeacherAge(user));
   const [companionConsent, setCompanionConsent] = useState(false);
   const [availableVoices, setAvailableVoices] = useState([]);
   const [selectedVoiceUri, setSelectedVoiceUri] = useState(() => (
@@ -125,9 +137,14 @@ export default function VirtualLessonPanel({
   const recognitionSupported = typeof window !== 'undefined' && Boolean(recognitionEngine());
   const messages = session?.messages || [];
   const secondsLeft = remainingSeconds(session, now);
+  const pricedCatalog = useMemo(() => ({
+    ...catalog,
+    pricePer30MinutesMcoins: teacher.pricePer30MinutesMcoins
+      ?? catalog.pricePer30MinutesMcoins,
+  }), [catalog, teacher.pricePer30MinutesMcoins]);
   const selectedQuote = useMemo(
-    () => lessonQuoteForCatalog(durationMinutes, catalog),
-    [catalog, durationMinutes],
+    () => lessonQuoteForCatalog(durationMinutes, pricedCatalog),
+    [pricedCatalog, durationMinutes],
   );
   const bestVoice = useMemo(() => selectTeacherVoice(
     availableVoices,
@@ -185,12 +202,16 @@ export default function VirtualLessonPanel({
   }, [user?.user_id]);
 
   useEffect(() => {
-    if (!teacher.requiresAdultConfirmation && conversationMode === 'adult-companion') {
+    if (!teacher.adultCompanionEnabled && conversationMode === 'adult-companion') {
       setConversationMode('music-coach');
       setCompanionConsent(false);
     }
     setSelectedVoiceUri(window.localStorage.getItem(`polymath-teacher-voice-${teacher.id}`) || '');
-  }, [teacher.id, teacher.requiresAdultConfirmation, conversationMode]);
+  }, [teacher.id, teacher.adultCompanionEnabled, conversationMode]);
+
+  useEffect(() => {
+    setConfirmedAge(storedTeacherAge(user));
+  }, [teacher.id, user?.adultCompanionConfirmed]);
 
   useEffect(() => {
     if (!speechSupported) return undefined;
@@ -283,7 +304,9 @@ export default function VirtualLessonPanel({
             style: teacher.style,
             voice: teacher.voice,
             voiceType: teacher.voiceType,
+            minimumAge: Number(teacher.minimumAge || 0),
             requiresAdultConfirmation: Boolean(teacher.requiresAdultConfirmation),
+            adultCompanionEnabled: Boolean(teacher.adultCompanionEnabled),
           },
           conversationMode,
           conversationPreferences: {
@@ -291,6 +314,7 @@ export default function VirtualLessonPanel({
             preferredName: user.name?.split(' ')[0] || '',
           },
           adultConfirmed: conversationMode === 'adult-companion' && adultConfirmed,
+          confirmedAge,
           companionConsent: conversationMode === 'adult-companion' && companionConsent,
         }),
       });
@@ -444,7 +468,7 @@ export default function VirtualLessonPanel({
             <strong>Music teacher</strong>
             <small>Music-first; other topics are welcome.</small>
           </button>
-          {teacher.requiresAdultConfirmation && (
+          {teacher.adultCompanionEnabled && (
             <button
               type="button"
               role="radio"
@@ -474,8 +498,13 @@ export default function VirtualLessonPanel({
                 onChange={(event) => {
                   const confirmed = event.target.checked;
                   setAdultConfirmed(confirmed);
-                  if (confirmed) window.localStorage.setItem('polymath-teacher-adult-confirmed', 'true');
-                  else window.localStorage.removeItem('polymath-teacher-adult-confirmed');
+                  if (confirmed) {
+                    window.localStorage.setItem('polymath-teacher-adult-confirmed', 'true');
+                    window.localStorage.setItem('polymath-teacher-confirmed-age', String(Math.max(18, confirmedAge)));
+                    setConfirmedAge((current) => Math.max(18, current));
+                  } else {
+                    window.localStorage.removeItem('polymath-teacher-adult-confirmed');
+                  }
                 }}
               />
               <span>I confirm I am 18 or older.</span>
@@ -533,7 +562,7 @@ export default function VirtualLessonPanel({
           <small className={selectedQuote?.rounded ? 'is-rounded' : ''} aria-live="polite">
             {selectedQuote?.rounded
               ? `${durationMinutes} minutes rounds to ${selectedQuote.durationMinutes} minutes.`
-              : `US$${Number(catalog.pricePer30MinutesMcoins || 0).toFixed(2)} per 30 minutes.`}
+              : `US$${Number(pricedCatalog.pricePer30MinutesMcoins || 0).toFixed(2)} per 30 minutes with ${teacher.name}.`}
           </small>
         </div>
         <div className="virtual-lesson-purchase-row">
