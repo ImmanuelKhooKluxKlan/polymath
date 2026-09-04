@@ -167,6 +167,8 @@ function publicVirtualLesson(session, now = new Date()) {
   return {
     id: session.id,
     status: active ? 'active' : session.status,
+    teacherSelectionLocked: active,
+    lockedTeacherId: active ? sanitizeTeacher(session.teacher).id : null,
     durationMinutes: Number(session.durationMinutes),
     priceMcoins: Number(session.priceMcoins),
     teacher: sanitizeTeacher(session.teacher),

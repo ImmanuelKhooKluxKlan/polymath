@@ -78,6 +78,8 @@ test('creates a server-timed session and returns only safe current memory', () =
   });
   const publicSession = publicVirtualLesson(session, new Date('2026-09-04T10:30:00.000Z'));
   assert.equal(publicSession.remainingSeconds, 1800);
+  assert.equal(publicSession.teacherSelectionLocked, true);
+  assert.equal(publicSession.lockedTeacherId, 'aria');
   assert.equal(publicSession.messages[0].text, 'Help me with timing.');
   assert.equal(publicSession.memory.goal, 'to play this smoothly');
   assert.equal(publicSession.memory.lastSong, 'Mean');
@@ -100,6 +102,7 @@ test('expired and manually ended sessions erase conversation memory', () => {
   assert.deepEqual(expired.messages, []);
   assert.equal(expired.memory, null);
   assert.equal(activeVirtualLesson(db, 'user_1', new Date('2026-09-04T11:00:01.000Z')), null);
+  assert.equal(publicVirtualLesson(expired, new Date('2026-09-04T11:00:01.000Z')).teacherSelectionLocked, false);
 
   const ended = lesson({ id: 'lesson_2' });
   endVirtualLesson(ended, new Date('2026-09-04T10:05:00.000Z'));

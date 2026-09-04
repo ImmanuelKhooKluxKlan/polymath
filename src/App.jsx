@@ -1557,6 +1557,7 @@ export default function App() {
                 setUser={setUser}
                 onNavigate={navigate}
                 onDemonstrate={requestVirtualTeacherDemonstration}
+                performanceTier={performanceTier}
               />
             )}
           </div>

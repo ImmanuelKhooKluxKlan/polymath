@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { TEACHER_PROFILES } from '../engine/teacherHands.js';
 import VirtualLessonPanel from './VirtualLessonPanel.jsx';
 
@@ -36,6 +36,7 @@ export default function PianoTeacherStudio({
   setUser,
   onNavigate,
   onDemonstrate,
+  performanceTier = 'balanced',
 }) {
   const [confirmedAge, setConfirmedAge] = useState(() => {
     const stored = Number(window.localStorage.getItem('polymath-teacher-confirmed-age') || 0);
@@ -43,11 +44,26 @@ export default function PianoTeacherStudio({
     return Math.max(Number.isFinite(stored) ? stored : 0, legacyAdult);
   });
   const [pendingAgeTeacher, setPendingAgeTeacher] = useState(null);
-  const teacher = profiles.find((profile) => profile.id === teacherId)
+  const [lessonLock, setLessonLock] = useState(null);
+  const selectedTeacher = profiles.find((profile) => profile.id === teacherId)
     || profiles.find((profile) => profile.id === 'aria')
     || profiles[0];
+  const lockedProfile = lessonLock?.teacher?.id
+    ? profiles.find((profile) => profile.id === lessonLock.teacher.id)
+      || TEACHER_PROFILES.find((profile) => profile.id === lessonLock.teacher.id)
+      || selectedTeacher
+    : null;
+  const teacher = lessonLock?.teacher
+    ? { ...lockedProfile, ...lessonLock.teacher }
+    : selectedTeacher;
+
+  useEffect(() => {
+    const lockedTeacherId = lessonLock?.teacher?.id;
+    if (lockedTeacherId && lockedTeacherId !== teacherId) onTeacherChange(lockedTeacherId);
+  }, [lessonLock?.teacher?.id, onTeacherChange, teacherId]);
 
   function chooseTeacher(profile) {
+    if (lessonLock) return;
     if (teacherMinimumAge(profile) > confirmedAge) {
       setPendingAgeTeacher(profile);
       return;
@@ -125,35 +141,50 @@ export default function PianoTeacherStudio({
             }}
             onDemonstrate={onDemonstrate}
             onNavigate={onNavigate}
+            onSessionLockChange={setLessonLock}
+            handTargets={targets}
+            teacherIsPlaying={isPlaying}
+            performanceTier={performanceTier}
           />
         </details>
 
-        <details className="teacher-studio-disclosure">
-          <summary>Choose another teacher</summary>
-          <div className="teacher-roster" role="group" aria-label="Choose a virtual piano teacher">
-            {profiles.map((profile) => (
-              <button
-                type="button"
-                key={profile.id}
-                className={profile.id === teacher.id ? 'teacher-choice is-selected' : 'teacher-choice'}
-                aria-pressed={profile.id === teacher.id}
-                onClick={() => chooseTeacher(profile)}
-              >
-                <TeacherPortrait teacher={profile} />
-                <span>
-                  <strong>{profile.name}</strong>
-                  <small>
-                    {profile.title}
-                    {teacherMinimumAge(profile) > 0 ? ` · ${teacherMinimumAge(profile)}+` : ''}
-                    {profile.effectivePricePer30MinutesMcoins !== null && profile.effectivePricePer30MinutesMcoins !== undefined
-                      ? ` · ${Number(profile.effectivePricePer30MinutesMcoins).toFixed(2)} Mcoins / 30 min`
-                      : ''}
-                  </small>
-                </span>
-              </button>
-            ))}
+        {lessonLock ? (
+          <div className="teacher-session-lock" role="status" data-locked-teacher-id={teacher.id}>
+            <TeacherPortrait teacher={teacher} />
+            <span>
+              <strong>Locked to {teacher.name}</strong>
+              <small>You paid for {teacher.name}, so this teacher stays with you until the session ends.</small>
+            </span>
+            <span aria-hidden="true">🔒</span>
           </div>
-        </details>
+        ) : (
+          <details className="teacher-studio-disclosure">
+            <summary>Choose another teacher</summary>
+            <div className="teacher-roster" role="group" aria-label="Choose a virtual piano teacher">
+              {profiles.map((profile) => (
+                <button
+                  type="button"
+                  key={profile.id}
+                  className={profile.id === teacher.id ? 'teacher-choice is-selected' : 'teacher-choice'}
+                  aria-pressed={profile.id === teacher.id}
+                  onClick={() => chooseTeacher(profile)}
+                >
+                  <TeacherPortrait teacher={profile} />
+                  <span>
+                    <strong>{profile.name}</strong>
+                    <small>
+                      {profile.title}
+                      {teacherMinimumAge(profile) > 0 ? ` · ${teacherMinimumAge(profile)}+` : ''}
+                      {profile.effectivePricePer30MinutesMcoins !== null && profile.effectivePricePer30MinutesMcoins !== undefined
+                        ? ` · ${Number(profile.effectivePricePer30MinutesMcoins).toFixed(2)} Mcoins / 30 min`
+                        : ''}
+                    </small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
       </div>
 
       {pendingAgeTeacher && (

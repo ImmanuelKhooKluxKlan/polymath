@@ -2965,6 +2965,15 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
       user: safeUser(req.user),
     });
   }
+  const active = activeVirtualLesson(req.db, req.user.id);
+  if (active) {
+    return res.status(409).json({
+      error: `Your active lesson is locked to ${active.teacher?.name || 'the selected teacher'} until it ends.`,
+      code: 'VIRTUAL_LESSON_TEACHER_LOCKED',
+      lockedTeacherId: active.teacher?.id || '',
+      session: publicVirtualLesson(active),
+    });
+  }
   if (!POLYMATH_ASSISTANT.capabilities().available) {
     return res.status(503).json({
       error: 'Virtual lessons are not available on this server yet. Nothing was charged.',
@@ -2998,13 +3007,6 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
   );
   if (!quote) {
     return res.status(400).json({ error: 'Enter a valid private-session duration.' });
-  }
-  const active = activeVirtualLesson(req.db, req.user.id);
-  if (active) {
-    return res.status(409).json({
-      error: 'Resume or end your current lesson before starting another one.',
-      session: publicVirtualLesson(active),
-    });
   }
   const adultConfirmed = req.body?.adultConfirmed === true;
   const companionConsent = req.body?.companionConsent === true;

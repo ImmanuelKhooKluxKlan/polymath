@@ -5,6 +5,12 @@ import {
   speechSegments,
   teacherVoiceProfile,
 } from '../engine/teacherVoice.js';
+import {
+  restingSpeechFrame,
+  speechAnimationFrame,
+  spokenTokenLength,
+} from '../engine/teacherSpeechAnimation.js';
+import PianoTeacherPerformanceStage from './PianoTeacherPerformanceStage.jsx';
 
 const DEFAULT_CATALOG = {
   rateMcoinsPerHour: 10,
@@ -105,6 +111,10 @@ export default function VirtualLessonPanel({
   observations,
   onDemonstrate,
   onNavigate,
+  onSessionLockChange,
+  handTargets,
+  teacherIsPlaying = false,
+  performanceTier = 'balanced',
 }) {
   const [catalog, setCatalog] = useState(DEFAULT_CATALOG);
   const [assistantAvailable, setAssistantAvailable] = useState(true);
@@ -129,14 +139,22 @@ export default function VirtualLessonPanel({
   const [selectedVoiceUri, setSelectedVoiceUri] = useState(() => (
     window.localStorage.getItem(`polymath-teacher-voice-${teacher.id}`) || ''
   ));
+  const [speechCue, setSpeechCue] = useState(restingSpeechFrame);
   const recognitionRef = useRef(null);
   const voiceFinalRef = useRef('');
   const checkoutRef = useRef('');
   const speechRunRef = useRef(0);
+  const speechTrackRef = useRef(null);
+  const speechAnimationTimerRef = useRef(0);
   const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
   const recognitionSupported = typeof window !== 'undefined' && Boolean(recognitionEngine());
   const messages = session?.messages || [];
   const secondsLeft = remainingSeconds(session, now);
+  const sessionTeacher = useMemo(() => (
+    session?.status === 'active' && session.teacher
+      ? { ...teacher, ...session.teacher }
+      : teacher
+  ), [session?.status, session?.teacher, teacher]);
   const pricedCatalog = useMemo(() => ({
     ...catalog,
     pricePer30MinutesMcoins: teacher.pricePer30MinutesMcoins
@@ -148,10 +166,10 @@ export default function VirtualLessonPanel({
   );
   const bestVoice = useMemo(() => selectTeacherVoice(
     availableVoices,
-    teacher,
+    sessionTeacher,
     navigator.language || 'en-US',
     selectedVoiceUri,
-  ), [availableVoices, selectedVoiceUri, teacher]);
+  ), [availableVoices, selectedVoiceUri, sessionTeacher]);
   const voiceChoices = useMemo(() => {
     const language = String(navigator.language || 'en-US').split('-')[0].toLowerCase();
     const matching = availableVoices.filter((voice) => String(voice.lang || '').toLowerCase().startsWith(language));
@@ -229,6 +247,17 @@ export default function VirtualLessonPanel({
   }, [session?.id, session?.status]);
 
   useEffect(() => {
+    const locked = session?.status === 'active' && session.teacher?.id
+      ? {
+        sessionId: session.id,
+        teacher: session.teacher,
+        expiresAt: session.expiresAt,
+      }
+      : null;
+    onSessionLockChange?.(locked);
+  }, [onSessionLockChange, session?.expiresAt, session?.id, session?.status, session?.teacher?.id]);
+
+  useEffect(() => {
     if (session?.status === 'active' && session.teacher?.id && session.teacher.id !== teacher.id) {
       onTeacherChange?.(session.teacher.id);
     }
@@ -240,6 +269,10 @@ export default function VirtualLessonPanel({
     setStatus('This private lesson has ended. Session memory was cleared.');
     window.speechSynthesis?.cancel();
     speechRunRef.current += 1;
+    window.clearInterval(speechAnimationTimerRef.current);
+    speechAnimationTimerRef.current = 0;
+    speechTrackRef.current = null;
+    setSpeechCue(restingSpeechFrame());
     recognitionRef.current?.abort();
   }, [secondsLeft, session?.id, session?.status]);
 
@@ -247,31 +280,101 @@ export default function VirtualLessonPanel({
     recognitionRef.current?.abort();
     speechRunRef.current += 1;
     window.speechSynthesis?.cancel();
+    window.clearInterval(speechAnimationTimerRef.current);
+    speechAnimationTimerRef.current = 0;
+    speechTrackRef.current = null;
   }, []);
+
+  function stopSpeechAnimation(run = null) {
+    if (run !== null && speechTrackRef.current?.run !== run) return;
+    window.clearInterval(speechAnimationTimerRef.current);
+    speechAnimationTimerRef.current = 0;
+    speechTrackRef.current = null;
+    setSpeechCue(restingSpeechFrame());
+  }
+
+  function cancelTeacherSpeech() {
+    speechRunRef.current += 1;
+    window.speechSynthesis?.cancel();
+    stopSpeechAnimation();
+  }
+
+  function refreshSpeechAnimation() {
+    const track = speechTrackRef.current;
+    if (!track) return;
+    setSpeechCue(speechAnimationFrame({
+      ...track,
+      speaking: true,
+      nowMs: window.performance?.now?.() ?? Date.now(),
+    }));
+  }
+
+  function beginSpeechAnimation(text, rate, run) {
+    window.clearInterval(speechAnimationTimerRef.current);
+    const startedAt = window.performance?.now?.() ?? Date.now();
+    speechTrackRef.current = {
+      run,
+      text,
+      rate,
+      boundaryIndex: 0,
+      // If a browser omits boundary events, the entire segment remains a
+      // deterministic fallback timeline instead of random mouth movement.
+      boundaryLength: text.length,
+      boundaryAtMs: startedAt,
+    };
+    refreshSpeechAnimation();
+    speechAnimationTimerRef.current = window.setInterval(refreshSpeechAnimation, 52);
+  }
+
+  function synchronizeSpeechBoundary(event, text, rate, run) {
+    if (speechRunRef.current !== run) return;
+    const boundaryIndex = Math.max(0, Math.min(text.length - 1, Number(event.charIndex) || 0));
+    const boundaryLength = Math.max(
+      1,
+      Number(event.charLength) || spokenTokenLength(text, boundaryIndex) || 1,
+    );
+    speechTrackRef.current = {
+      run,
+      text,
+      rate,
+      boundaryIndex,
+      boundaryLength,
+      boundaryAtMs: window.performance?.now?.() ?? Date.now(),
+    };
+    refreshSpeechAnimation();
+  }
 
   function speakTeacher(text) {
     if (!voiceOutput || !speechSupported || !text) return;
-    window.speechSynthesis.cancel();
+    cancelTeacherSpeech();
     const segments = speechSegments(text);
     if (!segments.length) return;
     const run = speechRunRef.current + 1;
     speechRunRef.current = run;
-    const settings = teacherVoiceProfile(session?.teacher || teacher);
+    const settings = teacherVoiceProfile(sessionTeacher);
     const language = navigator.language || 'en-US';
     const voice = selectTeacherVoice(
       window.speechSynthesis.getVoices(),
-      session?.teacher || teacher,
+      sessionTeacher,
       language,
       selectedVoiceUri,
     );
     const speakSegment = (index) => {
-      if (speechRunRef.current !== run || index >= segments.length) return;
-      const utterance = new window.SpeechSynthesisUtterance(segments[index]);
+      if (speechRunRef.current !== run) return;
+      if (index >= segments.length) {
+        stopSpeechAnimation(run);
+        return;
+      }
+      const segment = segments[index];
+      const utterance = new window.SpeechSynthesisUtterance(segment);
       utterance.rate = settings.rate;
       utterance.pitch = settings.pitch;
       utterance.lang = voice?.lang || language;
       if (voice) utterance.voice = voice;
+      utterance.onstart = () => beginSpeechAnimation(segment, settings.rate, run);
+      utterance.onboundary = (event) => synchronizeSpeechBoundary(event, segment, settings.rate, run);
       utterance.onend = () => speakSegment(index + 1);
+      utterance.onerror = () => stopSpeechAnimation(run);
       window.speechSynthesis.speak(utterance);
     };
     speakSegment(0);
@@ -370,7 +473,7 @@ export default function VirtualLessonPanel({
       recognitionRef.current?.stop();
       return;
     }
-    window.speechSynthesis?.cancel();
+    cancelTeacherSpeech();
     const Recognition = recognitionEngine();
     const recognition = new Recognition();
     recognitionRef.current = recognition;
@@ -426,7 +529,7 @@ export default function VirtualLessonPanel({
       });
       setSession(data.session);
       setStatus('Lesson ended. The conversation and session memory were erased.');
-      window.speechSynthesis?.cancel();
+      cancelTeacherSpeech();
       recognitionRef.current?.abort();
     } catch (error) {
       setStatus(error.message);
@@ -586,10 +689,10 @@ export default function VirtualLessonPanel({
   return (
     <div className="virtual-lesson-room">
       <header className="virtual-lesson-live-header">
-        <TeacherPortrait teacher={teacher} />
+        <TeacherPortrait teacher={sessionTeacher} />
         <div>
-          <span>{session.conversationMode === 'adult-companion' ? '18+ AI companion' : 'Private music session'} · Session memory on</span>
-          <strong>{teacher.name} with {user.name?.split(' ')[0] || 'you'}</strong>
+          <span>{session.conversationMode === 'adult-companion' ? '18+ AI companion' : 'Private music session'} · Teacher locked</span>
+          <strong>{sessionTeacher.name} with {user.name?.split(' ')[0] || 'you'}</strong>
         </div>
         <time dateTime={session.expiresAt}>{formatLessonTime(secondsLeft)}</time>
       </header>
@@ -613,10 +716,7 @@ export default function VirtualLessonPanel({
           onClick={() => {
             const enabled = !voiceOutput;
             setVoiceOutput(enabled);
-            if (!enabled) {
-              speechRunRef.current += 1;
-              window.speechSynthesis?.cancel();
-            }
+            if (!enabled) cancelTeacherSpeech();
           }}
         >
           {voiceOutput ? 'Teacher voice on' : 'Teacher voice off'}
@@ -633,8 +733,8 @@ export default function VirtualLessonPanel({
               onChange={(event) => {
                 const value = event.target.value;
                 setSelectedVoiceUri(value);
-                if (value) window.localStorage.setItem(`polymath-teacher-voice-${teacher.id}`, value);
-                else window.localStorage.removeItem(`polymath-teacher-voice-${teacher.id}`);
+                if (value) window.localStorage.setItem(`polymath-teacher-voice-${sessionTeacher.id}`, value);
+                else window.localStorage.removeItem(`polymath-teacher-voice-${sessionTeacher.id}`);
               }}
             >
               <option value="">Best available automatically</option>
@@ -654,7 +754,7 @@ export default function VirtualLessonPanel({
             <strong>{session.conversationMode === 'adult-companion'
               ? 'What do you feel like talking about?'
               : 'What do you want to improve or discuss today?'}</strong>
-            <small>{teacher.name} remembers your answers until this timer ends.</small>
+            <small>{sessionTeacher.name} remembers your answers until this timer ends.</small>
           </div>
         )}
         {messages.map((message) => (
@@ -670,16 +770,24 @@ export default function VirtualLessonPanel({
       </div>
 
       <form className="teacher-chat-form virtual-lesson-chat-form" onSubmit={submitChat}>
-        <label className="sr-only" htmlFor="virtual-lesson-message">Message {teacher.name}</label>
+        <label className="sr-only" htmlFor="virtual-lesson-message">Message {sessionTeacher.name}</label>
         <input
           id="virtual-lesson-message"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           maxLength="1600"
-          placeholder={`Ask ${teacher.name} or tap the microphone...`}
+          placeholder={`Ask ${sessionTeacher.name} or tap the microphone...`}
         />
         <button type="submit" className="primary" disabled={waiting || !draft.trim()}>Send</button>
       </form>
+
+      <PianoTeacherPerformanceStage
+        teacher={sessionTeacher}
+        targets={handTargets}
+        isPlaying={teacherIsPlaying}
+        performanceTier={performanceTier}
+        speechCue={speechCue}
+      />
       {status && <p className="teacher-chat-status" role="status">{status}</p>}
       <footer className="virtual-lesson-footer">
         <small>Microphone starts only when tapped. Browser speech recognition may use your browser's speech service. Polymath does not save raw microphone audio.</small>

@@ -14,6 +14,7 @@
     "test:performance": "node --test scripts/performance/devicePerformance.test.mjs scripts/performance/learningCoach.test.mjs",
     "test:teacher-hands": "node --test scripts/performance/teacherHands.test.mjs",
     "test:teacher-voice": "node --test scripts/performance/teacherVoice.test.mjs",
+    "test:teacher-animation": "node --test scripts/performance/teacherSpeechAnimation.test.mjs",
     "qa:teacher-hands": "node scripts/qa/captureTeacherHands.mjs",
     "test:learning-coach": "node --test scripts/performance/learningCoach.test.mjs",
     "test:guitar-voicing": "node --test scripts/performance/guitarVoicing.test.mjs",

@@ -94,9 +94,19 @@ test('virtual lessons charge once, remember the session, demonstrate exact range
   assert.equal(duplicate.data.user.mcoins, 10);
 
   const overlapping = await api('/api/virtual-lessons', {
-    method: 'POST', token: student.token, body: { ...checkout, clientRequestId: 'checkout_abcdefghij' },
+    method: 'POST',
+    token: student.token,
+    body: {
+      ...checkout,
+      teacher: { id: 'nova', name: 'Padme' },
+      clientRequestId: 'checkout_abcdefghij',
+    },
   });
   assert.equal(overlapping.status, 409);
+  assert.equal(overlapping.data.code, 'VIRTUAL_LESSON_TEACHER_LOCKED');
+  assert.equal(overlapping.data.lockedTeacherId, 'aria');
+  assert.equal(overlapping.data.session.teacher.id, 'aria');
+  assert.equal(overlapping.data.session.teacherSelectionLocked, true);
 
   const taught = await api(`/api/virtual-lessons/${started.data.session.id}/messages`, {
     method: 'POST',

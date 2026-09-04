@@ -367,6 +367,12 @@ async function main() {
       if (!help.result?.value) throw new Error('Signed-in Help trigger was not found.');
       await delay(250);
     }
+    if (surface === 'lesson' && startSession) {
+      await session.send('Runtime.evaluate', {
+        expression: `document.querySelector('.virtual-teacher-live-stage')?.scrollIntoView({ block: 'center' })`,
+      });
+      await delay(220);
+    }
     const visualAudit = await session.send('Runtime.evaluate', {
       expression: `(() => {
         const deck = document.querySelector('.keyboard-deck')?.getBoundingClientRect();
@@ -391,6 +397,13 @@ async function main() {
           documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           demonstrationPlaying: [...document.querySelectorAll('button')].some((item) => item.textContent.trim() === 'Pause'),
           teacherReplyCount: document.querySelectorAll('.teacher-message-teacher').length,
+          teacherLocked: Boolean(document.querySelector('.teacher-session-lock')),
+          lockedTeacherId: document.querySelector('.teacher-session-lock')?.dataset.lockedTeacherId || '',
+          teacherRosterAvailable: Boolean(document.querySelector('.teacher-roster')),
+          liveTeacherStage: Boolean(document.querySelector('.virtual-teacher-live-stage')),
+          liveTeacherStageId: document.querySelector('.virtual-teacher-live-stage')?.dataset.teacherId || '',
+          speechMouthLayer: Boolean(document.querySelector('.teacher-speech-mouth-window')),
+          songSyncedHandCamera: Boolean(document.querySelector('.virtual-teacher-live-stage .teacher-hand-camera')),
           speedLabel: document.querySelector('.dock-speed span')?.textContent?.trim() || '',
           supportOpen: Boolean(document.querySelector('.support-assistant-panel')),
           supportAllowance: document.querySelector('.support-assistant-panel header small')?.textContent?.trim() || '',
@@ -407,6 +420,16 @@ async function main() {
     }
     if (demonstrate && !/1\.00/.test(visualAudit.result?.value?.speedLabel || '')) {
       throw new Error(`A normal demonstration changed the learner's speed unexpectedly: ${JSON.stringify(visualAudit.result?.value)}`);
+    }
+    if (startSession && (
+      !visualAudit.result?.value?.teacherLocked
+      || visualAudit.result?.value?.teacherRosterAvailable
+      || !visualAudit.result?.value?.liveTeacherStage
+      || !visualAudit.result?.value?.speechMouthLayer
+      || !visualAudit.result?.value?.songSyncedHandCamera
+      || visualAudit.result?.value?.lockedTeacherId !== visualAudit.result?.value?.liveTeacherStageId
+    )) {
+      throw new Error(`Paid teacher identity or synchronized stage audit failed: ${JSON.stringify(visualAudit.result?.value)}`);
     }
     if (openHelp && (!visualAudit.result?.value?.supportOpen || !/\d+\/7 left today|Unlimited Help/.test(visualAudit.result?.value?.supportAllowance || ''))) {
       throw new Error(`Signed-in Help allowance was not visible: ${JSON.stringify(visualAudit.result?.value)}`);

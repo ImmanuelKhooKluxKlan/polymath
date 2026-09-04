@@ -10,6 +10,52 @@ function safeId(value) {
   return String(value || 'teacher').replace(/[^a-z0-9_-]/gi, '-');
 }
 
+function boundedPercent(value, fallback, minimum = 0, maximum = 100) {
+  const number = Number(value);
+  return Math.max(minimum, Math.min(maximum, Number.isFinite(number) ? number : fallback));
+}
+
+function TeacherSpeechMouth({ teacher, speechCue }) {
+  const image = teacher?.stageImage || teacher?.image;
+  if (!image) return null;
+  const supplied = teacher?.mouthAnchor || {};
+  const width = boundedPercent(supplied.width, 4, 1.5, 12);
+  const height = boundedPercent(supplied.height, 3, 1.2, 9);
+  const x = boundedPercent(supplied.x, 50, width / 2, 100 - width / 2);
+  const y = boundedPercent(supplied.y, 22, height / 2, 100 - height / 2);
+  const left = x - width / 2;
+  const top = y - height / 2;
+  return (
+    <span
+      className="teacher-speech-mouth-window"
+      data-speaking={speechCue?.active ? 'true' : 'false'}
+      data-viseme={speechCue?.viseme || 'rest'}
+      style={{
+        left: `${left}%`,
+        top: `${top}%`,
+        width: `${width}%`,
+        height: `${height}%`,
+        '--mouth-interior-opacity': Number(speechCue?.intensity || 0) * 0.58,
+      }}
+      aria-hidden="true"
+    >
+      <img
+        className="teacher-speech-mouth-source"
+        src={image}
+        alt=""
+        draggable="false"
+        style={{
+          width: `${10000 / width}%`,
+          height: `${10000 / height}%`,
+          left: `${(-left * 100) / width}%`,
+          top: `${(-top * 100) / height}%`,
+        }}
+      />
+      <i className="teacher-speech-mouth-interior" />
+    </span>
+  );
+}
+
 function useSmoothedCentres(targets) {
   const rawLeft = teacherHandCenter(targets?.left, 'left');
   const rawRight = teacherHandCenter(targets?.right, 'right');
@@ -75,7 +121,7 @@ function HandCamera({ teacher, targets, centres }) {
 
   return (
     <div className="teacher-hand-camera">
-      <div className="teacher-hand-camera-label"><span>Hand camera</span><small>Intact wrists and ten fingers</small></div>
+      <div className="teacher-hand-camera-label"><span>Hands · song-synced</span><small>Exact MIDI timing on the lesson keys</small></div>
       <svg viewBox="0 180 1200 500" role="img" aria-label={`${teacher.name}'s overhead hands moving across the lesson keyboard`}>
         <defs>
           <clipPath id={`${id}-left-hand`} clipPathUnits="objectBoundingBox"><rect x="0" y="0" width=".5" height="1" /></clipPath>
@@ -128,26 +174,40 @@ export default function PianoTeacherPerformanceStage({
   targets,
   isPlaying = false,
   performanceTier = 'balanced',
+  speechCue = null,
 }) {
   const centres = useSmoothedCentres(targets);
   const summary = [...(targets?.left?.notes || []), ...(targets?.right?.notes || [])]
     .map((note) => note.note)
     .join(', ');
   const fullStagePhoto = Boolean(teacher?.stageImage);
+  const isSpeaking = Boolean(speechCue?.active);
 
   return (
-    <article className={`teacher-performance-stage performance-${performanceTier}`} aria-label={`${teacher.name} seated at the piano demonstrating this lesson`}>
+    <article
+      className={`teacher-performance-stage virtual-teacher-live-stage performance-${performanceTier} ${isSpeaking ? 'is-speaking' : ''} ${isPlaying ? 'is-demonstrating' : ''}`}
+      data-teacher-id={teacher.id}
+      aria-label={`${teacher.name} seated at the piano with synchronized voice and hands`}
+    >
       <div className="teacher-performance-scene">
         <img
           className={`teacher-performance-person ${fullStagePhoto ? 'is-stage-photo' : 'is-cutout'}`}
           src={teacher?.stageImage || teacher?.image}
-          alt={`${teacher.name}, virtual piano teacher seated at the piano`}
+          alt={`${teacher.name}, your selected virtual piano teacher seated at the piano`}
           draggable="false"
         />
+        <TeacherSpeechMouth teacher={teacher} speechCue={speechCue} />
         {!fullStagePhoto && <div className="teacher-performance-cutout-piano" aria-hidden="true" />}
-        <div className={isPlaying ? 'teacher-performance-live is-playing' : 'teacher-performance-live'}>
+        <div className={isPlaying || isSpeaking ? 'teacher-performance-live is-playing' : 'teacher-performance-live'}>
           <i />
-          <span><strong>{isPlaying ? `${teacher.name} is demonstrating` : `${teacher.name} is ready`}</strong><small>{summary || 'Relaxed shoulders · level forearms · neutral wrists'}</small></span>
+          <span>
+            <strong>{isPlaying ? `${teacher.name} is demonstrating` : isSpeaking ? `${teacher.name} is speaking` : `${teacher.name} is ready`}</strong>
+            <small>{summary || (isSpeaking ? 'Mouth following live speech boundaries' : 'Relaxed shoulders · level forearms · neutral wrists')}</small>
+          </span>
+        </div>
+        <div className="teacher-performance-sync" aria-label="Teacher animation synchronization status">
+          <span className={isSpeaking ? 'is-active' : ''}>Voice-synced lips</span>
+          <span className={isPlaying ? 'is-active' : ''}>MIDI-synced hands</span>
         </div>
       </div>
       <HandCamera teacher={teacher} targets={targets} centres={centres} />
