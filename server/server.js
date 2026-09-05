@@ -150,6 +150,7 @@ const JOB_QUEUE = createJobQueue({
 
 const WITHDRAWAL_FEE_RATE = 0.25;
 const MARKETPLACE_FEE_RATE = 0.25;
+const TEACHER_MARKETPLACE_FEE_RATE = 0.25;
 const MCOINS_PER_USD = 1;
 const READY_SHEET_UPLOAD_MCOIN_COST = 0.5;
 const FREE_READY_SHEET_MONTHLY_LIMIT = 2;
@@ -415,6 +416,13 @@ const DEFAULT_SITE_POLICIES = Object.freeze({
   minimumMarketplacePriceMcoins: 0,
   maximumMarketplacePriceMcoins: 100000,
   marketplaceFeePercent: MARKETPLACE_FEE_RATE * 100,
+  teacherDirectoryEnabled: true,
+  teacherApplicationsEnabled: true,
+  teacherReviewsEnabled: true,
+  minimumTeacherHourlyRateMcoins: 0,
+  maximumTeacherHourlyRateMcoins: 100000,
+  teacherMarketplaceFeePercent: TEACHER_MARKETPLACE_FEE_RATE * 100,
+  teacherMarketplaceNotice: '',
   listenerRewardsEnabled: true,
   maximumListenerRewardMcoins: 100,
   maximumRewardOutflowPerListingMcoins: 1000,
@@ -889,6 +897,28 @@ function sitePolicies(db) {
     minimumMarketplacePriceMcoins: clampDecimal(raw.minimumMarketplacePriceMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.minimumMarketplacePriceMcoins),
     maximumMarketplacePriceMcoins: clampDecimal(raw.maximumMarketplacePriceMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumMarketplacePriceMcoins),
     marketplaceFeePercent: clampDecimal(raw.marketplaceFeePercent, 0, 100, DEFAULT_SITE_POLICIES.marketplaceFeePercent),
+    teacherDirectoryEnabled: raw.teacherDirectoryEnabled !== false,
+    teacherApplicationsEnabled: raw.teacherApplicationsEnabled !== false,
+    teacherReviewsEnabled: raw.teacherReviewsEnabled !== false,
+    minimumTeacherHourlyRateMcoins: clampDecimal(
+      raw.minimumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.minimumTeacherHourlyRateMcoins,
+    ),
+    maximumTeacherHourlyRateMcoins: clampDecimal(
+      raw.maximumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.maximumTeacherHourlyRateMcoins,
+    ),
+    teacherMarketplaceFeePercent: clampDecimal(
+      raw.teacherMarketplaceFeePercent,
+      0,
+      100,
+      DEFAULT_SITE_POLICIES.teacherMarketplaceFeePercent,
+    ),
+    teacherMarketplaceNotice: String(raw.teacherMarketplaceNotice || '').trim().slice(0, 600),
     listenerRewardsEnabled: raw.listenerRewardsEnabled !== false,
     maximumListenerRewardMcoins: clampDecimal(raw.maximumListenerRewardMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumListenerRewardMcoins),
     maximumRewardOutflowPerListingMcoins: clampDecimal(raw.maximumRewardOutflowPerListingMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumRewardOutflowPerListingMcoins),
@@ -3506,6 +3536,7 @@ app.get('/api/catalog', async (req, res) => {
     withdrawalFeeRate,
     withdrawalFeeLabel: `${publicPolicies.withdrawalFeePercent}% cash-out fee for every account`,
     marketplaceFeeRate,
+    teacherMarketplace: teacherMarketplaceTerms(publicPolicies),
     mcoinsPerUsd: MCOINS_PER_USD,
     translationMcoinCosts: {
       subscriber: SUBSCRIBER_TRANSLATION_MCOIN_COST,
@@ -3880,6 +3911,11 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
 
 app.get('/api/teachers', async (req, res) => {
   const db = await readDb();
+  const policies = sitePolicies(db);
+  const marketplace = teacherMarketplaceTerms(policies);
+  if (!policies.teacherDirectoryEnabled) {
+    return res.json({ teachers: [], marketplace });
+  }
   const viewer = authUser(req, db);
   const query = String(req.query.query || '').trim().toLowerCase();
   const instrument = String(req.query.instrument || '').trim().toLowerCase();
@@ -3906,15 +3942,23 @@ app.get('/api/teachers', async (req, res) => {
       || Number(b.reviewSummary.reviewCount) - Number(a.reviewSummary.reviewCount)
       || String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt))
     ));
-  res.json({ teachers });
+  return res.json({ teachers, marketplace });
 });
 
 app.get('/api/teachers/me', requireAuth, async (req, res) => {
   const profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
-  res.json({ teacher: profile ? publicTeacherProfile(profile, req.db, req.user.id) : null });
+  res.json({
+    teacher: profile ? publicTeacherProfile(profile, req.db, req.user.id) : null,
+    marketplace: teacherMarketplaceTerms(sitePolicies(req.db)),
+  });
 });
 
 app.put('/api/teachers/me', requireAuth, async (req, res) => {
+  const policies = sitePolicies(req.db);
+  let profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
+  if (!profile && !policies.teacherApplicationsEnabled) {
+    return res.status(403).json({ error: 'New teacher profiles are temporarily paused.' });
+  }
   const headline = String(req.body.headline || '').trim().slice(0, 100);
   const bio = String(req.body.bio || '').trim().slice(0, 1200);
   const instruments = cleanStringList(req.body.instruments, {
@@ -3935,12 +3979,19 @@ app.put('/api/teachers/me', requireAuth, async (req, res) => {
   if (!instruments.length) return res.status(400).json({ error: 'Choose at least one instrument.' });
   if (!levels.length) return res.status(400).json({ error: 'Choose at least one student level.' });
   if (!lessonModes.length) return res.status(400).json({ error: 'Choose online lessons, in-person lessons, or both.' });
-  if (!Number.isFinite(hourlyRateMcoins) || hourlyRateMcoins < 0 || hourlyRateMcoins > 100000) {
-    return res.status(400).json({ error: 'Enter an hourly rate between 0 and 100,000 Mcoins.' });
+  if (!Number.isFinite(hourlyRateMcoins)
+    || hourlyRateMcoins < policies.minimumTeacherHourlyRateMcoins
+    || (policies.maximumTeacherHourlyRateMcoins > 0
+      && hourlyRateMcoins > policies.maximumTeacherHourlyRateMcoins)) {
+    const maximum = policies.maximumTeacherHourlyRateMcoins > 0
+      ? policies.maximumTeacherHourlyRateMcoins.toLocaleString()
+      : 'unlimited';
+    return res.status(400).json({
+      error: `Enter an hourly rate from ${policies.minimumTeacherHourlyRateMcoins.toLocaleString()} Mcoins to ${maximum}.`,
+    });
   }
 
   const now = new Date().toISOString();
-  let profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
   if (profile) {
     Object.assign(profile, {
       headline,
@@ -3988,10 +4039,17 @@ app.get('/api/teachers/:teacherProfileId/reviews', async (req, res) => {
     .filter((review) => review.teacherProfileId === profile.id)
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))
     .map((review) => publicTeacherReview(review, db, viewer?.id));
-  return res.json({ reviews, summary: teacherReviewSummary(db, profile.id) });
+  return res.json({
+    reviews,
+    summary: teacherReviewSummary(db, profile.id),
+    reviewsEnabled: sitePolicies(db).teacherReviewsEnabled,
+  });
 });
 
 app.post('/api/teachers/:teacherProfileId/reviews', requireAuth, async (req, res) => {
+  if (!sitePolicies(req.db).teacherReviewsEnabled) {
+    return res.status(403).json({ error: 'New teacher reviews are temporarily paused.' });
+  }
   const profile = req.db.teacherProfiles.find(
     (item) => item.id === req.params.teacherProfileId && item.published !== false,
   );
@@ -5378,6 +5436,36 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
     minimumMarketplacePriceMcoins: clampDecimal(req.body.minimumMarketplacePriceMcoins, 0, 1000000000, current.minimumMarketplacePriceMcoins),
     maximumMarketplacePriceMcoins: clampDecimal(req.body.maximumMarketplacePriceMcoins, 0, 1000000000, current.maximumMarketplacePriceMcoins),
     marketplaceFeePercent: clampDecimal(req.body.marketplaceFeePercent, 0, 100, current.marketplaceFeePercent),
+    teacherDirectoryEnabled: typeof req.body.teacherDirectoryEnabled === 'boolean'
+      ? req.body.teacherDirectoryEnabled
+      : current.teacherDirectoryEnabled,
+    teacherApplicationsEnabled: typeof req.body.teacherApplicationsEnabled === 'boolean'
+      ? req.body.teacherApplicationsEnabled
+      : current.teacherApplicationsEnabled,
+    teacherReviewsEnabled: typeof req.body.teacherReviewsEnabled === 'boolean'
+      ? req.body.teacherReviewsEnabled
+      : current.teacherReviewsEnabled,
+    minimumTeacherHourlyRateMcoins: clampDecimal(
+      req.body.minimumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      current.minimumTeacherHourlyRateMcoins,
+    ),
+    maximumTeacherHourlyRateMcoins: clampDecimal(
+      req.body.maximumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      current.maximumTeacherHourlyRateMcoins,
+    ),
+    teacherMarketplaceFeePercent: clampDecimal(
+      req.body.teacherMarketplaceFeePercent,
+      0,
+      100,
+      current.teacherMarketplaceFeePercent,
+    ),
+    teacherMarketplaceNotice: String(
+      req.body.teacherMarketplaceNotice ?? current.teacherMarketplaceNotice ?? '',
+    ).trim().slice(0, 600),
     listenerRewardsEnabled: req.body.listenerRewardsEnabled !== false,
     maximumListenerRewardMcoins: clampDecimal(req.body.maximumListenerRewardMcoins, 0, 1000000000, current.maximumListenerRewardMcoins),
     maximumRewardOutflowPerListingMcoins: clampDecimal(req.body.maximumRewardOutflowPerListingMcoins, 0, 1000000000, current.maximumRewardOutflowPerListingMcoins),
@@ -5404,6 +5492,12 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   };
   if (next.maximumMarketplacePriceMcoins > 0 && next.maximumMarketplacePriceMcoins < next.minimumMarketplacePriceMcoins) {
     return res.status(400).json({ error: 'Maximum listing price must be 0 (unlimited) or at least the minimum listing price.' });
+  }
+  if (next.maximumTeacherHourlyRateMcoins > 0
+    && next.maximumTeacherHourlyRateMcoins < next.minimumTeacherHourlyRateMcoins) {
+    return res.status(400).json({
+      error: 'Maximum teacher hourly rate must be 0 (unlimited) or at least the minimum teacher hourly rate.',
+    });
   }
   if (next.maximumWithdrawalMcoins > 0 && next.maximumWithdrawalMcoins < next.minimumWithdrawalMcoins) {
     return res.status(400).json({ error: 'Maximum withdrawal must be 0 (unlimited) or at least the minimum withdrawal.' });
@@ -6324,6 +6418,42 @@ function publicTranslationJob(job) {
 
 const TEACHER_LEVELS = new Set(['beginner', 'intermediate', 'advanced']);
 const TEACHER_LESSON_MODES = new Set(['online', 'in-person']);
+
+function teacherMarketplaceTerms(policies) {
+  const feePercent = clampDecimal(
+    policies?.teacherMarketplaceFeePercent,
+    0,
+    100,
+    DEFAULT_SITE_POLICIES.teacherMarketplaceFeePercent,
+  );
+  return {
+    directoryEnabled: policies?.teacherDirectoryEnabled !== false,
+    applicationsEnabled: policies?.teacherApplicationsEnabled !== false,
+    reviewsEnabled: policies?.teacherReviewsEnabled !== false,
+    minimumHourlyRateMcoins: clampDecimal(
+      policies?.minimumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.minimumTeacherHourlyRateMcoins,
+    ),
+    maximumHourlyRateMcoins: clampDecimal(
+      policies?.maximumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.maximumTeacherHourlyRateMcoins,
+    ),
+    platformFeePercent: feePercent,
+    teacherKeepsPercent: Number((100 - feePercent).toFixed(2)),
+    withdrawalFeePercent: clampDecimal(
+      policies?.withdrawalFeePercent,
+      0,
+      100,
+      DEFAULT_SITE_POLICIES.withdrawalFeePercent,
+    ),
+    notice: String(policies?.teacherMarketplaceNotice || '').trim().slice(0, 600),
+    checkoutAvailable: false,
+  };
+}
 
 function teacherReviewSummary(db, teacherProfileId) {
   const reviews = db.teacherReviews.filter((review) => review.teacherProfileId === teacherProfileId);

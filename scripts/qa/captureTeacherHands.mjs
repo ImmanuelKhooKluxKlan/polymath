@@ -81,6 +81,9 @@ async function main() {
   const args = argsFrom(process.argv.slice(2));
   let token = String(process.env.QA_AUTH_TOKEN || '');
   const qaApi = String(args['qa-api'] || '').replace(/\/+$/, '');
+  const publicRoute = String(args['public-route'] || '').trim();
+  const clickText = String(args['click-text'] || '').trim();
+  const feeNoticeExpected = args['fee-notice'] === 'true';
   if (!token && qaApi) {
     const parsed = new URL(qaApi);
     if (!['127.0.0.1', 'localhost'].includes(parsed.hostname)) {
@@ -129,7 +132,7 @@ async function main() {
       token = registration.token;
     }
   }
-  if (!token) throw new Error('QA_AUTH_TOKEN or a loopback --qa-api is required.');
+  if (!token && !publicRoute) throw new Error('QA_AUTH_TOKEN, a loopback --qa-api, or --public-route is required.');
 
   const chrome = args.chrome || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
   const url = args.url || 'http://127.0.0.1:5173/#studio';
@@ -176,7 +179,7 @@ async function main() {
             if (!original) return nativeFetch(input, init);
             let parsed;
             try { parsed = new URL(original, window.location.href); } catch { return nativeFetch(input, init); }
-            const isolatedRoutes = ['/api/auth/', '/api/virtual-lessons', '/api/virtual-teachers'];
+            const isolatedRoutes = ['/api/auth/', '/api/admin/', '/api/virtual-lessons', '/api/virtual-teachers'];
             if (!isolatedRoutes.some((prefix) => parsed.pathname.startsWith(prefix))) {
               return nativeFetch(input, init);
             }
@@ -194,10 +197,67 @@ async function main() {
     });
     await session.send('Page.navigate', { url });
     await delay(900);
-    await session.send('Runtime.evaluate', {
-      expression: `localStorage.setItem('polymath_musician_auth_token', ${JSON.stringify(token)}); localStorage.setItem('polymath-teacher-hands-v2', 'true'); location.reload();`,
-    });
-    await delay(1800);
+    if (token) {
+      await session.send('Runtime.evaluate', {
+        expression: `localStorage.setItem('polymath_musician_auth_token', ${JSON.stringify(token)}); localStorage.setItem('polymath-teacher-hands-v2', 'true'); location.reload();`,
+      });
+      await delay(1800);
+    }
+    if (clickText) {
+      const clicked = await session.send('Runtime.evaluate', {
+        expression: `(() => {
+          const expected = ${JSON.stringify(clickText.toLowerCase())};
+          const button = [...document.querySelectorAll('button')]
+            .find((item) => item.textContent.trim().toLowerCase().includes(expected));
+          button?.click();
+          return Boolean(button);
+        })()`,
+        returnByValue: true,
+      });
+      if (!clicked.result?.value) throw new Error(`Could not find a button containing ${JSON.stringify(clickText)}.`);
+      await delay(250);
+    }
+    if (publicRoute) {
+      const deadline = Date.now() + 8000;
+      let audit = null;
+      while (Date.now() < deadline && !audit?.pageReady) {
+        const result = await session.send('Runtime.evaluate', {
+          expression: `(() => ({
+            pageReady: Boolean(document.querySelector(${JSON.stringify(publicRoute)})),
+            title: document.querySelector(${JSON.stringify(publicRoute)} + ' h1')?.textContent.trim() || '',
+            feeNotice: Boolean(document.querySelector('.teacher-marketplace-fee-notice')),
+            feeMetrics: document.querySelectorAll('.teacher-marketplace-fee-notice > div > span').length,
+            documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            clippedControls: [...document.querySelectorAll('button, input, select')]
+              .filter((item) => item.offsetParent && item.scrollWidth > item.clientWidth + 1).length,
+            body: document.body.innerText.slice(0, 500),
+            rootChildren: document.querySelector('#root')?.childElementCount || 0,
+          }))()`,
+          returnByValue: true,
+        });
+        audit = result.result?.value || null;
+        if (!audit?.pageReady) await delay(100);
+      }
+      if (!audit?.pageReady
+        || (feeNoticeExpected && (!audit.feeNotice || audit.feeMetrics !== 3))
+        || audit.documentOverflow
+        || audit.clippedControls) {
+        throw new Error(`Public page audit failed: ${JSON.stringify(audit)}`);
+      }
+      await session.send('Runtime.evaluate', {
+        expression: `(document.querySelector('.teacher-marketplace-fee-notice') || document.querySelector(${JSON.stringify(publicRoute)}))?.scrollIntoView({ block: 'center' })`,
+      });
+      await delay(200);
+      const screenshot = await session.send('Page.captureScreenshot', {
+        format: 'png',
+        captureBeyondViewport: false,
+        fromSurface: true,
+      });
+      await fsp.mkdir(path.dirname(output), { recursive: true });
+      await fsp.writeFile(output, Buffer.from(screenshot.data, 'base64'));
+      process.stdout.write(`${JSON.stringify({ output, width, height, publicRoute, audit }, null, 2)}\n`);
+      return;
+    }
     if (surface === 'admin-characters') {
       await session.send('Runtime.evaluate', {
         expression: `location.hash = 'admin-database'`,

@@ -9,6 +9,7 @@ const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
+  ['teacher-marketplace', 'Human teachers', 'Directory access, rates, reviews, and platform fees'],
   ['characters', 'Virtual teachers', 'Create, price, edit, restrict, hide, and delete characters'],
   ['community', 'Community safety', 'Review reported messages and moderation actions'],
   ['promotions', 'Discounts', 'Create percentage or fixed-Mcoin codes'],
@@ -699,6 +700,75 @@ export default function AdminDatabasePage({ user, onNavigate }) {
               <small className='phone-review-storage-note'>Reviews save automatically on this browser.</small>
             </aside>
           </div>
+        </section>
+      )}
+      {activeSection === 'teacher-marketplace' && policies && (
+        <section className='admin-workspace admin-teacher-marketplace'>
+          <div className='admin-section-heading'>
+            <div>
+              <p className='eyebrow'>Find a Teacher controls</p>
+              <h2>Human teacher marketplace</h2>
+              <p>Control public access, new teacher profiles, review activity, allowed rates, and the fee disclosed to teachers and students.</p>
+            </div>
+            <span className='status-pill'>{policies.teacherDirectoryEnabled !== false ? 'Directory live' : 'Directory paused'}</span>
+          </div>
+
+          <div className='admin-summary-grid'>
+            <article className='wallet-card'>
+              <p className='eyebrow'>Platform fee</p>
+              <strong className='admin-metric'>{Number(policies.teacherMarketplaceFeePercent ?? 25).toFixed(2)}%</strong>
+              <p className='muted'>Applied only to future lesson payments processed by Polymath.</p>
+            </article>
+            <article className='wallet-card'>
+              <p className='eyebrow'>Teacher keeps</p>
+              <strong className='admin-metric'>{Math.max(0, 100 - Number(policies.teacherMarketplaceFeePercent ?? 25)).toFixed(2)}%</strong>
+              <p className='muted'>Before any later cash-out fee.</p>
+            </article>
+            <article className='wallet-card'>
+              <p className='eyebrow'>100-Mcoin lesson net</p>
+              <strong className='admin-metric'>{(
+                Math.max(0, 100 - Number(policies.teacherMarketplaceFeePercent ?? 25))
+                * Math.max(0, 100 - Number(policies.withdrawalFeePercent ?? 25))
+                / 100
+              ).toFixed(2)}</strong>
+              <p className='muted'>Illustrative net after both configured platform fees.</p>
+            </article>
+          </div>
+
+          <form className='admin-form-card' onSubmit={savePolicies}>
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'>
+                <div><h3>Access switches</h3><p>Pause one part without deleting profiles, conversations, or existing reviews.</p></div>
+              </div>
+              <label className='rights-check'><input type='checkbox' checked={policies.teacherDirectoryEnabled !== false} onChange={(event) => setPolicies({ ...policies, teacherDirectoryEnabled: event.target.checked })} /><span>Show the public Find a Teacher directory</span></label>
+              <label className='rights-check'><input type='checkbox' checked={policies.teacherApplicationsEnabled !== false} onChange={(event) => setPolicies({ ...policies, teacherApplicationsEnabled: event.target.checked })} /><span>Allow users to create new teacher profiles</span></label>
+              <label className='rights-check'><input type='checkbox' checked={policies.teacherReviewsEnabled !== false} onChange={(event) => setPolicies({ ...policies, teacherReviewsEnabled: event.target.checked })} /><span>Allow students to post or update teacher reviews</span></label>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'>
+                <div><h3>Rates and platform fee</h3><p>Zero maximum means unlimited. The fee is a Polymath platform charge, not a government tax rate.</p></div>
+              </div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum hourly rate<input type='number' min='0' max='1000000000' step='0.01' value={policies.minimumTeacherHourlyRateMcoins ?? 0} onChange={(event) => setPolicies({ ...policies, minimumTeacherHourlyRateMcoins: Number(event.target.value) })} /><small>0 permits “Ask for rate”</small></label>
+                <label className='field'>Maximum hourly rate<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumTeacherHourlyRateMcoins ?? 100000} onChange={(event) => setPolicies({ ...policies, maximumTeacherHourlyRateMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Teacher platform fee<input type='number' min='0' max='100' step='0.01' value={policies.teacherMarketplaceFeePercent ?? 25} onChange={(event) => setPolicies({ ...policies, teacherMarketplaceFeePercent: Number(event.target.value) })} /><small>Percentage of Polymath-processed lesson payments</small></label>
+                <label className='field'>Cash-out fee<input type='number' min='0' max='100' step='0.01' value={policies.withdrawalFeePercent ?? 25} onChange={(event) => setPolicies({ ...policies, withdrawalFeePercent: Number(event.target.value) })} /><small>Also controlled in Payout rules</small></label>
+              </div>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Public teacher notice</h3><p>Optional text appears with the automatic fee disclosure at the bottom of Find a Teacher.</p></div></div>
+              <label className='field'>Additional notice<textarea rows='4' maxLength='600' value={policies.teacherMarketplaceNotice || ''} onChange={(event) => setPolicies({ ...policies, teacherMarketplaceNotice: event.target.value })} placeholder='Example: Introductory rates may vary by teacher.' /></label>
+            </div>
+
+            <div className='admin-teacher-fee-preview'>
+              <strong>Public disclosure preview</strong>
+              <p>Polymath platform fee: {Number(policies.teacherMarketplaceFeePercent ?? 25).toFixed(2)}%. Teachers keep {Math.max(0, 100 - Number(policies.teacherMarketplaceFeePercent ?? 25)).toFixed(2)}% before the separate {Number(policies.withdrawalFeePercent ?? 25).toFixed(2)}% cash-out fee.</p>
+              <small>Current teacher listings are discovery and private-chat tools. No directory payment is collected until a Polymath checkout is introduced.</small>
+            </div>
+            <button className='primary' type='submit'>Save teacher marketplace controls</button>
+          </form>
         </section>
       )}
       {activeSection === 'characters' && (

@@ -9,7 +9,7 @@ process.env.POLYMATH_DATA_DIR = testDataDir;
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 process.env.MUSCRIPTOR_ENABLED = 'false';
-process.env.ADMIN_EMAILS = '';
+process.env.ADMIN_EMAILS = 'policy-admin@example.test';
 
 const { app } = require('./server');
 
@@ -58,6 +58,23 @@ test('teachers publish profiles, connected students review, and chats remain pri
   const teacher = await register('Piano Teacher', 'teacher@example.test');
   const student = await register('Music Student', 'student@example.test');
   const outsider = await register('Private Outsider', 'outsider@example.test');
+  const policyAdmin = await register('Policy Admin', 'policy-admin@example.test');
+
+  const teacherPolicies = await api('/api/admin/policies', {
+    method: 'PUT',
+    token: policyAdmin.token,
+    body: {
+      teacherDirectoryEnabled: true,
+      teacherApplicationsEnabled: true,
+      teacherReviewsEnabled: true,
+      minimumTeacherHourlyRateMcoins: 10,
+      maximumTeacherHourlyRateMcoins: 80,
+      teacherMarketplaceFeePercent: 17.5,
+      teacherMarketplaceNotice: 'Teachers set their own availability.',
+    },
+  });
+  assert.equal(teacherPolicies.status, 200);
+  assert.equal(teacherPolicies.data.policies.teacherMarketplaceFeePercent, 17.5);
 
   const profileResult = await api('/api/teachers/me', {
     method: 'PUT',
@@ -82,6 +99,33 @@ test('teachers publish profiles, connected students review, and chats remain pri
   assert.equal(directory.status, 200);
   assert.equal(directory.data.teachers.length, 1);
   assert.equal(directory.data.teachers[0].hourlyRateMcoins, 35);
+  assert.deepEqual(directory.data.marketplace, {
+    directoryEnabled: true,
+    applicationsEnabled: true,
+    reviewsEnabled: true,
+    minimumHourlyRateMcoins: 10,
+    maximumHourlyRateMcoins: 80,
+    platformFeePercent: 17.5,
+    teacherKeepsPercent: 82.5,
+    withdrawalFeePercent: 25,
+    notice: 'Teachers set their own availability.',
+    checkoutAvailable: false,
+  });
+
+  const invalidRate = await api('/api/teachers/me', {
+    method: 'PUT',
+    token: teacher.token,
+    body: {
+      headline: 'Patient piano teacher for new players',
+      bio: 'I teach practical piano foundations through songs students already enjoy.',
+      instruments: ['piano'],
+      levels: ['beginner'],
+      lessonModes: ['online'],
+      hourlyRateMcoins: 9,
+    },
+  });
+  assert.equal(invalidRate.status, 400);
+  assert.match(invalidRate.data.error, /from 10 Mcoins to 80/);
 
   const prematureReview = await api(`/api/teachers/${profile.id}/reviews`, {
     method: 'POST',
@@ -129,4 +173,72 @@ test('teachers publish profiles, connected students review, and chats remain pri
   const outsiderConversation = await api(`/api/messages/${teacher.user.user_id}`, { token: outsider.token });
   assert.equal(outsiderConversation.status, 200);
   assert.equal(outsiderConversation.data.messages.length, 0);
+
+  const pausedPolicies = await api('/api/admin/policies', {
+    method: 'PUT',
+    token: policyAdmin.token,
+    body: {
+      ...teacherPolicies.data.policies,
+      teacherApplicationsEnabled: false,
+      teacherReviewsEnabled: false,
+    },
+  });
+  assert.equal(pausedPolicies.status, 200);
+
+  const blockedApplication = await api('/api/teachers/me', {
+    method: 'PUT',
+    token: outsider.token,
+    body: {
+      headline: 'New guitar teacher',
+      bio: 'Friendly guitar lessons for complete beginners.',
+      instruments: ['guitar'],
+      levels: ['beginner'],
+      lessonModes: ['online'],
+      hourlyRateMcoins: 30,
+    },
+  });
+  assert.equal(blockedApplication.status, 403);
+
+  const blockedReview = await api(`/api/teachers/${profile.id}/reviews`, {
+    method: 'POST',
+    token: student.token,
+    body: { rating: 4, comment: 'Updated review while reviews are paused.' },
+  });
+  assert.equal(blockedReview.status, 403);
+
+  const existingTeacherCanStillEdit = await api('/api/teachers/me', {
+    method: 'PUT',
+    token: teacher.token,
+    body: {
+      headline: 'Updated patient piano teacher',
+      bio: 'I still teach practical piano foundations through familiar songs.',
+      instruments: ['piano'],
+      levels: ['beginner'],
+      lessonModes: ['online'],
+      hourlyRateMcoins: 40,
+    },
+  });
+  assert.equal(existingTeacherCanStillEdit.status, 200);
+
+  const hiddenPolicies = await api('/api/admin/policies', {
+    method: 'PUT',
+    token: policyAdmin.token,
+    body: { ...pausedPolicies.data.policies, teacherDirectoryEnabled: false },
+  });
+  assert.equal(hiddenPolicies.status, 200);
+  const hiddenDirectory = await api('/api/teachers');
+  assert.equal(hiddenDirectory.status, 200);
+  assert.equal(hiddenDirectory.data.marketplace.directoryEnabled, false);
+  assert.deepEqual(hiddenDirectory.data.teachers, []);
+
+  const invalidRange = await api('/api/admin/policies', {
+    method: 'PUT',
+    token: policyAdmin.token,
+    body: {
+      ...hiddenPolicies.data.policies,
+      minimumTeacherHourlyRateMcoins: 100,
+      maximumTeacherHourlyRateMcoins: 50,
+    },
+  });
+  assert.equal(invalidRange.status, 400);
 });
