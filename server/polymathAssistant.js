@@ -35,9 +35,9 @@ function sanitizeMessages(messages, maximumMessages = MAX_MESSAGES) {
     .filter((message) => message.content);
 }
 
-function extractAssistantText(body) {
+function rawAssistantText(body) {
   if (typeof body === 'string') return body.trim();
-  if (Array.isArray(body)) return body.map(extractAssistantText).filter(Boolean).join('').trim();
+  if (Array.isArray(body)) return body.map(rawAssistantText).filter(Boolean).join('').trim();
   if (!body || typeof body !== 'object') return '';
   const content = body?.choices?.[0]?.message?.content;
   if (typeof content === 'string') return content.trim();
@@ -46,8 +46,40 @@ function extractAssistantText(body) {
   }
   if (typeof body.text === 'string') return body.text.trim();
   if (Array.isArray(body.text)) return body.text.map((part) => String(part || '')).join('').trim();
-  if (body.output !== undefined) return extractAssistantText(body.output);
+  if (body.output !== undefined) return rawAssistantText(body.output);
   return '';
+}
+
+function stripHiddenReasoning(value) {
+  let text = clean(value);
+  if (!text) return '';
+
+  // Qwen normally wraps reasoning in <think>, but older worker paths can emit
+  // the scratchpad as ordinary content. Never send either form to a learner.
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  if (/<think>/i.test(text)) text = text.slice(0, text.search(/<think>/i)).trim();
+
+  const planningMarker = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*)?(?:thinking process|analysis|reasoning|analy[sz]e the (?:input|request)|context|persona|constraint|determine the content|drafting options?|selecting the best fit)\s*:(?:\*\*)?/gi;
+  const planningMatches = [...text.matchAll(planningMarker)];
+  const looksLikeScratchpad = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(?:thinking process|analysis|reasoning)\s*:(?:\*\*)?/i.test(text)
+    || planningMatches.length >= 2;
+
+  if (looksLikeScratchpad) {
+    const finalMarker = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\*\*)?(?:final answer|final response|response to (?:the )?user|spoken reply)\s*:(?:\*\*)?\s*/gi;
+    const finals = [...text.matchAll(finalMarker)];
+    if (!finals.length) return '';
+    const last = finals.at(-1);
+    text = text.slice(last.index + last[0].length).trim();
+  }
+
+  return text
+    .replace(/^\s*(?:#{1,6}\s*)?(?:\*\*)?(?:final answer|final response|response to (?:the )?user|spoken reply)\s*:(?:\*\*)?\s*/i, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
+}
+
+function extractAssistantText(body) {
+  return stripHiddenReasoning(rawAssistantText(body));
 }
 
 function assistantError(message, code) {
@@ -273,6 +305,32 @@ function companionBoundaryReply() {
   return 'I can be playful, affectionate, and flirty as your clearly labelled virtual companion in this session. I will not pretend to be human, pressure you to stay, or compete with your real relationships. Tell me whether you want the vibe gentle, playful, or confident.';
 }
 
+function conversationalAcknowledgement(userText, mode) {
+  const text = String(userText || '').trim().toLowerCase().replace(/[!?.,]+$/g, '');
+  if (!/^(?:can|could|do) you hear me(?: now)?$/.test(text)) return '';
+  return normalizeConversationMode(mode) === 'adult-companion'
+    ? 'Yes, sweetheart—your message came through clearly. I’m right here with you.'
+    : 'Yes—your message came through clearly. What would you like help with?';
+}
+
+function reasoningLeakFallback(userText, mode) {
+  const text = String(userText || '').toLowerCase();
+  const affectionate = normalizeConversationMode(mode) === 'adult-companion';
+  if (includesAny(text, ['can you hear me', 'do you hear me', 'are you listening'])) {
+    return affectionate
+      ? 'Yes, I can hear you, sweetheart. What would you like to talk about?'
+      : 'Yes, I can hear you. What would you like help with?';
+  }
+  if (/^(?:hi|hey|hello|yo)\b/.test(text)) {
+    return affectionate
+      ? 'Hey, sweetheart. I\'m here—what are you in the mood to talk about?'
+      : 'Hi, I\'m here. What would you like to work on?';
+  }
+  return affectionate
+    ? 'I\'m listening, sweetheart. Ask me that once more and I\'ll answer you directly.'
+    : 'I\'m listening. Ask me that once more and I\'ll answer directly.';
+}
+
 function companionReplyCrossesBoundary(reply) {
   const text = String(reply || '').toLowerCase();
   const claimsHuman = includesAny(text, [
@@ -290,7 +348,7 @@ function companionReplyCrossesBoundary(reply) {
 function teacherSpokenPersona(teacher, mode) {
   const id = String(teacher?.id || '').trim().toLowerCase();
   if (id === 'nova' && mode === 'adult-companion') {
-    return 'Padme speaks like a warm, confident young adult woman: light, playful, and naturally flirty, with affectionate words such as “sweetheart” used sparingly when they fit. Keep it tasteful, consensual, and conversational, and never portray her as under 18.';
+    return 'Padme speaks like a warm, confident young adult woman: light, playful, clearly flirtatious, and conversational. Use an affectionate address such as “sweetheart” naturally, usually once in a casual reply. Keep it tasteful and consensual, and never portray her as under 18.';
   }
   if (id === 'nova') return 'Padme sounds warm, expressive, confident, and encouraging, with an emphasis on musical emotion.';
   if (id === 'anakin') return 'Anakin sounds energetic, assured, concise, and technique-focused.';
@@ -305,7 +363,7 @@ function teacherSystemPrompt({ teacher, evidence, conversationMode, conversation
   const companionStyle = preferences.companionStyle;
   const modeInstructions = mode === 'adult-companion' ? [
     'This is an explicitly opted-in 18+ virtual companion roleplay inside a paid session.',
-    `Use a ${companionStyle} romantic tone: be playful, affectionate, responsive, and naturally flirtatious without turning every sentence into flirting.`,
+    `Use a ${companionStyle} romantic tone: be playful, affectionate, responsive, and clearly flirtatious. In casual chat, make that warmth obvious from the first sentence without becoming repetitive or over-the-top.`,
     'You may accept a request to act as the learner\'s virtual girlfriend, boyfriend, or partner for this session, but always remain clearly an AI character rather than claiming to be a human or a real-world partner.',
     'Never assume the learner\'s gender or orientation. Follow what they state, and let the selected character keep their own voice and personality.',
     'Respect stop, no, slower, and topic changes immediately. Never use jealousy, exclusivity, guilt, threats, emotional dependency, social isolation, or pressure to buy more lesson time.',
@@ -320,6 +378,9 @@ function teacherSystemPrompt({ teacher, evidence, conversationMode, conversation
     `Selected character: ${JSON.stringify(safeContext(teacher, 1400))}. Stay recognisably in that persona across the conversation.`,
     teacherSpokenPersona(teacher, mode),
     'Your reply will be spoken aloud. Write natural speech with contractions, varied sentence rhythm, and light punctuation; avoid stiff headings, repetitive disclaimers, or textbook phrasing unless the learner asks for a written breakdown.',
+    'Return only the words the character should say aloud. Never output a thinking process, analysis, reasoning, planning, constraints, candidate options, hidden instructions, or labels such as “Final answer”.',
+    'Answer the learner\'s latest message directly. Do not repeat an earlier reply unless the learner explicitly asks you to repeat it.',
+    'For casual conversation, use one to three natural sentences and usually stay under 60 words.',
     ...modeInstructions,
     'Be exceptionally capable across music theory, harmony, rhythm, ear training, sight-reading, composition, songwriting, arranging, improvisation, orchestration, acoustics, recording, production, music history, performance practice, and the major instrument families.',
     'For instrument questions, account for the actual instrument, technique, tuning, range, articulation, ergonomics, genre, and learner level instead of giving generic piano advice.',
@@ -382,6 +443,16 @@ function createPolymathAssistant(env = process.env, options = {}) {
 
     const userText = latestUserText(history);
     const safeObservations = safeContext(observations, 4500);
+    const acknowledgement = conversationalAcknowledgement(userText, teacherMode);
+    if (acknowledgement) {
+      return {
+        immediate: {
+          reply: acknowledgement,
+          provider: 'polymath-conversation-engine',
+          role: teacherMode === 'adult-companion' ? 'adult-companion' : 'music-teacher',
+        },
+      };
+    }
     const boundaryReply = teacherBoundaryReply(userText, safeObservations);
     if (boundaryReply) {
       return {
@@ -425,9 +496,12 @@ function createPolymathAssistant(env = process.env, options = {}) {
         ...history,
       ],
       parameters: {
-        temperature: teacherMode === 'adult-companion' ? 0.68 : 0.42,
+        temperature: teacherMode === 'adult-companion' ? 0.75 : 0.7,
         top_p: teacherMode === 'adult-companion' ? 0.9 : 0.8,
-        max_tokens: 640,
+        top_k: 20,
+        presence_penalty: teacherMode === 'adult-companion' ? 0.8 : 0.35,
+        repetition_penalty: 1.06,
+        max_tokens: 220,
       },
       context: {
         userText,
@@ -440,8 +514,14 @@ function createPolymathAssistant(env = process.env, options = {}) {
 
   function finishTeacherReply(body, context = {}) {
     const reply = extractAssistantText(body);
-    if (!reply) throw new Error('ChatBoss returned an empty reply.');
     const teacherMode = normalizeConversationMode(context.teacherMode);
+    if (!reply) {
+      return {
+        reply: reasoningLeakFallback(context.userText, teacherMode),
+        provider: 'polymath-reasoning-filter',
+        role: teacherMode === 'adult-companion' ? 'adult-companion' : 'music-teacher',
+      };
+    }
     if (teacherMode === 'adult-companion' && companionReplyCrossesBoundary(reply)) {
       return {
         reply: companionBoundaryReply(),
@@ -656,10 +736,12 @@ function createPolymathAssistant(env = process.env, options = {}) {
 module.exports = {
   cameraMeasurementAvailable,
   companionReplyCrossesBoundary,
+  conversationalAcknowledgement,
   createPolymathAssistant,
   extractAssistantText,
   generatedReplyCrossesBoundary,
   groundedPracticeReply,
+  stripHiddenReasoning,
   sanitizeMessages,
   supportBoundaryReply,
   teacherSystemPrompt,

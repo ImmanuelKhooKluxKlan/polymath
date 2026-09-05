@@ -116,9 +116,14 @@ test('virtual teacher survives a long GPU cold start through a persistent queued
   assert.match(submitted.data.requestId, /^teacher_reply_/);
   assert.equal(submitted.data.session.pendingReply.id, submitted.data.requestId);
   assert.equal(submitted.data.session.remainingSeconds <= 1800, true);
-  assert.equal(submittedPayload.input.messages[0].role, 'system');
-  assert.match(submittedPayload.input.messages[0].content, /live paid session/i);
-  assert.equal(submittedPayload.input.sampling_params.max_tokens, 640);
+  assert.equal(submittedPayload.input.openai_route, '/v1/chat/completions');
+  assert.equal(submittedPayload.input.openai_input.messages[0].role, 'system');
+  assert.match(submittedPayload.input.openai_input.messages[0].content, /live paid session/i);
+  assert.equal(submittedPayload.input.openai_input.max_tokens, 220);
+  assert.deepEqual(
+    submittedPayload.input.openai_input.chat_template_kwargs,
+    { enable_thinking: false },
+  );
 
   const checking = await api(
     `/api/virtual-lessons/${started.data.session.id}/replies/${submitted.data.requestId}`,

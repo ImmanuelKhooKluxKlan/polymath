@@ -6,13 +6,55 @@ const {
   createPolymathAssistant,
   cameraMeasurementAvailable,
   companionReplyCrossesBoundary,
+  conversationalAcknowledgement,
   groundedPracticeReply,
   generatedReplyCrossesBoundary,
   sanitizeMessages,
   supportBoundaryReply,
+  stripHiddenReasoning,
   teacherSystemPrompt,
   teacherBoundaryReply,
 } = require('./polymathAssistant');
+
+test('removes Qwen reasoning and returns only the spoken final response', () => {
+  assert.equal(
+    stripHiddenReasoning('<think>private chain of thought</think>\n\nHey, sweetheart. I can hear you.'),
+    'Hey, sweetheart. I can hear you.',
+  );
+  assert.equal(
+    stripHiddenReasoning('Thinking Process:\n**Analyze the Request:** hello\n**Constraint:** be concise\n**Final Answer:** Hey, sweetheart.'),
+    'Hey, sweetheart.',
+  );
+  assert.equal(
+    stripHiddenReasoning('**Thinking Process:**\nPlanning privately.\n**Final Answer:** Hi, sweetheart.'),
+    'Hi, sweetheart.',
+  );
+  assert.equal(
+    stripHiddenReasoning('Thinking Process:\n**Analyze the Request:** hello\n**Constraint:** be concise'),
+    '',
+  );
+});
+
+test('answers voice connection checks directly without waking the model', async () => {
+  let modelCalls = 0;
+  const assistant = createPolymathAssistant({}, {
+    chatClient: {
+      async chat() { modelCalls += 1; return {}; },
+      async submit() { modelCalls += 1; return {}; },
+      async status() { return {}; },
+    },
+  });
+  const result = await assistant.submitTeacherChat({
+    messages: [{ role: 'user', content: 'can you hear me?' }],
+    teacher: { id: 'nova', name: 'Padme' },
+    conversationMode: 'adult-companion',
+  });
+  assert.equal(result.completed, true);
+  assert.equal(modelCalls, 0);
+  assert.match(result.result.reply, /Yes, sweetheart/);
+  assert.match(result.result.reply, /message came through clearly/);
+  assert.equal(conversationalAcknowledgement('Can you hear me now?!', 'music-coach').startsWith('Yes—'), true);
+});
 
 test('reports unavailable without pretending ChatBoss is connected', () => {
   const assistant = createPolymathAssistant({}, {});
@@ -100,10 +142,13 @@ test('uses lower randomness for teaching and expressive settings for opted-in co
     conversationMode: 'adult-companion',
     conversationPreferences: { companionStyle: 'playful' },
   });
-  assert.equal(calls[0].parameters.temperature, 0.42);
-  assert.equal(calls[1].parameters.temperature, 0.68);
+  assert.equal(calls[0].parameters.temperature, 0.7);
+  assert.equal(calls[1].parameters.temperature, 0.75);
+  assert.equal(calls[1].parameters.max_tokens, 220);
+  assert.equal(calls[1].parameters.top_k, 20);
   assert.match(calls[0].messages[0].content, /E2-A2-D3-G3-B3-E4/);
-  assert.match(calls[1].messages[0].content, /sweetheart.*sparingly/i);
+  assert.match(calls[1].messages[0].content, /sweetheart.*usually once/i);
+  assert.match(calls[1].messages[0].content, /Never output a thinking process/i);
   assert.match(calls[1].messages[0].content, /reply will be spoken aloud/i);
 });
 

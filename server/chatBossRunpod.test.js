@@ -30,8 +30,12 @@ test('native RunPod chat submits an asynchronous vLLM job', async () => {
   assert.equal(request.url, 'https://api.runpod.ai/v2/endpoint-123/run');
   assert.equal(request.options.headers.Authorization, 'Bearer secret-test-key');
   const payload = JSON.parse(request.options.body);
-  assert.deepEqual(payload.input.messages, [{ role: 'user', content: 'Hello' }]);
-  assert.equal(payload.input.sampling_params.max_tokens, 1024);
+  assert.equal(payload.input.openai_route, '/v1/chat/completions');
+  assert.deepEqual(payload.input.openai_input.messages, [{ role: 'user', content: 'Hello' }]);
+  assert.equal(payload.input.openai_input.model, 'polymath-chat-boss');
+  assert.equal(payload.input.openai_input.max_tokens, 1024);
+  assert.equal(payload.input.openai_input.stream, false);
+  assert.deepEqual(payload.input.openai_input.chat_template_kwargs, { enable_thinking: false });
 });
 
 test('native RunPod status and cancellation encode validated job IDs', async () => {

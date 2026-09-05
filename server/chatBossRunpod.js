@@ -99,14 +99,23 @@ function createChatBossRunpodClient(options = {}) {
       method: 'POST',
       body: JSON.stringify({
         input: {
-          messages,
-          sampling_params: {
+          // Use RunPod's OpenAI passthrough shape here. The legacy
+          // messages/sampling_params shorthand discards OpenAI-only fields
+          // such as chat_template_kwargs, which leaves Qwen thinking mode on.
+          openai_route: '/v1/chat/completions',
+          openai_input: {
+            model,
+            messages,
             temperature: 0.7,
             top_p: 0.8,
             max_tokens: 1024,
             ...samplingParams,
+            stream: false,
+            chat_template_kwargs: {
+              ...(samplingParams.chat_template_kwargs || {}),
+              enable_thinking: false,
+            },
           },
-          chat_template_kwargs: { enable_thinking: false },
         },
         policy: {
           executionTimeout: Math.min(timeoutMs, 15 * 60 * 1000),
