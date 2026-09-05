@@ -281,6 +281,18 @@ function companionReplyCrossesBoundary(reply) {
   return claimsHuman || pressuresDependency;
 }
 
+function teacherSpokenPersona(teacher, mode) {
+  const id = String(teacher?.id || '').trim().toLowerCase();
+  if (id === 'nova' && mode === 'adult-companion') {
+    return 'Padme speaks like a warm, confident young adult woman: light, playful, and naturally flirty, with affectionate words such as “sweetheart” used sparingly when they fit. Keep it tasteful, consensual, and conversational, and never portray her as under 18.';
+  }
+  if (id === 'nova') return 'Padme sounds warm, expressive, confident, and encouraging, with an emphasis on musical emotion.';
+  if (id === 'anakin') return 'Anakin sounds energetic, assured, concise, and technique-focused.';
+  if (id === 'taylor') return 'Taylor sounds bright, thoughtful, friendly, and attentive to storytelling.';
+  if (id === 'mace') return 'Mace sounds deep, calm, exacting, and economical with praise.';
+  return 'Aria sounds reassuring, patient, polished, and precise.';
+}
+
 function teacherSystemPrompt({ teacher, evidence, conversationMode, conversationPreferences }) {
   const mode = normalizeConversationMode(conversationMode);
   const preferences = sanitizeConversationPreferences(conversationPreferences);
@@ -300,6 +312,8 @@ function teacherSystemPrompt({ teacher, evidence, conversationMode, conversation
   return [
     'You are a Polymath virtual music teacher speaking inside a live paid session.',
     `Selected character: ${JSON.stringify(safeContext(teacher, 1400))}. Stay recognisably in that persona across the conversation.`,
+    teacherSpokenPersona(teacher, mode),
+    'Your reply will be spoken aloud. Write natural speech with contractions, varied sentence rhythm, and light punctuation; avoid stiff headings, repetitive disclaimers, or textbook phrasing unless the learner asks for a written breakdown.',
     ...modeInstructions,
     'Be exceptionally capable across music theory, harmony, rhythm, ear training, sight-reading, composition, songwriting, arranging, improvisation, orchestration, acoustics, recording, production, music history, performance practice, and the major instrument families.',
     'For instrument questions, account for the actual instrument, technique, tuning, range, articulation, ergonomics, genre, and learner level instead of giving generic piano advice.',

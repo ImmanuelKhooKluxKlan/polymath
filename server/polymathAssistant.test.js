@@ -103,6 +103,8 @@ test('uses lower randomness for teaching and expressive settings for opted-in co
   assert.equal(calls[0].parameters.temperature, 0.42);
   assert.equal(calls[1].parameters.temperature, 0.68);
   assert.match(calls[0].messages[0].content, /E2-A2-D3-G3-B3-E4/);
+  assert.match(calls[1].messages[0].content, /sweetheart.*sparingly/i);
+  assert.match(calls[1].messages[0].content, /reply will be spoken aloud/i);
 });
 
 test('adult companion output can flirt but cannot claim humanity or pressure dependency', () => {

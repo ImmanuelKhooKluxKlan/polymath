@@ -45,6 +45,32 @@ export async function apiRequest(path, options = {}) {
   return data;
 }
 
+export async function fetchProtectedBlob(path, options = {}) {
+  const token = getAuthToken();
+  const headers = new Headers(options.headers || {});
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json')
+      ? await response.json()
+      : await response.text();
+    const error = new Error(typeof data === 'object' && data?.error
+      ? data.error
+      : `Request failed (${response.status})`);
+    error.status = response.status;
+    error.details = data;
+    throw error;
+  }
+  return {
+    blob: await response.blob(),
+    headers: response.headers,
+  };
+}
+
 export async function fetchProtectedFile(path, fallbackName = 'download') {
   const token = getAuthToken();
   const response = await fetch(`${API_BASE}${path}`, {

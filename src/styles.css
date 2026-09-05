@@ -8286,6 +8286,24 @@ details[open] > summary {
 .virtual-lesson-actions button.is-on { border-color: rgba(118, 235, 209, .34); color: #90f1df; }
 @keyframes virtual-lesson-mic { to { opacity: .42; transform: scale(.82); } }
 
+.virtual-lesson-natural-voice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 6px 9px;
+  border: 1px solid rgba(118, 235, 209, .2);
+  border-radius: 999px;
+  color: #baf5e8;
+  background: rgba(50, 164, 139, .09);
+  font-size: .6rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.virtual-lesson-natural-voice span { color: #6fe4c9; font-size: .5rem; }
+
 .virtual-lesson-voice-picker {
   min-width: 0;
   padding: 8px 10px;

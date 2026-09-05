@@ -18,6 +18,7 @@ const { createModelLab } = require('./modelLab');
 const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
 const { createPolymathAssistant } = require('./polymathAssistant');
+const { createTeacherSpeechService, teacherGreeting } = require('./teacherSpeech');
 const {
   refundSupportQuestion,
   reserveSupportQuestion,
@@ -74,6 +75,7 @@ const REGISTRATION_OTP = createRegistrationOtpService(process.env);
 const POLYMATH_ASSISTANT = createPolymathAssistant(process.env);
 const CHAT_BOSS_ASSISTANT = createChatBossAssistant(process.env);
 const CHAT_BOSS_REQUEST_WINDOWS = new Map();
+const TEACHER_SPEECH = createTeacherSpeechService(process.env);
 const PROCESS_INSTANCE_ID = crypto.randomUUID();
 const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
 const BUILT_IN_VIRTUAL_TEACHERS = Object.freeze({
@@ -2992,6 +2994,7 @@ app.get('/api/virtual-lessons', requireAuth, async (req, res) => {
   return res.json({
     catalog: lessonCatalog(sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins),
     assistantAvailable: POLYMATH_ASSISTANT.capabilities().available,
+    teacherSpeech: TEACHER_SPEECH.capabilities(),
     session: publicVirtualLesson(activeVirtualLesson(req.db, req.user.id)),
     user: safeUser(req.user),
   });
@@ -3009,6 +3012,11 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
     return res.json({
       duplicate: true,
       session: publicVirtualLesson(existing),
+      greeting: teacherGreeting({
+        teacher: existing.teacher,
+        studentName: req.user.name,
+        conversationMode: existing.conversationMode,
+      }),
       user: safeUser(req.user),
     });
   }
@@ -3110,9 +3118,67 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
   await writeDb(req.db);
   return res.status(201).json({
     session: publicVirtualLesson(session),
+    greeting: teacherGreeting({
+      teacher: session.teacher,
+      studentName: req.user.name,
+      conversationMode: session.conversationMode,
+    }),
     user: safeUser(req.user),
     chargedMcoins: priceMcoins,
   });
+});
+
+app.post('/api/virtual-lessons/:sessionId/speech', requireAuth, async (req, res) => {
+  if (!requestIntervalAllowed(ASSISTANT_REQUEST_TIMES, `${req.user.id}:teacher-speech`, 350)) {
+    res.set('Retry-After', '1');
+    return res.status(429).json({ error: 'Give the teacher voice a moment to finish the previous line.' });
+  }
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+  if (!sessionIsActive(session)) {
+    return res.status(410).json({ error: 'This virtual lesson has ended.' });
+  }
+
+  const kind = String(req.body?.kind || '').trim().toLowerCase();
+  let text = '';
+  if (kind === 'greeting') {
+    text = teacherGreeting({
+      teacher: session.teacher,
+      studentName: req.user.name,
+      conversationMode: session.conversationMode,
+    });
+  } else {
+    const messageId = String(req.body?.messageId || '').trim();
+    const message = (session.messages || []).find((candidate) => (
+      candidate.id === messageId && candidate.role === 'assistant'
+    ));
+    if (!message) {
+      return res.status(404).json({ error: 'That teacher reply is no longer available to speak.' });
+    }
+    text = message.text;
+  }
+
+  try {
+    const speech = await TEACHER_SPEECH.synthesize({ teacher: session.teacher, text });
+    res.setHeader('Content-Type', speech.contentType);
+    res.setHeader('Content-Length', speech.audio.length);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Polymath-Voice-Quality', speech.profile.quality);
+    res.setHeader('X-Polymath-Voice-Character', encodeURIComponent(speech.profile.character));
+    return res.send(speech.audio);
+  } catch (error) {
+    const unavailable = error?.code === 'TEACHER_SPEECH_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_TEACHER_SPEECH';
+    if (!unavailable && !invalid) console.error('Natural teacher speech failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid
+        ? error.message
+        : 'The natural teacher voice could not load. Your device voice is still available.',
+    });
+  }
 });
 
 app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, res) => {
@@ -3189,7 +3255,7 @@ app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, re
       action,
     });
     const repliedAt = new Date();
-    appendSessionMessage(session, {
+    const spokenMessage = appendSessionMessage(session, {
       id: id('lesson_message'),
       role: 'assistant',
       text: result.reply,
@@ -3199,6 +3265,7 @@ app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, re
     return res.json({
       ...result,
       action,
+      speechMessageId: spokenMessage.id,
       session: publicVirtualLesson(session, repliedAt),
     });
   } catch (error) {

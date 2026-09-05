@@ -63,6 +63,13 @@ data "aws_iam_policy_document" "ecs_task" {
     ]
     resources = ["*"]
   }
+
+  statement {
+    sid       = "SynthesizeNaturalTeacherSpeech"
+    effect    = "Allow"
+    actions   = ["polly:SynthesizeSpeech"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_task" {

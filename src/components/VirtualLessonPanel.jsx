@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest } from '../services/api.js';
+import { apiRequest, fetchProtectedBlob } from '../services/api.js';
 import {
   selectTeacherVoice,
   speechSegments,
@@ -27,6 +27,37 @@ const DEFAULT_CATALOG = {
     { id: 'adult-companion', label: 'Flirty companion', requiresAdultConfirmation: true },
   ],
 };
+
+const DEFAULT_TEACHER_SPEECH = Object.freeze({
+  available: false,
+  provider: null,
+  engine: null,
+  fallback: 'device-voice',
+});
+
+function createSilentWavUrl() {
+  const sampleRate = 8000;
+  const sampleCount = 400;
+  const buffer = new ArrayBuffer(44 + sampleCount * 2);
+  const view = new DataView(buffer);
+  const writeText = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+  };
+  writeText(0, 'RIFF');
+  view.setUint32(4, 36 + sampleCount * 2, true);
+  writeText(8, 'WAVE');
+  writeText(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, 'data');
+  view.setUint32(40, sampleCount * 2, true);
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+}
 
 export function normalizeLessonMinutes(value, catalog = DEFAULT_CATALOG) {
   if (String(value ?? '').trim() === '') return null;
@@ -139,6 +170,7 @@ export default function VirtualLessonPanel({
   const [confirmedAge, setConfirmedAge] = useState(() => storedTeacherAge(user));
   const [companionConsent, setCompanionConsent] = useState(false);
   const [availableVoices, setAvailableVoices] = useState([]);
+  const [teacherSpeech, setTeacherSpeech] = useState(DEFAULT_TEACHER_SPEECH);
   const [selectedVoiceUri, setSelectedVoiceUri] = useState(() => (
     window.localStorage.getItem(`polymath-teacher-voice-${teacher.id}`) || ''
   ));
@@ -150,12 +182,18 @@ export default function VirtualLessonPanel({
   const speechTrackRef = useRef(null);
   const speechAnimationTimerRef = useRef(0);
   const speechUtteranceRef = useRef(null);
+  const naturalAudioRef = useRef(null);
+  const naturalAudioCacheRef = useRef(new Map());
+  const naturalSpeechAbortRef = useRef(null);
+  const silentAudioUrlRef = useRef('');
   const voiceOutputRef = useRef(true);
   const voiceUnlockedRef = useRef(false);
-  const lastTeacherReplyRef = useRef('');
-  const speechSupported = typeof window !== 'undefined'
+  const lastTeacherReplyRef = useRef(null);
+  const browserSpeechSupported = typeof window !== 'undefined'
     && 'speechSynthesis' in window
     && typeof window.SpeechSynthesisUtterance === 'function';
+  const naturalSpeechAvailable = Boolean(teacherSpeech.available);
+  const speechSupported = naturalSpeechAvailable || browserSpeechSupported;
   const recognitionSupported = typeof window !== 'undefined' && Boolean(recognitionEngine());
   const messages = session?.messages || [];
   const secondsLeft = remainingSeconds(session, now);
@@ -208,7 +246,18 @@ export default function VirtualLessonPanel({
           || DEFAULT_CATALOG.defaultDurationMinutes
         ));
         setAssistantAvailable(Boolean(data.assistantAvailable));
+        setTeacherSpeech(data.teacherSpeech || DEFAULT_TEACHER_SPEECH);
         setSession(data.session || null);
+        const latestReply = [...(data.session?.messages || [])]
+          .reverse()
+          .find((message) => message.role === 'assistant');
+        if (latestReply) {
+          lastTeacherReplyRef.current = {
+            text: latestReply.text,
+            messageId: latestReply.id,
+            sessionId: data.session.id,
+          };
+        }
         if (data.session?.conversationMode) setConversationMode(data.session.conversationMode);
         if (data.session?.conversationPreferences?.companionStyle) {
           setCompanionStyle(data.session.conversationPreferences.companionStyle);
@@ -241,13 +290,13 @@ export default function VirtualLessonPanel({
   }, [teacher.id, user?.adultCompanionConfirmed]);
 
   useEffect(() => {
-    if (!speechSupported) return undefined;
+    if (!browserSpeechSupported) return undefined;
     const synthesis = window.speechSynthesis;
     const refreshVoices = () => setAvailableVoices(synthesis.getVoices());
     refreshVoices();
     synthesis.addEventListener?.('voiceschanged', refreshVoices);
     return () => synthesis.removeEventListener?.('voiceschanged', refreshVoices);
-  }, [speechSupported]);
+  }, [browserSpeechSupported]);
 
   useEffect(() => {
     if (!session || session.status !== 'active') return undefined;
@@ -276,22 +325,22 @@ export default function VirtualLessonPanel({
     if (!session || session.status !== 'active' || secondsLeft > 0) return;
     setSession((current) => current ? { ...current, status: 'expired', messages: [], memory: null } : null);
     setStatus('This private lesson has ended. Session memory was cleared.');
-    window.speechSynthesis?.cancel();
-    speechRunRef.current += 1;
-    window.clearInterval(speechAnimationTimerRef.current);
-    speechAnimationTimerRef.current = 0;
-    speechTrackRef.current = null;
-    setSpeechCue(restingSpeechFrame());
+    cancelTeacherSpeech();
     recognitionRef.current?.abort();
   }, [secondsLeft, session?.id, session?.status]);
 
   useEffect(() => () => {
     recognitionRef.current?.abort();
+    naturalSpeechAbortRef.current?.abort();
+    naturalAudioRef.current?.pause();
     speechRunRef.current += 1;
     window.speechSynthesis?.cancel();
     window.clearInterval(speechAnimationTimerRef.current);
     speechAnimationTimerRef.current = 0;
     speechTrackRef.current = null;
+    for (const url of naturalAudioCacheRef.current.values()) URL.revokeObjectURL(url);
+    naturalAudioCacheRef.current.clear();
+    if (silentAudioUrlRef.current) URL.revokeObjectURL(silentAudioUrlRef.current);
   }, []);
 
   function stopSpeechAnimation(run = null) {
@@ -304,9 +353,43 @@ export default function VirtualLessonPanel({
 
   function cancelTeacherSpeech() {
     speechRunRef.current += 1;
+    naturalSpeechAbortRef.current?.abort();
+    naturalSpeechAbortRef.current = null;
+    if (naturalAudioRef.current) {
+      naturalAudioRef.current.onplay = null;
+      naturalAudioRef.current.ontimeupdate = null;
+      naturalAudioRef.current.onended = null;
+      naturalAudioRef.current.onerror = null;
+      naturalAudioRef.current.pause();
+      naturalAudioRef.current.removeAttribute('src');
+    }
     window.speechSynthesis?.cancel();
     speechUtteranceRef.current = null;
     stopSpeechAnimation();
+  }
+
+  function teacherAudioElement() {
+    if (!naturalAudioRef.current && typeof window.Audio === 'function') {
+      naturalAudioRef.current = new window.Audio();
+      naturalAudioRef.current.preload = 'auto';
+      naturalAudioRef.current.playsInline = true;
+    }
+    return naturalAudioRef.current;
+  }
+
+  function primeNaturalAudio() {
+    if (!naturalSpeechAvailable) return;
+    const audio = teacherAudioElement();
+    if (!audio) return;
+    if (!silentAudioUrlRef.current) silentAudioUrlRef.current = createSilentWavUrl();
+    const primeSource = silentAudioUrlRef.current;
+    audio.src = primeSource;
+    const attempt = audio.play();
+    attempt?.then(() => {
+      if (audio.src !== primeSource) return;
+      audio.pause();
+      audio.currentTime = 0;
+    }).catch(() => {});
   }
 
   function refreshSpeechAnimation() {
@@ -354,10 +437,9 @@ export default function VirtualLessonPanel({
     refreshSpeechAnimation();
   }
 
-  function speakTeacher(text, { unlockAttempt = false, remember = true } = {}) {
+  function speakBrowserTeacher(text, { unlockAttempt = false } = {}) {
     const spokenText = String(text || '').trim();
-    if (remember && spokenText) lastTeacherReplyRef.current = spokenText;
-    if (!voiceOutputRef.current || !speechSupported || !spokenText) return false;
+    if (!voiceOutputRef.current || !browserSpeechSupported || !spokenText) return false;
     if (!voiceUnlockedRef.current && !unlockAttempt) {
       setSpeechStatus('Tap Enable teacher voice once so this browser can play spoken replies.');
       return false;
@@ -430,6 +512,131 @@ export default function VirtualLessonPanel({
     return true;
   }
 
+  async function speakNaturalTeacher(text, {
+    unlockAttempt = false,
+    messageId = '',
+    speechKind = '',
+    sessionId = '',
+  } = {}) {
+    const spokenText = String(text || '').trim();
+    const targetSessionId = sessionId || session?.id || '';
+    if (!spokenText || !targetSessionId || (!messageId && !speechKind)) return false;
+    cancelTeacherSpeech();
+    if (unlockAttempt) {
+      voiceUnlockedRef.current = true;
+      setVoiceUnlocked(true);
+    }
+    const run = speechRunRef.current + 1;
+    speechRunRef.current = run;
+    const requestKey = `${targetSessionId}:${speechKind || messageId}`;
+    const controller = new window.AbortController();
+    naturalSpeechAbortRef.current = controller;
+    setSpeechStatus(`Preparing ${sessionTeacher.name}'s natural voice...`);
+
+    try {
+      let audioUrl = naturalAudioCacheRef.current.get(requestKey);
+      if (!audioUrl) {
+        const result = await fetchProtectedBlob(`/api/virtual-lessons/${targetSessionId}/speech`, {
+          method: 'POST',
+          signal: controller.signal,
+          body: JSON.stringify(speechKind ? { kind: speechKind } : { messageId }),
+        });
+        if (speechRunRef.current !== run) return false;
+        audioUrl = URL.createObjectURL(result.blob);
+        naturalAudioCacheRef.current.set(requestKey, audioUrl);
+        while (naturalAudioCacheRef.current.size > 24) {
+          const oldestKey = naturalAudioCacheRef.current.keys().next().value;
+          URL.revokeObjectURL(naturalAudioCacheRef.current.get(oldestKey));
+          naturalAudioCacheRef.current.delete(oldestKey);
+        }
+      }
+      if (speechRunRef.current !== run) return false;
+      naturalSpeechAbortRef.current = null;
+      const audio = teacherAudioElement();
+      if (!audio) throw new Error('This browser cannot play the natural teacher voice.');
+      audio.src = audioUrl;
+      audio.playbackRate = 1;
+      audio.onplay = () => {
+        if (speechRunRef.current !== run) return;
+        voiceUnlockedRef.current = true;
+        setVoiceUnlocked(true);
+        setSpeechStatus('');
+        beginSpeechAnimation(spokenText, 1, run);
+      };
+      audio.ontimeupdate = () => {
+        if (speechRunRef.current !== run || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+        const boundaryIndex = Math.min(
+          spokenText.length - 1,
+          Math.max(0, Math.floor((audio.currentTime / audio.duration) * spokenText.length)),
+        );
+        speechTrackRef.current = {
+          run,
+          text: spokenText,
+          rate: 1,
+          boundaryIndex,
+          boundaryLength: Math.max(1, spokenTokenLength(spokenText, boundaryIndex)),
+          boundaryAtMs: window.performance?.now?.() ?? Date.now(),
+        };
+        refreshSpeechAnimation();
+      };
+      audio.onended = () => {
+        if (speechRunRef.current !== run) return;
+        stopSpeechAnimation(run);
+      };
+      audio.onerror = () => {
+        if (speechRunRef.current !== run) return;
+        setSpeechStatus('Natural voice playback failed. Using this device\'s best voice instead.');
+        speakBrowserTeacher(spokenText, { unlockAttempt: true });
+      };
+      await audio.play();
+      return true;
+    } catch (error) {
+      if (error?.name === 'AbortError' || speechRunRef.current !== run) return false;
+      naturalSpeechAbortRef.current = null;
+      if (browserSpeechSupported) {
+        setSpeechStatus('Natural voice could not load. Using this device\'s best voice instead.');
+        return speakBrowserTeacher(spokenText, { unlockAttempt: true });
+      }
+      voiceUnlockedRef.current = false;
+      setVoiceUnlocked(false);
+      setSpeechStatus(error.message || 'The natural teacher voice could not load.');
+      return false;
+    }
+  }
+
+  function speakTeacher(text, {
+    unlockAttempt = false,
+    remember = true,
+    messageId = '',
+    speechKind = '',
+    sessionId = '',
+  } = {}) {
+    const spokenText = String(text || '').trim();
+    if (remember && spokenText) {
+      lastTeacherReplyRef.current = {
+        text: spokenText,
+        messageId,
+        speechKind,
+        sessionId: sessionId || session?.id || '',
+      };
+    }
+    if (!voiceOutputRef.current || !speechSupported || !spokenText) return false;
+    if (!voiceUnlockedRef.current && !unlockAttempt) {
+      setSpeechStatus('Tap Enable teacher voice once so this browser can play spoken replies.');
+      return false;
+    }
+    const targetSessionId = sessionId || session?.id || '';
+    if (naturalSpeechAvailable && targetSessionId && (messageId || speechKind)) {
+      return speakNaturalTeacher(spokenText, {
+        unlockAttempt,
+        messageId,
+        speechKind,
+        sessionId: targetSessionId,
+      });
+    }
+    return speakBrowserTeacher(spokenText, { unlockAttempt });
+  }
+
   function unlockTeacherVoice({ replayLatest = false } = {}) {
     voiceOutputRef.current = true;
     setVoiceOutput(true);
@@ -437,11 +644,16 @@ export default function VirtualLessonPanel({
       setSpeechStatus('Spoken replies are unavailable in this browser. Text chat still works.');
       return false;
     }
-    const replay = replayLatest ? lastTeacherReplyRef.current : '';
-    return speakTeacher(
-      replay || `${sessionTeacher.name}'s voice is ready.`,
-      { unlockAttempt: true, remember: false },
-    );
+    voiceUnlockedRef.current = true;
+    setVoiceUnlocked(true);
+    primeNaturalAudio();
+    const replay = replayLatest ? lastTeacherReplyRef.current : null;
+    if (replay?.text) return speakTeacher(replay.text, { ...replay, unlockAttempt: true, remember: false });
+    if (naturalSpeechAvailable) {
+      setSpeechStatus(`${sessionTeacher.name}'s natural character voice is ready.`);
+      return true;
+    }
+    return speakBrowserTeacher(`${sessionTeacher.name}'s fallback voice is ready.`, { unlockAttempt: true });
   }
 
   async function startLesson() {
@@ -491,9 +703,10 @@ export default function VirtualLessonPanel({
       setNow(Date.now());
       if (data.user) setUser?.(data.user);
       setStatus(`${teacher.name} is ready. Your session memory lasts only for this session.`);
-      speakTeacher(conversationMode === 'adult-companion'
-        ? `Hi ${user.name?.split(' ')[0] || 'there'}. I'm ${teacher.name}, your virtual companion for this session. What kind of mood are you in?`
-        : `Hi ${user.name?.split(' ')[0] || 'there'}. Tell me what you want to improve or talk about today.`);
+      speakTeacher(
+        data.greeting || `Hi ${user.name?.split(' ')[0] || 'there'}. Tell me what you want to improve or talk about today.`,
+        { sessionId: data.session.id, speechKind: 'greeting' },
+      );
     } catch (error) {
       if (error.details?.session) setSession(error.details.session);
       setStatus(error.message);
@@ -516,7 +729,10 @@ export default function VirtualLessonPanel({
       });
       setSession(data.session);
       if (data.action) onDemonstrate?.(data.action);
-      speakTeacher(data.reply);
+      speakTeacher(data.reply, {
+        sessionId: session.id,
+        messageId: data.speechMessageId,
+      });
     } catch (error) {
       if (error.details?.session) setSession(error.details.session);
       const restored = Number(error.details?.recoveredSeconds || 0);
@@ -796,11 +1012,18 @@ export default function VirtualLessonPanel({
         </button>
       </div>
 
-      {speechSupported && (
+      {naturalSpeechAvailable && (
+        <p className="virtual-lesson-natural-voice" aria-label="Natural teacher voice selected">
+          <span aria-hidden="true">●</span>
+          Natural character voice · {sessionTeacher.name}
+        </p>
+      )}
+
+      {browserSpeechSupported && (
         <details className="virtual-lesson-voice-picker">
-          <summary>Voice: {bestVoice?.name || 'device default'}</summary>
+          <summary>Fallback device voice: {bestVoice?.name || 'device default'}</summary>
           <label>
-            <span>Choose the most natural voice installed on this device</span>
+            <span>Used only if the natural character voice cannot load</span>
             <select
               value={selectedVoiceUri}
               onChange={(event) => {

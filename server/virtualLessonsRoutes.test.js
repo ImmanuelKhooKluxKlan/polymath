@@ -87,6 +87,13 @@ test('virtual lessons charge once, remember the session, demonstrate exact range
   assert.equal(started.data.chargedMcoins, 10);
   assert.equal(started.data.user.mcoins, 10);
   assert.equal(started.data.session.remainingSeconds > 3500, true);
+  assert.match(started.data.greeting, /Hi, Maya\. I'm Aria/i);
+
+  const unavailableSpeech = await api(`/api/virtual-lessons/${started.data.session.id}/speech`, {
+    method: 'POST', token: student.token, body: { kind: 'greeting' },
+  });
+  assert.equal(unavailableSpeech.status, 503);
+  assert.match(unavailableSpeech.data.error, /not configured/i);
 
   const duplicate = await api('/api/virtual-lessons', { method: 'POST', token: student.token, body: checkout });
   assert.equal(duplicate.status, 200);
@@ -255,6 +262,7 @@ test('virtual lessons charge once, remember the session, demonstrate exact range
   assert.equal(confirmedCompanion.data.session.teacher.name, 'Padme');
   assert.equal(confirmedCompanion.data.session.conversationMode, 'adult-companion');
   assert.equal(confirmedCompanion.data.session.adultCompanionConfirmed, true);
+  assert.equal(confirmedCompanion.data.greeting, "Oh, hi, sweetheart. I'm Padme. Come sit with me. What kind of mood are you in today?");
 
   const adminLesson = await api('/api/virtual-lessons', {
     method: 'POST',
