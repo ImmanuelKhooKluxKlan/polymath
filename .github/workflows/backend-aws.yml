@@ -82,9 +82,9 @@ jobs:
           ECS_SERVICE: ${{ matrix.service }}
           TASK_FAMILY: ${{ matrix.task_family }}
           RUNPOD_S3_REPLICAS: ${{ vars.RUNPOD_S3_REPLICAS }}
-          RUNPOD_CHAT_BOSS_ENDPOINT_ID: ${{ vars.RUNPOD_CHAT_BOSS_ENDPOINT_ID }}
-          RUNPOD_CHAT_BOSS_MODEL: ${{ vars.RUNPOD_CHAT_BOSS_MODEL }}
-          RUNPOD_CHAT_BOSS_TIMEOUT_MS: ${{ vars.RUNPOD_CHAT_BOSS_TIMEOUT_MS }}
+          RUNPOD_CHAT_BOSS_ENDPOINT_ID: ${{ vars.RUNPOD_CHAT_BOSS_ENDPOINT_ID || 'lk3brapzdbx0ch' }}
+          RUNPOD_CHAT_BOSS_MODEL: ${{ vars.RUNPOD_CHAT_BOSS_MODEL || 'polymath-chat-boss' }}
+          RUNPOD_CHAT_BOSS_TIMEOUT_MS: ${{ vars.RUNPOD_CHAT_BOSS_TIMEOUT_MS || '900000' }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition > current-task.json
           jq \

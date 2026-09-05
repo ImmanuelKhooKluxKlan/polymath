@@ -11,6 +11,7 @@ export default function AppNav({ route, onNavigate, user }) {
     ['find-teacher', 'Find Teacher'],
     ['band', 'Band'],
     ...(user ? [['your-songs', 'Your Songs']] : []),
+    ...(user?.admin ? [['chat-boss', 'Chat Boss']] : []),
     ['account', user ? 'Account' : 'Sign in'],
   ];
   const moreIsActive = moreItems.some(([value]) => route === value)

@@ -64,6 +64,7 @@ const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
 const BandPage = lazy(() => import('./pages/BandPage.jsx'));
 const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
 const AdminDatabasePage = lazy(() => import('./pages/AdminDatabasePage.jsx'));
+const ChatBossPage = lazy(() => import('./pages/ChatBossPage.jsx'));
 const ModelLabPage = lazy(() => import('./pages/ModelLabPage.jsx'));
 
 function readRoute() {
@@ -1372,6 +1373,7 @@ export default function App() {
     if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} onNavigate={navigate} />;
     if (route.page === 'your-songs') return <YourSongsPage user={user} onNavigate={navigate} />;
     if (route.page === 'admin-database') return <AdminDatabasePage user={user} onNavigate={navigate} />;
+    if (route.page === 'chat-boss') return <ChatBossPage user={user} onNavigate={navigate} />;
     if (route.page === 'messages') return <MessagesPage user={user} initialUser={messageUserId ? { user_id: messageUserId, name: messageName } : null} context={route.params.get('context')} onNavigate={navigate} />;
     if (route.page === 'account') return (
       <AccountPage

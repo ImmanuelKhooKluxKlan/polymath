@@ -24,6 +24,24 @@ function createChatBossRunpodClient(options = {}) {
   }
 
   const baseUrl = `https://api.runpod.ai/v2/${encodeURIComponent(endpointId)}/openai/v1`;
+  const nativeBaseUrl = `https://api.runpod.ai/v2/${encodeURIComponent(endpointId)}`;
+
+  async function requestJson(url, options = {}) {
+    const response = await requestFetch(url, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = body?.error?.message || body?.error || body?.message || response.statusText;
+      throw new Error(`RunPod Chat Boss request failed (${response.status}): ${detail}`);
+    }
+    return body;
+  }
 
   async function chat(messages, parameters = {}) {
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -62,7 +80,52 @@ function createChatBossRunpodClient(options = {}) {
     }
   }
 
-  return Object.freeze({ baseUrl, model, chat });
+  async function submit(messages, samplingParams = {}) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      throw new Error('messages must be a non-empty array.');
+    }
+    const body = await requestJson(`${nativeBaseUrl}/run`, {
+      method: 'POST',
+      body: JSON.stringify({
+        input: {
+          messages,
+          sampling_params: {
+            temperature: 0.7,
+            top_p: 0.8,
+            max_tokens: 1024,
+            ...samplingParams,
+          },
+          chat_template_kwargs: { enable_thinking: false },
+        },
+        policy: {
+          executionTimeout: Math.min(timeoutMs, 15 * 60 * 1000),
+          ttl: Math.max(timeoutMs + (15 * 60 * 1000), 30 * 60 * 1000),
+        },
+      }),
+    });
+    if (!body?.id) throw new Error('RunPod accepted the request without returning a job ID.');
+    return { id: body.id, status: body.status || 'IN_QUEUE' };
+  }
+
+  function validateJobId(jobId) {
+    const id = clean(jobId);
+    if (!/^[A-Za-z0-9_-]{8,160}$/.test(id)) throw new Error('Invalid RunPod job ID.');
+    return id;
+  }
+
+  async function status(jobId) {
+    const id = validateJobId(jobId);
+    return requestJson(`${nativeBaseUrl}/status/${encodeURIComponent(id)}`, { method: 'GET' });
+  }
+
+  async function cancel(jobId) {
+    const id = validateJobId(jobId);
+    return requestJson(`${nativeBaseUrl}/cancel/${encodeURIComponent(id)}`, { method: 'POST' });
+  }
+
+  return Object.freeze({ baseUrl, nativeBaseUrl, model, chat, submit, status, cancel });
 }
 
-module.exports = { createChatBossRunpodClient };
+module.exports = {
+  createChatBossRunpodClient,
+};

@@ -50,6 +50,7 @@ const {
   publicRoom,
   trimRoomMessages,
 } = require('./communityChat');
+const { createChatBossAssistant } = require('./chatBossAssistant');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -71,6 +72,8 @@ if (!IS_PRODUCTION) {
 }
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
 const POLYMATH_ASSISTANT = createPolymathAssistant(process.env);
+const CHAT_BOSS_ASSISTANT = createChatBossAssistant(process.env);
+const CHAT_BOSS_REQUEST_WINDOWS = new Map();
 const PROCESS_INSTANCE_ID = crypto.randomUUID();
 const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
 const BUILT_IN_VIRTUAL_TEACHERS = Object.freeze({
@@ -1269,6 +1272,20 @@ function requireAdmin(req, res, next) {
     return res.status(403).json({ error: 'Administrator access is required.' });
   }
   next();
+}
+
+function chatBossRequestAllowed(userId, intervalMs = 1500) {
+  const now = Date.now();
+  const previous = CHAT_BOSS_REQUEST_WINDOWS.get(userId) || 0;
+  if (now - previous < intervalMs) return false;
+  CHAT_BOSS_REQUEST_WINDOWS.set(userId, now);
+  if (CHAT_BOSS_REQUEST_WINDOWS.size > 5000) {
+    const cutoff = now - (10 * 60 * 1000);
+    for (const [entryUserId, timestamp] of CHAT_BOSS_REQUEST_WINDOWS) {
+      if (timestamp < cutoff) CHAT_BOSS_REQUEST_WINDOWS.delete(entryUserId);
+    }
+  }
+  return true;
 }
 
 function adminPurchaseRows(db) {
@@ -3519,6 +3536,53 @@ app.delete('/api/admin/virtual-teachers/:characterId', requireAuth, requireAdmin
     return res.json({ id: character.id, message: `${character.name} was deleted.` });
   } catch (error) {
     return next(error);
+  }
+});
+
+app.get('/api/chat-boss/capabilities', requireAuth, requireAdmin, async (req, res) => {
+  res.json(CHAT_BOSS_ASSISTANT.capabilities());
+});
+
+app.post('/api/chat-boss/jobs', requireAuth, requireAdmin, async (req, res) => {
+  if (!chatBossRequestAllowed(req.user.id)) {
+    res.set('Retry-After', '2');
+    return res.status(429).json({ error: 'Give Chat Boss a moment before sending another message.' });
+  }
+  try {
+    return res.status(202).json(await CHAT_BOSS_ASSISTANT.submit(req.body?.messages));
+  } catch (error) {
+    const unavailable = error?.code === 'CHAT_BOSS_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_CHAT_BOSS_REQUEST';
+    console.error('Chat Boss job submission failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid ? error.message : 'Chat Boss could not start this reply. Try again.',
+    });
+  }
+});
+
+app.get('/api/chat-boss/jobs/:jobId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    return res.json(await CHAT_BOSS_ASSISTANT.status(req.params.jobId));
+  } catch (error) {
+    console.error('Chat Boss status check failed:', error);
+    return res.status(error?.code === 'CHAT_BOSS_UNAVAILABLE' ? 503 : 502).json({
+      error: error?.code === 'CHAT_BOSS_UNAVAILABLE'
+        ? error.message
+        : 'Chat Boss status could not be checked. Try again.',
+    });
+  }
+});
+
+app.post('/api/chat-boss/jobs/:jobId/cancel', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    return res.json(await CHAT_BOSS_ASSISTANT.cancel(req.params.jobId));
+  } catch (error) {
+    console.error('Chat Boss cancellation failed:', error);
+    return res.status(error?.code === 'CHAT_BOSS_UNAVAILABLE' ? 503 : 502).json({
+      error: error?.code === 'CHAT_BOSS_UNAVAILABLE'
+        ? error.message
+        : 'Chat Boss could not cancel that reply.',
+    });
   }
 });
 
