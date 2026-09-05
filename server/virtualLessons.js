@@ -145,6 +145,7 @@ function expireVirtualLessons(db, now = new Date()) {
     session.endedAt = session.expiresAt || now.toISOString();
     session.messages = [];
     session.memory = null;
+    session.pendingReply = null;
     session.memoryClearedAt = now.toISOString();
     changed = true;
   });
@@ -161,7 +162,10 @@ function activeVirtualLesson(db, userId, now = new Date()) {
 function publicVirtualLesson(session, now = new Date()) {
   if (!session) return null;
   const active = sessionIsActive(session, now);
-  const remainingSeconds = active
+  const pendingRemaining = Number(session.pendingReply?.remainingSecondsAtSubmit);
+  const remainingSeconds = active && session.pendingReply && Number.isFinite(pendingRemaining)
+    ? Math.max(0, Math.ceil(pendingRemaining))
+    : active
     ? Math.max(0, Math.ceil((new Date(session.expiresAt).getTime() - now.getTime()) / 1000))
     : 0;
   return {
@@ -180,6 +184,11 @@ function publicVirtualLesson(session, now = new Date()) {
     startedAt: session.startedAt,
     expiresAt: session.expiresAt,
     remainingSeconds,
+    pendingReply: active && session.pendingReply ? {
+      id: cleanText(session.pendingReply.id, 96),
+      status: cleanText(session.pendingReply.status, 40).toUpperCase() || 'IN_QUEUE',
+      submittedAt: session.pendingReply.submittedAt,
+    } : null,
     messages: active
       ? (session.messages || []).map((message) => ({
         id: message.id,
@@ -248,6 +257,7 @@ function createVirtualLesson({
     createdAt: startedAt,
     lastActivityAt: startedAt,
     messages: [],
+    pendingReply: null,
     memory: {
       studentName: cleanText(studentName, 80),
       preferredName: preferences.preferredName,
@@ -417,6 +427,7 @@ function endVirtualLesson(session, now = new Date(), reason = 'student-ended') {
   session.endReason = cleanText(reason, 80);
   session.messages = [];
   session.memory = null;
+  session.pendingReply = null;
   session.memoryClearedAt = now.toISOString();
   return session;
 }

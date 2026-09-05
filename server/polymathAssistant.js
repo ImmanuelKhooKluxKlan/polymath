@@ -36,11 +36,17 @@ function sanitizeMessages(messages, maximumMessages = MAX_MESSAGES) {
 }
 
 function extractAssistantText(body) {
+  if (typeof body === 'string') return body.trim();
+  if (Array.isArray(body)) return body.map(extractAssistantText).filter(Boolean).join('').trim();
+  if (!body || typeof body !== 'object') return '';
   const content = body?.choices?.[0]?.message?.content;
   if (typeof content === 'string') return content.trim();
   if (Array.isArray(content)) {
     return content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim();
   }
+  if (typeof body.text === 'string') return body.text.trim();
+  if (Array.isArray(body.text)) return body.text.map((part) => String(part || '')).join('').trim();
+  if (body.output !== undefined) return extractAssistantText(body.output);
   return '';
 }
 
@@ -349,10 +355,174 @@ function createPolymathAssistant(env = process.env, options = {}) {
     return {
       available: configured,
       provider: configured ? 'polymath-chatboss' : null,
+      replyTransport: configured ? 'queued' : null,
       roles: ['customer-service', 'music-teacher', 'adult-companion'],
       conversationModes: ['music-coach', 'adult-companion'],
       persistence: 'Paid lesson text is temporary session memory, is cleared when the lesson ends, and is not added to training automatically.',
     };
+  }
+
+  function prepareTeacherRequest({
+    messages,
+    accountContext,
+    lessonContext,
+    observations,
+    teacher,
+    conversationMode,
+    conversationPreferences,
+  }) {
+    if (!configured || !chatClient) {
+      throw assistantError('Polymath Assistant is not configured on this server.', 'ASSISTANT_UNAVAILABLE');
+    }
+    const teacherMode = normalizeConversationMode(conversationMode);
+    const history = sanitizeMessages(messages, 28);
+    if (!history.length) {
+      throw assistantError('Write a message first.', 'INVALID_ASSISTANT_REQUEST');
+    }
+
+    const userText = latestUserText(history);
+    const safeObservations = safeContext(observations, 4500);
+    const boundaryReply = teacherBoundaryReply(userText, safeObservations);
+    if (boundaryReply) {
+      return {
+        immediate: {
+          reply: boundaryReply,
+          provider: 'polymath-guardrail',
+          role: 'piano-teacher',
+        },
+      };
+    }
+    const measuredReply = groundedPracticeReply(userText, safeObservations?.practiceReport);
+    if (measuredReply) {
+      return {
+        immediate: {
+          reply: measuredReply,
+          provider: 'polymath-measured-coach',
+          role: 'piano-teacher',
+        },
+      };
+    }
+
+    const evidence = {
+      teacher: safeContext(teacher, 1200),
+      student: safeContext(accountContext, 2400),
+      lesson: safeContext(lessonContext, 3000),
+      measuredPractice: safeObservations,
+      musicReference: retrieveMusicKnowledge(userText),
+      cameraMeasurementAvailable: cameraMeasurementAvailable(safeObservations),
+    };
+    return {
+      messages: [
+        {
+          role: 'system',
+          content: teacherSystemPrompt({
+            teacher,
+            evidence,
+            conversationMode: teacherMode,
+            conversationPreferences,
+          }),
+        },
+        ...history,
+      ],
+      parameters: {
+        temperature: teacherMode === 'adult-companion' ? 0.68 : 0.42,
+        top_p: teacherMode === 'adult-companion' ? 0.9 : 0.8,
+        max_tokens: 640,
+      },
+      context: {
+        userText,
+        observations: safeObservations,
+        teacherMode,
+        lessonContext: safeContext(lessonContext, 3000),
+      },
+    };
+  }
+
+  function finishTeacherReply(body, context = {}) {
+    const reply = extractAssistantText(body);
+    if (!reply) throw new Error('ChatBoss returned an empty reply.');
+    const teacherMode = normalizeConversationMode(context.teacherMode);
+    if (teacherMode === 'adult-companion' && companionReplyCrossesBoundary(reply)) {
+      return {
+        reply: companionBoundaryReply(),
+        provider: 'polymath-companion-boundary',
+        role: 'adult-companion',
+      };
+    }
+    if (generatedReplyCrossesBoundary({
+      role: 'teacher',
+      userText: clean(context.userText).toLowerCase(),
+      reply,
+      observations: context.observations,
+    })) {
+      const safeReply = teacherBoundaryReply(
+        clean(context.userText).toLowerCase(),
+        context.observations,
+      );
+      if (safeReply) {
+        return { reply: safeReply, provider: 'polymath-guardrail', role: 'piano-teacher' };
+      }
+      throw assistantError('The assistant reply failed a safety check.', 'ASSISTANT_SAFETY_REJECTED');
+    }
+    return {
+      reply,
+      provider: 'polymath-chatboss',
+      role: teacherMode === 'adult-companion' ? 'adult-companion' : 'music-teacher',
+    };
+  }
+
+  async function teacherChat(input) {
+    const request = prepareTeacherRequest(input);
+    if (request.immediate) return request.immediate;
+    const body = await chatClient.chat(request.messages, request.parameters);
+    return finishTeacherReply(body, request.context);
+  }
+
+  async function submitTeacherChat(input) {
+    const request = prepareTeacherRequest(input);
+    if (request.immediate) return { completed: true, result: request.immediate };
+    if (typeof chatClient.submit !== 'function' || typeof chatClient.status !== 'function') {
+      throw assistantError('Queued teacher replies are not configured on this server.', 'ASSISTANT_UNAVAILABLE');
+    }
+    const submitted = await chatClient.submit(request.messages, request.parameters);
+    const jobId = clean(submitted?.id);
+    if (!jobId) throw new Error('RunPod accepted the teacher reply without returning a job ID.');
+    return {
+      completed: false,
+      jobId,
+      status: clean(submitted?.status).toUpperCase() || 'IN_QUEUE',
+      context: request.context,
+    };
+  }
+
+  async function teacherChatJobStatus(jobId, context) {
+    if (!configured || !chatClient || typeof chatClient.status !== 'function') {
+      throw assistantError('Queued teacher replies are not configured on this server.', 'ASSISTANT_UNAVAILABLE');
+    }
+    const body = await chatClient.status(jobId);
+    const status = clean(body?.status).toUpperCase() || 'UNKNOWN';
+    if (['IN_QUEUE', 'IN_PROGRESS'].includes(status)) {
+      return { completed: false, failed: false, status };
+    }
+    if (status === 'COMPLETED') {
+      return {
+        completed: true,
+        failed: false,
+        status,
+        result: finishTeacherReply(body?.output, context),
+      };
+    }
+    return {
+      completed: false,
+      failed: true,
+      status,
+      providerError: clean(body?.error || body?.output?.error).slice(0, 300),
+    };
+  }
+
+  async function cancelTeacherChatJob(jobId) {
+    if (!configured || !chatClient || typeof chatClient.cancel !== 'function') return null;
+    return chatClient.cancel(jobId);
   }
 
   async function ask({
@@ -365,6 +535,17 @@ function createPolymathAssistant(env = process.env, options = {}) {
     conversationMode,
     conversationPreferences,
   }) {
+    if (role === 'teacher') {
+      return teacherChat({
+        messages,
+        accountContext,
+        lessonContext,
+        observations,
+        teacher,
+        conversationMode,
+        conversationPreferences,
+      });
+    }
     if (!configured || !chatClient) {
       throw assistantError('Polymath Assistant is not configured on this server.', 'ASSISTANT_UNAVAILABLE');
     }
@@ -465,7 +646,10 @@ function createPolymathAssistant(env = process.env, options = {}) {
   return Object.freeze({
     capabilities,
     supportChat: (input) => ask({ ...input, role: 'support' }),
-    teacherChat: (input) => ask({ ...input, role: 'teacher' }),
+    teacherChat,
+    submitTeacherChat,
+    teacherChatJobStatus,
+    cancelTeacherChatJob,
   });
 }
 

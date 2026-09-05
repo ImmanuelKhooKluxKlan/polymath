@@ -3,6 +3,39 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL
 const TOKEN_KEY = 'polymath_musician_auth_token';
 const LEGACY_TOKEN_KEY = 'polymath_muscian_auth_token';
 
+function retryDelay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      window.clearTimeout(timer);
+      reject(new window.DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+function friendlyNetworkError(error) {
+  if (error?.name === 'AbortError') return error;
+  const networkError = new Error('The connection was interrupted. Reconnecting may take a moment.');
+  networkError.name = 'NetworkError';
+  networkError.code = 'NETWORK_INTERRUPTED';
+  networkError.cause = error;
+  return networkError;
+}
+
+async function resilientFetch(url, options = {}, retries = 0) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      lastError = error;
+      if (attempt < retries) await retryDelay(350 * (attempt + 1), options.signal);
+    }
+  }
+  throw friendlyNetworkError(lastError);
+}
+
 export function getAuthToken() {
   const current = window.localStorage.getItem(TOKEN_KEY) || '';
   if (current) return current;
@@ -33,7 +66,12 @@ export async function apiRequest(path, options = {}) {
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const { networkRetries, ...fetchOptions } = options;
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const retries = Number.isFinite(Number(networkRetries))
+    ? Math.max(0, Math.min(4, Number(networkRetries)))
+    : (method === 'GET' || method === 'HEAD' ? 2 : 0);
+  const response = await resilientFetch(`${API_BASE}${path}`, { ...fetchOptions, headers }, retries);
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('application/json') ? await response.json() : await response.text();
   if (!response.ok) {
@@ -52,7 +90,12 @@ export async function fetchProtectedBlob(path, options = {}) {
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const { networkRetries = 1, ...fetchOptions } = options;
+  const response = await resilientFetch(
+    `${API_BASE}${path}`,
+    { ...fetchOptions, headers },
+    Math.max(0, Math.min(3, Number(networkRetries) || 0)),
+  );
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
     const data = contentType.includes('application/json')
@@ -73,9 +116,9 @@ export async function fetchProtectedBlob(path, options = {}) {
 
 export async function fetchProtectedFile(path, fallbackName = 'download') {
   const token = getAuthToken();
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await resilientFetch(`${API_BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  }, 2);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || 'File could not be loaded.');

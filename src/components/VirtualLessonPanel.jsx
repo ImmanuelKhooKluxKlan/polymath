@@ -90,8 +90,29 @@ function requestId() {
   return `lesson_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
+function waitForTeacher(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new window.DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new window.DOMException('Aborted', 'AbortError'));
+    };
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 function remainingSeconds(session, now = Date.now()) {
   if (!session?.expiresAt || session.status !== 'active') return 0;
+  if (session.pendingReply && Number.isFinite(Number(session.remainingSeconds))) {
+    return Math.max(0, Math.ceil(Number(session.remainingSeconds)));
+  }
   return Math.max(0, Math.ceil((new Date(session.expiresAt).getTime() - now) / 1000));
 }
 
@@ -276,6 +297,65 @@ export default function VirtualLessonPanel({
       });
     return () => { cancelled = true; };
   }, [user?.user_id]);
+
+  useEffect(() => {
+    const replyRequestId = session?.pendingReply?.id;
+    const targetSessionId = session?.id;
+    if (!user || !replyRequestId || !targetSessionId) return undefined;
+    const controller = new window.AbortController();
+    let stopped = false;
+    let consecutiveConnectionErrors = 0;
+
+    async function pollTeacherReply() {
+      setWaiting(true);
+      while (!controller.signal.aborted) {
+        try {
+          const data = await apiRequest(
+            `/api/virtual-lessons/${targetSessionId}/replies/${encodeURIComponent(replyRequestId)}`,
+            { signal: controller.signal, networkRetries: 2 },
+          );
+          consecutiveConnectionErrors = 0;
+          if (data.session) setSession(data.session);
+          if (data.pending) {
+            setStatus(data.message || 'Your teacher is preparing the reply...');
+            await waitForTeacher(data.status === 'IN_PROGRESS' ? 1800 : 2600, controller.signal);
+            continue;
+          }
+          if (data.action) onDemonstrate?.(data.action);
+          setStatus('');
+          speakTeacher(data.reply, {
+            sessionId: targetSessionId,
+            messageId: data.speechMessageId,
+          });
+          if (!stopped) setWaiting(false);
+          return;
+        } catch (error) {
+          if (error?.name === 'AbortError') return;
+          if (error.details?.session) setSession(error.details.session);
+          if (error.details?.retryable || error.code === 'NETWORK_INTERRUPTED') {
+            consecutiveConnectionErrors += 1;
+            setStatus(consecutiveConnectionErrors > 1
+              ? 'Connection interrupted. Your teacher job is safe; reconnecting automatically...'
+              : 'Your teacher is reconnecting...');
+            await waitForTeacher(Math.min(8000, 2500 + consecutiveConnectionErrors * 750), controller.signal);
+            continue;
+          }
+          const restored = Number(error.details?.recoveredSeconds || 0);
+          setStatus(restored > 0
+            ? `${error.message} Your lesson clock was restored.`
+            : error.message);
+          if (!stopped) setWaiting(false);
+          return;
+        }
+      }
+    }
+
+    pollTeacherReply();
+    return () => {
+      stopped = true;
+      controller.abort();
+    };
+  }, [user?.user_id, session?.id, session?.pendingReply?.id]);
 
   useEffect(() => {
     if (!teacher.adultCompanionEnabled && conversationMode === 'adult-companion') {
@@ -722,12 +802,18 @@ export default function VirtualLessonPanel({
     setDraft('');
     setWaiting(true);
     setStatus('');
+    let replyQueued = false;
     try {
       const data = await apiRequest(`/api/virtual-lessons/${session.id}/messages`, {
         method: 'POST',
         body: JSON.stringify({ message, lessonContext, observations }),
       });
       setSession(data.session);
+      if (data.pending) {
+        replyQueued = true;
+        setStatus(data.message || 'Your teacher is preparing the reply...');
+        return;
+      }
       if (data.action) onDemonstrate?.(data.action);
       speakTeacher(data.reply, {
         sessionId: session.id,
@@ -740,7 +826,7 @@ export default function VirtualLessonPanel({
         ? `${error.message} ${restored} seconds were restored to your lesson.`
         : error.message);
     } finally {
-      setWaiting(false);
+      if (!replyQueued) setWaiting(false);
     }
   }
 

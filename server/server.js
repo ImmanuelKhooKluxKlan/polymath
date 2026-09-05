@@ -3171,6 +3171,65 @@ app.post('/api/virtual-lessons/:sessionId/speech', requireAuth, async (req, res)
   }
 });
 
+const TEACHER_REPLY_HOLD_MS = 20 * 60 * 1000;
+
+function resumeLessonAfterTeacherReply(session, pending, now = new Date()) {
+  const remainingSeconds = Math.max(1, Number(pending?.remainingSecondsAtSubmit) || 1);
+  session.expiresAt = new Date(now.getTime() + remainingSeconds * 1000).toISOString();
+}
+
+function completeTeacherReply(session, pending, result, user, now = new Date()) {
+  if (pending?.id) resumeLessonAfterTeacherReply(session, pending, now);
+  const context = pending?.context || {};
+  updateSessionMemory(session, {
+    studentName: user.name,
+    userMessage: context.userText,
+    lessonContext: context.lessonContext,
+    practiceReport: context.observations?.practiceReport,
+    action: pending?.action || null,
+  });
+  const spokenMessage = appendSessionMessage(session, {
+    id: id('lesson_message'),
+    role: 'assistant',
+    text: result.reply,
+    createdAt: now.toISOString(),
+  }, now);
+  if (pending?.id) {
+    session.lastReplyJob = {
+      id: pending.id,
+      messageId: spokenMessage.id,
+      provider: result.provider,
+      role: result.role,
+      action: pending.action || null,
+      completedAt: now.toISOString(),
+    };
+    session.pendingReply = null;
+  }
+  return spokenMessage;
+}
+
+function rollbackTeacherReply(session, pending, now = new Date()) {
+  if (pending) resumeLessonAfterTeacherReply(session, pending, now);
+  const lastMessage = session.messages?.[session.messages.length - 1];
+  if (lastMessage?.id === pending?.userMessageId && lastMessage.role === 'user') session.messages.pop();
+  session.pendingReply = null;
+  session.aiFailureCount = Number(session.aiFailureCount || 0) + 1;
+  session.lastFailureAt = now.toISOString();
+}
+
+function queuedTeacherPayload(session) {
+  const pending = session.pendingReply;
+  return {
+    pending: true,
+    requestId: pending.id,
+    status: pending.status,
+    message: pending.status === 'IN_PROGRESS'
+      ? `${session.teacher?.name || 'Your teacher'} is preparing the reply...`
+      : `Waking ${session.teacher?.name || 'your teacher'}'s private GPU...`,
+    session: publicVirtualLesson(session),
+  };
+}
+
 app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, res) => {
   if (!requestIntervalAllowed(ASSISTANT_REQUEST_TIMES, `${req.user.id}:teacher`, 1400)) {
     res.set('Retry-After', '2');
@@ -3190,6 +3249,8 @@ app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, re
       session: publicVirtualLesson(session),
     });
   }
+  if (session.pendingReply) return res.status(202).json(queuedTeacherPayload(session));
+
   const userText = String(req.body?.message || '').trim().slice(0, 1600);
   if (!userText) return res.status(400).json({ error: 'Say or type a message first.' });
   const requestedAt = new Date();
@@ -3200,7 +3261,7 @@ app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, re
     lessonContext,
     session.memory?.lastDemonstration,
   );
-  appendSessionMessage(session, {
+  const userMessage = appendSessionMessage(session, {
     id: id('lesson_message'),
     role: 'user',
     text: userText,
@@ -3208,74 +3269,162 @@ app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, re
   }, requestedAt);
 
   try {
-    let result;
     if (action) {
       const start = Math.floor(action.startSeconds / 60) + ':' + String(Math.floor(action.startSeconds % 60)).padStart(2, '0');
       const end = Math.floor(action.endSeconds / 60) + ':' + String(Math.floor(action.endSeconds % 60)).padStart(2, '0');
       const hand = action.hand === 'both' ? 'both hands' : `the ${action.hand} hand`;
       const speed = action.speed ? ` at ${Math.round(action.speed * 100)}% speed` : '';
-      result = {
-        reply: `${req.user.name?.split(' ')[0] || 'Ready'}, watch ${hand} from ${start} to ${end}${speed}. Notice where each fingertip lands, then copy only this short phrase once.` ,
+      const result = {
+        reply: `${req.user.name?.split(' ')[0] || 'Ready'}, watch ${hand} from ${start} to ${end}${speed}. Notice where each fingertip lands, then copy only this short phrase once.`,
         provider: 'polymath-demonstration-engine',
         role: 'piano-teacher',
       };
-    } else {
-      result = await POLYMATH_ASSISTANT.teacherChat({
-        messages: session.messages.map((message) => ({
-          role: message.role === 'assistant' ? 'assistant' : 'user',
-          content: message.text,
-        })),
-        teacher: session.teacher,
-        conversationMode: session.conversationMode,
-        conversationPreferences: session.conversationPreferences,
-        accountContext: {
-          studentName: req.user.name,
-          sessionMemory: session.memory,
-          sessionEndsAt: session.expiresAt,
-        },
-        lessonContext,
-        observations,
+      const spokenMessage = completeTeacherReply(session, {
+        context: { userText, lessonContext, observations }, action,
+      }, result, req.user, requestedAt);
+      await writeDb(req.db);
+      return res.json({
+        ...result,
+        action,
+        speechMessageId: spokenMessage.id,
+        session: publicVirtualLesson(session, requestedAt),
       });
     }
-    updateSessionMemory(session, {
-      studentName: req.user.name,
-      userMessage: userText,
+
+    const submission = await POLYMATH_ASSISTANT.submitTeacherChat({
+      messages: session.messages.map((message) => ({
+        role: message.role === 'assistant' ? 'assistant' : 'user',
+        content: message.text,
+      })),
+      teacher: session.teacher,
+      conversationMode: session.conversationMode,
+      conversationPreferences: session.conversationPreferences,
+      accountContext: {
+        studentName: req.user.name,
+        sessionMemory: session.memory,
+        sessionEndsAt: session.expiresAt,
+      },
       lessonContext,
-      practiceReport: observations?.practiceReport,
-      action,
+      observations,
     });
+    if (submission.completed) {
+      const spokenMessage = completeTeacherReply(session, {
+        context: { userText, lessonContext, observations }, action: null,
+      }, submission.result, req.user, new Date());
+      await writeDb(req.db);
+      return res.json({
+        ...submission.result,
+        action: null,
+        speechMessageId: spokenMessage.id,
+        session: publicVirtualLesson(session),
+      });
+    }
+
+    const remainingSecondsAtSubmit = Math.max(
+      1,
+      Math.ceil((new Date(session.expiresAt).getTime() - requestedAt.getTime()) / 1000),
+    );
+    const holdUntil = new Date(requestedAt.getTime() + TEACHER_REPLY_HOLD_MS);
+    session.expiresAt = new Date(holdUntil.getTime() + remainingSecondsAtSubmit * 1000).toISOString();
+    session.pendingReply = {
+      id: id('teacher_reply'),
+      providerJobId: submission.jobId,
+      userMessageId: userMessage.id,
+      status: submission.status,
+      submittedAt: requestedAt.toISOString(),
+      holdUntil: holdUntil.toISOString(),
+      remainingSecondsAtSubmit,
+      context: submission.context,
+      action: null,
+    };
+    await writeDb(req.db);
+    return res.status(202).json(queuedTeacherPayload(session));
+  } catch (error) {
+    const unavailable = error?.code === 'ASSISTANT_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_ASSISTANT_REQUEST';
+    console.error('Polymath teacher job submission failed:', error);
+    const recoverySeconds = Math.min(120, Math.max(15, Math.ceil((Date.now() - requestedAt.getTime()) / 1000) + 10));
+    session.expiresAt = new Date(new Date(session.expiresAt).getTime() + recoverySeconds * 1000).toISOString();
+    if (session.messages?.at(-1)?.id === userMessage.id) session.messages.pop();
+    session.aiFailureCount = Number(session.aiFailureCount || 0) + 1;
+    session.lastFailureAt = new Date().toISOString();
+    await writeDb(req.db);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid
+        ? error.message
+        : 'Your virtual teacher could not start this reply. Please try again.',
+      session: publicVirtualLesson(session),
+      recoveredSeconds: recoverySeconds,
+    });
+  }
+});
+
+app.get('/api/virtual-lessons/:sessionId/replies/:requestId', requireAuth, async (req, res) => {
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+
+  if (session.lastReplyJob?.id === req.params.requestId) {
+    const message = (session.messages || []).find((candidate) => candidate.id === session.lastReplyJob.messageId);
+    if (message) {
+      return res.json({
+        pending: false,
+        reply: message.text,
+        provider: session.lastReplyJob.provider,
+        role: session.lastReplyJob.role,
+        action: session.lastReplyJob.action,
+        speechMessageId: message.id,
+        session: publicVirtualLesson(session),
+      });
+    }
+  }
+
+  const pending = session.pendingReply;
+  if (!pending || pending.id !== req.params.requestId) {
+    return res.status(404).json({ error: 'That teacher reply is no longer pending.' });
+  }
+  try {
+    const job = await POLYMATH_ASSISTANT.teacherChatJobStatus(
+      pending.providerJobId,
+      pending.context,
+    );
+    if (!job.completed && !job.failed) {
+      if (pending.status !== job.status) {
+        pending.status = job.status;
+        await writeDb(req.db);
+      }
+      return res.status(202).json(queuedTeacherPayload(session));
+    }
+    if (job.failed) {
+      console.error(`Polymath teacher job ${pending.id} ended with ${job.status}: ${job.providerError || 'no provider detail'}`);
+      const recoveredSeconds = pending.remainingSecondsAtSubmit;
+      rollbackTeacherReply(session, pending, new Date());
+      await writeDb(req.db);
+      return res.status(502).json({
+        error: 'Your teacher could not complete that reply. Your lesson clock was restored; please try again.',
+        recoveredSeconds,
+        session: publicVirtualLesson(session),
+      });
+    }
+
     const repliedAt = new Date();
-    const spokenMessage = appendSessionMessage(session, {
-      id: id('lesson_message'),
-      role: 'assistant',
-      text: result.reply,
-      createdAt: repliedAt.toISOString(),
-    }, repliedAt);
+    const spokenMessage = completeTeacherReply(session, pending, job.result, req.user, repliedAt);
     await writeDb(req.db);
     return res.json({
-      ...result,
-      action,
+      pending: false,
+      ...job.result,
+      action: pending.action || null,
       speechMessageId: spokenMessage.id,
       session: publicVirtualLesson(session, repliedAt),
     });
   } catch (error) {
-    const unavailable = error?.code === 'ASSISTANT_UNAVAILABLE';
-    const invalid = error?.code === 'INVALID_ASSISTANT_REQUEST';
-    console.error('Polymath teacher chat failed:', error);
-    // Paid time should not disappear while a GPU reply fails. Restore the
-    // failed request time plus a small recovery allowance.
-    const recoverySeconds = Math.min(120, Math.max(15, Math.ceil((Date.now() - requestedAt.getTime()) / 1000) + 10));
-    session.expiresAt = new Date(new Date(session.expiresAt).getTime() + recoverySeconds * 1000).toISOString();
-    session.messages.pop();
-    session.aiFailureCount = Number(session.aiFailureCount || 0) + 1;
-    session.lastFailureAt = new Date().toISOString();
-    await writeDb(req.db);
-    return res.status(unavailable ? 503 : invalid ? 400 : error?.name === 'AbortError' ? 504 : 502).json({
-      error: unavailable || invalid
-        ? error.message
-        : 'Your virtual teacher could not reply. Please try again.',
+    console.error('Polymath teacher job status check failed:', error);
+    return res.status(503).json({
+      error: 'Your teacher is still reconnecting. Keep this page open.',
+      retryable: true,
+      requestId: pending.id,
       session: publicVirtualLesson(session),
-      recoveredSeconds: recoverySeconds,
     });
   }
 });
@@ -3285,8 +3434,14 @@ app.post('/api/virtual-lessons/:sessionId/end', requireAuth, async (req, res) =>
     candidate.id === req.params.sessionId && candidate.userId === req.user.id
   ));
   if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+  const pendingProviderJobId = session.pendingReply?.providerJobId;
   if (session.status === 'active') endVirtualLesson(session);
   await writeDb(req.db);
+  if (pendingProviderJobId) {
+    POLYMATH_ASSISTANT.cancelTeacherChatJob(pendingProviderJobId).catch((error) => {
+      console.error('Could not cancel ended virtual teacher job:', error.message);
+    });
+  }
   return res.json({ session: publicVirtualLesson(session), user: safeUser(req.user) });
 });
 
