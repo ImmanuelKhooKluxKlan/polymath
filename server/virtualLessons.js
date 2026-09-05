@@ -1,5 +1,7 @@
 'use strict';
 
+const { stripHiddenReasoning } = require('./assistantOutput');
+
 const LESSON_RATE_MCOINS_PER_HOUR = 10;
 const LESSON_DURATION_STEP_MINUTES = 30;
 const LESSON_MIN_DURATION_MINUTES = 30;
@@ -193,9 +195,11 @@ function publicVirtualLesson(session, now = new Date()) {
       ? (session.messages || []).map((message) => ({
         id: message.id,
         role: message.role,
-        text: cleanText(message.text),
+        text: cleanText(message.role === 'assistant'
+          ? stripHiddenReasoning(message.text)
+          : message.text),
         createdAt: message.createdAt,
-      }))
+      })).filter((message) => message.text)
       : [],
     memory: active && session.memory ? {
       goal: cleanText(session.memory.goal, 240),

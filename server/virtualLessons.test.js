@@ -110,6 +110,32 @@ test('expired and manually ended sessions erase conversation memory', () => {
   assert.equal(ended.memory, null);
 });
 
+test('public lesson history never exposes a previously stored model scratchpad', () => {
+  const session = lesson();
+  appendSessionMessage(session, {
+    id: 'message_user',
+    role: 'user',
+    text: 'Can you hear me?',
+  }, new Date('2026-09-04T10:00:05.000Z'));
+  appendSessionMessage(session, {
+    id: 'message_reasoning_only',
+    role: 'assistant',
+    text: 'Thinking Process: **Analyze the Request:** connection check **Constraint:** be concise',
+  }, new Date('2026-09-04T10:00:06.000Z'));
+  appendSessionMessage(session, {
+    id: 'message_with_final',
+    role: 'assistant',
+    text: 'Thinking Process: **Analyze the Request:** connection check **Constraint:** flirt **Final Answer:** Yes, sweetheart—I hear you.',
+  }, new Date('2026-09-04T10:00:07.000Z'));
+
+  const visible = publicVirtualLesson(session, new Date('2026-09-04T10:00:08.000Z')).messages;
+  assert.equal(visible.some((message) => /Thinking Process|Analyze the Request/.test(message.text)), false);
+  assert.deepEqual(visible.map((message) => message.text), [
+    'Can you hear me?',
+    'Yes, sweetheart—I hear you.',
+  ]);
+});
+
 test('parses exact teacher demonstrations and safely bounds long requests', () => {
   assert.deepEqual(
     parseTeacherDemonstration('Show me how your hands move for the first 5 seconds', { duration: 200 }),
