@@ -19,6 +19,7 @@ const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
 const { createPolymathAssistant } = require('./polymathAssistant');
 const { createTeacherSpeechService, teacherGreeting } = require('./teacherSpeech');
+const { buildClientOrigins, clientOriginAllowed } = require('./clientOrigins');
 const {
   refundSupportQuestion,
   reserveSupportQuestion,
@@ -59,18 +60,8 @@ require('dotenv').config({
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-const CLIENT_ORIGINS = new Set(
-  [CLIENT_ORIGIN, ...String(process.env.CLIENT_ORIGINS || '').split(',')]
-    .map((origin) => origin.trim().replace(/\/+$/, ''))
-    .filter(Boolean),
-);
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
-if (!IS_PRODUCTION) {
-  CLIENT_ORIGINS.add('http://localhost:5173');
-  CLIENT_ORIGINS.add('http://127.0.0.1:5173');
-  CLIENT_ORIGINS.add('http://localhost:5174');
-  CLIENT_ORIGINS.add('http://127.0.0.1:5174');
-}
+const CLIENT_ORIGINS = buildClientOrigins(process.env);
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
 const POLYMATH_ASSISTANT = createPolymathAssistant(process.env);
 const CHAT_BOSS_ASSISTANT = createChatBossAssistant(process.env);
@@ -2860,8 +2851,7 @@ function requestIntervalAllowed(store, key, minimumIntervalMs) {
 
 app.use(cors({
   origin(origin, callback) {
-    const normalizedOrigin = String(origin || '').replace(/\/+$/, '');
-    if (!origin || CLIENT_ORIGINS.has(normalizedOrigin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+    if (clientOriginAllowed(origin, CLIENT_ORIGINS)) {
       callback(null, true);
       return;
     }

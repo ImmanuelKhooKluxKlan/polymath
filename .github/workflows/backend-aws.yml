@@ -85,6 +85,7 @@ jobs:
           RUNPOD_CHAT_BOSS_ENDPOINT_ID: ${{ vars.RUNPOD_CHAT_BOSS_ENDPOINT_ID || 'lk3brapzdbx0ch' }}
           RUNPOD_CHAT_BOSS_MODEL: ${{ vars.RUNPOD_CHAT_BOSS_MODEL || 'polymath-chat-boss' }}
           RUNPOD_CHAT_BOSS_TIMEOUT_MS: ${{ vars.RUNPOD_CHAT_BOSS_TIMEOUT_MS || '900000' }}
+          CLIENT_ORIGINS: ${{ vars.CLIENT_ORIGINS || 'https://www.polymathmusician67.com,https://polymath-musician.pages.dev,https://scaling-preview.polymath-musician.pages.dev' }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition > current-task.json
           jq \
@@ -92,19 +93,22 @@ jobs:
             --arg runpodReplicas "$RUNPOD_S3_REPLICAS" \
             --arg chatBossEndpointId "$RUNPOD_CHAT_BOSS_ENDPOINT_ID" \
             --arg chatBossModel "$RUNPOD_CHAT_BOSS_MODEL" \
-            --arg chatBossTimeoutMs "$RUNPOD_CHAT_BOSS_TIMEOUT_MS" '
+            --arg chatBossTimeoutMs "$RUNPOD_CHAT_BOSS_TIMEOUT_MS" \
+            --arg clientOrigins "$CLIENT_ORIGINS" '
             .containerDefinitions[0].image = $image
             | .containerDefinitions[0].environment = (
                 (.containerDefinitions[0].environment // [])
                 | map(select(.name != "RUNPOD_S3_REPLICAS"
                   and .name != "RUNPOD_CHAT_BOSS_ENDPOINT_ID"
                   and .name != "RUNPOD_CHAT_BOSS_MODEL"
-                  and .name != "RUNPOD_CHAT_BOSS_TIMEOUT_MS"))
+                  and .name != "RUNPOD_CHAT_BOSS_TIMEOUT_MS"
+                  and .name != "CLIENT_ORIGINS"))
                 + [
                     { name: "RUNPOD_S3_REPLICAS", value: $runpodReplicas },
                     { name: "RUNPOD_CHAT_BOSS_ENDPOINT_ID", value: $chatBossEndpointId },
                     { name: "RUNPOD_CHAT_BOSS_MODEL", value: $chatBossModel },
-                    { name: "RUNPOD_CHAT_BOSS_TIMEOUT_MS", value: $chatBossTimeoutMs }
+                    { name: "RUNPOD_CHAT_BOSS_TIMEOUT_MS", value: $chatBossTimeoutMs },
+                    { name: "CLIENT_ORIGINS", value: $clientOrigins }
                   ]
               )
             | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
