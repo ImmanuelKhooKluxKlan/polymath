@@ -1,6 +1,18 @@
 'use strict';
 
-const LEVEL_IDS = new Set(['melody', 'beginner', 'intermediate', 'original']);
+const LEVEL_IDS = new Set([
+  'first-keys',
+  'song-builder',
+  'piano-player',
+  'piano-master',
+  'piano-king',
+]);
+const LEGACY_LEVEL_IDS = Object.freeze({
+  melody: 'first-keys',
+  beginner: 'song-builder',
+  intermediate: 'piano-player',
+  original: 'piano-king',
+});
 const HAND_MODES = new Set(['left', 'right', 'both']);
 const PRACTICE_FOCUS_IDS = new Set(['notes', 'rhythm', 'holds', 'touch', 'pedal']);
 const METRICS = Object.freeze({
@@ -28,6 +40,13 @@ function score(value) {
 function count(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(clamp(number, 0, 100000)) : 0;
+}
+
+function normalizeLearningLevelId(value) {
+  const requested = text(value, 40);
+  return LEVEL_IDS.has(requested)
+    ? requested
+    : LEGACY_LEVEL_IDS[requested] || 'first-keys';
 }
 
 function learningError(message, code) {
@@ -78,7 +97,7 @@ function sanitizeLearningAttempt(payload, userId, options = {}) {
   const start = clamp(Number(report.range?.start) || 0, 0, 86400);
   const requestedEnd = Number(report.range?.end);
   const end = clamp(Number.isFinite(requestedEnd) ? requestedEnd : start, start, Math.min(86400, start + 3600));
-  const levelId = LEVEL_IDS.has(report.levelId) ? report.levelId : 'beginner';
+  const levelId = normalizeLearningLevelId(report.levelId);
   const createdAt = safeCreatedAt(report.createdAt, now);
   const attemptScore = score(report.score) ?? 0;
   const internalId = typeof options.idFactory === 'function'
@@ -131,7 +150,7 @@ function publicLearningAttempt(attempt) {
     songId: attempt.songId,
     songTitle: attempt.songTitle || '',
     createdAt: attempt.createdAt,
-    levelId: attempt.levelId,
+    levelId: normalizeLearningLevelId(attempt.levelId),
     range: attempt.range,
     sectionKey: attempt.sectionKey,
     elapsedSeconds: attempt.elapsedSeconds,
@@ -173,6 +192,7 @@ function trimUserLearningAttempts(db, userId, maximum = 500) {
 
 module.exports = {
   learningAttemptsForUser,
+  normalizeLearningLevelId,
   publicLearningAttempt,
   sanitizeLearningAttempt,
   trimUserLearningAttempts,

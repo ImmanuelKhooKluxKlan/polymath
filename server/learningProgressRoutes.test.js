@@ -75,7 +75,7 @@ test('learning evidence is private, idempotent, bounded, and available only with
     songTitle: 'Mean',
     report: {
       createdAt: '2026-09-06T04:00:00.000Z',
-      levelId: 'beginner',
+      levelId: 'first-keys',
       range: { start: 10, end: 22 },
       score: 999,
       speedPercent: 65,
@@ -106,6 +106,8 @@ test('learning evidence is private, idempotent, bounded, and available only with
   assert.equal(saved.data.attempts[0].handMode, 'right');
   assert.equal(saved.data.attempts[0].practiceFocusId, 'rhythm');
   assert.equal(saved.data.attempts[0].practiceTargetScore, 82);
+  assert.equal(saved.data.attempts[0].levelId, 'first-keys');
+  assert.match(saved.data.attempts[0].sectionKey, /^first-keys:/);
 
   const duplicate = await api('/api/learning/attempts', { method: 'POST', token: learner.token, body: attempt });
   assert.equal(duplicate.status, 200);
@@ -121,19 +123,36 @@ test('learning evidence is private, idempotent, bounded, and available only with
         {
           ...attempt,
           attemptId: 'attempt_offline_123456',
-          report: { ...attempt.report, createdAt: '2026-09-06T04:05:00.000Z', score: 81 },
+          report: {
+            ...attempt.report,
+            createdAt: '2026-09-06T04:05:00.000Z',
+            levelId: 'piano-player',
+            score: 81,
+          },
+        },
+        {
+          ...attempt,
+          attemptId: 'attempt_legacy_1234567',
+          report: {
+            ...attempt.report,
+            createdAt: '2026-09-06T04:10:00.000Z',
+            levelId: 'original',
+            score: 88,
+          },
         },
       ],
     },
   });
   assert.equal(synchronized.status, 200);
-  assert.equal(synchronized.data.savedCount, 1);
-  assert.equal(synchronized.data.attempts.length, 2);
+  assert.equal(synchronized.data.savedCount, 2);
+  assert.equal(synchronized.data.attempts.length, 3);
+  assert.equal(synchronized.data.attempts[1].levelId, 'piano-player');
+  assert.equal(synchronized.data.attempts[2].levelId, 'piano-king');
 
   const ownProgress = await api('/api/learning/progress', { token: learner.token });
   assert.equal(ownProgress.status, 200);
   assert.equal(ownProgress.data.attempts[0].id, attempt.attemptId);
-  assert.equal(ownProgress.data.attempts.length, 2);
+  assert.equal(ownProgress.data.attempts.length, 3);
   const isolatedProgress = await api('/api/learning/progress', { token: other.token });
   assert.equal(isolatedProgress.status, 200);
   assert.deepEqual(isolatedProgress.data.attempts, []);
