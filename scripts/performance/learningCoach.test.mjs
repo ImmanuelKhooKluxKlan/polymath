@@ -27,6 +27,31 @@ test('learning arrangements progressively restore musical density', () => {
   assert.equal(original.length, notes.length);
 });
 
+test('learning levels respect the arranger melody role instead of blindly taking the highest note', () => {
+  const arranged = buildLearningArrangement([
+    { id: 'bass', note: 'C3', time: 0, duration: 0.8, velocity: 0.48, arrangementRole: 'bass' },
+    { id: 'melody', note: 'E4', time: 0, duration: 0.7, velocity: 0.86, arrangementRole: 'melody' },
+    { id: 'ornament', note: 'C6', time: 0, duration: 0.15, velocity: 0.55, arrangementRole: 'harmony' },
+  ], 'melody');
+
+  assert.equal(arranged.length, 1);
+  assert.equal(arranged[0].id, 'melody');
+  assert.equal(arranged[0].learningRole, 'melody');
+  assert.equal(arranged[0].hand, 'right');
+});
+
+test('rapid duplicate melody evidence becomes one sustained learning note', () => {
+  const arranged = buildLearningArrangement([
+    { id: 'first', note: 'C5', time: 0, duration: 0.06, velocity: 0.72, arrangementRole: 'melody' },
+    { id: 'duplicate', note: 'C5', time: 0.04, duration: 0.32, velocity: 0.81, arrangementRole: 'melody' },
+  ], 'melody');
+
+  assert.equal(arranged.length, 1);
+  assert.ok(arranged[0].duration >= 0.36);
+  assert.equal(arranged[0].velocity, 0.81);
+  assert.ok(arranged[0].audioDuration > 0.3);
+});
+
 test('a precise performance receives a strong report', () => {
   const report = analyzePracticeAttempt({
     expectedNotes: notes,

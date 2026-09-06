@@ -6795,6 +6795,61 @@ details[open] > summary {
     radial-gradient(circle at 92% 110%, rgba(221, 77, 180, 0.12), transparent 25rem);
 }
 
+.piano-core-start {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(18px, 4vw, 52px);
+  min-width: 0;
+  min-height: 148px;
+  padding: clamp(20px, 3vw, 34px);
+  border-left: 1px solid rgba(151, 133, 255, 0.16);
+  background:
+    radial-gradient(circle at 14% -30%, rgba(110, 96, 255, 0.24), transparent 32rem),
+    radial-gradient(circle at 96% 130%, rgba(221, 77, 180, 0.16), transparent 24rem);
+}
+
+.piano-core-start > div:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  max-width: 660px;
+}
+
+.piano-core-start h1,
+.piano-core-start p { margin: 0; }
+.piano-core-start h1 {
+  font-size: clamp(1.45rem, 3.1vw, 2.35rem);
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+.piano-core-start > div:first-child > p:last-child {
+  max-width: 54ch;
+  color: var(--muted);
+  font-size: clamp(0.76rem, 1.25vw, 0.94rem);
+  line-height: 1.55;
+}
+
+.piano-core-start-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr);
+  gap: 9px;
+  flex: 0 1 210px;
+  min-width: 160px;
+}
+.piano-core-start-actions button {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  white-space: normal;
+  line-height: 1.2;
+}
+.piano-core-start.is-locked {
+  background:
+    radial-gradient(circle at 14% -30%, rgba(129, 104, 255, 0.25), transparent 32rem),
+    radial-gradient(circle at 96% 130%, rgba(214, 90, 178, 0.19), transparent 24rem);
+}
+
 .learn-journey-header {
   display: flex;
   align-items: center;
@@ -7073,6 +7128,7 @@ details[open] > summary {
 @media (max-width: 900px) {
   .piano-learn-journey { grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; max-width: 100%; border-radius: 21px; }
   .learn-journey-mode { justify-self: start; margin: 10px 10px 0; }
+  .piano-core-start { border-top: 1px solid rgba(151, 133, 255, 0.14); border-left: 0; }
   .learn-journey-body,
   .learn-journey-steps,
   .learn-journey-stage { width: 100%; min-width: 0; max-width: 100%; }
@@ -7084,6 +7140,9 @@ details[open] > summary {
 
 @media (max-width: 600px) {
   .piano-learn-journey { gap: 8px; margin-bottom: 9px; border-radius: 18px; }
+  .piano-core-start { display: grid; gap: 15px; min-height: 0; padding: 16px 14px 18px; }
+  .piano-core-start h1 { font-size: clamp(1.38rem, 8vw, 1.75rem); }
+  .piano-core-start-actions { grid-template-columns: minmax(0, 1fr); min-width: 0; }
   .learn-journey-body { gap: 10px; padding: 10px; }
   .learn-journey-header { align-items: start; }
   .learn-journey-header h2 { font-size: 1.12rem; }
@@ -7126,6 +7185,11 @@ details[open] > summary {
   .piano-learn-journey { grid-template-columns: 122px minmax(0, 1fr); gap: 0; }
   .learn-journey-mode { display: grid; grid-template-columns: minmax(0, 1fr); align-self: start; width: 106px; margin: 9px 8px; }
   .learn-journey-mode button { min-height: 36px; padding: 7px 8px; }
+  .piano-core-start { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; min-height: 0; padding: 12px; border-top: 0; border-left: 1px solid rgba(151, 133, 255, 0.14); }
+  .piano-core-start h1 { font-size: 1.16rem; }
+  .piano-core-start > div:first-child > p:last-child { display: none; }
+  .piano-core-start-actions { grid-template-columns: repeat(2, minmax(112px, 1fr)); min-width: 0; }
+  .piano-core-start-actions button { min-height: 36px; padding: 7px 9px; font-size: 0.7rem; }
   .learn-journey-body { gap: 6px; padding: 8px; border-top: 0; border-left: 1px solid rgba(151, 133, 255, 0.14); }
   .learn-journey-header .eyebrow { font-size: 0.57rem; }
   .learn-journey-header h2 { font-size: 1rem; }

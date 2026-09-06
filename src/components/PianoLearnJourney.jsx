@@ -119,13 +119,45 @@ export default function PianoLearnJourney({
   }
 
   return (
-    <section ref={panelRef} className={`piano-learn-journey ${mode === 'learn' ? 'is-active' : ''}`} aria-labelledby="learn-journey-title">
+    <section
+      ref={panelRef}
+      className={`piano-learn-journey ${mode === 'learn' ? 'is-active' : ''}`}
+      aria-label="Piano journey"
+    >
       <div className="mode-switch learn-journey-mode" role="group" aria-label="Piano mode">
         <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => switchMode('regular')}>Chilling</button>
         <button type="button" className={mode === 'learn' ? 'active' : ''} onClick={() => switchMode('learn')}>
           {locked ? 'Learn · Musician' : 'Learn'}
         </button>
       </div>
+
+      {mode === 'regular' && (
+        <div className="piano-core-start">
+          <div>
+            <p className="eyebrow">Start here</p>
+            <h1>Play the song you love.</h1>
+            <p>Bring a song or choose one that is ready. Polymath turns it into playable piano.</p>
+          </div>
+          <div className="piano-core-start-actions">
+            <button type="button" className="primary" onClick={() => onChooseMusic?.('upload')}>Upload my song</button>
+            <button type="button" className="ghost" onClick={() => onChooseMusic?.('available')}>Choose a ready song</button>
+          </div>
+        </div>
+      )}
+
+      {mode === 'learn' && locked && (
+        <div className="piano-core-start is-locked">
+          <div>
+            <p className="eyebrow">Personal piano path</p>
+            <h1>Make this song fit your level.</h1>
+            <p>Choose Melody, Easy, Medium or Original, then practise one clear section at a time.</p>
+          </div>
+          <div className="piano-core-start-actions">
+            <button type="button" className="primary" onClick={onUpgrade}>Unlock Learn</button>
+            <button type="button" className="ghost" onClick={() => switchMode('regular')}>Keep playing</button>
+          </div>
+        </div>
+      )}
 
       {mode === 'learn' && !locked && (
         <div className="learn-journey-body">
@@ -160,13 +192,13 @@ export default function PianoLearnJourney({
                 <div className="learn-song-focus">
                   <span className="learn-song-art" aria-hidden="true"><i /><b>♪</b></span>
                   <div>
-                    <span>Selected song</span>
+                    <span>Ready to arrange</span>
                     <strong>{song?.title || 'Choose a song'}</strong>
                     <small>{songArtist(song)} · {noteCount} source notes</small>
                   </div>
                 </div>
                 <div className="learn-primary-actions">
-                  <button type="button" className="primary" onClick={() => setStep(1)}>Learn this song</button>
+                  <button type="button" className="primary" onClick={() => setStep(1)}>Choose my level</button>
                   <button type="button" className="ghost" onClick={() => onChooseMusic?.('available')}>Choose another</button>
                 </div>
                 <details className="learn-disclosure">

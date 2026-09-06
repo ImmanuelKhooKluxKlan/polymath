@@ -34,7 +34,7 @@ class PianoLegatoTests(unittest.TestCase):
             if arranged['arrangementRole'] == 'harmony'
         ]
 
-        self.assertEqual(result['pianoArrangement']['version'], 4)
+        self.assertEqual(result['pianoArrangement']['version'], 5)
         self.assertGreater(result['pianoArrangement']['legatoExtendedNotes'], 0)
         self.assertEqual(result['performance']['defaultAutoplayReleaseSeconds'], 0.62)
         self.assertTrue(any(arranged['duration'] >= 0.4 for arranged in harmony))
@@ -69,8 +69,39 @@ class PianoLegatoTests(unittest.TestCase):
         )
         self.assertGreater(expression['rightToLeftVelocityRatio'], 1.2)
         self.assertTrue(result['performance']['melodyForwardDynamics'])
-        self.assertEqual(result['performance']['profile'], 'polymath-piano-arranger-v4')
-        self.assertEqual(result['arrangementProfile'], 'piano-reduction-with-midi-phrasing-v4')
+        self.assertEqual(result['performance']['profile'], 'polymath-piano-arranger-v5')
+        self.assertEqual(result['arrangementProfile'], 'piano-reduction-with-physical-performance-v5')
+
+    def test_separates_written_duration_key_hold_release_and_inferred_pedal(self):
+        notes = []
+        for index, onset in enumerate((0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5)):
+            notes.extend(
+                [
+                    note(48 + index % 4, onset, 'electric_bass', duration=0.45),
+                    note(60 + index % 5, onset, 'clean_electric_guitar', duration=0.45),
+                    note(72 + index % 3, onset, 'voice', duration=0.45),
+                ]
+            )
+
+        result = arrange_payload(
+            {
+                'title': 'Physical performance fixture',
+                'instrument': 'band',
+                'bpm': 120,
+                'notes': notes,
+            },
+            'full',
+        )
+
+        self.assertEqual(result['instrument'], 'piano')
+        self.assertTrue(result['pedals'])
+        self.assertEqual(result['pedals'], result['pedalEvents'])
+        self.assertTrue(all(event['inferred'] for event in result['pedals']))
+        self.assertTrue(all('scoreDuration' in item for item in result['notes']))
+        self.assertTrue(all('audioDuration' in item for item in result['notes']))
+        self.assertTrue(all('releaseSeconds' in item for item in result['notes']))
+        self.assertTrue(all(item['scoreDuration'] == item['duration'] for item in result['notes']))
+        self.assertTrue(result['pianoArrangement']['physicalPerformance']['writtenAndPhysicalDurationsSeparated'])
 
     def test_preserved_piano_gets_register_balance_without_clipping(self):
         notes = []

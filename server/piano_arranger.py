@@ -16,6 +16,8 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any, Iterable
 
+from omr.polymath_omr.performance import shape_piano_performance
+
 
 PIANO_MIN_MIDI = 21
 PIANO_MAX_MIDI = 108
@@ -710,11 +712,21 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
         and note.get("arrangementRole") == "melody"
     )
     role_counts = Counter(note["arrangementRole"] for note in arranged_notes)
+    # Source events can already carry physical-performance fields from an
+    # earlier processing pass.  The arranger has now changed their musical
+    # duration, so stale holds must not overwrite the new score during the
+    # final pianist pass.
+    for note in arranged_notes:
+        note["scoreDuration"] = note["duration"]
+        note["visualDuration"] = note["duration"]
+        note.pop("audioDuration", None)
+        note.pop("releaseSeconds", None)
     output = dict(payload)
+    output["instrument"] = "piano"
     output["notes"] = arranged_notes
     output["instrumentGroups"] = ["acoustic_piano"]
     output["vocalMelodyIncluded"] = vocal_melody_notes > 0
-    output["arrangementProfile"] = "piano-reduction-with-midi-phrasing-v4"
+    output["arrangementProfile"] = "piano-reduction-with-physical-performance-v5"
     output["performance"] = {
         **(payload.get("performance") or {}),
         "profile": "polymath-piano-arranger-v1",
@@ -756,15 +768,25 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
         "arrangerProfile": arranger_profile,
         "arrangedNotesPerSecond": round_number(notes_per_second(arranged_notes), 3),
     }
-    output['performance']['profile'] = 'polymath-piano-arranger-v4'
+    # Turn symbolic durations into a physically plausible performance layer.
+    # `duration` remains the written/visual value; `audioDuration` represents
+    # how long the key is actually held, while the release tail and explicitly
+    # labelled pedal events let the string continue naturally.  Keeping these
+    # concepts separate prevents both typewriter cut-offs and stuck overlaps.
+    output = shape_piano_performance(output, infer_pedal=True)
+    output['performance']['profile'] = 'polymath-piano-arranger-v5'
     output['performance']['defaultAutoplayReleaseSeconds'] = 0.62
     output['performance']['melodyForwardDynamics'] = True
-    output['pianoArrangement']['version'] = 4
+    output['pianoArrangement']['version'] = 5
     output['pianoArrangement']['maximumHarmonyPitchClasses'] = (
         MAX_HARMONY_PITCH_CLASSES
     )
     output['pianoArrangement']['legatoExtendedNotes'] = legato_extended
     output['pianoArrangement']['expression'] = expression
+    output['pianoArrangement']['physicalPerformance'] = {
+        **(output.get('pianoPerformance') or {}),
+        'profile': 'written-key-hold-damper-v1',
+    }
     return output
 
 

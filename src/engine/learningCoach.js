@@ -90,7 +90,13 @@ function safeMidi(event) {
 
 function normalizedHand(event, midi) {
   const hand = String(event?.hand || '').toLowerCase();
-  const role = String(event?.scoreRole || event?.role || '').toLowerCase();
+  const role = String(
+    event?.arrangementRole
+      || event?.scoreRole
+      || event?.learningRole
+      || event?.role
+      || '',
+  ).toLowerCase();
   if (hand === 'left' || role.includes('left') || role.includes('bass')) return 'left';
   if (hand === 'right' || role.includes('right') || role.includes('melody') || role.includes('vocal')) return 'right';
   return midi < 60 ? 'left' : 'right';
@@ -126,7 +132,13 @@ function groupByOnset(notes) {
 
 function melodyFromGroup(group) {
   const explicitlyMelodic = group.notes.filter((note) => {
-    const role = String(note.scoreRole || note.role || '').toLowerCase();
+    const role = String(
+      note.arrangementRole
+        || note.scoreRole
+        || note.learningRole
+        || note.role
+        || '',
+    ).toLowerCase();
     return role.includes('melody') || role.includes('vocal') || role.includes('top');
   });
   const rightHand = group.notes.filter((note) => note.hand === 'right');
@@ -134,27 +146,149 @@ function melodyFromGroup(group) {
   return [...pool].sort((left, right) => right.midi - left.midi)[0];
 }
 
-function outerVoices(notes, maximum) {
-  const ordered = [...notes].sort((left, right) => left.midi - right.midi);
-  if (ordered.length <= maximum) return ordered;
-  if (maximum <= 2) return [ordered[0], ordered[ordered.length - 1]];
-  const selected = [ordered[0], ordered[ordered.length - 1]];
-  for (let slot = 1; slot < maximum - 1; slot += 1) {
-    const index = Math.round((slot * (ordered.length - 1)) / (maximum - 1));
-    selected.push(ordered[index]);
-  }
-  return [...new Map(selected.map((note) => [note.id, note])).values()]
-    .sort((left, right) => left.midi - right.midi)
-    .slice(0, maximum);
+function melodyCandidates(group) {
+  const explicit = group.notes.filter((note) => {
+    const role = String(
+      note.arrangementRole
+        || note.scoreRole
+        || note.learningRole
+        || note.role
+        || '',
+    ).toLowerCase();
+    return role.includes('melody') || role.includes('vocal') || role.includes('top');
+  });
+  if (explicit.length) return explicit;
+  const right = group.notes.filter((note) => note.hand === 'right');
+  return right.length ? right : group.notes;
 }
 
-function removeMachineGunDuplicates(notes, minimumGap = 0.075) {
-  const lastByMidi = new Map();
-  return notes.filter((note) => {
-    const lastTime = lastByMidi.get(note.midi);
-    lastByMidi.set(note.midi, note.time);
-    return lastTime === undefined || note.time - lastTime >= minimumGap;
+function melodyEvidence(note) {
+  const role = String(
+    note.arrangementRole
+      || note.scoreRole
+      || note.learningRole
+      || note.role
+      || '',
+  ).toLowerCase();
+  const explicit = role.includes('melody') || role.includes('vocal') || role.includes('top');
+  const register = note.midi >= 55 && note.midi <= 88 ? 0.9 : -0.6;
+  return (explicit ? 5 : 0)
+    + (note.hand === 'right' ? 0.8 : 0)
+    + register
+    + clamp(note.velocity, 0, 1) * 0.7
+    + clamp(note.duration / 1.5, 0, 1) * 0.25
+    + note.midi / 240;
+}
+
+function selectMelodyPath(groups) {
+  if (!groups.length) return [];
+  const candidates = groups.map((group) => melodyCandidates(group));
+  const scores = [];
+  const previousIndexes = [];
+
+  candidates.forEach((groupCandidates, groupIndex) => {
+    const row = [];
+    const backRow = [];
+    groupCandidates.forEach((note) => {
+      let bestScore = melodyEvidence(note);
+      let bestPrevious = -1;
+      if (groupIndex > 0) {
+        bestScore = Number.NEGATIVE_INFINITY;
+        candidates[groupIndex - 1].forEach((previous, previousIndex) => {
+          const leap = Math.abs(note.midi - previous.midi);
+          const continuityPenalty = Math.min(3.2, leap * 0.105);
+          const directionPenalty = leap > 12 ? (leap - 12) * 0.045 : 0;
+          const candidateScore = scores[groupIndex - 1][previousIndex]
+            + melodyEvidence(note)
+            - continuityPenalty
+            - directionPenalty;
+          if (candidateScore > bestScore) {
+            bestScore = candidateScore;
+            bestPrevious = previousIndex;
+          }
+        });
+      }
+      row.push(bestScore);
+      backRow.push(bestPrevious);
+    });
+    scores.push(row);
+    previousIndexes.push(backRow);
   });
+
+  let candidateIndex = scores.at(-1).reduce(
+    (best, score, index, row) => (score > row[best] ? index : best),
+    0,
+  );
+  const path = Array(groups.length);
+  for (let groupIndex = groups.length - 1; groupIndex >= 0; groupIndex -= 1) {
+    path[groupIndex] = candidates[groupIndex][candidateIndex];
+    candidateIndex = previousIndexes[groupIndex][candidateIndex];
+    if (candidateIndex < 0 && groupIndex > 0) candidateIndex = 0;
+  }
+  return path;
+}
+
+function mergeMachineGunDuplicates(notes, minimumGap = 0.075) {
+  const output = [];
+  const lastIndexByMidi = new Map();
+  notes.forEach((note) => {
+    const previousIndex = lastIndexByMidi.get(note.midi);
+    const previous = previousIndex === undefined ? null : output[previousIndex];
+    if (!previous || note.time - previous.time >= minimumGap) {
+      lastIndexByMidi.set(note.midi, output.length);
+      output.push({ ...note });
+      return;
+    }
+    const noteEnd = note.time + note.duration;
+    previous.duration = Math.max(previous.duration, noteEnd - previous.time);
+    previous.scoreDuration = previous.duration;
+    previous.visualDuration = previous.duration;
+    previous.audioDuration = Math.max(
+      Number(previous.audioDuration) || 0,
+      Math.min(previous.duration, Math.max(0.055, noteEnd - previous.time - 0.018)),
+    );
+    previous.velocity = Math.max(previous.velocity, note.velocity);
+  });
+  return output;
+}
+
+function learningNote(note, learningRole, minimumDuration, velocityFloor = null) {
+  const duration = Math.max(minimumDuration, note.duration);
+  const velocity = velocityFloor === null ? note.velocity : Math.max(velocityFloor, note.velocity);
+  return {
+    ...note,
+    duration,
+    scoreDuration: duration,
+    visualDuration: duration,
+    audioDuration: Math.min(
+      duration,
+      Math.max(Number(note.audioDuration) || 0, duration * 0.92),
+    ),
+    releaseSeconds: Math.max(Number(note.releaseSeconds) || 0, 0.52),
+    velocity,
+    learningRole,
+  };
+}
+
+function intermediateVoicing(group, melody) {
+  const ordered = [...group.notes].sort((left, right) => left.midi - right.midi);
+  const bass = ordered.find((note) => note.hand === 'left') || ordered[0];
+  const compulsory = [bass, melody].filter(Boolean);
+  const selectedIds = new Set(compulsory.map((note) => note.id));
+  const selectedPitchClasses = new Set(compulsory.map((note) => note.midi % 12));
+  const optional = ordered
+    .filter((note) => !selectedIds.has(note.id))
+    .sort((left, right) => (
+      (right.duration + right.velocity * 0.5) - (left.duration + left.velocity * 0.5)
+    ));
+  for (const note of optional) {
+    if (compulsory.length >= 4) break;
+    if (selectedPitchClasses.has(note.midi % 12)) continue;
+    compulsory.push(note);
+    selectedPitchClasses.add(note.midi % 12);
+  }
+  return [...new Map(compulsory.map((note) => [note.id, note])).values()]
+    .sort((left, right) => left.midi - right.midi);
 }
 
 export function learningLevelById(levelId) {
@@ -173,29 +307,40 @@ export function buildLearningArrangement(rawNotes = [], levelId = 'beginner') {
   if (levelId === 'original') return notes;
 
   const groups = groupByOnset(notes);
+  const melodyPath = selectMelodyPath(groups);
   let selected;
   if (levelId === 'melody') {
-    selected = groups.map((group) => ({
-      ...melodyFromGroup(group),
+    selected = groups.map((group, index) => ({
+      ...learningNote(melodyPath[index] || melodyFromGroup(group), 'melody', 0.12, 0.78),
       hand: 'right',
-      learningRole: 'melody',
-      duration: Math.max(0.12, melodyFromGroup(group).duration),
     }));
   } else if (levelId === 'beginner') {
-    selected = groups.flatMap((group) => {
+    selected = groups.flatMap((group, index) => {
       const left = group.notes.filter((note) => note.hand === 'left').sort((a, b) => a.midi - b.midi)[0];
-      const melody = melodyFromGroup(group);
-      return [...new Map([left, melody].filter(Boolean).map((note) => [note.id, {
-        ...note,
-        duration: Math.max(0.12, note.duration),
-        learningRole: note.id === melody.id ? 'melody' : 'foundation',
-      }])).values()];
+      const melody = melodyPath[index] || melodyFromGroup(group);
+      return [...new Map([left, melody].filter(Boolean).map((note) => [
+        note.id,
+        learningNote(
+          note,
+          note.id === melody.id ? 'melody' : 'foundation',
+          0.12,
+          note.id === melody.id ? 0.76 : null,
+        ),
+      ])).values()];
     });
   } else {
-    selected = groups.flatMap((group) => outerVoices(group.notes, 4));
+    selected = groups.flatMap((group, index) => (
+      intermediateVoicing(group, melodyPath[index] || melodyFromGroup(group))
+        .map((note) => learningNote(
+          note,
+          note.id === melodyPath[index]?.id ? 'melody' : 'harmony',
+          0.09,
+          note.id === melodyPath[index]?.id ? 0.74 : null,
+        ))
+    ));
   }
 
-  return removeMachineGunDuplicates(
+  return mergeMachineGunDuplicates(
     selected.sort((left, right) => left.time - right.time || left.midi - right.midi),
     levelId === 'melody' ? 0.09 : 0.065,
   );

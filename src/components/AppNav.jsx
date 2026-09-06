@@ -1,16 +1,15 @@
-const PRIMARY_ITEMS = [
-  ['studio', 'Piano'],
-  ['guitar', 'Guitar'],
-  ['ensemble', 'Instruments'],
-  ['published-songs', 'Composers'],
-];
-
 export default function AppNav({ route, onNavigate, user }) {
+  const primaryItems = [
+    ['studio', 'Piano'],
+    ...(user ? [['your-songs', 'My songs']] : []),
+  ];
   const moreItems = [
-    ['community', 'Community'],
+    ['guitar', 'Guitar'],
+    ['ensemble', 'Other instruments'],
+    ['published-songs', 'Composers'],
     ['find-teacher', 'Find Teacher'],
     ['band', 'Band'],
-    ...(user ? [['your-songs', 'Your Songs']] : []),
+    ['community', 'Community'],
     ...(user?.admin ? [['chat-boss', 'Chat Boss']] : []),
     ['account', user ? 'Account' : 'Sign in'],
   ];
@@ -34,7 +33,7 @@ export default function AppNav({ route, onNavigate, user }) {
         </span>
       </button>
       <div className='nav-links'>
-        {PRIMARY_ITEMS.map(([value, label]) => (
+        {primaryItems.map(([value, label]) => (
           <button
             key={value}
             type='button'
@@ -47,13 +46,6 @@ export default function AppNav({ route, onNavigate, user }) {
         <details className='nav-more'>
           <summary className={moreIsActive ? 'active' : ''}>More</summary>
           <div className='nav-more-menu'>
-            <button
-              type='button'
-              className={`mobile-nav-only ${route === 'published-songs' ? 'active' : ''}`}
-              onClick={(event) => navigateFromMenu(event, 'published-songs')}
-            >
-              Composers
-            </button>
             {moreItems.map(([value, label]) => (
               <button
                 key={value}
