@@ -80,6 +80,7 @@ async function pageTarget(port) {
 async function main() {
   const args = argsFrom(process.argv.slice(2));
   let token = String(process.env.QA_AUTH_TOKEN || '');
+  let learnerId = '';
   const qaApi = String(args['qa-api'] || '').replace(/\/+$/, '');
   const publicRoute = String(args['public-route'] || '').trim();
   const clickText = String(args['click-text'] || '').trim();
@@ -98,6 +99,7 @@ async function main() {
     });
     const login = await loginResponse.json();
     if (loginResponse.ok) {
+      learnerId = String(login.user?.user_id || '');
       token = login.token;
       if (login.user?.mustChangePassword) {
         const passwordResponse = await fetch(`${qaApi}/api/auth/change-password`, {
@@ -129,6 +131,7 @@ async function main() {
       });
       const registration = await registrationResponse.json();
       if (!registrationResponse.ok) throw new Error(registration.error || 'QA registration failed.');
+      learnerId = String(registration.user?.user_id || '');
       token = registration.token;
     }
   }
@@ -139,13 +142,14 @@ async function main() {
   const width = Math.max(360, Number(args.width) || 1440);
   const height = Math.max(500, Number(args.height) || 1000);
   const playSeconds = Math.max(0, Number(args['play-seconds']) || 0);
-  const surface = ['lesson', 'admin-characters'].includes(args.surface) ? args.surface : 'keyboard';
+  const surface = ['lesson', 'admin-characters', 'adaptive-learn'].includes(args.surface) ? args.surface : 'keyboard';
   const demonstrate = args.demonstrate === 'true';
   const openHelp = args['open-help'] === 'true';
   const requestedTeacher = String(args.teacher || '').trim();
   const requestedConversationMode = String(args['conversation-mode'] || '').trim();
   const startSession = args['start-session'] === 'true';
   const voiceOnly = args['voice-only'] === 'true';
+  const followPlan = args['follow-plan'] === 'true';
   const output = path.resolve(args.output || 'qa-teacher-hands.png');
   const profile = await fsp.mkdtemp(path.join(os.tmpdir(), 'polymath-teacher-qa-'));
   const child = spawn(chrome, [
@@ -173,18 +177,29 @@ async function main() {
         source: `(() => {
           const qaApi = ${JSON.stringify(qaApi)};
           window.__polymathQaApi = qaApi;
+          window.__polymathQaFetchLog = [];
           const nativeFetch = window.fetch.bind(window);
           window.fetch = (input, init) => {
             const original = typeof input === 'string' ? input : input?.url;
             if (!original) return nativeFetch(input, init);
             let parsed;
             try { parsed = new URL(original, window.location.href); } catch { return nativeFetch(input, init); }
-            const isolatedRoutes = ['/api/auth/', '/api/admin/', '/api/virtual-lessons', '/api/virtual-teachers'];
+            const isolatedRoutes = ['/api/auth/', '/api/admin/', '/api/learning/', '/api/virtual-lessons', '/api/virtual-teachers'];
             if (!isolatedRoutes.some((prefix) => parsed.pathname.startsWith(prefix))) {
               return nativeFetch(input, init);
             }
             const redirected = new URL(qaApi + parsed.pathname + parsed.search);
-            return nativeFetch(typeof input === 'string' ? redirected.href : new Request(redirected.href, input), init);
+            return nativeFetch(typeof input === 'string' ? redirected.href : new Request(redirected.href, input), init)
+              .then((response) => {
+                if (parsed.pathname.startsWith('/api/learning/')) {
+                  window.__polymathQaFetchLog.push({ path: parsed.pathname, status: response.status });
+                }
+                return response;
+              })
+              .catch((error) => {
+                window.__polymathQaFetchLog.push({ path: parsed.pathname, error: String(error?.message || error) });
+                throw error;
+              });
           };
         })();`,
       });
@@ -199,7 +214,19 @@ async function main() {
     await delay(900);
     if (token) {
       await session.send('Runtime.evaluate', {
-        expression: `localStorage.setItem('polymath_musician_auth_token', ${JSON.stringify(token)}); localStorage.setItem('polymath-teacher-hands-v2', 'true'); location.reload();`,
+        expression: `(() => {
+          localStorage.setItem('polymath_musician_auth_token', ${JSON.stringify(token)});
+          if (${JSON.stringify(surface)} === 'adaptive-learn' && ${JSON.stringify(learnerId)}) {
+            const learnerId = ${JSON.stringify(learnerId)};
+            const songIds = ['free:Blank Space:Taylor Swift', 'free:Neon C Major Warmup:Polymath Musician'];
+            const history = songIds.flatMap((songId, songIndex) => [
+              { id: 'qa_adaptive_' + songIndex + '_1', songId, createdAt: '2026-09-04T01:00:00.000Z', levelId: 'beginner', range: { start: 0, end: 8 }, score: 68, expectedCount: 20, matchedCount: 15, metrics: { notes: { score: 76, available: true }, rhythm: { score: 52, available: true }, duration: { score: 73, available: true }, dynamics: { score: null, available: false }, pedal: { score: null, available: false } } },
+              { id: 'qa_adaptive_' + songIndex + '_2', songId, createdAt: '2026-09-05T01:00:00.000Z', levelId: 'beginner', range: { start: 8, end: 16 }, score: 72, expectedCount: 22, matchedCount: 18, metrics: { notes: { score: 81, available: true }, rhythm: { score: 57, available: true }, duration: { score: 76, available: true }, dynamics: { score: null, available: false }, pedal: { score: null, available: false } } },
+            ]);
+            localStorage.setItem('polymath-learning-progress-v2:' + learnerId, JSON.stringify({ version: 2, totalAttempts: 4, practiceSeconds: 32, songs: {}, history }));
+          }
+          location.reload();
+        })();`,
       });
       await delay(1800);
     }
@@ -308,6 +335,30 @@ async function main() {
       returnByValue: true,
     });
     await delay(650);
+    if (surface === 'adaptive-learn' && followPlan) {
+      const followed = await session.send('Runtime.evaluate', {
+        expression: `(() => {
+          const button = [...document.querySelectorAll('button')]
+            .find((item) => /continue my plan/i.test(item.textContent));
+          button?.click();
+          return Boolean(button);
+        })()`,
+        returnByValue: true,
+      });
+      if (!followed.result?.value) throw new Error('The adaptive plan action was not available.');
+      await delay(450);
+    }
+    if (surface === 'adaptive-learn') {
+      await session.send('Runtime.evaluate', {
+        expression: `(() => {
+          const details = document.querySelector('.learn-mastery-disclosure');
+          if (details) details.open = true;
+          return Boolean(details);
+        })()`,
+        returnByValue: true,
+      });
+      await delay(180);
+    }
     if (requestedTeacher) {
       const selection = await session.send('Runtime.evaluate', {
         expression: `(() => {
@@ -362,7 +413,9 @@ async function main() {
     await session.send('Runtime.evaluate', {
       expression: surface === 'lesson'
         ? `(() => { const studio = document.querySelector('.piano-teacher-studio'); const lesson = studio?.querySelector('details'); if (lesson) lesson.open = true; studio?.scrollIntoView({ block: 'start' }); })()`
-        : `document.querySelector('.piano-scroll-wrap')?.scrollIntoView({ block: 'center' })`,
+        : surface === 'adaptive-learn'
+          ? `document.querySelector('.piano-learn-journey')?.scrollIntoView({ block: 'start' })`
+          : `document.querySelector('.piano-scroll-wrap')?.scrollIntoView({ block: 'center' })`,
     });
     await delay(350);
     if (surface === 'lesson' && requestedConversationMode === 'adult-companion') {
@@ -514,9 +567,18 @@ async function main() {
               overlapsKeys: Boolean(deck && rect.top < deck.bottom && rect.bottom > deck.top),
             };
           });
+        const guidedKeys = [...document.querySelectorAll('.learning-target-left, .learning-target-right, .learning-target-both')]
+          .map((node) => ({
+            note: node.querySelector('.key-note')?.textContent?.trim() || '',
+            side: node.classList.contains('learning-target-left')
+              ? 'left'
+              : node.classList.contains('learning-target-right') ? 'right' : 'both',
+          }));
         return {
           handCount: hands.length,
           bothHandsOverlapMainKeyboard: hands.length === 2 && hands.every((hand) => hand.overlapsKeys),
+          guidedKeyCount: guidedKeys.length,
+          guidedKeys,
           documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           demonstrationPlaying: [...document.querySelectorAll('button')].some((item) => item.textContent.trim() === 'Pause'),
           teacherReplyCount: document.querySelectorAll('.teacher-message-teacher').length,
@@ -532,13 +594,39 @@ async function main() {
           speedLabel: document.querySelector('.dock-speed span')?.textContent?.trim() || '',
           supportOpen: Boolean(document.querySelector('.support-assistant-panel')),
           supportAllowance: document.querySelector('.support-assistant-panel header small')?.textContent?.trim() || '',
+          adaptivePlan: document.querySelector('.learn-coach-plan')?.textContent?.trim() || '',
+          focusContract: document.querySelector('.learn-focus-contract')?.textContent?.trim() || '',
+          goalPasses: document.querySelector('.learn-focus-contract .learn-goal-progress strong')?.textContent?.trim() || '',
+          masterySkillCount: document.querySelectorAll('.learn-mastery-skill').length,
+          syncState: document.querySelector('.learn-sync-state')?.textContent?.trim() || '',
+          learnClippedControls: [...document.querySelectorAll('.piano-learn-journey button')]
+            .filter((item) => item.offsetParent && item.scrollWidth > item.clientWidth + 1).length,
+          learningFetchLog: window.__polymathQaFetchLog || [],
           hands,
         };
       })()`,
       returnByValue: true,
     });
-    if (!voiceOnly && !visualAudit.result?.value?.bothHandsOverlapMainKeyboard) {
-      throw new Error(`Teacher hands failed main-keyboard overlap audit: ${JSON.stringify(visualAudit.result?.value)}`);
+    if (!voiceOnly && visualAudit.result?.value?.handCount !== 0) {
+      throw new Error(`A teacher hand still covers the main keyboard: ${JSON.stringify(visualAudit.result?.value)}`);
+    }
+    if (!voiceOnly && visualAudit.result?.value?.guidedKeyCount < 1) {
+      throw new Error(`Learn key guidance was not visible: ${JSON.stringify(visualAudit.result?.value)}`);
+    }
+    if (surface === 'adaptive-learn' && (
+      (!followPlan && !visualAudit.result?.value?.adaptivePlan)
+      || (!followPlan && visualAudit.result?.value?.masterySkillCount !== 5)
+      || visualAudit.result?.value?.documentOverflow
+      || visualAudit.result?.value?.learnClippedControls
+    )) {
+      throw new Error(`Adaptive Learn layout audit failed: ${JSON.stringify(visualAudit.result?.value)}`);
+    }
+    if (surface === 'adaptive-learn' && followPlan && (
+      !visualAudit.result?.value?.focusContract
+      || !/0\/2 passes/.test(visualAudit.result?.value?.goalPasses || '')
+      || !/Speed 0\.65/.test(visualAudit.result?.value?.speedLabel || '')
+    )) {
+      throw new Error(`Focused practice setup audit failed: ${JSON.stringify(visualAudit.result?.value)}`);
     }
     if (demonstrate && !visualAudit.result?.value?.demonstrationPlaying) {
       throw new Error(`The paid teacher command did not start main-piano playback: ${JSON.stringify(visualAudit.result?.value)}`);

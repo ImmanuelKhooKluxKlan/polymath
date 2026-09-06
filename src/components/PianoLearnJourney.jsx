@@ -36,6 +36,66 @@ function Metric({ metric }) {
   );
 }
 
+function MasteryMap({ mastery }) {
+  return (
+    <div className="learn-mastery-map">
+      {(mastery?.skills || []).map((skill) => (
+        <div className={`learn-mastery-skill is-${skill.status}`} key={skill.id}>
+          <div>
+            <strong>{skill.label}</strong>
+            <span>{skill.score === null ? 'Not measured' : `${skill.score}%`}</span>
+          </div>
+          <span
+            className="learn-mastery-track"
+            role={skill.score === null ? undefined : 'progressbar'}
+            aria-label={`${skill.label} mastery`}
+            aria-valuemin={skill.score === null ? undefined : 0}
+            aria-valuemax={skill.score === null ? undefined : 100}
+            aria-valuenow={skill.score === null ? undefined : skill.score}
+          >
+            <i style={{ width: `${skill.score || 0}%` }} />
+          </span>
+          <small>
+            {skill.score === null
+              ? skill.description
+              : `${skill.observations} measured attempt${skill.observations === 1 ? '' : 's'} · ${skill.trend}`}
+          </small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function syncLabel(status) {
+  if (status === 'syncing') return 'Saving…';
+  if (status === 'synced') return 'Synced';
+  if (status === 'offline') return 'Saved on device';
+  return 'On this device';
+}
+
+function GoalProgress({ goal, baseline = false }) {
+  const required = Math.max(1, Number(goal?.requiredPasses) || 1);
+  const passes = Math.max(0, Math.min(required, Number(goal?.passes) || 0));
+  return (
+    <div
+      className="learn-goal-progress"
+      aria-label={baseline ? 'One measured attempt needed' : `${passes} of ${required} clean passes`}
+    >
+      <span aria-hidden="true">
+        {Array.from({ length: required }, (_, index) => <i className={index < passes ? 'is-complete' : ''} key={index} />)}
+      </span>
+      <strong>{baseline ? '1 attempt' : `${passes}/${required} passes`}</strong>
+    </div>
+  );
+}
+
+function outcomeComparison(outcome) {
+  if (!outcome || outcome.score === null) return 'No measurable score was available for this focus.';
+  if (outcome.improvement === null) return `${outcome.skillLabel}: ${outcome.score}% starting score.`;
+  if (outcome.improvement === 0) return `${outcome.skillLabel}: ${outcome.score}% · matched your previous attempt.`;
+  return `${outcome.skillLabel}: ${outcome.score}% · ${outcome.improvement > 0 ? '+' : ''}${outcome.improvement} points from your previous attempt.`;
+}
+
 export default function PianoLearnJourney({
   mode,
   locked = false,
@@ -66,7 +126,13 @@ export default function PianoLearnJourney({
   onStartAttempt,
   attemptStatus,
   report,
+  practiceOutcome,
   progress,
+  coachPlan,
+  activePlan,
+  syncStatus = 'device',
+  onSpeedChange,
+  onApplyCoachPlan,
   onOpenTeacher,
   onFindTeacher,
   onOpenBand,
@@ -79,6 +145,7 @@ export default function PianoLearnJourney({
   const currentSession = LEARNING_SESSION_GOALS.find((goal) => goal.id === sessionId) || LEARNING_SESSION_GOALS[1];
   const selectedSection = sections[selectedIndex] || sections[0];
   const songProgress = progress?.songs?.[songKey] || null;
+  const practicePlan = activePlan || (coachPlan?.source === 'baseline' ? coachPlan : null);
   const recommendedLevelId = recommendedLearningLevel(songProgress);
   const stepTitle = [
     'Start with music you care about',
@@ -116,6 +183,20 @@ export default function PianoLearnJourney({
     }
     onModeChange(nextMode);
     if (nextMode === 'learn') setStep(0);
+  }
+
+  function followCoachPlan() {
+    if (!coachPlan) return;
+    if (onApplyCoachPlan) {
+      onApplyCoachPlan(coachPlan);
+    } else {
+      onLevelChange(coachPlan.recommendedLevelId);
+      onSelectSection(coachPlan.recommendedSectionIndex || 0);
+      onHandModeChange(coachPlan.recommendedHand || 'both');
+      onSpeedChange?.((coachPlan.speedPercent || 70) / 100);
+    }
+    setStep(3);
+    window.setTimeout(() => onFocusPlayer?.(), 100);
   }
 
   return (
@@ -166,7 +247,10 @@ export default function PianoLearnJourney({
               <p className="eyebrow">Learn journey</p>
               <h2 id="learn-journey-title">{stepTitle}</h2>
             </div>
-            <span className="learn-journey-position">{step + 1} / {JOURNEY_STEPS.length}</span>
+            <div className="learn-journey-status">
+              <span className={`learn-sync-state is-${syncStatus}`}>{syncLabel(syncStatus)}</span>
+              <span className="learn-journey-position">{step + 1} / {JOURNEY_STEPS.length}</span>
+            </div>
           </header>
 
           <nav className="learn-journey-steps" aria-label="Learning journey progress">
@@ -198,9 +282,27 @@ export default function PianoLearnJourney({
                   </div>
                 </div>
                 <div className="learn-primary-actions">
-                  <button type="button" className="primary" onClick={() => setStep(1)}>Choose my level</button>
+                  {coachPlan?.source === 'measured' ? (
+                    <button type="button" className="primary" onClick={followCoachPlan}>Continue my plan</button>
+                  ) : (
+                    <button type="button" className="primary" onClick={() => setStep(1)}>Choose my level</button>
+                  )}
                   <button type="button" className="ghost" onClick={() => onChooseMusic?.('available')}>Choose another</button>
                 </div>
+                {coachPlan?.source === 'measured' && (
+                  <div className="learn-coach-plan" aria-label="Polymath recommended practice">
+                    <span>Next focus · {coachPlan.skillLabel}</span>
+                    <strong>{coachPlan.title}</strong>
+                    <p>{coachPlan.reason}</p>
+                    <small>{coachPlan.instruction}</small>
+                  </div>
+                )}
+                {coachPlan?.source === 'measured' && (
+                  <details className="learn-disclosure learn-mastery-disclosure">
+                    <summary>My skill map · {coachPlan.mastery.overall}% overall</summary>
+                    <MasteryMap mastery={coachPlan.mastery} />
+                  </details>
+                )}
                 <details className="learn-disclosure">
                   <summary>Use my own music</summary>
                   <div><p>Upload a ready-to-play sheet, MIDI or supported audio source. Your current song stays selected until a replacement is ready.</p><button type="button" onClick={() => onChooseMusic?.('upload')}>Open music upload</button></div>
@@ -274,6 +376,19 @@ export default function PianoLearnJourney({
 
             {step === 3 && (
               <div className="learn-play-step">
+                {practicePlan && (
+                  <section className="learn-focus-contract" aria-label="Current focused practice goal">
+                    <div>
+                      <span>{practicePlan.source === 'baseline' ? 'Starting attempt' : `Focus · ${practicePlan.skillLabel}`}</span>
+                      <strong>{practicePlan.title}</strong>
+                      <small>
+                        {rangeLabel(activeRange)} · {practicePlan.speedPercent}% speed · {handMode === 'both' ? 'Both hands' : `${handMode[0].toUpperCase()}${handMode.slice(1)} hand`}
+                      </small>
+                    </div>
+                    <GoalProgress goal={practicePlan.goal} baseline={practicePlan.source === 'baseline'} />
+                    <p>{practicePlan.successRule}</p>
+                  </section>
+                )}
                 <div className={`learn-readiness ${preparationStatus === 'ready' ? 'is-ready' : ''}`}>
                   <i aria-hidden="true" />
                   <div>
@@ -296,7 +411,9 @@ export default function PianoLearnJourney({
                 ) : (
                   <div className="learn-play-actions">
                     <button type="button" className="ghost" disabled={preparationStatus !== 'ready'} onClick={() => onListen(activeRange)}>Hear example</button>
-                    <button type="button" className="primary" disabled={preparationStatus !== 'ready'} onClick={() => onStartAttempt(activeRange)}>Start my attempt</button>
+                    <button type="button" className="primary" disabled={preparationStatus !== 'ready'} onClick={() => onStartAttempt(activeRange)}>
+                      {practicePlan?.source === 'measured' ? `Start ${practicePlan.skillLabel.toLowerCase()} attempt` : 'Start my attempt'}
+                    </button>
                   </div>
                 )}
 
@@ -328,20 +445,51 @@ export default function PianoLearnJourney({
                       <div className="learn-score-ring" style={{ '--score': report.score }}><strong>{report.score}</strong><span>out of 100</span></div>
                       <div><span>Coach focus · {report.focus}</span><h3>{report.headline}</h3><p>{report.nextAction}</p></div>
                     </div>
+                    {practiceOutcome && (
+                      <div className={`learn-practice-outcome is-${practiceOutcome.status}`} role="status">
+                        <div>
+                          <span>{practiceOutcome.status === 'baseline' ? 'Baseline complete' : `Goal · ${practiceOutcome.skillLabel}`}</span>
+                          <strong>{practiceOutcome.headline}</strong>
+                          <small>{outcomeComparison(practiceOutcome)}</small>
+                        </div>
+                        <GoalProgress goal={practiceOutcome} baseline={practiceOutcome.status === 'baseline'} />
+                        <p>{practiceOutcome.nextAction}</p>
+                      </div>
+                    )}
                     <div className="learn-review-summary">
                       <span><strong>{report.matchedCount}/{report.expectedCount}</strong> notes found</span>
                       <span><strong>{report.strongest}</strong> strongest</span>
                       <span><strong>{songProgress?.bestScore || report.score}</strong> personal best</span>
                     </div>
                     <div className="learn-primary-actions">
-                      <button type="button" className="primary" onClick={() => { setStep(3); onStartAttempt(activeRange); }}>Try this part again</button>
+                      <button type="button" className="primary" onClick={followCoachPlan}>
+                        {practiceOutcome?.status === 'baseline'
+                          ? 'Start my focused plan'
+                          : practiceOutcome?.achieved
+                            ? `Continue at ${coachPlan?.speedPercent || 70}%`
+                            : practiceOutcome?.passedThisAttempt
+                              ? 'Repeat for pass 2'
+                              : `Retry ${coachPlan?.skillLabel || 'this focus'}`}
+                      </button>
                       {selectedIndex < sections.length - 1 && sessionId !== 'full' && <button type="button" className="ghost" onClick={() => { onSelectSection(selectedIndex + 1); setStep(3); }}>Next part</button>}
                     </div>
+                    {coachPlan && (
+                      <div className="learn-coach-plan is-review" aria-label="Next adaptive exercise">
+                        <span>Next exercise · {coachPlan.speedPercent}% speed</span>
+                        <strong>{coachPlan.title}</strong>
+                        <p>{coachPlan.instruction}</p>
+                        <small>{coachPlan.successRule}</small>
+                      </div>
+                    )}
                     <details className="learn-disclosure learn-full-review">
                       <summary>See full feedback</summary>
                       <div className="learn-review-metrics">
                         {Object.values(report.metrics).map((item) => <Metric key={item.label} metric={item} />)}
                       </div>
+                    </details>
+                    <details className="learn-disclosure learn-mastery-disclosure">
+                      <summary>My skill map{coachPlan?.mastery?.overall !== null ? ` · ${coachPlan.mastery.overall}% overall` : ''}</summary>
+                      <MasteryMap mastery={coachPlan?.mastery} />
                     </details>
                     <details className="learn-disclosure">
                       <summary>Get help from people</summary>

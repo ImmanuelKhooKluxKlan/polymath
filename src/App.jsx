@@ -27,9 +27,13 @@ import {
 import { buildAdaptivePianoLayout, buildLearningHandLayout } from './engine/grandPianoLayout.js';
 import {
   analyzePracticeAttempt,
+  buildAdaptivePracticePlan,
   buildLearningArrangement,
+  evaluateAdaptivePracticeOutcome,
   learningLevelById,
+  learningProgressFromAttempts,
   learningSessionById,
+  mergeLearningProgress,
   readLearningProgress,
   recordLearningAttempt,
   writeLearningProgress,
@@ -52,6 +56,11 @@ import { analyzeLearningSections } from './utils/learningSections.js';
 
 const AUDIO_LOOKAHEAD_SECONDS = 0.18;
 const AUDIO_SCHEDULER_INTERVAL_MS = 25;
+
+function createLearningAttemptId() {
+  return globalThis.crypto?.randomUUID?.()
+    || `attempt_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+}
 
 const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
 const GuitarPage = lazy(() => import('./pages/GuitarPage.jsx'));
@@ -170,7 +179,9 @@ export default function App() {
   const [learningSession, setLearningSession] = useState(() => learningSessionById(window.localStorage.getItem('polymath-learning-session')).id);
   const [learningAttemptStatus, setLearningAttemptStatus] = useState('idle');
   const [learningReport, setLearningReport] = useState(null);
+  const [activePracticePlan, setActivePracticePlan] = useState(null);
   const [learningProgress, setLearningProgress] = useState(() => readLearningProgress(window.localStorage, 'guest'));
+  const [learningSyncStatus, setLearningSyncStatus] = useState('device');
   const [midiInput, setMidiInput] = useState(() => ({
     supported: typeof navigator !== 'undefined' && typeof navigator.requestMIDIAccess === 'function',
     status: 'idle',
@@ -190,7 +201,6 @@ export default function App() {
     return savedTeacher;
   });
   const [remoteTeacherDirectory, setRemoteTeacherDirectory] = useState(null);
-  const [teacherHandsEnabled, setTeacherHandsEnabled] = useState(() => window.localStorage.getItem('polymath-teacher-hands-v2') !== 'false');
   const [teacherDemonstration, setTeacherDemonstration] = useState(null);
   const [portraitDevice, setPortraitDevice] = useState(() => (
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
@@ -214,6 +224,7 @@ export default function App() {
   const visualTimers = useRef([]);
   const pedalTimers = useRef([]);
   const playbackRunId = useRef(0);
+  const activeLearnerIdRef = useRef('guest');
   const seekWasPlaying = useRef(false);
   const studioPlayerRef = useRef(null);
   const keyboardReadyRef = useRef(false);
@@ -289,12 +300,24 @@ export default function App() {
     [song, learningArrangement, preferredSectionSeconds],
   );
   const activeLearningRange = useMemo(() => {
+    if (practiceRange) return practiceRange;
     if (learningSession === 'full') {
       const duration = getSongDuration(song);
       return { id: 'full-song', name: 'Full song', start: 0, end: duration, duration };
     }
     return learningSections[selectedSectionIndex] || learningSections[0] || null;
-  }, [learningSession, learningSections, selectedSectionIndex, song]);
+  }, [learningSession, learningSections, selectedSectionIndex, song, practiceRange]);
+  const learningCoachPlan = useMemo(() => buildAdaptivePracticePlan({
+    progress: learningProgress,
+    songId: songLibraryId(song),
+    sections: learningSections,
+    levelId: learningLevel,
+  }), [learningProgress, song, learningSections, learningLevel]);
+  const learningPracticeOutcome = useMemo(() => evaluateAdaptivePracticeOutcome({
+    progress: learningProgress,
+    songId: songLibraryId(song),
+    report: learningReport,
+  }), [learningProgress, song, learningReport]);
 
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', '#studio');
@@ -336,13 +359,43 @@ export default function App() {
   }, [pianoTeacher.id]);
 
   useEffect(() => {
-    window.localStorage.setItem('polymath-teacher-hands-v2', String(teacherHandsEnabled));
-  }, [teacherHandsEnabled]);
-
-  useEffect(() => {
     const learnerId = user?.user_id || 'guest';
-    setLearningProgress(readLearningProgress(window.localStorage, learnerId));
-  }, [user?.user_id]);
+    activeLearnerIdRef.current = learnerId;
+    const local = readLearningProgress(window.localStorage, learnerId);
+    setLearningProgress(local);
+    if (!user?.user_id || (!user.admin && !user.access?.learn)) {
+      setLearningSyncStatus('device');
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLearningSyncStatus('syncing');
+    apiRequest('/api/learning/progress/sync', {
+      method: 'POST',
+      networkRetries: 2,
+      body: JSON.stringify({
+        attempts: local.history.map((attempt) => ({
+          attemptId: attempt.id,
+          songId: attempt.songId,
+          report: attempt,
+        })),
+      }),
+    })
+      .then((data) => {
+        if (cancelled || activeLearnerIdRef.current !== learnerId) return;
+        const cloud = learningProgressFromAttempts(data.attempts);
+        const merged = mergeLearningProgress(local, cloud);
+        writeLearningProgress(window.localStorage, learnerId, merged);
+        setLearningProgress(merged);
+        setLearningSyncStatus('synced');
+      })
+      .catch((error) => {
+        if (cancelled || activeLearnerIdRef.current !== learnerId) return;
+        console.warn('Learning progress is saved on this device until cloud sync returns:', error);
+        setLearningSyncStatus('offline');
+      });
+    return () => { cancelled = true; };
+  }, [user?.user_id, user?.admin, user?.access?.learn]);
 
   useEffect(() => {
     if (selectedSectionIndex < learningSections.length) return;
@@ -817,6 +870,19 @@ export default function App() {
     }
 
     setSpeed(safeSpeed);
+    setActivePracticePlan((current) => {
+      if (!current || Math.round(Number(current.speedPercent) || 0) === Math.round(safeSpeed * 100)) return current;
+      return {
+        ...current,
+        speedPercent: Math.round(safeSpeed * 100),
+        goal: current.goal ? {
+          ...current.goal,
+          speedPercent: Math.round(safeSpeed * 100),
+          passes: 0,
+          remainingPasses: current.goal.requiredPasses,
+        } : current.goal,
+      };
+    });
 
     if (shouldResume) {
       await resumePlaybackAt(position, safeSpeed);
@@ -828,6 +894,7 @@ export default function App() {
     setPracticeRange(null);
     setSelectedSectionIndex(0);
     setLearningReport(null);
+    setActivePracticePlan(null);
     setSongSelectionId(libraryId);
   }
 
@@ -838,6 +905,7 @@ export default function App() {
     setPracticeRange(null);
     setSelectedSectionIndex(0);
     setLearningReport(null);
+    setActivePracticePlan(null);
     setSongs((previous) => [normalized, ...previous.filter((candidate) => songLibraryId(candidate) !== libraryId)]);
     setSongSelectionId(libraryId);
     setOpenMusicChooser(null);
@@ -972,6 +1040,7 @@ export default function App() {
       practicePlaybackModeRef.current = 'listen';
       return;
     }
+    const practicePlan = activePracticePlan || learningCoachPlan;
     learningCaptureRef.current = {
       status: 'running',
       notes: [],
@@ -980,6 +1049,11 @@ export default function App() {
       range,
       songId: songLibraryId(song),
       levelId: learningLevel,
+      speedPercent: Math.round(speed * 100),
+      handMode: pianoHandMode,
+      practiceFocusId: practicePlan?.skillId || 'notes',
+      practicePlanSource: practicePlan?.source || 'baseline',
+      practiceTargetScore: practicePlan?.goal?.targetScore ?? null,
     };
     setLearningAttemptStatus('running');
     focusMobilePlayer(true);
@@ -990,14 +1064,22 @@ export default function App() {
     if (capture.status !== 'running') return;
     finishAllCapturedNotes(endTime);
     capture.status = 'complete';
-    const report = analyzePracticeAttempt({
+    const report = {
+      ...analyzePracticeAttempt({
       expectedNotes: playbackNotes,
       playedNotes: capture.notes,
       expectedPedals: song.pedals || [],
       playedPedals: capture.pedals,
       range: capture.range,
       levelId: capture.levelId,
-    });
+      }),
+      attemptId: createLearningAttemptId(),
+      speedPercent: capture.speedPercent,
+      handMode: capture.handMode,
+      practiceFocusId: capture.practiceFocusId,
+      practicePlanSource: capture.practicePlanSource,
+      practiceTargetScore: capture.practiceTargetScore,
+    };
     setLearningAttemptStatus('complete');
     setLearningReport(report);
     const learnerId = user?.user_id || 'guest';
@@ -1006,6 +1088,31 @@ export default function App() {
       writeLearningProgress(window.localStorage, learnerId, next);
       return next;
     });
+    if (user?.user_id && (user.admin || user.access?.learn)) {
+      setLearningSyncStatus('syncing');
+      apiRequest('/api/learning/attempts', {
+        method: 'POST',
+        networkRetries: 2,
+        body: JSON.stringify({
+          attemptId: report.attemptId,
+          songId: capture.songId,
+          songTitle: song?.title || 'Selected song',
+          report,
+        }),
+      }).then((data) => {
+        if (activeLearnerIdRef.current !== learnerId) return;
+        setLearningProgress((current) => {
+          const merged = mergeLearningProgress(current, learningProgressFromAttempts(data.attempts));
+          writeLearningProgress(window.localStorage, learnerId, merged);
+          return merged;
+        });
+        setLearningSyncStatus('synced');
+      }).catch((error) => {
+        if (activeLearnerIdRef.current !== learnerId) return;
+        console.warn('Learning attempt remains safely stored on this device:', error);
+        setLearningSyncStatus('offline');
+      });
+    }
   }
 
   function getSongTimeFromPerformanceClock(now = performance.now()) {
@@ -1248,6 +1355,39 @@ export default function App() {
     setSelectedSectionIndex(safeIndex);
     setPracticeRange(section);
     setCurrentTime(section.start);
+    setActivePracticePlan(null);
+  }
+
+  function applyLearningCoachPlan(plan) {
+    if (!plan) return;
+    const level = learningLevelById(plan.recommendedLevelId);
+    const index = Math.max(0, Math.min(
+      learningSections.length - 1,
+      Number(plan.recommendedSectionIndex) || 0,
+    ));
+    const section = learningSections[index] || learningSections[0];
+    const start = Math.max(0, Number(plan.recommendedRange?.start ?? section?.start) || 0);
+    const end = Math.max(start, Number(plan.recommendedRange?.end ?? section?.end) || start);
+    const range = {
+      ...(section || {}),
+      id: section?.id || `adaptive-${start.toFixed(2)}-${end.toFixed(2)}`,
+      name: section?.name || 'Adaptive focus',
+      start,
+      end,
+      duration: Math.max(0, end - start),
+    };
+    const plannedSpeed = Math.max(0.2, Math.min(1, Number(plan.speedPercent) / 100 || 0.7));
+
+    stopPlayback();
+    setLearningLevel(level.id);
+    setPianoHandMode(plan.recommendedHand || level.handMode);
+    setSpeed(plannedSpeed);
+    setSelectedSectionIndex(index);
+    setPracticeRange(range);
+    setCurrentTime(start);
+    setLearningReport(null);
+    setActivePracticePlan({ ...plan, recommendedRange: range, speedPercent: Math.round(plannedSpeed * 100) });
+    window.localStorage.setItem('polymath-learning-level', level.id);
   }
 
   function changeLearningLevel(levelId) {
@@ -1259,6 +1399,7 @@ export default function App() {
     setPracticeRange(null);
     setSelectedSectionIndex(0);
     setLearningReport(null);
+    setActivePracticePlan(null);
     window.localStorage.setItem('polymath-learning-level', level.id);
   }
 
@@ -1270,6 +1411,7 @@ export default function App() {
     setPracticeRange(null);
     setSelectedSectionIndex(0);
     setLearningReport(null);
+    setActivePracticePlan(null);
     window.localStorage.setItem('polymath-learning-session', session.id);
   }
 
@@ -1278,6 +1420,7 @@ export default function App() {
     setPianoHandMode(hand);
     setPracticeRange(null);
     setLearningReport(null);
+    setActivePracticePlan(null);
   }
 
   function openLearningMusicChoice(choice) {
@@ -1289,14 +1432,12 @@ export default function App() {
   }
 
   function openVirtualTeacher() {
-    setTeacherHandsEnabled(true);
     window.setTimeout(() => document.querySelector('.piano-teacher-studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   }
 
   function requestVirtualTeacherDemonstration(action) {
     if (action?.type !== 'demonstrate_range') return;
     stopPlayback();
-    setTeacherHandsEnabled(true);
     setRepeatSection(false);
     if (['left', 'right', 'both'].includes(action.hand)) setPianoHandMode(action.hand);
     if (action.speed !== null && action.speed !== undefined && Number.isFinite(Number(action.speed))) {
@@ -1408,6 +1549,7 @@ export default function App() {
             setTeachingMode(mode);
             if (mode === 'regular') {
               setPracticeRange(null);
+              setActivePracticePlan(null);
               resetLearningCapture('idle');
               practicePlaybackModeRef.current = 'listen';
             }
@@ -1437,7 +1579,13 @@ export default function App() {
           onStartAttempt={startLearningAttempt}
           attemptStatus={learningAttemptStatus}
           report={learningReport}
+          practiceOutcome={learningPracticeOutcome}
           progress={learningProgress}
+          coachPlan={learningCoachPlan}
+          activePlan={activePracticePlan}
+          syncStatus={learningSyncStatus}
+          onSpeedChange={handleSpeedChange}
+          onApplyCoachPlan={applyLearningCoachPlan}
           onOpenTeacher={openVirtualTeacher}
           onFindTeacher={() => navigate('find-teacher')}
           onOpenBand={() => navigate('band')}
@@ -1484,10 +1632,7 @@ export default function App() {
                 performanceTier={performanceTier}
                 deviceClass={deviceClass}
                 onPrepare={prepareKeyboard}
-                teacher={pianoTeacher}
-                teacherTargets={teacherHandTargets}
-                showTeacherHands={teachingMode === 'learn' && teacherHandsEnabled}
-                teacherHandMode={pianoHandMode}
+                teacherTargets={teachingMode === 'learn' ? teacherHandTargets : null}
               />
             </div>
             <TransportDock
@@ -1534,16 +1679,12 @@ export default function App() {
                 profiles={teacherProfiles}
                 teacherId={pianoTeacher.id}
                 onTeacherChange={setPianoTeacherId}
-                showHands={teacherHandsEnabled}
-                onShowHandsChange={(enabled) => {
-                  setTeacherHandsEnabled(enabled);
-                  if (enabled) {
-                    window.setTimeout(() => studioPlayerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-                  }
-                }}
                 targets={teacherHandTargets}
                 isPlaying={isPlaying}
                 practiceReport={learningReport}
+                practiceOutcome={learningPracticeOutcome}
+                masteryProfile={learningCoachPlan.mastery}
+                coachPlan={learningCoachPlan}
                 lessonContext={{
                   title: song?.title || 'Selected song',
                   composer: song?.composer || song?.artist || '',
@@ -1554,6 +1695,8 @@ export default function App() {
                   currentTime,
                   duration: getSongDuration(song),
                   activeRange: activeLearningRange,
+                  adaptiveFocus: learningCoachPlan.skillLabel,
+                  adaptiveExercise: learningCoachPlan.title,
                 }}
                 user={user}
                 setUser={setUser}

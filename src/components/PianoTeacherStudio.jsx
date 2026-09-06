@@ -26,11 +26,12 @@ export default function PianoTeacherStudio({
   profiles = TEACHER_PROFILES,
   teacherId,
   onTeacherChange,
-  showHands,
-  onShowHandsChange,
   targets,
   isPlaying = false,
   practiceReport = null,
+  practiceOutcome = null,
+  masteryProfile = null,
+  coachPlan = null,
   lessonContext = null,
   user = null,
   setUser,
@@ -87,37 +88,19 @@ export default function PianoTeacherStudio({
       <header className="piano-teacher-header">
         <div>
           <p className="eyebrow">Teacher controls</p>
-          <h3 id="piano-teacher-title">{teacher.name} plays your main piano</h3>
-          <p>The hands above follow this lesson on the same keys as the falling notes.</p>
+          <h3 id="piano-teacher-title">{teacher.name} guides your main piano</h3>
+          <p>The next keys light up directly. Nothing covers your keyboard.</p>
         </div>
-        <button
-          type="button"
-          className={showHands ? 'teacher-hands-toggle is-on' : 'teacher-hands-toggle'}
-          aria-pressed={showHands}
-          onClick={() => onShowHandsChange(!showHands)}
-        >
-          {showHands ? 'Hide hands' : 'Show hands'}
-        </button>
       </header>
 
       <div className="piano-teacher-workspace human-teacher-workspace">
-        {showHands ? (
-          <div className="teacher-main-piano-status" role="status">
-            <TeacherPortrait teacher={teacher} />
-            <span>
-              <strong>{isPlaying ? `${teacher.name} is demonstrating on the main piano` : `${teacher.name} is ready on the main piano`}</strong>
-              <small>{[...(targets?.left?.notes || []), ...(targets?.right?.notes || [])].map((note) => note.note).join(', ') || 'Press Play to follow the teacher hands above.'}</small>
-            </span>
-          </div>
-        ) : (
-          <button type="button" className="teacher-stage-placeholder" onClick={() => onShowHandsChange(true)}>
-            <TeacherPortrait teacher={teacher} />
-            <span>
-              <strong>Show {teacher.name}'s hands</strong>
-              <small>The hands will appear directly on the main piano above.</small>
-            </span>
-          </button>
-        )}
+        <div className="teacher-main-piano-status" role="status">
+          <TeacherPortrait teacher={teacher} />
+          <span>
+            <strong>{isPlaying ? `${teacher.name} is guiding the coloured keys` : `${teacher.name} is ready to guide you`}</strong>
+            <small>{[...(targets?.left?.notes || []), ...(targets?.right?.notes || [])].map((note) => note.note).join(', ') || 'Press Play and follow the keys that light up above.'}</small>
+          </span>
+        </div>
 
         <details className="teacher-studio-disclosure">
           <summary>Private voice session · Choose time and style</summary>
@@ -129,6 +112,31 @@ export default function PianoTeacherStudio({
             lessonContext={lessonContext}
             observations={{
               practiceReport,
+              practiceOutcome,
+              masteryProfile: masteryProfile ? {
+                overall: masteryProfile.overall,
+                attempts: masteryProfile.attempts,
+                measuredSkillCount: masteryProfile.measuredSkillCount,
+                skills: masteryProfile.skills?.map((skill) => ({
+                  id: skill.id,
+                  label: skill.label,
+                  score: skill.score,
+                  observations: skill.observations,
+                  confidence: skill.confidence,
+                  trend: skill.trend,
+                })),
+              } : null,
+              coachPlan: coachPlan ? {
+                source: coachPlan.source,
+                skillId: coachPlan.skillId,
+                skillLabel: coachPlan.skillLabel,
+                title: coachPlan.title,
+                reason: coachPlan.reason,
+                instruction: coachPlan.instruction,
+                successRule: coachPlan.successRule,
+                speedPercent: coachPlan.speedPercent,
+                confidence: coachPlan.confidence,
+              } : null,
               upcomingKeys: [...(targets?.left?.notes || []), ...(targets?.right?.notes || [])]
                 .sort((left, right) => Number(left.time || 0) - Number(right.time || 0))
                 .slice(0, 14)

@@ -8,6 +8,8 @@ const {
   companionReplyCrossesBoundary,
   conversationalAcknowledgement,
   groundedPracticeReply,
+  groundedPracticeOutcomeReply,
+  groundedCoachPlanReply,
   generatedReplyCrossesBoundary,
   sanitizeMessages,
   supportBoundaryReply,
@@ -269,6 +271,63 @@ test('measured feedback bypasses the language model so report facts cannot drift
   assert.equal(modelCalls, 0);
   assert.equal(result.provider, 'polymath-measured-coach');
   assert.match(result.reply, /A4 landed 135 ms early/);
+});
+
+test('saved mastery produces a deterministic next exercise without inventing a new performance', async () => {
+  let modelCalls = 0;
+  const assistant = createPolymathAssistant({}, {
+    chatClient: { async chat() { modelCalls += 1; return {}; } },
+  });
+  const coachPlan = {
+    source: 'measured',
+    skillLabel: 'Rhythm',
+    title: 'Place each note in time',
+    instruction: 'Count the pulse aloud, then copy one phrase.',
+    successRule: 'Reach 82% rhythm twice.',
+    speedPercent: 65,
+    confidence: 68,
+  };
+  assert.match(groundedCoachPlanReply('What should I practice next?', coachPlan), /saved attempts.*rhythm/i);
+  const result = await assistant.teacherChat({
+    messages: [{ role: 'user', content: 'What should I practice next?' }],
+    observations: { coachPlan },
+  });
+  assert.equal(modelCalls, 0);
+  assert.equal(result.provider, 'polymath-adaptive-coach');
+  assert.match(result.reply, /65% speed/);
+});
+
+test('the teacher reports measured improvement and requires two clean passes before raising tempo', async () => {
+  const practiceOutcome = {
+    skillLabel: 'Rhythm',
+    score: 86,
+    improvement: 7,
+    passes: 1,
+    requiredPasses: 2,
+    speedPercent: 65,
+    targetScore: 82,
+    achieved: false,
+    passedThisAttempt: true,
+    status: 'passed',
+  };
+  const direct = groundedPracticeOutcomeReply('Did I improve and can I go faster?', practiceOutcome);
+  assert.match(direct, /improved by 7 points/i);
+  assert.match(direct, /1 of 2 clean passes/i);
+  assert.match(direct, /65% speed once more/i);
+
+  const assistant = createPolymathAssistant({}, {
+    chatClient: { async chat() { throw new Error('The deterministic coach should not wake the model.'); } },
+  });
+  const result = await assistant.teacherChat({
+    messages: [{ role: 'user', content: 'Did I pass?' }],
+    observations: { practiceOutcome },
+  });
+  assert.equal(result.provider, 'polymath-progress-coach');
+  assert.doesNotMatch(groundedPracticeOutcomeReply('Did I improve?', {
+    status: 'baseline',
+    skillLabel: 'Notes',
+    score: null,
+  }), /0%/);
 });
 
 test('post-generation checks reject invented actions, secret requests, and unqualified live status', () => {

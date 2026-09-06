@@ -2,7 +2,20 @@ import { midiToNote, parseNote } from './noteMath.js';
 
 const ONSET_WINDOW_SECONDS = 0.035;
 const MATCH_WINDOW_SECONDS = 0.42;
-const PROGRESS_VERSION = 1;
+const PROGRESS_VERSION = 2;
+const LEGACY_PROGRESS_VERSION = 1;
+const MAX_LOCAL_ATTEMPT_HISTORY = 240;
+
+export const PIANO_MASTERY_SKILLS = Object.freeze([
+  { id: 'notes', metricKey: 'notes', label: 'Notes', description: 'Find the intended keys without misses or extras.' },
+  { id: 'rhythm', metricKey: 'rhythm', label: 'Rhythm', description: 'Land each note at the intended moment.' },
+  { id: 'holds', metricKey: 'duration', label: 'Holds', description: 'Release each key at the intended moment.' },
+  { id: 'touch', metricKey: 'dynamics', label: 'Touch', description: 'Shape soft and strong notes with MIDI velocity.' },
+  { id: 'pedal', metricKey: 'pedal', label: 'Pedal', description: 'Press and release sustain at the intended moments.' },
+]);
+
+const PIANO_MASTERY_SKILL_IDS = new Set(PIANO_MASTERY_SKILLS.map((skill) => skill.id));
+const PIANO_HAND_MODES = new Set(['left', 'right', 'both']);
 
 export const PIANO_LEARNING_LEVELS = Object.freeze([
   {
@@ -631,7 +644,13 @@ export function analyzePracticeAttempt({
 }
 
 export function emptyLearningProgress() {
-  return { version: PROGRESS_VERSION, totalAttempts: 0, practiceSeconds: 0, songs: {} };
+  return {
+    version: PROGRESS_VERSION,
+    totalAttempts: 0,
+    practiceSeconds: 0,
+    songs: {},
+    history: [],
+  };
 }
 
 export function recommendedLearningLevel(songProgress) {
@@ -649,39 +668,61 @@ export function recommendedLearningLevel(songProgress) {
 
 export function readLearningProgress(storage, learnerId = 'guest') {
   try {
-    const parsed = JSON.parse(storage?.getItem?.(`polymath-learning-progress-v${PROGRESS_VERSION}:${learnerId}`) || 'null');
-    if (!parsed || parsed.version !== PROGRESS_VERSION || typeof parsed.songs !== 'object') return emptyLearningProgress();
-    return parsed;
+    const current = JSON.parse(storage?.getItem?.(`polymath-learning-progress-v${PROGRESS_VERSION}:${learnerId}`) || 'null');
+    if (current?.version === PROGRESS_VERSION && typeof current.songs === 'object') {
+      return normalizeLearningProgress(current);
+    }
+    const legacy = JSON.parse(storage?.getItem?.(`polymath-learning-progress-v${LEGACY_PROGRESS_VERSION}:${learnerId}`) || 'null');
+    if (legacy?.version === LEGACY_PROGRESS_VERSION && typeof legacy.songs === 'object') {
+      return normalizeLearningProgress({ ...legacy, version: PROGRESS_VERSION, history: [] });
+    }
+    return emptyLearningProgress();
   } catch {
     return emptyLearningProgress();
   }
 }
 
 export function recordLearningAttempt(progress, songId, report) {
-  const current = progress?.version === PROGRESS_VERSION ? progress : emptyLearningProgress();
-  const previousSong = current.songs?.[songId] || { attempts: 0, bestScore: 0, sections: {} };
-  const sectionKey = `${report.levelId}:${report.range.start.toFixed(2)}-${report.range.end.toFixed(2)}`;
+  const current = normalizeLearningProgress(progress);
+  const snapshot = learningAttemptSnapshot(songId, report);
+  if (current.history.some((attempt) => attempt.id === snapshot.id)) return current;
+  const previousSong = current.songs?.[snapshot.songId] || { attempts: 0, bestScore: 0, sections: {} };
+  const sectionKey = snapshot.sectionKey;
   const previousSection = previousSong.sections?.[sectionKey] || { attempts: 0, bestScore: 0 };
-  const elapsed = Math.max(0, report.range.end - report.range.start);
+  const skillScores = { ...(previousSection.skillScores || {}) };
+  Object.entries(snapshot.metrics).forEach(([metricKey, item]) => {
+    if (!item.available || !Number.isFinite(item.score)) return;
+    const previousSkill = skillScores[metricKey] || { attempts: 0, bestScore: 0 };
+    skillScores[metricKey] = {
+      attempts: Number(previousSkill.attempts || 0) + 1,
+      bestScore: Math.max(Number(previousSkill.bestScore || 0), item.score),
+      lastScore: item.score,
+    };
+  });
   return {
     ...current,
     totalAttempts: Number(current.totalAttempts || 0) + 1,
-    practiceSeconds: Number(current.practiceSeconds || 0) + elapsed,
+    practiceSeconds: Number(current.practiceSeconds || 0) + snapshot.elapsedSeconds,
+    history: [...current.history, snapshot].slice(-MAX_LOCAL_ATTEMPT_HISTORY),
     songs: {
       ...current.songs,
-      [songId]: {
+      [snapshot.songId]: {
         ...previousSong,
         attempts: Number(previousSong.attempts || 0) + 1,
-        bestScore: Math.max(Number(previousSong.bestScore || 0), report.score),
-        lastScore: report.score,
-        lastLevelId: report.levelId,
-        lastPracticedAt: report.createdAt,
+        bestScore: Math.max(Number(previousSong.bestScore || 0), snapshot.score),
+        lastScore: snapshot.score,
+        lastLevelId: snapshot.levelId,
+        lastPracticedAt: snapshot.createdAt,
         sections: {
           ...previousSong.sections,
           [sectionKey]: {
             attempts: Number(previousSection.attempts || 0) + 1,
-            bestScore: Math.max(Number(previousSection.bestScore || 0), report.score),
-            lastScore: report.score,
+            bestScore: Math.max(Number(previousSection.bestScore || 0), snapshot.score),
+            lastScore: snapshot.score,
+            lastPracticedAt: snapshot.createdAt,
+            range: snapshot.range,
+            levelId: snapshot.levelId,
+            skillScores,
           },
         },
       },
@@ -691,9 +732,523 @@ export function recordLearningAttempt(progress, songId, report) {
 
 export function writeLearningProgress(storage, learnerId, progress) {
   try {
-    storage?.setItem?.(`polymath-learning-progress-v${PROGRESS_VERSION}:${learnerId}`, JSON.stringify(progress));
+    storage?.setItem?.(
+      `polymath-learning-progress-v${PROGRESS_VERSION}:${learnerId}`,
+      JSON.stringify(normalizeLearningProgress(progress)),
+    );
     return true;
   } catch {
     return false;
   }
+}
+
+function finiteScore(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(clamp(number, 0, 100)) : null;
+}
+
+function validDateValue(value) {
+  const timestamp = new Date(value || '').getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function normalizedRange(range) {
+  const start = Math.max(0, Number(range?.start) || 0);
+  const end = Math.max(start, Number(range?.end) || start);
+  return { start, end };
+}
+
+function normalizeSnapshotMetric(metricKey, item) {
+  const score = finiteScore(item?.score);
+  return {
+    label: PIANO_MASTERY_SKILLS.find((skill) => skill.metricKey === metricKey)?.label || String(item?.label || metricKey),
+    score,
+    available: item?.available !== false && score !== null,
+  };
+}
+
+function learningAttemptSnapshot(songId, report = {}) {
+  const range = normalizedRange(report.range);
+  const createdAt = String(report.createdAt || new Date().toISOString());
+  const safeSongId = String(songId || 'unknown-song').slice(0, 180);
+  const levelId = learningLevelById(report.levelId).id;
+  const metrics = Object.fromEntries(PIANO_MASTERY_SKILLS.map((skill) => [
+    skill.metricKey,
+    normalizeSnapshotMetric(skill.metricKey, report.metrics?.[skill.metricKey]),
+  ]));
+  const fallbackIdentity = [safeSongId, createdAt, levelId, range.start.toFixed(3), range.end.toFixed(3), finiteScore(report.score) ?? 0].join(':');
+  return {
+    id: String(report.attemptId || report.id || fallbackIdentity).slice(0, 220),
+    songId: safeSongId,
+    createdAt,
+    levelId,
+    range,
+    sectionKey: `${levelId}:${range.start.toFixed(2)}-${range.end.toFixed(2)}`,
+    elapsedSeconds: Math.max(0, range.end - range.start),
+    score: finiteScore(report.score) ?? 0,
+    metrics,
+    focus: String(report.focus || '').slice(0, 40),
+    strongest: String(report.strongest || '').slice(0, 40),
+    timingDirection: ['early', 'late', 'centred'].includes(report.timingDirection) ? report.timingDirection : 'centred',
+    timingBiasMs: Math.round(clamp(Number(report.timingBiasMs) || 0, -5000, 5000)),
+    speedPercent: report.speedPercent !== null
+      && report.speedPercent !== undefined
+      && report.speedPercent !== ''
+      && Number.isFinite(Number(report.speedPercent))
+      ? Math.round(clamp(Number(report.speedPercent), 20, 200))
+      : null,
+    handMode: PIANO_HAND_MODES.has(report.handMode) ? report.handMode : 'both',
+    practiceFocusId: PIANO_MASTERY_SKILL_IDS.has(report.practiceFocusId) ? report.practiceFocusId : '',
+    practicePlanSource: ['baseline', 'measured'].includes(report.practicePlanSource)
+      ? report.practicePlanSource
+      : '',
+    practiceTargetScore: finiteScore(report.practiceTargetScore),
+    expectedCount: Math.max(0, Math.round(Number(report.expectedCount) || 0)),
+    matchedCount: Math.max(0, Math.round(Number(report.matchedCount) || 0)),
+    missedCount: Math.max(0, Math.round(Number(report.missedCount) || 0)),
+    extraCount: Math.max(0, Math.round(Number(report.extraCount) || 0)),
+    missedNotes: Array.isArray(report.missedNotes)
+      ? report.missedNotes.slice(0, 5).map((item) => ({
+        note: String(item?.note || '').slice(0, 12),
+        count: Math.max(1, Math.round(Number(item?.count) || 1)),
+      })).filter((item) => item.note)
+      : [],
+  };
+}
+
+function normalizeLearningProgress(progress) {
+  if (!progress || typeof progress !== 'object') return emptyLearningProgress();
+  const songs = progress.songs && typeof progress.songs === 'object' ? progress.songs : {};
+  const history = Array.isArray(progress.history)
+    ? progress.history.map((attempt) => learningAttemptSnapshot(attempt.songId, attempt)).slice(-MAX_LOCAL_ATTEMPT_HISTORY)
+    : [];
+  return {
+    version: PROGRESS_VERSION,
+    totalAttempts: Math.max(0, Math.round(Number(progress.totalAttempts) || 0)),
+    practiceSeconds: Math.max(0, Number(progress.practiceSeconds) || 0),
+    songs,
+    history,
+  };
+}
+
+function skillObservationWeight(attempt, skill) {
+  if (skill.metricKey === 'notes') return clamp(0.65 + Math.sqrt(attempt.expectedCount || 0) / 8, 0.65, 1.6);
+  if (['rhythm', 'duration'].includes(skill.metricKey)) return clamp(0.6 + Math.sqrt(attempt.matchedCount || 0) / 8, 0.6, 1.45);
+  return 1;
+}
+
+function weightedMean(observations) {
+  const totalWeight = observations.reduce((sum, item) => sum + item.weight, 0);
+  if (!totalWeight) return null;
+  return observations.reduce((sum, item) => sum + item.score * item.weight, 0) / totalWeight;
+}
+
+export function learningMasteryProfile(progress, songId) {
+  const current = normalizeLearningProgress(progress);
+  const safeSongId = String(songId || 'unknown-song');
+  const attempts = current.history
+    .filter((attempt) => attempt.songId === safeSongId)
+    .sort((left, right) => validDateValue(left.createdAt) - validDateValue(right.createdAt));
+  const skills = PIANO_MASTERY_SKILLS.map((skill) => {
+    const observations = attempts
+      .map((attempt, index) => {
+        const item = attempt.metrics?.[skill.metricKey];
+        if (!item?.available || !Number.isFinite(item.score)) return null;
+        const recency = 1 / (1 + Math.max(0, attempts.length - index - 1) * 0.16);
+        return { score: item.score, weight: recency * skillObservationWeight(attempt, skill) };
+      })
+      .filter(Boolean);
+    const score = weightedMean(observations);
+    const recent = observations.slice(-3).map((item) => item.score);
+    const earlier = observations.slice(-6, -3).map((item) => item.score);
+    const delta = earlier.length && recent.length ? mean(recent) - mean(earlier) : null;
+    return {
+      ...skill,
+      score: score === null ? null : Math.round(score),
+      observations: observations.length,
+      confidence: Math.round((1 - Math.exp(-observations.reduce((sum, item) => sum + item.weight, 0) / 4)) * 100),
+      trend: delta === null ? 'learning' : delta >= 4 ? 'improving' : delta <= -4 ? 'slipping' : 'steady',
+      trendDelta: delta === null ? null : Math.round(delta),
+      status: score === null ? 'unmeasured' : score >= 88 ? 'strong' : score >= 70 ? 'building' : 'focus',
+    };
+  });
+  const measured = skills.filter((skill) => skill.score !== null);
+  return {
+    version: 1,
+    songId: safeSongId,
+    attempts: Number(current.songs?.[safeSongId]?.attempts || attempts.length),
+    lastPracticedAt: current.songs?.[safeSongId]?.lastPracticedAt || attempts.at(-1)?.createdAt || null,
+    overall: measured.length ? Math.round(mean(measured.map((skill) => skill.score))) : null,
+    measuredSkillCount: measured.length,
+    skills,
+  };
+}
+
+const ADAPTIVE_EXERCISES = Object.freeze({
+  notes: {
+    title: 'Lock in the notes',
+    instruction: 'Hear the phrase once. Then play four notes at a time, slowly, without adding extra keys.',
+    successRule: 'Reach 85% note accuracy twice before increasing speed.',
+    speedPercent: 60,
+    targetScore: 85,
+    requiredPasses: 2,
+  },
+  rhythm: {
+    title: 'Place each note in time',
+    instruction: 'Listen once, count the pulse aloud, then copy the phrase at a slower speed.',
+    successRule: 'Reach 82% rhythm twice with your timing centred.',
+    speedPercent: 65,
+    targetScore: 82,
+    requiredPasses: 2,
+  },
+  holds: {
+    title: 'Let the notes breathe',
+    instruction: 'Watch each falling bar to its end. Keep the key down until the bar clears the strike line.',
+    successRule: 'Reach 82% holds twice before increasing speed.',
+    speedPercent: 65,
+    targetScore: 82,
+    requiredPasses: 2,
+  },
+  touch: {
+    title: 'Shape the melody',
+    instruction: 'Use the MIDI keyboard and play the melody slightly stronger than its accompaniment.',
+    successRule: 'Reach 80% touch twice while keeping note accuracy above 80%.',
+    speedPercent: 75,
+    targetScore: 80,
+    requiredPasses: 2,
+  },
+  pedal: {
+    title: 'Clean the pedal changes',
+    instruction: 'Practise only the pedal changes once. Then add the notes without changing the pedal timing.',
+    successRule: 'Reach 85% pedal timing twice without lowering note accuracy.',
+    speedPercent: 70,
+    targetScore: 85,
+    requiredPasses: 2,
+  },
+});
+
+function rangesMatch(left, right, tolerance = 0.12) {
+  const first = normalizedRange(left);
+  const second = normalizedRange(right);
+  return Math.abs(first.start - second.start) <= tolerance
+    && Math.abs(first.end - second.end) <= tolerance;
+}
+
+function attemptSkillScore(attempt, skill) {
+  const item = attempt?.metrics?.[skill.metricKey];
+  return item?.available && Number.isFinite(item.score) ? item.score : null;
+}
+
+function roundedPracticeSpeed(attempt, fallback) {
+  const value = Number(attempt?.speedPercent);
+  return Math.round(clamp(Number.isFinite(value) ? value : fallback, 20, 100) / 5) * 5;
+}
+
+function consecutivePassingAttempts(attempts, skill, targetScore) {
+  let passes = 0;
+  for (let index = attempts.length - 1; index >= 0; index -= 1) {
+    const score = attemptSkillScore(attempts[index], skill);
+    if (score === null || score < targetScore) break;
+    passes += 1;
+  }
+  return passes;
+}
+
+function adaptiveGoalForSection({ progress, songId, skill, exercise, levelId, range }) {
+  const baseSpeed = Math.round(exercise.speedPercent / 5) * 5;
+  const comparable = progress.history
+    .filter((attempt) => (
+      attempt.songId === String(songId)
+      && attempt.levelId === levelId
+      && rangesMatch(attempt.range, range)
+      && attemptSkillScore(attempt, skill) !== null
+    ))
+    .sort((left, right) => validDateValue(left.createdAt) - validDateValue(right.createdAt));
+  const tempoComparable = comparable.filter(
+    (attempt) => attempt.speedPercent !== null && attempt.speedPercent !== undefined,
+  );
+  const speeds = [...new Set(tempoComparable.map((attempt) => roundedPracticeSpeed(attempt, baseSpeed)))];
+  const completedSpeeds = speeds.filter((speed) => {
+    const atSpeed = tempoComparable.filter((attempt) => roundedPracticeSpeed(attempt, baseSpeed) === speed);
+    return consecutivePassingAttempts(atSpeed, skill, exercise.targetScore) >= exercise.requiredPasses;
+  });
+  const highestCompletedSpeed = completedSpeeds.length ? Math.max(...completedSpeeds) : null;
+  const speedPercent = highestCompletedSpeed === null
+    ? baseSpeed
+    : Math.min(100, Math.max(baseSpeed, highestCompletedSpeed + (highestCompletedSpeed < 80 ? 10 : 5)));
+  const attemptsAtSpeed = tempoComparable.filter(
+    (attempt) => roundedPracticeSpeed(attempt, baseSpeed) === speedPercent,
+  );
+  const passes = Math.min(
+    exercise.requiredPasses,
+    consecutivePassingAttempts(attemptsAtSpeed, skill, exercise.targetScore),
+  );
+  const latestScore = attemptsAtSpeed.length
+    ? attemptSkillScore(attemptsAtSpeed.at(-1), skill)
+    : null;
+  return {
+    metricKey: skill.metricKey,
+    targetScore: exercise.targetScore,
+    requiredPasses: exercise.requiredPasses,
+    passes,
+    remainingPasses: Math.max(0, exercise.requiredPasses - passes),
+    speedPercent,
+    latestScore,
+    highestCompletedSpeed,
+  };
+}
+
+function weakestSectionIndex(songProgress, sections, metricKey) {
+  if (!Array.isArray(sections) || !sections.length) return 0;
+  const candidates = Object.values(songProgress?.sections || {})
+    .map((section) => ({
+      range: normalizedRange(section.range),
+      score: finiteScore(section.skillScores?.[metricKey]?.lastScore) ?? finiteScore(section.lastScore),
+    }))
+    .filter((section) => section.score !== null);
+  if (!candidates.length) return 0;
+  const weakest = [...candidates].sort((left, right) => left.score - right.score)[0];
+  return sections.reduce((bestIndex, section, index) => {
+    const best = sections[bestIndex];
+    const distance = Math.abs(Number(section.start) - weakest.range.start);
+    const bestDistance = Math.abs(Number(best.start) - weakest.range.start);
+    return distance < bestDistance ? index : bestIndex;
+  }, 0);
+}
+
+export function buildAdaptivePracticePlan({ progress, songId, sections = [], levelId = 'beginner' } = {}) {
+  const current = normalizeLearningProgress(progress);
+  const mastery = learningMasteryProfile(current, songId);
+  const measured = mastery.skills.filter((skill) => skill.score !== null && skill.observations > 0);
+  const focusSkill = [...measured].sort((left, right) => {
+    const leftAdjusted = left.score + (100 - left.confidence) * 0.08;
+    const rightAdjusted = right.score + (100 - right.confidence) * 0.08;
+    return leftAdjusted - rightAdjusted;
+  })[0] || null;
+  const recommendedLevelId = recommendedLearningLevel(current.songs?.[songId]);
+  const baselineSection = sections[0] || { start: 0, end: 8 };
+  if (!focusSkill) {
+    return {
+      version: 1,
+      source: 'baseline',
+      skillId: 'notes',
+      skillLabel: 'Notes',
+      title: 'Create your starting point',
+      reason: 'One short measured attempt lets Polymath choose the next exercise from evidence.',
+      instruction: 'Prepare the piano, hear one short part, then play it once at a comfortable speed.',
+      successRule: 'Finish one measured attempt. No score is treated as a judgement.',
+      speedPercent: 70,
+      recommendedLevelId,
+      recommendedSectionIndex: 0,
+      recommendedRange: normalizedRange(baselineSection),
+      recommendedHand: learningLevelById(levelId).handMode,
+      confidence: 0,
+      goal: {
+        metricKey: 'notes',
+        targetScore: null,
+        requiredPasses: 1,
+        passes: 0,
+        remainingPasses: 1,
+        speedPercent: 70,
+        latestScore: null,
+        highestCompletedSpeed: null,
+      },
+      mastery,
+    };
+  }
+  const exercise = ADAPTIVE_EXERCISES[focusSkill.id];
+  const recommendedSectionIndex = weakestSectionIndex(
+    current.songs?.[songId],
+    sections,
+    focusSkill.metricKey,
+  );
+  const recommendedRange = normalizedRange(sections[recommendedSectionIndex] || baselineSection);
+  const goal = adaptiveGoalForSection({
+    progress: current,
+    songId,
+    skill: focusSkill,
+    exercise,
+    levelId: recommendedLevelId,
+    range: recommendedRange,
+  });
+  const recentAttempt = current.history.filter((attempt) => attempt.songId === String(songId)).at(-1);
+  const timingDetail = focusSkill.id === 'rhythm' && recentAttempt?.timingDirection !== 'centred'
+    ? ` Your recent matched notes tended to land ${recentAttempt.timingDirection}.`
+    : '';
+  return {
+    version: 1,
+    source: 'measured',
+    skillId: focusSkill.id,
+    skillLabel: focusSkill.label,
+    title: exercise.title,
+    reason: `${focusSkill.label} is the clearest measured opportunity at ${focusSkill.score}% across ${focusSkill.observations} attempt${focusSkill.observations === 1 ? '' : 's'}.${timingDetail}`,
+    instruction: exercise.instruction,
+    successRule: exercise.successRule,
+    speedPercent: goal.speedPercent,
+    recommendedLevelId,
+    recommendedSectionIndex,
+    recommendedRange,
+    recommendedHand: learningLevelById(recommendedLevelId).handMode,
+    confidence: focusSkill.confidence,
+    goal,
+    mastery,
+  };
+}
+
+function skillFromAttempt(report) {
+  const explicit = PIANO_MASTERY_SKILLS.find((skill) => skill.id === report?.practiceFocusId);
+  if (explicit) return explicit;
+  const focus = String(report?.focus || '').trim().toLowerCase();
+  return PIANO_MASTERY_SKILLS.find((skill) => skill.label.toLowerCase() === focus)
+    || PIANO_MASTERY_SKILLS[0];
+}
+
+export function evaluateAdaptivePracticeOutcome({ progress, songId, report } = {}) {
+  if (!report) return null;
+  const current = normalizeLearningProgress(progress);
+  const snapshot = learningAttemptSnapshot(songId, report);
+  const skill = skillFromAttempt(snapshot);
+  const exercise = ADAPTIVE_EXERCISES[skill.id];
+  const currentScore = attemptSkillScore(snapshot, skill);
+  const baseline = snapshot.practicePlanSource === 'baseline';
+  const speedPercent = roundedPracticeSpeed(snapshot, exercise.speedPercent);
+  const comparable = current.history
+    .filter((attempt) => (
+      attempt.songId === snapshot.songId
+      && attempt.levelId === snapshot.levelId
+      && rangesMatch(attempt.range, snapshot.range)
+      && attempt.speedPercent !== null
+      && attempt.speedPercent !== undefined
+      && roundedPracticeSpeed(attempt, exercise.speedPercent) === speedPercent
+      && attemptSkillScore(attempt, skill) !== null
+    ))
+    .sort((left, right) => validDateValue(left.createdAt) - validDateValue(right.createdAt));
+  const currentIndex = comparable.findIndex((attempt) => attempt.id === snapshot.id);
+  const attemptsThroughCurrent = currentIndex >= 0
+    ? comparable.slice(0, currentIndex + 1)
+    : [...comparable, snapshot];
+  const previous = attemptsThroughCurrent.length > 1
+    ? attemptsThroughCurrent.at(-2)
+    : null;
+  const previousScore = attemptSkillScore(previous, skill);
+  const improvement = currentScore !== null && previousScore !== null
+    ? currentScore - previousScore
+    : null;
+  const targetScore = snapshot.practiceTargetScore ?? exercise.targetScore;
+  const passes = baseline ? 1 : Math.min(
+    exercise.requiredPasses,
+    consecutivePassingAttempts(attemptsThroughCurrent, skill, targetScore),
+  );
+  const achieved = baseline || passes >= exercise.requiredPasses;
+  const passedThisAttempt = baseline || (currentScore !== null && currentScore >= targetScore);
+
+  let headline = 'Keep this speed and try once more';
+  let nextAction = `Aim for ${targetScore}% ${skill.label.toLowerCase()} at ${speedPercent}% speed.`;
+  if (baseline) {
+    headline = 'Starting point captured';
+    nextAction = 'Polymath can now choose one measured skill and section for your next attempt.';
+  } else if (achieved) {
+    headline = speedPercent >= 100 ? 'Focus goal mastered' : 'Two clean passes—tempo can rise';
+    nextAction = speedPercent >= 100
+      ? 'Keep this skill strong while Polymath moves to the next measured opportunity.'
+      : 'Your next plan will raise the tempo without changing everything at once.';
+  } else if (passedThisAttempt) {
+    headline = 'One clean pass—repeat it once';
+    nextAction = `Repeat the same section at ${speedPercent}% to prove it is reliable.`;
+  }
+
+  return {
+    version: 1,
+    skillId: skill.id,
+    skillLabel: skill.label,
+    score: currentScore,
+    previousScore,
+    improvement,
+    speedPercent,
+    targetScore: baseline ? null : targetScore,
+    requiredPasses: baseline ? 1 : exercise.requiredPasses,
+    passes,
+    achieved,
+    passedThisAttempt,
+    status: baseline ? 'baseline' : achieved ? 'achieved' : passedThisAttempt ? 'passed' : 'retry',
+    headline,
+    nextAction,
+  };
+}
+
+function newerSong(left, right) {
+  return validDateValue(right?.lastPracticedAt) > validDateValue(left?.lastPracticedAt) ? right : left;
+}
+
+function mergeSections(leftSections = {}, rightSections = {}) {
+  const output = {};
+  new Set([...Object.keys(leftSections), ...Object.keys(rightSections)]).forEach((key) => {
+    const left = leftSections[key] || {};
+    const right = rightSections[key] || {};
+    const recent = newerSong(left, right) || {};
+    const skillScores = {};
+    new Set([...Object.keys(left.skillScores || {}), ...Object.keys(right.skillScores || {})]).forEach((metricKey) => {
+      const leftSkill = left.skillScores?.[metricKey] || {};
+      const rightSkill = right.skillScores?.[metricKey] || {};
+      const last = validDateValue(right.lastPracticedAt) > validDateValue(left.lastPracticedAt) ? rightSkill : leftSkill;
+      skillScores[metricKey] = {
+        attempts: Math.max(Number(leftSkill.attempts || 0), Number(rightSkill.attempts || 0)),
+        bestScore: Math.max(Number(leftSkill.bestScore || 0), Number(rightSkill.bestScore || 0)),
+        lastScore: finiteScore(last.lastScore) ?? 0,
+      };
+    });
+    output[key] = {
+      ...recent,
+      attempts: Math.max(Number(left.attempts || 0), Number(right.attempts || 0)),
+      bestScore: Math.max(Number(left.bestScore || 0), Number(right.bestScore || 0)),
+      skillScores,
+    };
+  });
+  return output;
+}
+
+export function mergeLearningProgress(leftProgress, rightProgress) {
+  const left = normalizeLearningProgress(leftProgress);
+  const right = normalizeLearningProgress(rightProgress);
+  const byId = new Map();
+  [...left.history, ...right.history].forEach((attempt) => byId.set(attempt.id, attempt));
+  const history = [...byId.values()]
+    .sort((a, b) => validDateValue(a.createdAt) - validDateValue(b.createdAt))
+    .slice(-MAX_LOCAL_ATTEMPT_HISTORY);
+  let rebuilt = emptyLearningProgress();
+  history.forEach((attempt) => { rebuilt = recordLearningAttempt(rebuilt, attempt.songId, attempt); });
+
+  const songs = { ...rebuilt.songs };
+  new Set([...Object.keys(left.songs), ...Object.keys(right.songs)]).forEach((songId) => {
+    const first = left.songs[songId] || {};
+    const second = right.songs[songId] || {};
+    const calculated = songs[songId] || {};
+    const recent = newerSong(newerSong(first, second), calculated) || {};
+    songs[songId] = {
+      ...recent,
+      attempts: Math.max(Number(first.attempts || 0), Number(second.attempts || 0), Number(calculated.attempts || 0)),
+      bestScore: Math.max(Number(first.bestScore || 0), Number(second.bestScore || 0), Number(calculated.bestScore || 0)),
+      sections: mergeSections(mergeSections(first.sections, second.sections), calculated.sections),
+    };
+  });
+  return {
+    version: PROGRESS_VERSION,
+    totalAttempts: Math.max(
+      Number(left.totalAttempts || 0),
+      Number(right.totalAttempts || 0),
+      Number(rebuilt.totalAttempts || 0),
+      Object.values(songs).reduce((sum, song) => sum + Number(song.attempts || 0), 0),
+    ),
+    practiceSeconds: Math.max(Number(left.practiceSeconds || 0), Number(right.practiceSeconds || 0), Number(rebuilt.practiceSeconds || 0)),
+    songs,
+    history,
+  };
+}
+
+export function learningProgressFromAttempts(attempts = []) {
+  return mergeLearningProgress(emptyLearningProgress(), {
+    ...emptyLearningProgress(),
+    history: Array.isArray(attempts) ? attempts : [],
+  });
 }

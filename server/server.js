@@ -53,6 +53,11 @@ const {
   trimRoomMessages,
 } = require('./communityChat');
 const { createChatBossAssistant } = require('./chatBossAssistant');
+const {
+  learningAttemptsForUser,
+  sanitizeLearningAttempt,
+  trimUserLearningAttempts,
+} = require('./learningProgress');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -510,6 +515,7 @@ function ensureStorage() {
       teacherReviews: [],
       virtualTeacherCharacters: [],
       virtualLessonSessions: [],
+      learningAttempts: [],
       withdrawals: [],
       paymentOrders: [],
       subscriptions: [],
@@ -586,6 +592,7 @@ function normalizeDb(db) {
     'teacherReviews',
     'virtualTeacherCharacters',
     'virtualLessonSessions',
+    'learningAttempts',
     'withdrawals',
     'paymentOrders',
     'subscriptions',
@@ -1251,6 +1258,19 @@ function requireMusician(req, res, next) {
   return requireAuth(req, res, () => {
     if (!hasMusicianAccess(req.user)) {
       res.status(403).json({ error: 'Band access requires the Musician plan.' });
+      return;
+    }
+    next();
+  });
+}
+
+function requireLearn(req, res, next) {
+  return requireAuth(req, res, () => {
+    if (!hasMusicianAccess(req.user)) {
+      res.status(403).json({
+        error: 'Learning progress sync requires the Musician plan.',
+        code: 'LEARN_ACCESS_REQUIRED',
+      });
       return;
     }
     next();
@@ -2903,6 +2923,66 @@ app.get('/api/test', async (req, res) => res.json({
   environment: PAYPAL_ENV,
   scoreTranslation: localOmrAvailability(),
 }));
+
+app.get('/api/learning/progress', requireLearn, async (req, res) => res.json({
+  version: 1,
+  attempts: learningAttemptsForUser(req.db, req.user.id),
+}));
+
+app.post('/api/learning/progress/sync', requireLearn, async (req, res) => {
+  try {
+    const payloads = Array.isArray(req.body?.attempts) ? req.body.attempts.slice(0, 240) : [];
+    const existingIds = new Set(req.db.learningAttempts
+      .filter((attempt) => attempt.userId === req.user.id)
+      .map((attempt) => attempt.clientAttemptId));
+    let savedCount = 0;
+    payloads.forEach((payload) => {
+      const candidate = sanitizeLearningAttempt(payload, req.user.id, { idFactory: id });
+      if (existingIds.has(candidate.clientAttemptId)) return;
+      req.db.learningAttempts.push(candidate);
+      existingIds.add(candidate.clientAttemptId);
+      savedCount += 1;
+    });
+    if (savedCount) {
+      trimUserLearningAttempts(req.db, req.user.id);
+      await writeDb(req.db);
+    }
+    return res.json({
+      version: 1,
+      savedCount,
+      attempts: learningAttemptsForUser(req.db, req.user.id),
+    });
+  } catch (error) {
+    if (String(error?.code || '').startsWith('INVALID_LEARNING_')) {
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
+    throw error;
+  }
+});
+
+app.post('/api/learning/attempts', requireLearn, async (req, res) => {
+  try {
+    const candidate = sanitizeLearningAttempt(req.body, req.user.id, { idFactory: id });
+    const duplicate = req.db.learningAttempts.find((attempt) => (
+      attempt.userId === req.user.id && attempt.clientAttemptId === candidate.clientAttemptId
+    ));
+    if (!duplicate) {
+      req.db.learningAttempts.push(candidate);
+      trimUserLearningAttempts(req.db, req.user.id);
+      await writeDb(req.db);
+    }
+    return res.status(duplicate ? 200 : 201).json({
+      version: 1,
+      duplicate: Boolean(duplicate),
+      attempts: learningAttemptsForUser(req.db, req.user.id),
+    });
+  } catch (error) {
+    if (String(error?.code || '').startsWith('INVALID_LEARNING_')) {
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
+    throw error;
+  }
+});
 
 app.get('/api/assistant/capabilities', requireAuth, async (req, res) => {
   const policies = sitePolicies(req.db);

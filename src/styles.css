@@ -643,30 +643,29 @@ select {
 .white.active { background: linear-gradient(180deg, #e7fbff, #56d9f2); outline: 2px solid #77f2ff; outline-offset: -2px; box-shadow: 0 0 30px rgba(88,240,255,0.65); transform: translateY(4px); }
 .black.active { background: linear-gradient(180deg, #ff89df, #7e4cff); outline: 2px solid #ffa3ea; outline-offset: -2px; box-shadow: 0 0 30px rgba(255,107,214,0.78); transform: translateY(4px); }
 
-/* Learn mode preserves the falling-note hand colours on the physical keys.
-   The outline remains visible on low-performance phones where glow is removed. */
-.white.teacher-pressed-left {
+/* Learn mode puts guidance directly on the keys so no hand overlay blocks the view. */
+.white.learning-target-left {
   background: linear-gradient(180deg, #e0e5ff, #7c71ff);
   outline: 2px solid #a9a2ff;
   outline-offset: -2px;
 }
-.black.teacher-pressed-left {
+.black.learning-target-left {
   background: linear-gradient(180deg, #9188ff, #4137b7);
   outline: 2px solid #c0bbff;
   outline-offset: -2px;
 }
-.white.teacher-pressed-right {
+.white.learning-target-right {
   background: linear-gradient(180deg, #ffd9f0, #e75bb9);
   outline: 2px solid #ff9bd8;
   outline-offset: -2px;
 }
-.black.teacher-pressed-right {
+.black.learning-target-right {
   background: linear-gradient(180deg, #ff7dce, #8f2d9e);
   outline: 2px solid #ffb1e1;
   outline-offset: -2px;
 }
-.white.teacher-pressed-both,
-.black.teacher-pressed-both {
+.white.learning-target-both,
+.black.learning-target-both {
   background: linear-gradient(180deg, #e9c8ff, #945ee2);
   outline: 2px solid #e8b7ff;
   outline-offset: -2px;
@@ -6777,6 +6776,7 @@ details[open] > summary {
   background: linear-gradient(145deg, rgba(19, 22, 58, 0.92), rgba(10, 13, 38, 0.94));
   box-shadow: 0 20px 54px rgba(3, 5, 28, 0.22);
   overflow: hidden;
+  scroll-margin-top: 76px;
 }
 
 .learn-journey-mode {
@@ -6861,6 +6861,25 @@ details[open] > summary {
 .learn-journey-header h2,
 .learn-journey-header p { margin: 0; }
 .learn-journey-header h2 { margin-top: 3px; font-size: clamp(1.18rem, 2.2vw, 1.7rem); line-height: 1.16; }
+.learn-journey-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+.learn-sync-state {
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #c2badd;
+  background: rgba(129, 111, 201, 0.09);
+  font-size: 0.62rem;
+  font-weight: 820;
+  white-space: nowrap;
+}
+.learn-sync-state.is-synced { color: #75e8c2; background: rgba(77, 201, 162, 0.1); }
+.learn-sync-state.is-syncing { color: #91dff4; }
+.learn-sync-state.is-offline { color: #f4c27b; background: rgba(220, 153, 73, 0.09); }
 .learn-journey-position {
   flex: 0 0 auto;
   padding: 7px 10px;
@@ -7091,6 +7110,81 @@ details[open] > summary {
 .learn-practice-options > small { max-width: 620px; color: var(--muted); font-size: 0.67rem; line-height: 1.45; }
 .learn-teacher-link { justify-self: start; min-height: 36px; padding: 6px 0; border: 0; color: #d4c8ff; background: transparent; font-size: 0.72rem; font-weight: 820; text-decoration: underline; text-underline-offset: 3px; }
 
+.learn-focus-contract,
+.learn-practice-outcome {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px 14px;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(139, 225, 255, 0.28);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(74, 137, 211, 0.13), rgba(139, 72, 190, 0.11));
+}
+.learn-focus-contract > div:first-child,
+.learn-practice-outcome > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.learn-focus-contract > div:first-child > span,
+.learn-practice-outcome > div:first-child > span { color: #8be4ff; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.045em; text-transform: uppercase; }
+.learn-focus-contract strong,
+.learn-practice-outcome strong { overflow-wrap: anywhere; }
+.learn-focus-contract small,
+.learn-practice-outcome small { color: #c0b9da; font-size: 0.67rem; line-height: 1.4; overflow-wrap: anywhere; }
+.learn-focus-contract > p,
+.learn-practice-outcome > p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 0.68rem; line-height: 1.45; }
+.learn-goal-progress { display: grid; justify-items: end; gap: 4px; min-width: 66px; }
+.learn-goal-progress > span { display: flex; gap: 5px; }
+.learn-goal-progress i { width: 10px; height: 10px; border: 1px solid rgba(197, 187, 238, 0.38); border-radius: 50%; background: rgba(255, 255, 255, 0.05); }
+.learn-goal-progress i.is-complete { border-color: #6de8bf; background: #6de8bf; box-shadow: 0 0 0 4px rgba(86, 214, 173, 0.1); }
+.learn-goal-progress strong { color: #ece8ff; font-size: 0.66rem; white-space: nowrap; }
+.learn-practice-outcome.is-achieved { border-color: rgba(102, 235, 190, 0.42); background: linear-gradient(135deg, rgba(54, 172, 139, 0.14), rgba(101, 83, 199, 0.11)); }
+.learn-practice-outcome.is-passed { border-color: rgba(114, 222, 255, 0.38); }
+.learn-practice-outcome.is-retry { border-color: rgba(241, 179, 111, 0.28); background: rgba(202, 127, 65, 0.07); }
+
+.learn-coach-plan {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(134, 220, 255, 0.2);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(76, 143, 210, 0.1), rgba(134, 83, 205, 0.1));
+}
+.learn-coach-plan > span { color: #8be4ff; font-size: 0.64rem; font-weight: 880; text-transform: uppercase; letter-spacing: 0.045em; }
+.learn-coach-plan > strong { font-size: 0.9rem; overflow-wrap: anywhere; }
+.learn-coach-plan p,
+.learn-coach-plan small { margin: 0; color: var(--muted); font-size: 0.7rem; line-height: 1.45; overflow-wrap: anywhere; }
+.learn-coach-plan.is-review { border-color: rgba(168, 148, 255, 0.23); }
+
+.learn-mastery-disclosure > .learn-mastery-map { display: grid; }
+.learn-mastery-map {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: stretch !important;
+  width: 100%;
+  gap: 8px !important;
+}
+.learn-mastery-skill {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(155, 143, 211, 0.16);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.022);
+}
+.learn-mastery-skill > div { display: flex; align-items: baseline; justify-content: space-between; gap: 5px; min-width: 0; }
+.learn-mastery-skill strong,
+.learn-mastery-skill span,
+.learn-mastery-skill small { overflow-wrap: anywhere; }
+.learn-mastery-skill strong { font-size: 0.69rem; }
+.learn-mastery-skill > div > span { color: #d9d3f3; font-size: 0.67rem; font-weight: 850; }
+.learn-mastery-track { display: block; width: 100%; height: 5px; border-radius: 999px; background: rgba(155, 145, 205, 0.16); overflow: hidden; }
+.learn-mastery-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6960e8, #cf61bc); }
+.learn-mastery-skill.is-strong .learn-mastery-track i { background: linear-gradient(90deg, #50cda6, #85e8cf); }
+.learn-mastery-skill.is-unmeasured { opacity: 0.65; }
+.learn-mastery-skill small { color: var(--muted); font-size: 0.58rem; line-height: 1.38; }
+
 .learn-review-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 17px; }
 .learn-score-ring {
   --score: 0;
@@ -7146,6 +7240,8 @@ details[open] > summary {
   .learn-journey-body { gap: 10px; padding: 10px; }
   .learn-journey-header { align-items: start; }
   .learn-journey-header h2 { font-size: 1.12rem; }
+  .learn-journey-status { display: grid; justify-items: end; gap: 4px; }
+  .learn-sync-state { padding: 4px 6px; font-size: 0.56rem; }
   .learn-journey-position { padding: 5px 7px; font-size: 0.6rem; }
   .learn-journey-steps { gap: 2px; }
   .learn-journey-steps button { min-height: 39px; }
@@ -7163,6 +7259,10 @@ details[open] > summary {
   .learn-session-focus small { grid-column: 1; grid-row: auto; }
   .learn-part-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .learn-play-actions { grid-template-columns: minmax(0, 1fr); }
+  .learn-focus-contract,
+  .learn-practice-outcome { grid-template-columns: minmax(0, 1fr) auto; padding: 10px; }
+  .learn-focus-contract > p,
+  .learn-practice-outcome > p { display: none; }
   .learn-readiness,
   .learn-input-source { align-items: stretch; flex-wrap: wrap; }
   .learn-readiness > i { align-self: center; }
@@ -7172,6 +7272,7 @@ details[open] > summary {
   .learn-score-ring { width: 92px; height: 92px; }
   .learn-review-summary { grid-template-columns: minmax(0, 1fr); }
   .learn-review-metrics { grid-template-columns: minmax(0, 1fr); }
+  .learn-mastery-map { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .learn-primary-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .learn-primary-actions button { width: 100%; min-width: 0; }
 }
@@ -7193,6 +7294,7 @@ details[open] > summary {
   .learn-journey-body { gap: 6px; padding: 8px; border-top: 0; border-left: 1px solid rgba(151, 133, 255, 0.14); }
   .learn-journey-header .eyebrow { font-size: 0.57rem; }
   .learn-journey-header h2 { font-size: 1rem; }
+  .learn-sync-state { display: none; }
   .learn-journey-position { padding: 4px 6px; }
   .learn-journey-steps button { min-height: 34px; gap: 1px; }
   .learn-journey-steps button i { width: 24px; height: 24px; box-shadow: 0 0 0 3px rgba(13, 16, 45, 0.9); font-size: 0.64rem; }
@@ -7209,6 +7311,9 @@ details[open] > summary {
   .learn-attempt-live { padding: 7px 9px; border-radius: 12px; }
   .learn-play-actions button { min-height: 38px; padding-block: 7px; }
   .learn-disclosure summary { padding-top: 7px; }
+  .learn-coach-plan { padding: 8px 9px; }
+  .learn-coach-plan p { display: none; }
+  .learn-mastery-map { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .learn-teacher-link { min-height: 28px; padding: 2px 0; }
 }
 
@@ -7943,100 +8048,6 @@ details[open] > summary {
 }
 .teacher-photo-hand.is-pressing { opacity: 1; }
 
-/* Player-facing teacher hands live on the real playable piano. Each hand is a
-   separately positioned crop of the photographic overhead asset. The crop is
-   rotated so wrists enter from the learner's side, matching a Pianella-style
-   keyboard view. */
-.piano-shell.has-teacher-hands {
-  padding-bottom: clamp(36px, 3.4vw, 44px);
-}
-
-.piano-shell.has-teacher-hands .piano-row-shell {
-  isolation: isolate;
-}
-
-.teacher-row-hands {
-  position: absolute;
-  z-index: 6;
-  top: 0;
-  right: 0;
-  bottom: clamp(-44px, -3.4vw, -36px);
-  left: 0;
-  overflow: hidden;
-  pointer-events: none;
-  user-select: none;
-  contain: layout paint;
-}
-
-.two-storey .teacher-row-hands {
-  bottom: 0;
-}
-
-.teacher-main-hand-photo {
-  position: absolute;
-  top: var(--teacher-finger-depth, 25%);
-  left: var(--teacher-hand-center, 50%);
-  display: block;
-  width: var(--teacher-hand-width, 30%);
-  height: auto;
-  aspect-ratio: 768 / 900;
-  overflow: hidden;
-  opacity: .96;
-  transform:
-    translateX(-50%)
-    translateY(-25%)
-    rotate(var(--teacher-hand-tilt, 0deg))
-    scaleX(var(--teacher-hand-narrow, .9))
-    scaleY(var(--teacher-hand-flex, 1));
-  transform-origin: 50% 25%;
-  transition:
-    left var(--teacher-hand-travel-ms, 165ms) cubic-bezier(.2, .72, .22, 1),
-    top var(--teacher-hand-travel-ms, 165ms) cubic-bezier(.2, .72, .22, 1),
-    width var(--teacher-hand-travel-ms, 165ms) cubic-bezier(.2, .72, .22, 1),
-    opacity 120ms ease,
-    transform 155ms cubic-bezier(.22, .8, .3, 1);
-  filter: drop-shadow(0 8px 7px rgba(0, 0, 0, .44));
-  will-change: left, top, transform;
-}
-
-.teacher-main-hand-left { transform-origin: 58% 24%; }
-.teacher-main-hand-right { transform-origin: 42% 24%; }
-
-.teacher-main-hand-photo .teacher-hand-pose {
-  transition: opacity 90ms ease;
-}
-
-.teacher-main-hand-photo .teacher-hand-pose-relaxed { opacity: 1; }
-.teacher-main-hand-photo .teacher-hand-pose-pressed { opacity: 0; }
-.teacher-main-hand-photo.is-pressing .teacher-hand-pose-relaxed { opacity: 0; }
-.teacher-main-hand-photo.is-pressing .teacher-hand-pose-pressed { opacity: 1; }
-
-.teacher-main-hand-photo.is-upcoming {
-  opacity: .82;
-  transform:
-    translateX(-50%)
-    translateY(calc(-25% - var(--teacher-hand-lift, 7px)))
-    rotate(var(--teacher-hand-tilt, 0deg))
-    scaleX(var(--teacher-hand-narrow, .9))
-    scaleY(var(--teacher-hand-flex, 1));
-}
-
-.teacher-main-hand-photo.is-pressing {
-  opacity: 1;
-  transform:
-    translateX(-50%)
-    translateY(calc(-25% + var(--teacher-hand-press, 4px)))
-    rotate(var(--teacher-hand-tilt, 0deg))
-    scaleX(var(--teacher-hand-narrow, .9))
-    scaleY(calc(var(--teacher-hand-flex, 1) * .985));
-  filter: drop-shadow(0 5px 5px rgba(0, 0, 0, .5));
-}
-
-.teacher-main-hand-photo.at-rest {
-  opacity: .94;
-  filter: saturate(.94) drop-shadow(0 8px 7px rgba(0, 0, 0, .42));
-}
-
 .teacher-main-piano-status {
   display: flex;
   align-items: center;
@@ -8069,16 +8080,7 @@ details[open] > summary {
 }
 
 @media (max-width: 700px) {
-  .piano-shell.has-teacher-hands { padding-bottom: 34px; }
-  .teacher-row-hands { bottom: -34px; }
-  .two-storey .teacher-row-hands { bottom: 0; }
-  .teacher-main-hand-photo { --teacher-hand-travel-ms: 125ms !important; }
   .teacher-main-piano-status { min-height: 62px; padding: 9px 10px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .teacher-main-hand-photo { transition: opacity 120ms ease; will-change: auto; }
-  .teacher-main-hand-photo .teacher-hand-pose { transition: none; }
 }
 
 /* Paid, session-scoped virtual piano lesson. The purchase choice is compact;

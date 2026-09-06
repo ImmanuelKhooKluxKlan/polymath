@@ -2,8 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   analyzePracticeAttempt,
+  buildAdaptivePracticePlan,
   buildLearningArrangement,
   emptyLearningProgress,
+  evaluateAdaptivePracticeOutcome,
+  learningMasteryProfile,
+  mergeLearningProgress,
+  readLearningProgress,
   recommendedLearningLevel,
   recordLearningAttempt,
 } from '../../src/engine/learningCoach.js';
@@ -160,4 +165,216 @@ test('a pedal held into a phrase must be pressed at the phrase start', () => {
   });
   assert.equal(report.metrics.pedal.available, true);
   assert.equal(report.metrics.pedal.score, 97);
+});
+
+function measuredReport({
+  attemptId,
+  createdAt,
+  range = { start: 0, end: 8 },
+  score = 70,
+  notes = 70,
+  rhythm = 70,
+  holds = 70,
+  touch = null,
+  pedal = null,
+  speedPercent = null,
+  practiceFocusId = '',
+  practicePlanSource = '',
+  practiceTargetScore = null,
+} = {}) {
+  const measured = (value, label) => ({ score: value, label, available: value !== null });
+  return {
+    attemptId,
+    createdAt,
+    levelId: 'beginner',
+    range,
+    score,
+    focus: 'Notes',
+    strongest: 'Rhythm',
+    speedPercent,
+    handMode: 'both',
+    practiceFocusId,
+    practicePlanSource,
+    practiceTargetScore,
+    expectedCount: 20,
+    matchedCount: 16,
+    metrics: {
+      notes: measured(notes, 'Notes'),
+      rhythm: measured(rhythm, 'Rhythm'),
+      duration: measured(holds, 'Holds'),
+      dynamics: measured(touch, 'Touch'),
+      pedal: measured(pedal, 'Pedal'),
+    },
+  };
+}
+
+test('mastery uses repeated measured evidence and never invents unavailable touch or pedal scores', () => {
+  let progress = emptyLearningProgress();
+  progress = recordLearningAttempt(progress, 'mean', measuredReport({
+    attemptId: 'attempt_mastery_1', createdAt: '2026-09-01T00:00:00.000Z', notes: 52, rhythm: 78, holds: 71,
+  }));
+  progress = recordLearningAttempt(progress, 'mean', measuredReport({
+    attemptId: 'attempt_mastery_2', createdAt: '2026-09-02T00:00:00.000Z', notes: 60, rhythm: 82, holds: 75,
+  }));
+  const mastery = learningMasteryProfile(progress, 'mean');
+  assert.equal(mastery.attempts, 2);
+  assert.ok(mastery.skills.find((skill) => skill.id === 'notes').score < 65);
+  assert.equal(mastery.skills.find((skill) => skill.id === 'touch').score, null);
+  assert.equal(mastery.skills.find((skill) => skill.id === 'pedal').status, 'unmeasured');
+});
+
+test('adaptive planning chooses the weakest measured skill and its weakest practised section', () => {
+  let progress = emptyLearningProgress();
+  progress = recordLearningAttempt(progress, 'mean', measuredReport({
+    attemptId: 'attempt_plan_1', createdAt: '2026-09-01T00:00:00.000Z', range: { start: 0, end: 8 }, notes: 80, rhythm: 62, holds: 76,
+  }));
+  progress = recordLearningAttempt(progress, 'mean', measuredReport({
+    attemptId: 'attempt_plan_2', createdAt: '2026-09-02T00:00:00.000Z', range: { start: 8, end: 16 }, notes: 84, rhythm: 45, holds: 79,
+  }));
+  const plan = buildAdaptivePracticePlan({
+    progress,
+    songId: 'mean',
+    levelId: 'beginner',
+    sections: [
+      { id: 'part-1', start: 0, end: 8 },
+      { id: 'part-2', start: 8, end: 16 },
+    ],
+  });
+  assert.equal(plan.source, 'measured');
+  assert.equal(plan.skillId, 'rhythm');
+  assert.equal(plan.recommendedSectionIndex, 1);
+  assert.match(plan.reason, /measured opportunity/i);
+  assert.equal(plan.goal.targetScore, 82);
+  assert.equal(plan.goal.requiredPasses, 2);
+});
+
+test('two clean focused passes advance only the recommended tempo', () => {
+  let progress = emptyLearningProgress();
+  const first = measuredReport({
+    attemptId: 'attempt_tempo_1',
+    createdAt: '2026-09-01T00:00:00.000Z',
+    score: 78,
+    notes: 90,
+    rhythm: 83,
+    holds: 88,
+    speedPercent: 65,
+    practiceFocusId: 'rhythm',
+    practicePlanSource: 'measured',
+    practiceTargetScore: 82,
+  });
+  const second = measuredReport({
+    attemptId: 'attempt_tempo_2',
+    createdAt: '2026-09-02T00:00:00.000Z',
+    score: 81,
+    notes: 91,
+    rhythm: 88,
+    holds: 89,
+    speedPercent: 65,
+    practiceFocusId: 'rhythm',
+    practicePlanSource: 'measured',
+    practiceTargetScore: 82,
+  });
+  progress = recordLearningAttempt(progress, 'mean', first);
+  progress = recordLearningAttempt(progress, 'mean', second);
+
+  const outcome = evaluateAdaptivePracticeOutcome({ progress, songId: 'mean', report: second });
+  assert.equal(outcome.status, 'achieved');
+  assert.equal(outcome.passes, 2);
+  assert.equal(outcome.improvement, 5);
+
+  const plan = buildAdaptivePracticePlan({
+    progress,
+    songId: 'mean',
+    levelId: 'beginner',
+    sections: [{ id: 'part-1', start: 0, end: 8 }],
+  });
+  assert.equal(plan.skillId, 'rhythm');
+  assert.equal(plan.speedPercent, 75);
+  assert.equal(plan.goal.passes, 0);
+});
+
+test('legacy scores without recorded tempo never unlock a faster tempo', () => {
+  let progress = emptyLearningProgress();
+  progress = recordLearningAttempt(progress, 'mean', measuredReport({
+    attemptId: 'attempt_legacy_tempo_1', createdAt: '2026-09-01T00:00:00.000Z', notes: 94, rhythm: 84, holds: 91,
+  }));
+  progress = recordLearningAttempt(progress, 'mean', measuredReport({
+    attemptId: 'attempt_legacy_tempo_2', createdAt: '2026-09-02T00:00:00.000Z', notes: 95, rhythm: 87, holds: 92,
+  }));
+  const plan = buildAdaptivePracticePlan({
+    progress,
+    songId: 'mean',
+    levelId: 'beginner',
+    sections: [{ id: 'part-1', start: 0, end: 8 }],
+  });
+  assert.equal(plan.speedPercent, 65);
+  assert.equal(plan.goal.highestCompletedSpeed, null);
+});
+
+test('a first baseline is celebrated without pretending it passed a mastery threshold', () => {
+  const report = measuredReport({
+    attemptId: 'attempt_baseline_1',
+    createdAt: '2026-09-01T00:00:00.000Z',
+    notes: 48,
+    rhythm: 51,
+    holds: 60,
+    practicePlanSource: 'baseline',
+    speedPercent: 70,
+  });
+  const progress = recordLearningAttempt(emptyLearningProgress(), 'mean', report);
+  const outcome = evaluateAdaptivePracticeOutcome({ progress, songId: 'mean', report });
+  assert.equal(outcome.status, 'baseline');
+  assert.equal(outcome.targetScore, null);
+  assert.match(outcome.nextAction, /choose one measured skill/i);
+});
+
+test('cloud and local progress merge idempotently without losing independent attempts', () => {
+  const local = recordLearningAttempt(emptyLearningProgress(), 'mean', measuredReport({
+    attemptId: 'attempt_merge_local', createdAt: '2026-09-01T00:00:00.000Z', notes: 72,
+  }));
+  const cloud = recordLearningAttempt(emptyLearningProgress(), 'mean', measuredReport({
+    attemptId: 'attempt_merge_cloud', createdAt: '2026-09-02T00:00:00.000Z', notes: 81,
+  }));
+  const merged = mergeLearningProgress(local, cloud);
+  assert.equal(merged.totalAttempts, 2);
+  assert.equal(merged.history.length, 2);
+  assert.equal(mergeLearningProgress(merged, cloud).totalAttempts, 2);
+});
+
+test('server snapshots retain their stable IDs when reconstructed in the browser', () => {
+  const cloud = mergeLearningProgress(emptyLearningProgress(), {
+    ...emptyLearningProgress(),
+    history: [{
+      id: 'server_attempt_123456',
+      songId: 'free:Blank Space:Taylor Swift',
+      createdAt: '2026-09-02T00:00:00.000Z',
+      levelId: 'beginner',
+      range: { start: 0, end: 8 },
+      score: 70,
+      speedPercent: 65,
+      handMode: 'right',
+      practiceFocusId: 'rhythm',
+      practicePlanSource: 'measured',
+      practiceTargetScore: 82,
+      metrics: {},
+    }],
+  });
+  assert.equal(cloud.history[0].id, 'server_attempt_123456');
+  assert.equal(cloud.history[0].metrics.dynamics.score, null);
+  assert.equal(cloud.history[0].speedPercent, 65);
+  assert.equal(cloud.history[0].practiceFocusId, 'rhythm');
+});
+
+test('version one browser progress migrates instead of disappearing', () => {
+  const storage = new Map();
+  storage.set('polymath-learning-progress-v1:learner', JSON.stringify({
+    version: 1,
+    totalAttempts: 4,
+    practiceSeconds: 42,
+    songs: { mean: { attempts: 4, bestScore: 83, sections: {} } },
+  }));
+  const progress = readLearningProgress({ getItem: (key) => storage.get(key) || null }, 'learner');
+  assert.equal(progress.version, 2);
+  assert.equal(progress.totalAttempts, 4);
+  assert.equal(progress.songs.mean.bestScore, 83);
 });

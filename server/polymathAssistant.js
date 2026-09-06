@@ -124,6 +124,7 @@ function cameraMeasurementAvailable(observations) {
 }
 
 function finiteNumber(value, minimum, maximum) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) && number >= minimum && number <= maximum ? number : null;
 }
@@ -228,6 +229,68 @@ function groundedPracticeReply(userText, practiceReport) {
   return `${opening} This section has no measured pedal target. Do not invent a pedal correction; practise the current note or timing focus instead.`;
 }
 
+function groundedPracticeOutcomeReply(userText, outcome) {
+  const text = String(userText || '').toLowerCase();
+  if (!outcome || !includesAny(text, [
+    'did i improve', 'am i improving', 'did i pass', 'have i passed',
+    'did i reach', 'goal progress', 'ready to speed up', 'raise the tempo',
+    'can i go faster', 'how many passes',
+  ])) return '';
+  const skill = clean(outcome.skillLabel) || 'Focus';
+  const score = finiteNumber(outcome.score, 0, 100);
+  const improvement = finiteNumber(outcome.improvement, -100, 100);
+  const passes = finiteNumber(outcome.passes, 0, 20);
+  const required = finiteNumber(outcome.requiredPasses, 1, 20);
+  const speed = finiteNumber(outcome.speedPercent, 20, 200);
+  const target = finiteNumber(outcome.targetScore, 0, 100);
+
+  if (outcome.status === 'baseline') {
+    return `Your starting point is now measured${score === null ? '' : ` at ${Math.round(score)}% for ${skill.toLowerCase()}`}. That is a baseline, not a pass or fail. Follow the new focused plan and compare the next attempt.`;
+  }
+  const comparison = improvement === null
+    ? ''
+    : improvement > 0
+      ? ` You improved by ${Math.round(improvement)} points from the previous comparable attempt.`
+      : improvement < 0
+        ? ` This attempt was ${Math.abs(Math.round(improvement))} points below the previous comparable attempt.`
+        : ' You matched the previous comparable attempt.';
+  const checkpoint = passes === null || required === null
+    ? ''
+    : ` You have ${Math.round(passes)} of ${Math.round(required)} clean passes.`;
+  if (outcome.achieved) {
+    return `${skill} reached its checkpoint${score === null ? '' : ` at ${Math.round(score)}%`}.${comparison}${checkpoint}${speed !== null && speed < 100 ? ' You are ready for the next small tempo increase.' : ' Keep it reliable while moving to the next focus.'}`;
+  }
+  if (outcome.passedThisAttempt) {
+    return `${score === null ? skill : `${skill} scored ${Math.round(score)}%`}${target === null ? '' : ` against the ${Math.round(target)}% target`}.${comparison}${checkpoint} Repeat the same section at ${speed === null ? 'the same' : `${Math.round(speed)}%`} speed once more.`;
+  }
+  return `${score === null ? skill : `${skill} scored ${Math.round(score)}%`}${target === null ? '' : ` against the ${Math.round(target)}% target`}.${comparison}${checkpoint} Keep the same short section and tempo for the next attempt.`;
+}
+
+function asksForPracticePlan(userText) {
+  const text = String(userText || '').toLowerCase();
+  return includesAny(text, [
+    'what should i practise', 'what should i practice', 'what should i fix',
+    'what do i practise', 'what do i practice', 'next exercise', 'today\'s focus',
+    'todays focus', 'practice next', 'practise next',
+  ]);
+}
+
+function groundedCoachPlanReply(userText, coachPlan) {
+  if (!coachPlan || !asksForPracticeFeedback(userText)) return '';
+  const title = clean(coachPlan.title);
+  const skill = clean(coachPlan.skillLabel);
+  const instruction = clean(coachPlan.instruction);
+  const successRule = clean(coachPlan.successRule);
+  const speed = finiteNumber(coachPlan.speedPercent, 20, 200);
+  const confidence = finiteNumber(coachPlan.confidence, 0, 100);
+  if (!title || !skill || !instruction) return '';
+  const evidence = coachPlan.source === 'measured' && confidence !== null
+    ? `Across your saved attempts, ${skill.toLowerCase()} is the clearest measured focus.`
+    : 'We need one short measured attempt to establish your starting point.';
+  const tempo = speed === null ? '' : ` Use ${Math.round(speed)}% speed.`;
+  return `${evidence} ${title}: ${instruction}${tempo}${successRule ? ` Your checkpoint is: ${successRule}` : ''}`;
+}
+
 function teacherBoundaryReply(userText, observations) {
   const asksForVision = includesAny(userText, [
     'can you see', 'look at my hand', 'look at my wrist', 'my wrists', 'my wrist',
@@ -241,7 +304,8 @@ function teacherBoundaryReply(userText, observations) {
     'what exact note did i miss', 'which note did i miss', 'how late was i',
     'what did i play wrong', 'measure my playing',
   ]);
-  if (asksForUnmeasuredResult && !observations?.practiceReport) {
+  const savedPlanCanAnswer = asksForPracticePlan(userText) && clean(observations?.coachPlan?.title);
+  if (asksForUnmeasuredResult && !observations?.practiceReport && !savedPlanCanAnswer) {
     return 'I cannot measure the missed note or timing because no completed practice report is available. Play that short section again with measurement enabled, then I can give one exact correction.';
   }
   return '';
@@ -436,12 +500,32 @@ function createPolymathAssistant(env = process.env, options = {}) {
         },
       };
     }
+    const outcomeReply = groundedPracticeOutcomeReply(userText, safeObservations?.practiceOutcome);
+    if (outcomeReply) {
+      return {
+        immediate: {
+          reply: outcomeReply,
+          provider: 'polymath-progress-coach',
+          role: 'piano-teacher',
+        },
+      };
+    }
     const measuredReply = groundedPracticeReply(userText, safeObservations?.practiceReport);
     if (measuredReply) {
       return {
         immediate: {
           reply: measuredReply,
           provider: 'polymath-measured-coach',
+          role: 'piano-teacher',
+        },
+      };
+    }
+    const adaptiveReply = groundedCoachPlanReply(userText, safeObservations?.coachPlan);
+    if (adaptiveReply) {
+      return {
+        immediate: {
+          reply: adaptiveReply,
+          provider: 'polymath-adaptive-coach',
           role: 'piano-teacher',
         },
       };
@@ -620,6 +704,16 @@ function createPolymathAssistant(env = process.env, options = {}) {
         role: isTeacher ? 'piano-teacher' : 'customer-service',
       };
     }
+    const outcomeReply = isTeacher
+      ? groundedPracticeOutcomeReply(userText, observations?.practiceOutcome)
+      : '';
+    if (outcomeReply) {
+      return {
+        reply: outcomeReply,
+        provider: 'polymath-progress-coach',
+        role: 'piano-teacher',
+      };
+    }
     const measuredReply = isTeacher
       ? groundedPracticeReply(userText, observations?.practiceReport)
       : '';
@@ -627,6 +721,16 @@ function createPolymathAssistant(env = process.env, options = {}) {
       return {
         reply: measuredReply,
         provider: 'polymath-measured-coach',
+        role: 'piano-teacher',
+      };
+    }
+    const adaptiveReply = isTeacher
+      ? groundedCoachPlanReply(userText, observations?.coachPlan)
+      : '';
+    if (adaptiveReply) {
+      return {
+        reply: adaptiveReply,
+        provider: 'polymath-adaptive-coach',
         role: 'piano-teacher',
       };
     }
@@ -714,6 +818,8 @@ module.exports = {
   extractAssistantText,
   generatedReplyCrossesBoundary,
   groundedPracticeReply,
+  groundedPracticeOutcomeReply,
+  groundedCoachPlanReply,
   stripHiddenReasoning,
   sanitizeMessages,
   supportBoundaryReply,
