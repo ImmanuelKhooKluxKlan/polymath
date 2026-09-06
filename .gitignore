@@ -23,5 +23,6 @@ server/server-live.stderr.log
 alignment-output/
 qa/*.png
 artifacts/qa/
+artifacts/*.png
 tmp/imagegen/
 public/teachers/pianist-hands-pressed*.png

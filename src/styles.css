@@ -8947,3 +8947,146 @@ details[open] > summary {
 @media (prefers-reduced-motion: reduce) {
   .chat-boss-thinking i { animation: none; }
 }
+
+/* Piano-roll contact geometry
+   Each falling lane is physically paired with the keyboard row it controls.
+   The shared seam is the 100% note position and the 0px keyboard edge. */
+.visual-stack {
+  grid-template-rows: auto;
+  gap: 0;
+}
+.piano-roll {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+}
+.piano-roll.two-storey { gap: 12px; }
+.piano-roll-pair {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: auto auto;
+  gap: 0;
+}
+.piano-roll-pair > .falling-stage {
+  width: 100%;
+  min-height: 350px;
+  height: clamp(350px, 48vh, 410px);
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+}
+.piano-roll.two-storey .piano-roll-pair > .falling-stage {
+  min-height: 210px;
+  height: clamp(210px, 27vh, 270px);
+}
+.piano-roll-pair > .piano-scroll-wrap,
+.visual-stack .piano-roll-pair > .piano-scroll-wrap {
+  position: relative;
+  z-index: 3;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 20px 20px;
+  background: #080b20;
+}
+.piano-roll-pair .piano-shell {
+  border-radius: 0 0 20px 20px;
+}
+.piano-roll-pair .timing-line {
+  bottom: 0;
+  height: 2px;
+  transform: translateY(50%);
+}
+.falling-row-name {
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  left: 12px;
+  max-width: calc(100% - 100px);
+  overflow: hidden;
+  color: rgba(198, 204, 235, 0.52);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.piano-roll-pair .falling-note[data-strike-contact=true] {
+  border-radius: 10px 10px 1px 1px;
+}
+
+/* Five-stage Learn setup: one decision at a time. */
+.learn-level-grid.five-stages {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.learn-hand-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.learn-teacher-verdict {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(88, 240, 255, 0.22);
+  border-radius: 15px;
+  background: linear-gradient(145deg, rgba(69, 129, 197, 0.12), rgba(129, 82, 206, 0.1));
+}
+.learn-teacher-verdict > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.learn-teacher-verdict span {
+  color: var(--cyan);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.learn-teacher-verdict strong,
+.learn-teacher-verdict p { overflow-wrap: anywhere; }
+.learn-teacher-verdict p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.learn-teacher-verdict button { white-space: nowrap; }
+
+@media (max-width: 1100px) {
+  .learn-level-grid.five-stages { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) and (orientation: portrait) {
+  .learn-level-grid.five-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .piano-roll-pair > .falling-stage {
+    min-height: 260px;
+    height: clamp(260px, 42vh, 340px);
+  }
+  .piano-roll.two-storey .piano-roll-pair > .falling-stage {
+    min-height: 145px;
+    height: clamp(145px, 22vh, 190px);
+  }
+  .piano-roll.two-storey { gap: 8px; }
+}
+
+@media (max-width: 950px) and (max-height: 600px) and (orientation: landscape) {
+  .piano-roll-pair > .falling-stage {
+    min-height: 160px;
+    height: clamp(160px, 44vh, 220px);
+  }
+  .piano-roll.two-storey .piano-roll-pair > .falling-stage {
+    min-height: 112px;
+    height: clamp(112px, 27vh, 150px);
+  }
+  .piano-roll.two-storey { gap: 7px; }
+}
+
+@media (max-width: 600px) {
+  .learn-level-grid.five-stages,
+  .learn-hand-grid { grid-template-columns: minmax(0, 1fr); }
+  .learn-teacher-verdict { grid-template-columns: minmax(0, 1fr); }
+  .learn-teacher-verdict button { width: 100%; white-space: normal; }
+}

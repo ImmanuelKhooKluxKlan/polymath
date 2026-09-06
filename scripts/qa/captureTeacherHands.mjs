@@ -150,6 +150,8 @@ async function main() {
   const startSession = args['start-session'] === 'true';
   const voiceOnly = args['voice-only'] === 'true';
   const followPlan = args['follow-plan'] === 'true';
+  const learnStep = String(args['learn-step'] || '').trim().toLowerCase();
+  const learnLevel = String(args['learn-level'] || '').trim().toLowerCase();
   const output = path.resolve(args.output || 'qa-teacher-hands.png');
   const profile = await fsp.mkdtemp(path.join(os.tmpdir(), 'polymath-teacher-qa-'));
   const child = spawn(chrome, [
@@ -249,24 +251,52 @@ async function main() {
       let audit = null;
       while (Date.now() < deadline && !audit?.pageReady) {
         const result = await session.send('Runtime.evaluate', {
-          expression: `(() => ({
+          expression: `(() => {
+            const routeRoot = document.querySelector(${JSON.stringify(publicRoute)});
+            const controls = routeRoot ? [...routeRoot.querySelectorAll('button, input, select')] : [];
+            return ({
             pageReady: Boolean(document.querySelector(${JSON.stringify(publicRoute)})),
             title: document.querySelector(${JSON.stringify(publicRoute)} + ' h1')?.textContent.trim() || '',
             feeNotice: Boolean(document.querySelector('.teacher-marketplace-fee-notice')),
             feeMetrics: document.querySelectorAll('.teacher-marketplace-fee-notice > div > span').length,
             documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-            clippedControls: [...document.querySelectorAll('button, input, select')]
+            clippedControls: controls
               .filter((item) => item.offsetParent && item.scrollWidth > item.clientWidth + 1).length,
+            clippedControlLabels: controls
+              .filter((item) => item.offsetParent && item.scrollWidth > item.clientWidth + 1)
+              .slice(0, 8)
+              .map((item) => item.getAttribute('aria-label') || item.textContent.trim().slice(0, 80) || item.tagName),
+            pianoContacts: [...document.querySelectorAll('.piano-roll-pair')].map((pair) => {
+              const stage = pair.querySelector('.falling-stage')?.getBoundingClientRect();
+              const deck = pair.querySelector('.keyboard-deck')?.getBoundingClientRect();
+              const line = pair.querySelector('.timing-line')?.getBoundingClientRect();
+              const lineCenter = line ? line.top + (line.height / 2) : null;
+              return {
+                row: pair.dataset.pianoRow || '',
+                stageToKeyPx: stage && deck ? Math.round((deck.top - stage.bottom) * 1000) / 1000 : null,
+                lineToKeyPx: lineCenter !== null && deck ? Math.round((deck.top - lineCenter) * 1000) / 1000 : null,
+              };
+            }),
             body: document.body.innerText.slice(0, 500),
             rootChildren: document.querySelector('#root')?.childElementCount || 0,
-          }))()`,
+          }); })()`,
           returnByValue: true,
         });
         audit = result.result?.value || null;
         if (!audit?.pageReady) await delay(100);
       }
+      const pianoContactFailed = publicRoute === '.piano-roll' && (
+        !audit?.pianoContacts?.length
+        || audit.pianoContacts.some((contact) => (
+          contact.stageToKeyPx === null
+          || contact.lineToKeyPx === null
+          || Math.abs(contact.stageToKeyPx) > 0.51
+          || Math.abs(contact.lineToKeyPx) > 0.51
+        ))
+      );
       if (!audit?.pageReady
         || (feeNoticeExpected && (!audit.feeNotice || audit.feeMetrics !== 3))
+        || pianoContactFailed
         || audit.documentOverflow
         || audit.clippedControls) {
         throw new Error(`Public page audit failed: ${JSON.stringify(audit)}`);
@@ -335,6 +365,46 @@ async function main() {
       returnByValue: true,
     });
     await delay(650);
+    if (surface === 'adaptive-learn' && (learnStep || learnLevel)) {
+      const stepNumbers = { music: 1, stage: 2, hands: 3, play: 4 };
+      if (learnLevel) {
+        await session.send('Runtime.evaluate', {
+          expression: `(() => {
+            const stageButton = document.querySelector('button[aria-label="Step 2: Stage"]');
+            stageButton?.click();
+            return Boolean(stageButton);
+          })()`,
+          returnByValue: true,
+        });
+        await delay(180);
+        const selected = await session.send('Runtime.evaluate', {
+          expression: `(() => {
+            const expected = ${JSON.stringify(learnLevel)};
+            const levelButton = [...document.querySelectorAll('.learn-level-grid button')]
+              .find((item) => item.textContent.trim().toLowerCase().includes(expected));
+            levelButton?.click();
+            return Boolean(levelButton);
+          })()`,
+          returnByValue: true,
+        });
+        if (!selected.result?.value) throw new Error(`Learn level ${learnLevel} was not found.`);
+        await delay(180);
+      }
+      if (learnStep) {
+        const stepNumber = stepNumbers[learnStep];
+        if (!stepNumber) throw new Error(`Unsupported --learn-step value: ${learnStep}.`);
+        const selected = await session.send('Runtime.evaluate', {
+          expression: `(() => {
+            const button = document.querySelector('button[aria-label^="Step ${stepNumber}:"]');
+            button?.click();
+            return Boolean(button);
+          })()`,
+          returnByValue: true,
+        });
+        if (!selected.result?.value) throw new Error(`Learn step ${learnStep} was not found.`);
+        await delay(250);
+      }
+    }
     if (surface === 'adaptive-learn' && followPlan) {
       const followed = await session.send('Runtime.evaluate', {
         expression: `(() => {
@@ -599,6 +669,9 @@ async function main() {
           goalPasses: document.querySelector('.learn-focus-contract .learn-goal-progress strong')?.textContent?.trim() || '',
           masterySkillCount: document.querySelectorAll('.learn-mastery-skill').length,
           syncState: document.querySelector('.learn-sync-state')?.textContent?.trim() || '',
+          learningStageCardCount: document.querySelectorAll('.learn-level-grid.five-stages [role="radio"]').length,
+          learningHandChoiceCount: document.querySelectorAll('.learn-hand-grid [role="radio"]').length,
+          learningPracticeScope: document.querySelector('.learn-session-focus')?.textContent?.trim() || '',
           learnClippedControls: [...document.querySelectorAll('.piano-learn-journey button')]
             .filter((item) => item.offsetParent && item.scrollWidth > item.clientWidth + 1).length,
           learningFetchLog: window.__polymathQaFetchLog || [],
@@ -614,12 +687,22 @@ async function main() {
       throw new Error(`Learn key guidance was not visible: ${JSON.stringify(visualAudit.result?.value)}`);
     }
     if (surface === 'adaptive-learn' && (
-      (!followPlan && !visualAudit.result?.value?.adaptivePlan)
-      || (!followPlan && visualAudit.result?.value?.masterySkillCount !== 5)
+      (!learnStep && !followPlan && !visualAudit.result?.value?.adaptivePlan)
+      || (!learnStep && !followPlan && visualAudit.result?.value?.masterySkillCount !== 5)
       || visualAudit.result?.value?.documentOverflow
       || visualAudit.result?.value?.learnClippedControls
     )) {
       throw new Error(`Adaptive Learn layout audit failed: ${JSON.stringify(visualAudit.result?.value)}`);
+    }
+    if (surface === 'adaptive-learn' && learnStep === 'stage'
+      && visualAudit.result?.value?.learningStageCardCount !== 5) {
+      throw new Error(`Five-stage Learn audit failed: ${JSON.stringify(visualAudit.result?.value)}`);
+    }
+    if (surface === 'adaptive-learn' && learnStep === 'hands' && (
+      visualAudit.result?.value?.learningHandChoiceCount !== 3
+      || !visualAudit.result?.value?.learningPracticeScope
+    )) {
+      throw new Error(`Learn hand-and-scope audit failed: ${JSON.stringify(visualAudit.result?.value)}`);
     }
     if (surface === 'adaptive-learn' && followPlan && (
       !visualAudit.result?.value?.focusContract

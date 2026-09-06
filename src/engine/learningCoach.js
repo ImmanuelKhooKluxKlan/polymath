@@ -19,43 +19,82 @@ const PIANO_HAND_MODES = new Set(['left', 'right', 'both']);
 
 export const PIANO_LEARNING_LEVELS = Object.freeze([
   {
-    id: 'melody',
-    label: 'Melody first',
-    shortLabel: 'Melody',
-    summary: 'Recognise the song with one clear note at a time.',
-    detail: 'Keeps the strongest upper melody and removes accompaniment. Best for a first play-through.',
+    id: 'first-keys',
+    stage: 1,
+    arrangement: 'melody',
+    label: 'Learn to play piano',
+    shortLabel: 'Stage 1',
+    summary: 'Start with the melody, one small part at a time.',
+    detail: 'The song is split into short parts. You play the clearest melody notes with your right hand first.',
     handMode: 'right',
-    speed: 0.6,
+    speed: 0.55,
+    usesParts: true,
+    partSeconds: 20,
   },
   {
-    id: 'beginner',
-    label: 'Easy two-hand',
-    shortLabel: 'Easy',
-    summary: 'Melody plus a simple bass foundation.',
-    detail: 'Keeps at most one melody note and one bass note at each moment so both hands can develop without dense chords.',
+    id: 'song-builder',
+    stage: 2,
+    arrangement: 'beginner',
+    label: 'Build the song',
+    shortLabel: 'Stage 2',
+    summary: 'Add simple bass and learn in 20-second parts.',
+    detail: 'Each short part keeps the melody plus a simple left-hand foundation, without dense chords.',
     handMode: 'both',
     speed: 0.7,
+    usesParts: true,
+    partSeconds: 20,
   },
   {
-    id: 'intermediate',
-    label: 'Full shape, slower',
-    shortLabel: 'Medium',
-    summary: 'Preserve the musical shape with lighter chords.',
-    detail: 'Keeps up to four useful notes per onset, including the outer voices, while reducing overly dense clusters.',
+    id: 'piano-player',
+    stage: 3,
+    arrangement: 'intermediate',
+    label: 'Piano Player',
+    shortLabel: 'Stage 3',
+    summary: 'Play the full song with lighter chords.',
+    detail: 'The 20-second parts disappear. Play the whole song with its musical shape and up to four useful notes per chord.',
     handMode: 'both',
     speed: 0.85,
+    usesParts: false,
+    partSeconds: 20,
   },
   {
-    id: 'original',
-    label: 'Original arrangement',
-    shortLabel: 'Original',
-    summary: 'Play every available note at the recorded tempo.',
-    detail: 'Preserves the complete arrangement, durations, dynamics, pedal data and hand assignments.',
+    id: 'piano-master',
+    stage: 4,
+    arrangement: 'advanced',
+    label: 'Piano Master',
+    shortLabel: 'Stage 4',
+    summary: 'Play the full song with richer harmony.',
+    detail: 'Most of the arrangement returns, including richer chords, holds, dynamics and pedal guidance.',
+    handMode: 'both',
+    speed: 0.95,
+    usesParts: false,
+    partSeconds: 20,
+  },
+  {
+    id: 'piano-king',
+    stage: 5,
+    arrangement: 'original',
+    label: 'Piano King',
+    shortLabel: 'Stage 5',
+    summary: 'Perform the complete arrangement at full speed.',
+    detail: 'Every available note, duration, dynamic, pedal event and hand assignment is preserved.',
     handMode: 'both',
     speed: 1,
+    usesParts: false,
+    partSeconds: 20,
   },
 ]);
 
+// Kept only for saved progress created by the previous four-level interface.
+const LEGACY_LEVEL_IDS = Object.freeze({
+  melody: 'first-keys',
+  beginner: 'song-builder',
+  intermediate: 'piano-player',
+  original: 'piano-king',
+});
+
+// Deprecated compatibility export. The Learn screen no longer asks learners
+// to understand session lengths; practice scope now follows the chosen stage.
 export const LEARNING_SESSION_GOALS = Object.freeze([
   {
     id: 'quick',
@@ -304,30 +343,53 @@ function intermediateVoicing(group, melody) {
     .sort((left, right) => left.midi - right.midi);
 }
 
+function advancedVoicing(group, melody) {
+  const ordered = [...group.notes].sort((left, right) => left.midi - right.midi);
+  if (ordered.length <= 6) return ordered;
+  const bass = ordered[0];
+  const top = ordered.at(-1);
+  const compulsory = [bass, melody, top].filter(Boolean);
+  const selectedIds = new Set(compulsory.map((note) => note.id));
+  const optional = ordered
+    .filter((note) => !selectedIds.has(note.id))
+    .sort((left, right) => (
+      (right.duration + right.velocity * 0.5) - (left.duration + left.velocity * 0.5)
+    ));
+  for (const note of optional) {
+    if (compulsory.length >= 6) break;
+    compulsory.push(note);
+  }
+  return [...new Map(compulsory.map((note) => [note.id, note])).values()]
+    .sort((left, right) => left.midi - right.midi);
+}
+
 export function learningLevelById(levelId) {
-  return PIANO_LEARNING_LEVELS.find((level) => level.id === levelId) || PIANO_LEARNING_LEVELS[1];
+  const normalizedId = LEGACY_LEVEL_IDS[levelId] || levelId;
+  return PIANO_LEARNING_LEVELS.find((level) => level.id === normalizedId) || PIANO_LEARNING_LEVELS[0];
 }
 
 export function learningSessionById(sessionId) {
   return LEARNING_SESSION_GOALS.find((goal) => goal.id === sessionId) || LEARNING_SESSION_GOALS[1];
 }
 
-export function buildLearningArrangement(rawNotes = [], levelId = 'beginner') {
+export function buildLearningArrangement(rawNotes = [], levelId = 'first-keys') {
+  const learningLevel = learningLevelById(levelId);
+  const arrangement = learningLevel.arrangement;
   const notes = rawNotes
     .map(normalizeLearningNote)
     .filter(Boolean)
     .sort((left, right) => left.time - right.time || left.midi - right.midi);
-  if (levelId === 'original') return notes;
+  if (arrangement === 'original') return notes;
 
   const groups = groupByOnset(notes);
   const melodyPath = selectMelodyPath(groups);
   let selected;
-  if (levelId === 'melody') {
+  if (arrangement === 'melody') {
     selected = groups.map((group, index) => ({
       ...learningNote(melodyPath[index] || melodyFromGroup(group), 'melody', 0.12, 0.78),
       hand: 'right',
     }));
-  } else if (levelId === 'beginner') {
+  } else if (arrangement === 'beginner') {
     selected = groups.flatMap((group, index) => {
       const left = group.notes.filter((note) => note.hand === 'left').sort((a, b) => a.midi - b.midi)[0];
       const melody = melodyPath[index] || melodyFromGroup(group);
@@ -341,7 +403,7 @@ export function buildLearningArrangement(rawNotes = [], levelId = 'beginner') {
         ),
       ])).values()];
     });
-  } else {
+  } else if (arrangement === 'intermediate') {
     selected = groups.flatMap((group, index) => (
       intermediateVoicing(group, melodyPath[index] || melodyFromGroup(group))
         .map((note) => learningNote(
@@ -349,13 +411,23 @@ export function buildLearningArrangement(rawNotes = [], levelId = 'beginner') {
           note.id === melodyPath[index]?.id ? 'melody' : 'harmony',
           0.09,
           note.id === melodyPath[index]?.id ? 0.74 : null,
+      ))
+    ));
+  } else {
+    selected = groups.flatMap((group, index) => (
+      advancedVoicing(group, melodyPath[index] || melodyFromGroup(group))
+        .map((note) => learningNote(
+          note,
+          note.id === melodyPath[index]?.id ? 'melody' : 'harmony',
+          0.075,
+          note.id === melodyPath[index]?.id ? 0.74 : null,
         ))
     ));
   }
 
   return mergeMachineGunDuplicates(
     selected.sort((left, right) => left.time - right.time || left.midi - right.midi),
-    levelId === 'melody' ? 0.09 : 0.065,
+    arrangement === 'melody' ? 0.09 : 0.065,
   );
 }
 
@@ -538,7 +610,7 @@ export function analyzePracticeAttempt({
   expectedPedals = [],
   playedPedals = [],
   range,
-  levelId = 'beginner',
+  levelId = 'first-keys',
 } = {}) {
   const safeRange = {
     start: Math.max(0, Number(range?.start) || 0),
@@ -654,9 +726,10 @@ export function emptyLearningProgress() {
 }
 
 export function recommendedLearningLevel(songProgress) {
-  if (!songProgress?.attempts) return 'beginner';
+  if (!songProgress?.attempts) return 'first-keys';
   const ordered = PIANO_LEARNING_LEVELS.map((level) => level.id);
-  const current = ordered.includes(songProgress.lastLevelId) ? songProgress.lastLevelId : 'beginner';
+  const savedLevel = learningLevelById(songProgress.lastLevelId).id;
+  const current = ordered.includes(savedLevel) ? savedLevel : 'first-keys';
   const index = ordered.indexOf(current);
   const score = Number(songProgress.lastScore || 0);
   if (score >= 88 && Number(songProgress.attempts) >= 2) {
@@ -1017,8 +1090,9 @@ function weakestSectionIndex(songProgress, sections, metricKey) {
   }, 0);
 }
 
-export function buildAdaptivePracticePlan({ progress, songId, sections = [], levelId = 'beginner' } = {}) {
+export function buildAdaptivePracticePlan({ progress, songId, sections = [], levelId = 'first-keys' } = {}) {
   const current = normalizeLearningProgress(progress);
+  const activeLevel = learningLevelById(levelId);
   const mastery = learningMasteryProfile(current, songId);
   const measured = mastery.skills.filter((skill) => skill.score !== null && skill.observations > 0);
   const focusSkill = [...measured].sort((left, right) => {
@@ -1036,13 +1110,15 @@ export function buildAdaptivePracticePlan({ progress, songId, sections = [], lev
       skillLabel: 'Notes',
       title: 'Create your starting point',
       reason: 'One short measured attempt lets Polymath choose the next exercise from evidence.',
-      instruction: 'Prepare the piano, hear one short part, then play it once at a comfortable speed.',
+      instruction: activeLevel.usesParts
+        ? 'Prepare the piano, hear one 20-second part, then play it once at a comfortable speed.'
+        : 'Prepare the piano, hear the example, then play the full song once at a comfortable speed.',
       successRule: 'Finish one measured attempt. No score is treated as a judgement.',
       speedPercent: 70,
       recommendedLevelId,
       recommendedSectionIndex: 0,
       recommendedRange: normalizedRange(baselineSection),
-      recommendedHand: learningLevelById(levelId).handMode,
+      recommendedHand: activeLevel.handMode,
       confidence: 0,
       goal: {
         metricKey: 'notes',

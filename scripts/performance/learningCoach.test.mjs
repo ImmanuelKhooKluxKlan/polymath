@@ -8,6 +8,7 @@ import {
   evaluateAdaptivePracticeOutcome,
   learningMasteryProfile,
   mergeLearningProgress,
+  PIANO_LEARNING_LEVELS,
   readLearningProgress,
   recommendedLearningLevel,
   recordLearningAttempt,
@@ -22,14 +23,30 @@ const notes = [
 ];
 
 test('learning arrangements progressively restore musical density', () => {
-  const melody = buildLearningArrangement(notes, 'melody');
-  const beginner = buildLearningArrangement(notes, 'beginner');
-  const intermediate = buildLearningArrangement(notes, 'intermediate');
-  const original = buildLearningArrangement(notes, 'original');
+  const melody = buildLearningArrangement(notes, 'first-keys');
+  const beginner = buildLearningArrangement(notes, 'song-builder');
+  const intermediate = buildLearningArrangement(notes, 'piano-player');
+  const advanced = buildLearningArrangement(notes, 'piano-master');
+  const original = buildLearningArrangement(notes, 'piano-king');
   assert.deepEqual(melody.map((note) => note.note), ['G4', 'A4']);
   assert.equal(beginner.length, 4);
   assert.ok(intermediate.length >= beginner.length);
+  assert.ok(advanced.length >= intermediate.length);
   assert.equal(original.length, notes.length);
+});
+
+test('the visible journey has five stages and only stages one and two use parts', () => {
+  assert.equal(PIANO_LEARNING_LEVELS.length, 5);
+  assert.equal(PIANO_LEARNING_LEVELS[0].label, 'Learn to play piano');
+  assert.equal(PIANO_LEARNING_LEVELS.at(-1).label, 'Piano King');
+  assert.deepEqual(
+    PIANO_LEARNING_LEVELS.map((level) => level.usesParts),
+    [true, true, false, false, false],
+  );
+  assert.deepEqual(
+    PIANO_LEARNING_LEVELS.slice(0, 2).map((level) => level.partSeconds),
+    [20, 20],
+  );
 });
 
 test('learning levels respect the arranger melody role instead of blindly taking the highest note', () => {
@@ -100,14 +117,14 @@ test('progress keeps personal bests without discarding recent results', () => {
   assert.equal(second.practiceSeconds, 20);
   assert.equal(second.songs['song-a'].bestScore, 82);
   assert.equal(second.songs['song-a'].lastScore, 65);
-  assert.equal(second.songs['song-a'].lastLevelId, 'beginner');
+  assert.equal(second.songs['song-a'].lastLevelId, 'song-builder');
 });
 
 test('difficulty recommendations react to recent evidence without changing it silently', () => {
-  assert.equal(recommendedLearningLevel(null), 'beginner');
-  assert.equal(recommendedLearningLevel({ attempts: 2, lastLevelId: 'beginner', lastScore: 91 }), 'intermediate');
-  assert.equal(recommendedLearningLevel({ attempts: 1, lastLevelId: 'beginner', lastScore: 44 }), 'melody');
-  assert.equal(recommendedLearningLevel({ attempts: 3, lastLevelId: 'intermediate', lastScore: 76 }), 'intermediate');
+  assert.equal(recommendedLearningLevel(null), 'first-keys');
+  assert.equal(recommendedLearningLevel({ attempts: 2, lastLevelId: 'beginner', lastScore: 91 }), 'piano-player');
+  assert.equal(recommendedLearningLevel({ attempts: 1, lastLevelId: 'beginner', lastScore: 44 }), 'first-keys');
+  assert.equal(recommendedLearningLevel({ attempts: 3, lastLevelId: 'intermediate', lastScore: 76 }), 'piano-player');
 });
 
 test('timing feedback identifies whether matched notes tend to be early', () => {

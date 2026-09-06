@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PIANO_LEARNING_LEVELS,
-  LEARNING_SESSION_GOALS,
   recommendedLearningLevel,
 } from '../engine/learningCoach.js';
 import { formatLearningTime } from '../utils/learningSections.js';
 
 const JOURNEY_STEPS = [
   ['music', 'Music'],
-  ['level', 'Level'],
-  ['session', 'Session'],
+  ['level', 'Stage'],
+  ['hands', 'Hands'],
   ['play', 'Play'],
   ['review', 'Review'],
 ];
@@ -105,8 +104,6 @@ export default function PianoLearnJourney({
   songKey,
   levelId,
   onLevelChange,
-  sessionId,
-  onSessionChange,
   sections,
   selectedIndex,
   onSelectSection,
@@ -141,16 +138,17 @@ export default function PianoLearnJourney({
   const [step, setStep] = useState(0);
   const panelRef = useRef(null);
   const previousSongRef = useRef(song?.libraryId || song?.title);
-  const currentLevel = PIANO_LEARNING_LEVELS.find((level) => level.id === levelId) || PIANO_LEARNING_LEVELS[1];
-  const currentSession = LEARNING_SESSION_GOALS.find((goal) => goal.id === sessionId) || LEARNING_SESSION_GOALS[1];
+  const currentLevel = PIANO_LEARNING_LEVELS.find((level) => level.id === levelId) || PIANO_LEARNING_LEVELS[0];
+  const currentLevelIndex = PIANO_LEARNING_LEVELS.findIndex((level) => level.id === currentLevel.id);
+  const nextLevel = PIANO_LEARNING_LEVELS[currentLevelIndex + 1] || null;
   const selectedSection = sections[selectedIndex] || sections[0];
   const songProgress = progress?.songs?.[songKey] || null;
   const practicePlan = activePlan || (coachPlan?.source === 'baseline' ? coachPlan : null);
   const recommendedLevelId = recommendedLearningLevel(songProgress);
   const stepTitle = [
     'Start with music you care about',
-    'Make it achievable today',
-    'Choose the size of today’s win',
+    'Choose one of five clear stages',
+    'Choose which hands to learn',
     'Listen once—or play it yourself',
     report ? report.headline : 'Your review will appear here',
   ][step];
@@ -231,7 +229,7 @@ export default function PianoLearnJourney({
           <div>
             <p className="eyebrow">Personal piano path</p>
             <h1>Make this song fit your level.</h1>
-            <p>Choose Melody, Easy, Medium or Original, then practise one clear section at a time.</p>
+            <p>Move through five simple stages—from your first keys to Piano King.</p>
           </div>
           <div className="piano-core-start-actions">
             <button type="button" className="primary" onClick={onUpgrade}>Unlock Learn</button>
@@ -312,7 +310,7 @@ export default function PianoLearnJourney({
 
             {step === 1 && (
               <div className="learn-level-step">
-                <div className="learn-choice-grid learn-level-grid" role="radiogroup" aria-label="Arrangement difficulty">
+                <div className="learn-choice-grid learn-level-grid five-stages" role="radiogroup" aria-label="Piano learning stage">
                   {PIANO_LEARNING_LEVELS.map((level) => (
                     <button
                       type="button"
@@ -329,38 +327,45 @@ export default function PianoLearnJourney({
                   ))}
                 </div>
                 <details className="learn-disclosure">
-                  <summary>What changes in {currentLevel.shortLabel}?</summary>
-                  <div><p>{currentLevel.detail}</p><p>Starting tempo: {Math.round(currentLevel.speed * 100)}%. You can change it below the keyboard at any time.</p></div>
+                  <summary>What happens in {currentLevel.shortLabel}?</summary>
+                  <div>
+                    <p>{currentLevel.detail}</p>
+                    <p>{currentLevel.usesParts ? 'This stage uses clear 20-second parts.' : 'This stage uses the full song.'} Starting tempo: {Math.round(currentLevel.speed * 100)}%.</p>
+                  </div>
                 </details>
-                <div className="learn-primary-actions"><button type="button" className="primary" onClick={() => setStep(2)}>Continue</button></div>
+                <div className="learn-primary-actions"><button type="button" className="primary" onClick={() => setStep(2)}>Choose my hands</button></div>
               </div>
             )}
 
             {step === 2 && (
-              <div className="learn-session-step">
-                <div className="learn-choice-grid learn-session-grid" role="radiogroup" aria-label="Practice session goal">
-                  {LEARNING_SESSION_GOALS.map((goal) => (
+              <div className="learn-session-step learn-hands-step">
+                <div className="learn-choice-grid learn-hand-grid" role="radiogroup" aria-label="Hands to learn">
+                  {[
+                    { id: 'right', label: 'Right hand', summary: 'Learn the melody first.' },
+                    { id: 'left', label: 'Left hand', summary: 'Learn bass and support notes.' },
+                    { id: 'both', label: 'Both hands', summary: 'Put the complete part together.' },
+                  ].map((hand) => (
                     <button
                       type="button"
                       role="radio"
-                      aria-checked={goal.id === sessionId}
-                      key={goal.id}
-                      className={goal.id === sessionId ? 'is-selected' : ''}
-                      onClick={() => onSessionChange(goal.id)}
+                      aria-checked={hand.id === handMode}
+                      key={hand.id}
+                      className={hand.id === handMode ? 'is-selected' : ''}
+                      onClick={() => onHandModeChange(hand.id)}
                     >
-                      <strong>{goal.label}</strong>
-                      <small>{goal.summary}</small>
+                      <strong>{hand.label}</strong>
+                      <small>{hand.summary}</small>
                     </button>
                   ))}
                 </div>
                 <div className="learn-session-focus">
-                  <span>{currentSession.id === 'full' ? 'Today’s run' : `Part ${selectedIndex + 1} of ${sections.length}`}</span>
-                  <strong>{currentSession.id === 'full' ? 'Full song' : selectedSection?.name}</strong>
+                  <span>{currentLevel.usesParts ? `Part ${selectedIndex + 1} of ${sections.length}` : `${currentLevel.shortLabel} · no small parts`}</span>
+                  <strong>{currentLevel.usesParts ? selectedSection?.name : 'Learn the full song'}</strong>
                   <small>{rangeLabel(activeRange)}</small>
                 </div>
-                {currentSession.id !== 'full' && (
+                {currentLevel.usesParts && (
                   <details className="learn-disclosure">
-                    <summary>Choose a different part</summary>
+                    <summary>Choose a different 20-second part</summary>
                     <div className="learn-part-list" role="list">
                       {sections.map((section, index) => (
                         <button type="button" role="listitem" key={section.id} className={index === selectedIndex ? 'is-selected' : ''} onClick={() => onSelectSection(index)}>
@@ -370,7 +375,7 @@ export default function PianoLearnJourney({
                     </div>
                   </details>
                 )}
-                <div className="learn-primary-actions"><button type="button" className="primary" onClick={() => { setStep(3); window.setTimeout(() => onFocusPlayer?.(), 80); }}>Go to piano</button></div>
+                <div className="learn-primary-actions"><button type="button" className="primary" onClick={() => { setStep(3); window.setTimeout(() => onFocusPlayer?.(), 80); }}>Start with {handMode === 'both' ? 'both hands' : `${handMode} hand`}</button></div>
               </div>
             )}
 
@@ -420,13 +425,8 @@ export default function PianoLearnJourney({
                 <details className="learn-disclosure">
                   <summary>Practice options</summary>
                   <div className="learn-practice-options">
-                    <fieldset>
-                      <legend>Hands</legend>
-                      <div role="group" aria-label="Hands to practise">
-                        {[['left', 'Left'], ['right', 'Right'], ['both', 'Both']].map(([value, label]) => <button type="button" key={value} className={handMode === value ? 'is-selected' : ''} onClick={() => onHandModeChange(value)}>{label}</button>)}
-                      </div>
-                    </fieldset>
                     <label><input type="checkbox" checked={repeatSection} onChange={(event) => onRepeatChange(event.target.checked)} /> Loop example playback</label>
+                    <button type="button" className="ghost" onClick={() => setStep(2)}>Change hands</button>
                     <small>Touch and dynamics are measured only when a velocity-sensitive MIDI keyboard is connected. Polymath will not invent a score it cannot measure.</small>
                   </div>
                 </details>
@@ -445,6 +445,14 @@ export default function PianoLearnJourney({
                       <div className="learn-score-ring" style={{ '--score': report.score }}><strong>{report.score}</strong><span>out of 100</span></div>
                       <div><span>Coach focus · {report.focus}</span><h3>{report.headline}</h3><p>{report.nextAction}</p></div>
                     </div>
+                    <section className="learn-teacher-verdict" aria-label="AI teacher correctness check">
+                      <div>
+                        <span>AI teacher check</span>
+                        <strong>I checked your attempt: {report.score} out of 100.</strong>
+                        <p>{report.nextAction}</p>
+                      </div>
+                      <button type="button" className="ghost" onClick={onOpenTeacher}>Ask my teacher</button>
+                    </section>
                     {practiceOutcome && (
                       <div className={`learn-practice-outcome is-${practiceOutcome.status}`} role="status">
                         <div>
@@ -462,16 +470,19 @@ export default function PianoLearnJourney({
                       <span><strong>{songProgress?.bestScore || report.score}</strong> personal best</span>
                     </div>
                     <div className="learn-primary-actions">
-                      <button type="button" className="primary" onClick={followCoachPlan}>
-                        {practiceOutcome?.status === 'baseline'
-                          ? 'Start my focused plan'
-                          : practiceOutcome?.achieved
-                            ? `Continue at ${coachPlan?.speedPercent || 70}%`
-                            : practiceOutcome?.passedThisAttempt
-                              ? 'Repeat for pass 2'
-                              : `Retry ${coachPlan?.skillLabel || 'this focus'}`}
+                      <button type="button" className="primary" onClick={() => { setStep(3); window.setTimeout(() => onFocusPlayer?.(), 80); }}>
+                        Stay here and practise
                       </button>
-                      {selectedIndex < sections.length - 1 && sessionId !== 'full' && <button type="button" className="ghost" onClick={() => { onSelectSection(selectedIndex + 1); setStep(3); }}>Next part</button>}
+                      {currentLevel.usesParts && selectedIndex < sections.length - 1 && (
+                        <button type="button" className="ghost" onClick={() => { onSelectSection(selectedIndex + 1); setStep(3); }}>
+                          Next 20-second part
+                        </button>
+                      )}
+                      {(!currentLevel.usesParts || selectedIndex >= sections.length - 1) && nextLevel && (
+                        <button type="button" className="ghost" onClick={() => { onLevelChange(nextLevel.id); setStep(2); }}>
+                          Proceed to {nextLevel.shortLabel}
+                        </button>
+                      )}
                     </div>
                     {coachPlan && (
                       <div className="learn-coach-plan is-review" aria-label="Next adaptive exercise">

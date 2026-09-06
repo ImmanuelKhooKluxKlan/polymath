@@ -2,8 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import AppNav from './components/AppNav.jsx';
 import HeaderActions from './components/HeaderActions.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
-import FallingNotes from './components/FallingNotes.jsx';
-import PianoKeyboard, { keyboardMap } from './components/PianoKeyboard.jsx';
+import { keyboardMap } from './components/PianoKeyboard.jsx';
+import PianoRoll from './components/PianoRoll.jsx';
 import SongUploader from './components/SongUploader.jsx';
 import TransportDock from './components/TransportDock.jsx';
 import PianoLearnJourney from './components/PianoLearnJourney.jsx';
@@ -32,7 +32,6 @@ import {
   evaluateAdaptivePracticeOutcome,
   learningLevelById,
   learningProgressFromAttempts,
-  learningSessionById,
   mergeLearningProgress,
   readLearningProgress,
   recordLearningAttempt,
@@ -165,6 +164,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [activeNotes, setActiveNotes] = useState(new Set());
+  const [activePlaybackEventIds, setActivePlaybackEventIds] = useState(new Set());
   const [strikeVersions, setStrikeVersions] = useState(new Map());
   const [speed, setSpeed] = useState(1);
   const [leadTime, setLeadTime] = useState(3.4);
@@ -176,7 +176,6 @@ export default function App() {
   const [playbackEpoch, setPlaybackEpoch] = useState(0);
   const [teachingMode, setTeachingMode] = useState('regular');
   const [learningLevel, setLearningLevel] = useState(() => learningLevelById(window.localStorage.getItem('polymath-learning-level')).id);
-  const [learningSession, setLearningSession] = useState(() => learningSessionById(window.localStorage.getItem('polymath-learning-session')).id);
   const [learningAttemptStatus, setLearningAttemptStatus] = useState('idle');
   const [learningReport, setLearningReport] = useState(null);
   const [activePracticePlan, setActivePracticePlan] = useState(null);
@@ -188,7 +187,6 @@ export default function App() {
     name: '',
     error: '',
   }));
-  const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(() => learningSessionById(window.localStorage.getItem('polymath-learning-session')).partSeconds);
   const [selectedSectionIndex, setSelectedSectionIndex] = useState(0);
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
@@ -268,6 +266,7 @@ export default function App() {
       : learningArrangement
   ), [learningArrangement, teachingMode, pianoHandMode]);
   const teachingSong = useMemo(() => ({ ...song, notes: playbackNotes }), [song, playbackNotes]);
+  const currentLearningLevel = useMemo(() => learningLevelById(learningLevel), [learningLevel]);
   const teacherProfiles = useMemo(() => {
     const baseById = new Map(TEACHER_PROFILES.map((profile) => [profile.id, profile]));
     if (!remoteTeacherDirectory) return TEACHER_PROFILES;
@@ -296,17 +295,21 @@ export default function App() {
     [teacherHandTimeline, currentTime, pianoHandMode],
   );
   const learningSections = useMemo(
-    () => analyzeLearningSections(learningArrangement, getSongDuration(song), preferredSectionSeconds),
-    [song, learningArrangement, preferredSectionSeconds],
+    () => analyzeLearningSections(
+      learningArrangement,
+      getSongDuration(song),
+      currentLearningLevel.partSeconds,
+    ),
+    [song, learningArrangement, currentLearningLevel.partSeconds],
   );
   const activeLearningRange = useMemo(() => {
     if (practiceRange) return practiceRange;
-    if (learningSession === 'full') {
+    if (!currentLearningLevel.usesParts) {
       const duration = getSongDuration(song);
       return { id: 'full-song', name: 'Full song', start: 0, end: duration, duration };
     }
     return learningSections[selectedSectionIndex] || learningSections[0] || null;
-  }, [learningSession, learningSections, selectedSectionIndex, song, practiceRange]);
+  }, [currentLearningLevel.usesParts, learningSections, selectedSectionIndex, song, practiceRange]);
   const learningCoachPlan = useMemo(() => buildAdaptivePracticePlan({
     progress: learningProgress,
     songId: songLibraryId(song),
@@ -524,6 +527,7 @@ export default function App() {
   function clearActiveNotes() {
     activeNoteCounts.current.clear();
     setActiveNotes(new Set());
+    setActivePlaybackEventIds(new Set());
   }
 
   function clearTimers(timerRef) {
@@ -1122,9 +1126,20 @@ export default function App() {
   function scheduleVisualStrike(event, delaySeconds, visualDuration, runId) {
     const startTimer = window.setTimeout(() => {
       if (playbackRunId.current !== runId) return;
+      setActivePlaybackEventIds((current) => {
+        const next = new Set(current);
+        next.add(event.id);
+        return next;
+      });
       addActiveNote(event.note, true);
       const stopTimer = window.setTimeout(() => {
-        if (playbackRunId.current === runId) removeActiveNote(event.note);
+        if (playbackRunId.current !== runId) return;
+        setActivePlaybackEventIds((current) => {
+          const next = new Set(current);
+          next.delete(event.id);
+          return next;
+        });
+        removeActiveNote(event.note);
       }, visualDuration * 1000 + 70);
       visualTimers.current.push(stopTimer);
     }, delaySeconds * 1000);
@@ -1368,7 +1383,7 @@ export default function App() {
     const section = learningSections[index] || learningSections[0];
     const start = Math.max(0, Number(plan.recommendedRange?.start ?? section?.start) || 0);
     const end = Math.max(start, Number(plan.recommendedRange?.end ?? section?.end) || start);
-    const range = {
+    const focusedRange = {
       ...(section || {}),
       id: section?.id || `adaptive-${start.toFixed(2)}-${end.toFixed(2)}`,
       name: section?.name || 'Adaptive focus',
@@ -1376,6 +1391,10 @@ export default function App() {
       end,
       duration: Math.max(0, end - start),
     };
+    const songDuration = getSongDuration(song);
+    const range = level.usesParts
+      ? focusedRange
+      : { id: 'full-song', name: 'Full song', start: 0, end: songDuration, duration: songDuration };
     const plannedSpeed = Math.max(0.2, Math.min(1, Number(plan.speedPercent) / 100 || 0.7));
 
     stopPlayback();
@@ -1384,7 +1403,7 @@ export default function App() {
     setSpeed(plannedSpeed);
     setSelectedSectionIndex(index);
     setPracticeRange(range);
-    setCurrentTime(start);
+    setCurrentTime(range.start);
     setLearningReport(null);
     setActivePracticePlan({ ...plan, recommendedRange: range, speedPercent: Math.round(plannedSpeed * 100) });
     window.localStorage.setItem('polymath-learning-level', level.id);
@@ -1401,18 +1420,6 @@ export default function App() {
     setLearningReport(null);
     setActivePracticePlan(null);
     window.localStorage.setItem('polymath-learning-level', level.id);
-  }
-
-  function changeLearningSession(sessionId) {
-    const session = learningSessionById(sessionId);
-    stopPlayback();
-    setLearningSession(session.id);
-    setPreferredSectionSeconds(session.partSeconds);
-    setPracticeRange(null);
-    setSelectedSectionIndex(0);
-    setLearningReport(null);
-    setActivePracticePlan(null);
-    window.localStorage.setItem('polymath-learning-session', session.id);
   }
 
   function changeLearningHand(hand) {
@@ -1558,8 +1565,6 @@ export default function App() {
           songKey={songLibraryId(song)}
           levelId={learningLevel}
           onLevelChange={changeLearningLevel}
-          sessionId={learningSession}
-          onSessionChange={changeLearningSession}
           sections={learningSections}
           selectedIndex={selectedSectionIndex}
           onSelectSection={selectLearningSection}
@@ -1609,32 +1614,34 @@ export default function App() {
             personalSongStatus={personalSongStatus}
           />
           <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
-            <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} performanceTier={performanceTier} />
-            <div className="piano-scroll-wrap">
-              <PianoKeyboard
-                layout={pianoLayout}
-                activeNotes={activeNotes}
-                strikeVersions={strikeVersions}
-                showKeyNotes={showKeyNotes}
-                onPress={(note, interaction = {}) => pressNote(
-                  note,
-                  interaction.pointerType === 'pen' && Number(interaction.pressure) > 0
-                    ? Math.max(0.12, Math.min(1, Number(interaction.pressure)))
-                    : 0.85,
-                  null,
-                  'manual',
-                  { ...interaction, inputType: interaction.pointerType || 'screen' }
-                )}
-                onRelease={releaseNote}
-                preparationStatus={keyboardPreparationStatus}
-                preparationProgress={keyboardPreparationProgress}
-                preparationStage={keyboardPreparationStage}
-                performanceTier={performanceTier}
-                deviceClass={deviceClass}
-                onPrepare={prepareKeyboard}
-                teacherTargets={teachingMode === 'learn' ? teacherHandTargets : null}
-              />
-            </div>
+            <PianoRoll
+              song={teachingSong}
+              layout={pianoLayout}
+              currentTime={currentTime}
+              isPlaying={isPlaying}
+              leadTime={leadTime}
+              activeNotes={activeNotes}
+              activePlaybackEventIds={activePlaybackEventIds}
+              performanceTier={performanceTier}
+              strikeVersions={strikeVersions}
+              showKeyNotes={showKeyNotes}
+              onPress={(note, interaction = {}) => pressNote(
+                note,
+                interaction.pointerType === 'pen' && Number(interaction.pressure) > 0
+                  ? Math.max(0.12, Math.min(1, Number(interaction.pressure)))
+                  : 0.85,
+                null,
+                'manual',
+                { ...interaction, inputType: interaction.pointerType || 'screen' }
+              )}
+              onRelease={releaseNote}
+              preparationStatus={keyboardPreparationStatus}
+              preparationProgress={keyboardPreparationProgress}
+              preparationStage={keyboardPreparationStage}
+              deviceClass={deviceClass}
+              onPrepare={prepareKeyboard}
+              teacherTargets={teachingMode === 'learn' ? teacherHandTargets : null}
+            />
             <TransportDock
               song={song}
               isPlaying={isPlaying}
@@ -1690,7 +1697,8 @@ export default function App() {
                   composer: song?.composer || song?.artist || '',
                   bpm: song?.bpm || null,
                   level: learningLevel,
-                  session: learningSession,
+                  stage: currentLearningLevel.stage,
+                  practiceScope: currentLearningLevel.usesParts ? '20-second parts' : 'full song',
                   hand: pianoHandMode,
                   currentTime,
                   duration: getSongDuration(song),

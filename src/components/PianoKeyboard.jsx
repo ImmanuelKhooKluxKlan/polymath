@@ -149,6 +149,9 @@ export default function PianoKeyboard({
   deviceClass = 'desktop',
   onPrepare,
   teacherTargets = null,
+  compact = layout.isTwoStorey,
+  showModeLabel = true,
+  showPreparation = true,
 }) {
   useEffect(() => () => {
     activePointers.clear();
@@ -164,18 +167,20 @@ export default function PianoKeyboard({
   const liteWarning = performanceTier === 'lite';
   const layoutLabel = layout.mode === 'learn-grand-single'
     ? 'Single-row A0-C8 guided grand piano'
-    : layout.isTwoStorey
+    : layout.parentMode === 'two-storey-grand' || layout.isTwoStorey
       ? 'Two-storey A0-C8 grand piano'
       : 'Polymath Musician A1-C7 row';
   return (
     <section
-      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
+      className={`piano-shell ${compact ? 'two-storey compact-row' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
       aria-label={`Playable piano section, ${layout.rangeLabel}`}
     >
-      <div className="piano-mode-label">
-        <span>{layoutLabel} · Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
-        <small className="performance-tier-badge">{deviceLabel} · {performanceTier}</small>
-      </div>
+      {showModeLabel && (
+        <div className="piano-mode-label">
+          <span>{layoutLabel} · Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
+          <small className="performance-tier-badge">{deviceLabel} · {performanceTier}</small>
+        </div>
+      )}
       <div className="piano-glow" />
       <div className="piano-rows">
         {layout.rows.map((row) => (
@@ -197,7 +202,7 @@ export default function PianoKeyboard({
           Lite mode: reduced effects for smoother playback on this device.
         </small>
       )}
-      {disabled && (
+      {disabled && showPreparation && (
         <div className="piano-preparation" aria-live="polite">
           {isPreparing ? (
             <>
