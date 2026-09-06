@@ -672,6 +672,8 @@ async function main() {
           learningStageCardCount: document.querySelectorAll('.learn-level-grid.five-stages [role="radio"]').length,
           learningHandChoiceCount: document.querySelectorAll('.learn-hand-grid [role="radio"]').length,
           learningPracticeScope: document.querySelector('.learn-session-focus')?.textContent?.trim() || '',
+          dailyWin: document.querySelector('.learn-daily-win')?.textContent?.trim() || '',
+          dailyWinWeekDayCount: document.querySelectorAll('.learn-week-strip > span').length,
           learnClippedControls: [...document.querySelectorAll('.piano-learn-journey button')]
             .filter((item) => item.offsetParent && item.scrollWidth > item.clientWidth + 1).length,
           learningFetchLog: window.__polymathQaFetchLog || [],
@@ -689,6 +691,8 @@ async function main() {
     if (surface === 'adaptive-learn' && (
       (!learnStep && !followPlan && !visualAudit.result?.value?.adaptivePlan)
       || (!learnStep && !followPlan && visualAudit.result?.value?.masterySkillCount !== 5)
+      || (!learnStep && !visualAudit.result?.value?.dailyWin)
+      || (!learnStep && visualAudit.result?.value?.dailyWinWeekDayCount !== 7)
       || visualAudit.result?.value?.documentOverflow
       || visualAudit.result?.value?.learnClippedControls
     )) {

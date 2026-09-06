@@ -11,7 +11,7 @@
     "lint": "eslint src --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "align:notes": "node scripts/alignment/noteCoordinateAligner.mjs",
     "test:alignment": "node --test scripts/alignment/noteCoordinateAligner.test.mjs",
-    "test:performance": "node --test scripts/performance/devicePerformance.test.mjs scripts/performance/learningCoach.test.mjs",
+    "test:performance": "node --test scripts/performance/devicePerformance.test.mjs scripts/performance/learningCoach.test.mjs scripts/performance/learningMomentum.test.mjs",
     "test:falling-notes": "node --test scripts/performance/fallingNoteGeometry.test.mjs",
     "test:teacher-hands": "node --test scripts/performance/teacherHands.test.mjs",
     "test:teacher-voice": "node --test scripts/performance/teacherVoice.test.mjs",

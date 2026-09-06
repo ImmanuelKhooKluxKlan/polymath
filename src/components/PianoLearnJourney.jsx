@@ -3,6 +3,7 @@ import {
   PIANO_LEARNING_LEVELS,
   recommendedLearningLevel,
 } from '../engine/learningCoach.js';
+import { buildLearningMomentum } from '../engine/learningMomentum.js';
 import { formatLearningTime } from '../utils/learningSections.js';
 
 const JOURNEY_STEPS = [
@@ -153,6 +154,7 @@ export default function PianoLearnJourney({
     report ? report.headline : 'Your review will appear here',
   ][step];
   const noteCount = useMemo(() => Number(song?.notes?.length || 0).toLocaleString(), [song?.notes?.length]);
+  const momentum = useMemo(() => buildLearningMomentum(progress), [progress]);
 
   useEffect(() => {
     const songIdentity = song?.libraryId || song?.title;
@@ -281,12 +283,39 @@ export default function PianoLearnJourney({
                 </div>
                 <div className="learn-primary-actions">
                   {coachPlan?.source === 'measured' ? (
-                    <button type="button" className="primary" onClick={followCoachPlan}>Continue my plan</button>
+                    <button type="button" className="primary" onClick={followCoachPlan}>
+                      {momentum.todayComplete ? 'Continue my plan' : 'Start today’s win'}
+                    </button>
                   ) : (
-                    <button type="button" className="primary" onClick={() => setStep(1)}>Choose my level</button>
+                    <button type="button" className="primary" onClick={() => setStep(1)}>
+                      {momentum.todayComplete ? 'Choose my level' : 'Start today’s win'}
+                    </button>
                   )}
                   <button type="button" className="ghost" onClick={() => onChooseMusic?.('available')}>Choose another</button>
                 </div>
+                <section className={`learn-daily-win ${momentum.todayComplete ? 'is-complete' : momentum.streakAtRisk ? 'is-at-risk' : ''}`} aria-label="Daily piano momentum">
+                  <span className="learn-daily-win-mark" aria-hidden="true">{momentum.todayComplete ? '✓' : '1'}</span>
+                  <div>
+                    <span>Today’s win</span>
+                    <strong>{momentum.todayComplete ? 'You showed up today.' : 'Complete one measured attempt.'}</strong>
+                    <small>
+                      {momentum.streakDays > 0 ? `${momentum.streakDays}-day streak` : 'Start your first streak'}
+                      {' · '}{momentum.todayAttempts}/{momentum.dailyGoal} today
+                    </small>
+                  </div>
+                  <details>
+                    <summary>{momentum.activeDaysThisWeek}/7 active days</summary>
+                    <div className="learn-week-strip" aria-label="Last seven practice days">
+                      {momentum.week.map((day) => (
+                        <span className={`${day.active ? 'is-active' : ''} ${day.today ? 'is-today' : ''}`} key={day.key} title={`${day.key}: ${day.count} measured attempt${day.count === 1 ? '' : 's'}`}>
+                          <i aria-hidden="true" />
+                          <b>{day.label}</b>
+                        </span>
+                      ))}
+                    </div>
+                    <small>{momentum.daysToMilestone} more active day{momentum.daysToMilestone === 1 ? '' : 's'} to the {momentum.nextMilestone}-day milestone.</small>
+                  </details>
+                </section>
                 {coachPlan?.source === 'measured' && (
                   <div className="learn-coach-plan" aria-label="Polymath recommended practice">
                     <span>Next focus · {coachPlan.skillLabel}</span>

@@ -7277,6 +7277,88 @@ details[open] > summary {
   .learn-primary-actions button { width: 100%; min-width: 0; }
 }
 
+/* A compact habit loop for paid Learn retention. */
+.learn-daily-win {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(123, 105, 235, 0.24);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(84, 73, 185, 0.1), rgba(42, 54, 126, 0.08));
+}
+.learn-daily-win.is-complete {
+  border-color: rgba(74, 224, 178, 0.25);
+  background: linear-gradient(145deg, rgba(35, 156, 126, 0.12), rgba(62, 72, 165, 0.08));
+}
+.learn-daily-win-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(145deg, #7660f0, #d54ac8);
+  font-size: 0.8rem;
+  font-weight: 950;
+  box-shadow: 0 8px 18px rgba(83, 60, 202, 0.2);
+}
+.learn-daily-win.is-complete .learn-daily-win-mark { background: linear-gradient(145deg, #33c69a, #62d6c6); }
+.learn-daily-win > div { display: grid; min-width: 0; gap: 2px; }
+.learn-daily-win > div > span {
+  color: var(--cyan);
+  font-size: 0.61rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.learn-daily-win > div > strong,
+.learn-daily-win > div > small { overflow-wrap: anywhere; }
+.learn-daily-win > div > small { color: var(--muted); font-size: 0.68rem; }
+.learn-daily-win details { position: relative; }
+.learn-daily-win details > summary {
+  min-width: 112px;
+  padding: 8px 10px;
+  border: 1px solid rgba(132, 128, 212, 0.22);
+  border-radius: 11px;
+  color: var(--text);
+  background: rgba(14, 18, 48, 0.58);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-align: center;
+  cursor: pointer;
+  list-style: none;
+}
+.learn-daily-win details > summary::-webkit-details-marker { display: none; }
+.learn-daily-win details[open] {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+.learn-daily-win details[open] > summary { width: fit-content; margin-left: auto; }
+.learn-week-strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(24px, 1fr));
+  gap: 5px;
+  margin: 11px 0 7px;
+}
+.learn-week-strip span { display: grid; justify-items: center; gap: 4px; color: var(--muted); font-size: 0.57rem; }
+.learn-week-strip i {
+  width: 100%;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(137, 139, 192, 0.16);
+}
+.learn-week-strip .is-active i { background: linear-gradient(90deg, #7961f2, #d64bc9); }
+.learn-week-strip .is-today b { color: var(--cyan); }
+.learn-daily-win details > small { display: block; color: var(--muted); font-size: 0.64rem; text-align: right; }
+
+@media (max-width: 600px) {
+  .learn-daily-win { grid-template-columns: auto minmax(0, 1fr); }
+  .learn-daily-win details { grid-column: 1 / -1; }
+  .learn-daily-win details > summary { width: 100%; min-width: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .learn-journey-stage,
   .learn-attempt-live > i { animation: none; }
