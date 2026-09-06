@@ -83,7 +83,11 @@ async function main() {
   let learnerId = '';
   const qaApi = String(args['qa-api'] || '').replace(/\/+$/, '');
   const publicRoute = String(args['public-route'] || '').trim();
-  const clickText = String(args['click-text'] || '').trim();
+  const clickTexts = ['click-text', 'click-text-2', 'click-text-3', 'click-text-4', 'click-text-5']
+    .map((key) => String(args[key] || '').trim())
+    .filter(Boolean);
+  const clickWaitMs = Math.max(100, Math.min(15000, Number(args['click-wait-ms']) || 300));
+  const afterClicksWaitMs = Math.max(0, Math.min(60000, Number(args['after-clicks-wait-ms']) || 0));
   const feeNoticeExpected = args['fee-notice'] === 'true';
   if (!token && qaApi) {
     const parsed = new URL(qaApi);
@@ -232,7 +236,7 @@ async function main() {
       });
       await delay(1800);
     }
-    if (clickText) {
+    for (const clickText of clickTexts) {
       const clicked = await session.send('Runtime.evaluate', {
         expression: `(() => {
           const expected = ${JSON.stringify(clickText.toLowerCase())};
@@ -244,8 +248,9 @@ async function main() {
         returnByValue: true,
       });
       if (!clicked.result?.value) throw new Error(`Could not find a button containing ${JSON.stringify(clickText)}.`);
-      await delay(250);
+      await delay(clickWaitMs);
     }
+    if (afterClicksWaitMs) await delay(afterClicksWaitMs);
     if (publicRoute) {
       const deadline = Date.now() + 8000;
       let audit = null;

@@ -6850,6 +6850,42 @@ details[open] > summary {
     radial-gradient(circle at 96% 130%, rgba(214, 90, 178, 0.19), transparent 24rem);
 }
 
+.learn-free-preview {
+  align-content: start;
+  background:
+    radial-gradient(circle at 13% -25%, rgba(110, 96, 255, 0.22), transparent 31rem),
+    radial-gradient(circle at 96% 120%, rgba(221, 77, 180, 0.14), transparent 24rem);
+}
+.learn-preview-badge {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid rgba(104, 229, 196, 0.26);
+  border-radius: 999px;
+  color: #7cebc9;
+  background: rgba(51, 170, 138, 0.1);
+  font-size: 0.64rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.learn-challenge-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(229, 99, 199, 0.25);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(132, 89, 236, 0.13), rgba(221, 75, 184, 0.1));
+}
+.learn-challenge-target span { color: #d2c8ef; font-size: 0.67rem; font-weight: 780; }
+.learn-challenge-target strong { color: #ffb8e8; font-size: 0.78rem; }
+.learn-preview-note {
+  color: var(--muted);
+  font-size: 0.67rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .learn-journey-header {
   display: flex;
   align-items: center;
@@ -7208,6 +7244,24 @@ details[open] > summary {
 .learn-review-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .learn-review-summary span { display: grid; gap: 3px; min-width: 0; padding: 10px; border-radius: 13px; color: var(--muted); background: rgba(255,255,255,0.03); font-size: 0.62rem; }
 .learn-review-summary strong { color: var(--text); font-size: 0.76rem; overflow-wrap: anywhere; }
+.learn-win-share {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px 14px;
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid rgba(139, 225, 255, 0.21);
+  border-radius: 15px;
+  background: linear-gradient(135deg, rgba(69, 134, 211, 0.1), rgba(176, 70, 183, 0.1));
+}
+.learn-win-share > div { display: grid; gap: 2px; min-width: 0; }
+.learn-win-share > div > span { color: #85e8ff; font-size: 0.61rem; font-weight: 900; letter-spacing: 0.055em; text-transform: uppercase; }
+.learn-win-share > div > strong { font-size: 0.82rem; overflow-wrap: anywhere; }
+.learn-win-share > div > small { color: var(--muted); font-size: 0.64rem; }
+.learn-win-share > button { min-width: 128px; min-height: 38px; }
+.learn-share-status { grid-column: 1 / -1; color: #78e7c4; font-size: 0.63rem; }
+.learn-share-status:empty { display: none; }
 .learn-review-metrics { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; gap: 8px !important; }
 .learn-review-metric { display: grid; align-content: start; gap: 3px; min-width: 0; padding: 11px; border: 1px solid rgba(155, 143, 211, 0.16); border-radius: 14px; background: rgba(255,255,255,0.02); }
 .learn-review-metric span { color: var(--muted); font-size: 0.62rem; font-weight: 800; }
@@ -7271,6 +7325,8 @@ details[open] > summary {
   .learn-review-hero { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; }
   .learn-score-ring { width: 92px; height: 92px; }
   .learn-review-summary { grid-template-columns: minmax(0, 1fr); }
+  .learn-win-share { grid-template-columns: minmax(0, 1fr); }
+  .learn-win-share > button { width: 100%; min-width: 0; }
   .learn-review-metrics { grid-template-columns: minmax(0, 1fr); }
   .learn-mastery-map { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .learn-primary-actions { display: grid; grid-template-columns: minmax(0, 1fr); }

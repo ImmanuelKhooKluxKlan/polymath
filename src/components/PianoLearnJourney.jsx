@@ -5,6 +5,7 @@ import {
 } from '../engine/learningCoach.js';
 import { buildLearningMomentum } from '../engine/learningMomentum.js';
 import { formatLearningTime } from '../utils/learningSections.js';
+import LearningWinShare from './LearningWinShare.jsx';
 
 const JOURNEY_STEPS = [
   ['music', 'Music'],
@@ -135,8 +136,10 @@ export default function PianoLearnJourney({
   onFindTeacher,
   onOpenBand,
   onFocusPlayer,
+  challengeScore = null,
 }) {
   const [step, setStep] = useState(0);
+  const [freePreviewOpen, setFreePreviewOpen] = useState(false);
   const panelRef = useRef(null);
   const previousSongRef = useRef(song?.libraryId || song?.title);
   const currentLevel = PIANO_LEARNING_LEVELS.find((level) => level.id === levelId) || PIANO_LEARNING_LEVELS[0];
@@ -155,6 +158,13 @@ export default function PianoLearnJourney({
   ][step];
   const noteCount = useMemo(() => Number(song?.notes?.length || 0).toLocaleString(), [song?.notes?.length]);
   const momentum = useMemo(() => buildLearningMomentum(progress), [progress]);
+  const previewRange = sections[0] || activeRange;
+  const sharedScore = challengeScore !== null
+    && challengeScore !== undefined
+    && String(challengeScore).trim() !== ''
+    && Number.isFinite(Number(challengeScore))
+    ? Math.max(0, Math.min(100, Math.round(Number(challengeScore))))
+    : null;
 
   useEffect(() => {
     const songIdentity = song?.libraryId || song?.title;
@@ -178,11 +188,28 @@ export default function PianoLearnJourney({
 
   function switchMode(nextMode) {
     if (nextMode === 'learn' && locked) {
-      onUpgrade?.();
-      return;
+      const firstStage = PIANO_LEARNING_LEVELS[0];
+      onLevelChange(firstStage.id);
+      onHandModeChange('right');
+      onSelectSection(0);
+      setFreePreviewOpen(false);
     }
     onModeChange(nextMode);
     if (nextMode === 'learn') setStep(0);
+  }
+
+  function openFreePreview() {
+    const firstStage = PIANO_LEARNING_LEVELS[0];
+    onLevelChange(firstStage.id);
+    onHandModeChange('right');
+    onSelectSection(0);
+    setFreePreviewOpen(true);
+  }
+
+  function resetFreePreview() {
+    onLevelChange(PIANO_LEARNING_LEVELS[0].id);
+    onHandModeChange('right');
+    onSelectSection(0);
   }
 
   function followCoachPlan() {
@@ -208,7 +235,7 @@ export default function PianoLearnJourney({
       <div className="mode-switch learn-journey-mode" role="group" aria-label="Piano mode">
         <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => switchMode('regular')}>Chilling</button>
         <button type="button" className={mode === 'learn' ? 'active' : ''} onClick={() => switchMode('learn')}>
-          {locked ? 'Learn · Musician' : 'Learn'}
+          {locked ? 'Try Learn' : 'Learn'}
         </button>
       </div>
 
@@ -226,16 +253,80 @@ export default function PianoLearnJourney({
         </div>
       )}
 
-      {mode === 'learn' && locked && (
+      {mode === 'learn' && locked && !freePreviewOpen && (
         <div className="piano-core-start is-locked">
           <div>
-            <p className="eyebrow">Personal piano path</p>
-            <h1>Make this song fit your level.</h1>
-            <p>Move through five simple stages—from your first keys to Piano King.</p>
+            <p className="eyebrow">Free first win</p>
+            <h1>{sharedScore === null ? 'Try the teaching before you subscribe.' : `A friend scored ${sharedScore}. Can you beat it?`}</h1>
+            <p>Play one guided part and receive a real score. No account or payment card is needed.</p>
           </div>
           <div className="piano-core-start-actions">
-            <button type="button" className="primary" onClick={onUpgrade}>Unlock Learn</button>
-            <button type="button" className="ghost" onClick={() => switchMode('regular')}>Keep playing</button>
+            <button type="button" className="primary" onClick={openFreePreview}>Try a free lesson</button>
+            <button type="button" className="ghost" onClick={onUpgrade}>See Musician</button>
+          </div>
+        </div>
+      )}
+
+      {mode === 'learn' && locked && freePreviewOpen && (
+        <div className="learn-journey-body learn-free-preview">
+          <header className="learn-journey-header">
+            <div>
+              <p className="eyebrow">Free 20-second lesson</p>
+              <h2>{report ? 'Your first result is ready' : 'Play one part. See real progress.'}</h2>
+            </div>
+            <span className="learn-preview-badge">No card needed</span>
+          </header>
+
+          <div className="learn-journey-stage">
+            {!report ? (
+              <div className="learn-play-step">
+                <div className="learn-song-focus">
+                  <span className="learn-song-art" aria-hidden="true"><i /><b>♪</b></span>
+                  <div>
+                    <span>Free guided part · right hand</span>
+                    <strong>{song?.title || 'Choose a song'}</strong>
+                    <small>{songArtist(song)} · {rangeLabel(previewRange)}</small>
+                  </div>
+                </div>
+                {sharedScore !== null && <div className="learn-challenge-target"><span>Friend challenge</span><strong>Beat {sharedScore}/100</strong></div>}
+                <div className={`learn-readiness ${preparationStatus === 'ready' ? 'is-ready' : ''}`}>
+                  <i aria-hidden="true" />
+                  <div>
+                    <span>{preparationStatus === 'ready' ? 'Piano ready' : 'Prepare this device'}</span>
+                    <strong>{preparationStatus === 'ready' ? 'Your free attempt is ready' : preparationStage}</strong>
+                    {['calibrating', 'loading'].includes(preparationStatus) && <progress max="100" value={preparationProgress} aria-label="Keyboard preparation progress" />}
+                  </div>
+                  {preparationStatus !== 'ready' && !['calibrating', 'loading'].includes(preparationStatus) && <button type="button" className="primary" onClick={onPrepare}>Prepare piano</button>}
+                </div>
+                {['preparing', 'running', 'paused'].includes(attemptStatus) ? (
+                  <div className="learn-attempt-live" role="status"><i /><span><strong>{attemptStatus === 'preparing' ? 'Getting your attempt ready' : attemptStatus === 'paused' ? 'Attempt paused' : 'Listening to your attempt'}</strong><small>Play when each falling note reaches the keys.</small></span></div>
+                ) : (
+                  <div className="learn-play-actions">
+                    <button type="button" className="ghost" disabled={preparationStatus !== 'ready'} onClick={() => onListen(previewRange)}>Hear the example</button>
+                    <button type="button" className="primary" disabled={preparationStatus !== 'ready'} onClick={() => onStartAttempt(previewRange)}>Play my free attempt</button>
+                  </div>
+                )}
+                <small className="learn-preview-note">Use the screen keys, computer keyboard, or a connected MIDI piano. The full five-stage path and teacher stay inside Musician.</small>
+              </div>
+            ) : (
+              <div className="learn-review-step">
+                <div className="learn-review-hero">
+                  <div className="learn-score-ring" style={{ '--score': report.score }}><strong>{report.score}</strong><span>out of 100</span></div>
+                  <div><span>First win complete</span><h3>{report.headline}</h3><p>{report.nextAction}</p></div>
+                </div>
+                <div className="learn-review-summary">
+                  <span><strong>{report.matchedCount}/{report.expectedCount}</strong> notes found</span>
+                  <span><strong>{report.strongest}</strong> strongest skill</span>
+                  <span><strong>{rangeLabel(previewRange)}</strong> guided part</span>
+                </div>
+                <LearningWinShare report={report} song={song} songKey={songKey} level={PIANO_LEARNING_LEVELS[0]} momentum={momentum} />
+                <div className="learn-primary-actions">
+                  <button type="button" className="primary" onClick={onUpgrade}>Unlock my full song</button>
+                  <button type="button" className="ghost" onClick={resetFreePreview}>Try this part again</button>
+                </div>
+                <small className="learn-preview-note">Musician unlocks all five stages, saved progress, adaptive exercises, both hands, and the virtual teacher.</small>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -498,6 +589,7 @@ export default function PianoLearnJourney({
                       <span><strong>{report.strongest}</strong> strongest</span>
                       <span><strong>{songProgress?.bestScore || report.score}</strong> personal best</span>
                     </div>
+                    <LearningWinShare report={report} song={song} songKey={songKey} level={currentLevel} momentum={momentum} />
                     <div className="learn-primary-actions">
                       <button type="button" className="primary" onClick={() => { setStep(3); window.setTimeout(() => onFocusPlayer?.(), 80); }}>
                         Stay here and practise

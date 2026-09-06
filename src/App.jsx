@@ -321,6 +321,14 @@ export default function App() {
     songId: songLibraryId(song),
     report: learningReport,
   }), [learningProgress, song, learningReport]);
+  const sharedLearnRequest = route.page === 'studio' && route.params.get('try') === 'learn';
+  const sharedSongId = sharedLearnRequest ? String(route.params.get('song') || '') : '';
+  const sharedChallengeScoreValue = sharedLearnRequest ? String(route.params.get('score') || '').trim() : '';
+  const sharedChallengeScore = sharedChallengeScoreValue && Number.isFinite(Number(sharedChallengeScoreValue))
+    ? Math.max(0, Math.min(100, Math.round(Number(sharedChallengeScoreValue))))
+    : null;
+  const hasFullLearnAccess = Boolean(user?.admin || user?.access?.learn);
+  const freeLearnActive = teachingMode === 'learn' && !hasFullLearnAccess;
 
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', '#studio');
@@ -328,6 +336,40 @@ export default function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  useEffect(() => {
+    if (!sharedLearnRequest) return;
+    setTeachingMode('learn');
+    if (sharedSongId && songs.some((candidate) => songLibraryId(candidate) === sharedSongId)) {
+      setSongSelectionId(sharedSongId);
+    }
+  }, [sharedLearnRequest, sharedSongId, songs]);
+
+  useEffect(() => {
+    if (!freeLearnActive) return;
+    const firstStage = learningLevelById('first-keys');
+    const firstSection = learningSections[0];
+    if (learningLevel !== firstStage.id) setLearningLevel(firstStage.id);
+    if (pianoHandMode !== 'right') setPianoHandMode('right');
+    if (selectedSectionIndex !== 0) setSelectedSectionIndex(0);
+    if (Math.abs(speed - firstStage.speed) > 0.001) setSpeed(firstStage.speed);
+    if (firstSection && (
+      practiceRange?.id !== firstSection.id
+      || practiceRange?.start !== firstSection.start
+      || practiceRange?.end !== firstSection.end
+    )) {
+      setPracticeRange(firstSection);
+      setCurrentTime(firstSection.start);
+    }
+  }, [
+    freeLearnActive,
+    learningLevel,
+    learningSections,
+    pianoHandMode,
+    practiceRange,
+    selectedSectionIndex,
+    speed,
+  ]);
 
   useEffect(() => {
     // Dismissal lasts only for this app session. Remove the legacy permanent
@@ -545,6 +587,14 @@ export default function App() {
     );
   }
 
+  function clampPlaybackTime(value) {
+    const songTime = clampSongTime(value);
+    if (teachingMode !== 'learn' || !practiceRange) return songTime;
+    const start = clampSongTime(practiceRange.start);
+    const end = Math.max(start, clampSongTime(practiceRange.end));
+    return Math.max(start, Math.min(end, songTime));
+  }
+
   function focusMobilePlayer(force = false) {
     if (!force && !window.matchMedia('(max-width: 1100px)').matches) return;
     window.setTimeout(() => {
@@ -757,7 +807,7 @@ export default function App() {
 
   async function startPlaybackAt(position, speedOverride = speed) {
     if (!keyboardReadyRef.current && !(await prepareKeyboard())) return false;
-    const target = clampSongTime(position);
+    const target = clampPlaybackTime(position);
     const playbackSpeed = Math.max(0.2, Math.min(2, Number(speedOverride) || 1));
 
     const requestedRunId = playbackRunId.current + 1;
@@ -832,13 +882,13 @@ export default function App() {
   }
 
   function previewSeek(position) {
-    const target = clampSongTime(position);
+    const target = clampPlaybackTime(position);
     pauseOffset.current = target;
     setCurrentTime(target);
   }
 
   async function commitSeek(position) {
-    const target = clampSongTime(position);
+    const target = clampPlaybackTime(position);
     const shouldResume = seekWasPlaying.current;
     seekWasPlaying.current = false;
     previewSeek(target);
@@ -850,7 +900,7 @@ export default function App() {
 
   async function jumpBy(seconds) {
     const shouldResume = isPlaying;
-    const target = clampSongTime(currentTime + seconds);
+    const target = clampPlaybackTime(currentTime + seconds);
     pauseLearningCapture(currentTime);
     silencePlayback(currentTime);
     setIsPlaying(false);
@@ -1549,7 +1599,7 @@ export default function App() {
       <section className={`studio-page ${teachingMode === 'learn' ? 'is-learning-journey' : ''}`}>
         <PianoLearnJourney
           mode={teachingMode}
-          locked={!user?.admin && !user?.access?.learn}
+          locked={!hasFullLearnAccess}
           onUpgrade={() => navigate('payment', { productId: 'polymath-musician-monthly' })}
           onModeChange={(mode) => {
             stopPlayback();
@@ -1595,6 +1645,7 @@ export default function App() {
           onFindTeacher={() => navigate('find-teacher')}
           onOpenBand={() => navigate('band')}
           onFocusPlayer={() => focusMobilePlayer(true)}
+          challengeScore={sharedChallengeScore}
         />
 
         <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''}`}>
@@ -1660,6 +1711,7 @@ export default function App() {
               showKeyNotes={showKeyNotes}
               onShowKeyNotesChange={setShowKeyNotes}
               minSpeed={0.2}
+              playbackRange={teachingMode === 'learn' ? practiceRange : null}
             />
             <details className="lesson-options player-settings">
               <summary>Settings</summary>
@@ -1681,7 +1733,7 @@ export default function App() {
                 </label>
               </div>
             </details>
-            {teachingMode === 'learn' && (
+            {teachingMode === 'learn' && hasFullLearnAccess && (
               <PianoTeacherStudio
                 profiles={teacherProfiles}
                 teacherId={pianoTeacher.id}
