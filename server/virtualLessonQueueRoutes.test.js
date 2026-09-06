@@ -11,46 +11,31 @@ process.env.POLYMATH_DATA_DIR = testDataDir;
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 process.env.MUSCRIPTOR_ENABLED = 'false';
-process.env.RUNPOD_CHAT_BOSS_ENDPOINT_ID = 'queued-teacher-endpoint';
-process.env.RUNPOD_API_KEY = 'queued-teacher-test-key';
+process.env.POLYMATH_ASSISTANT_PROVIDER = 'deepseek';
+process.env.DEEPSEEK_API_KEY = 'direct-teacher-test-key';
+process.env.DEEPSEEK_MODEL = 'deepseek-v4-flash';
 
 const nativeFetch = globalThis.fetch;
-let statusChecks = 0;
 let submittedPayload = null;
 
 globalThis.fetch = async (url, options = {}) => {
   const target = String(url);
-  if (!target.startsWith('https://api.runpod.ai/')) return nativeFetch(url, options);
-  if (target.endsWith('/run')) {
+  if (!target.startsWith('https://api.deepseek.com/')) return nativeFetch(url, options);
+  if (target.endsWith('/chat/completions')) {
     submittedPayload = JSON.parse(options.body);
-    return new Response(JSON.stringify({ id: 'teacher_job_12345678', status: 'IN_QUEUE' }), {
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'Start slowly with five relaxed C-major scales.' } }],
+    }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (target.includes('/status/teacher_job_12345678')) {
-    statusChecks += 1;
-    const body = statusChecks === 1
-      ? { id: 'teacher_job_12345678', status: 'IN_PROGRESS' }
-      : {
-        id: 'teacher_job_12345678',
-        status: 'COMPLETED',
-        output: { text: ['Start slowly with five relaxed C-major scales.'] },
-      };
-    return new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-  return new Response(JSON.stringify({ id: 'teacher_job_12345678', status: 'CANCELLED' }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return new Response(JSON.stringify({ error: 'unexpected DeepSeek test route' }), { status: 404 });
 };
 
 const { app, readDb, writeDb } = require('./server');
 
-test('virtual teacher survives a long GPU cold start through a persistent queued reply', async (context) => {
+test('virtual teacher returns a direct DeepSeek reply without a RunPod queue', async (context) => {
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -111,43 +96,17 @@ test('virtual teacher survives a long GPU cold start through a persistent queued
       observations: {},
     },
   });
-  assert.equal(submitted.status, 202);
-  assert.equal(submitted.data.pending, true);
-  assert.match(submitted.data.requestId, /^teacher_reply_/);
-  assert.equal(submitted.data.session.pendingReply.id, submitted.data.requestId);
+  assert.equal(submitted.status, 200);
+  assert.equal(submitted.data.pending, undefined);
+  assert.equal(submitted.data.session.pendingReply, null);
   assert.equal(submitted.data.session.remainingSeconds <= 1800, true);
-  assert.equal(submittedPayload.input.openai_route, '/v1/chat/completions');
-  assert.equal(submittedPayload.input.openai_input.messages[0].role, 'system');
-  assert.match(submittedPayload.input.openai_input.messages[0].content, /live paid session/i);
-  assert.equal(submittedPayload.input.openai_input.max_tokens, 220);
-  assert.deepEqual(
-    submittedPayload.input.openai_input.chat_template_kwargs,
-    { enable_thinking: false },
-  );
-
-  const checking = await api(
-    `/api/virtual-lessons/${started.data.session.id}/replies/${submitted.data.requestId}`,
-    { token: registration.data.token },
-  );
-  assert.equal(checking.status, 202);
-  assert.equal(checking.data.status, 'IN_PROGRESS');
-
-  const completed = await api(
-    `/api/virtual-lessons/${started.data.session.id}/replies/${submitted.data.requestId}`,
-    { token: registration.data.token },
-  );
-  assert.equal(completed.status, 200);
-  assert.equal(completed.data.pending, false);
-  assert.match(completed.data.reply, /five relaxed C-major scales/i);
-  assert.equal(Boolean(completed.data.speechMessageId), true);
-  assert.equal(completed.data.session.pendingReply, null);
-  assert.equal(completed.data.session.messages.length, 2);
-  assert.equal(completed.data.session.memory.lastSong, 'Warm-up study');
-
-  const repeatedPoll = await api(
-    `/api/virtual-lessons/${started.data.session.id}/replies/${submitted.data.requestId}`,
-    { token: registration.data.token },
-  );
-  assert.equal(repeatedPoll.status, 200);
-  assert.equal(repeatedPoll.data.reply, completed.data.reply);
+  assert.equal(submittedPayload.model, 'deepseek-v4-flash');
+  assert.equal(submittedPayload.messages[0].role, 'system');
+  assert.match(submittedPayload.messages[0].content, /live paid session/i);
+  assert.equal(submittedPayload.max_tokens, 220);
+  assert.deepEqual(submittedPayload.thinking, { type: 'disabled' });
+  assert.match(submitted.data.reply, /five relaxed C-major scales/i);
+  assert.equal(Boolean(submitted.data.speechMessageId), true);
+  assert.equal(submitted.data.session.messages.length, 2);
+  assert.equal(submitted.data.session.memory.lastSong, 'Warm-up study');
 });

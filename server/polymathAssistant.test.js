@@ -18,7 +18,7 @@ const {
   teacherBoundaryReply,
 } = require('./polymathAssistant');
 
-test('removes Qwen reasoning and returns only the spoken final response', () => {
+test('removes hidden reasoning and returns only the spoken final response', () => {
   assert.equal(
     stripHiddenReasoning('<think>private chain of thought</think>\n\nHey, sweetheart. I can hear you.'),
     'Hey, sweetheart. I can hear you.',
@@ -58,7 +58,7 @@ test('answers voice connection checks directly without waking the model', async 
   assert.equal(conversationalAcknowledgement('Can you hear me now?!', 'music-coach').startsWith('Yes—'), true);
 });
 
-test('reports unavailable without pretending ChatBoss is connected', () => {
+test('reports unavailable without pretending an AI provider is connected', () => {
   const assistant = createPolymathAssistant({}, {});
   assert.equal(assistant.capabilities().available, false);
   assert.equal(assistant.capabilities().provider, null);
@@ -271,6 +271,33 @@ test('measured feedback bypasses the language model so report facts cannot drift
   assert.equal(modelCalls, 0);
   assert.equal(result.provider, 'polymath-measured-coach');
   assert.match(result.reply, /A4 landed 135 ms early/);
+});
+
+test('uses a direct DeepSeek reply without creating a RunPod queue job', async () => {
+  const assistant = createPolymathAssistant({
+    POLYMATH_ASSISTANT_PROVIDER: 'deepseek',
+    DEEPSEEK_API_KEY: 'test-key',
+    DEEPSEEK_MODEL: 'deepseek-v4-flash',
+  }, {
+    fetch: async () => ({
+      ok: true,
+      async json() {
+        return { choices: [{ message: { content: 'Keep C4 down slightly longer.' } }] };
+      },
+    }),
+  });
+
+  const result = await assistant.submitTeacherChat({
+    messages: [{ role: 'user', content: 'How do I improve this note?' }],
+    teacher: { id: 'aria', name: 'Aria' },
+    conversationMode: 'music-coach',
+  });
+
+  assert.equal(assistant.capabilities().provider, 'deepseek');
+  assert.equal(assistant.capabilities().replyTransport, 'direct');
+  assert.equal(result.completed, true);
+  assert.equal(result.result.reply, 'Keep C4 down slightly longer.');
+  assert.equal(result.result.provider, 'deepseek');
 });
 
 test('saved mastery produces a deterministic next exercise without inventing a new performance', async () => {

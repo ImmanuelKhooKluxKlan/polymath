@@ -1,6 +1,6 @@
 'use strict';
 
-const { createChatBossRunpodClient } = require('./chatBossRunpod');
+const { createDeepSeekClient } = require('./deepSeekClient');
 const { stripHiddenReasoning } = require('./assistantOutput');
 const { retrieveMusicKnowledge } = require('./musicKnowledge');
 const { normalizeConversationMode, sanitizeConversationPreferences } = require('./virtualLessons');
@@ -437,23 +437,28 @@ function teacherSystemPrompt({ teacher, evidence, conversationMode, conversation
 }
 
 function createPolymathAssistant(env = process.env, options = {}) {
+  const requestedProvider = clean(env.POLYMATH_ASSISTANT_PROVIDER || 'deepseek').toLowerCase();
   const configured = Boolean(
     options.chatClient
-    || (clean(env.RUNPOD_CHAT_BOSS_ENDPOINT_ID) && clean(env.RUNPOD_API_KEY)),
+    || (requestedProvider === 'deepseek' && clean(env.DEEPSEEK_API_KEY)),
   );
-  const chatClient = options.chatClient || (configured ? createChatBossRunpodClient({
-    endpointId: env.RUNPOD_CHAT_BOSS_ENDPOINT_ID,
-    apiKey: env.RUNPOD_API_KEY,
-    model: env.RUNPOD_CHAT_BOSS_MODEL,
-    timeoutMs: env.RUNPOD_CHAT_BOSS_TIMEOUT_MS,
+  const chatClient = options.chatClient || (configured ? createDeepSeekClient({
+    apiKey: env.DEEPSEEK_API_KEY,
+    model: env.DEEPSEEK_MODEL,
+    baseUrl: env.DEEPSEEK_BASE_URL,
+    timeoutMs: env.DEEPSEEK_TIMEOUT_MS,
     fetch: options.fetch,
   }) : null);
+  const providerName = configured
+    ? clean(options.provider || chatClient?.provider || requestedProvider || 'deepseek')
+    : null;
 
   function capabilities() {
     return {
       available: configured,
-      provider: configured ? 'polymath-chatboss' : null,
-      replyTransport: configured ? 'queued' : null,
+      provider: providerName,
+      model: configured ? clean(chatClient?.model || env.DEEPSEEK_MODEL || 'deepseek-v4-flash') : null,
+      replyTransport: configured ? (typeof chatClient?.submit === 'function' ? 'queued' : 'direct') : null,
       roles: ['customer-service', 'music-teacher', 'adult-companion'],
       conversationModes: ['music-coach', 'adult-companion'],
       persistence: 'Paid lesson text is temporary session memory, is cleared when the lesson ends, and is not added to training automatically.',
@@ -603,7 +608,7 @@ function createPolymathAssistant(env = process.env, options = {}) {
     }
     return {
       reply,
-      provider: 'polymath-chatboss',
+      provider: providerName,
       role: teacherMode === 'adult-companion' ? 'adult-companion' : 'music-teacher',
     };
   }
@@ -619,7 +624,11 @@ function createPolymathAssistant(env = process.env, options = {}) {
     const request = prepareTeacherRequest(input);
     if (request.immediate) return { completed: true, result: request.immediate };
     if (typeof chatClient.submit !== 'function' || typeof chatClient.status !== 'function') {
-      throw assistantError('Queued teacher replies are not configured on this server.', 'ASSISTANT_UNAVAILABLE');
+      const body = await chatClient.chat(request.messages, request.parameters);
+      return {
+        completed: true,
+        result: finishTeacherReply(body, request.context),
+      };
     }
     const submitted = await chatClient.submit(request.messages, request.parameters);
     const jobId = clean(submitted?.id);
@@ -770,7 +779,7 @@ function createPolymathAssistant(env = process.env, options = {}) {
       max_tokens: isTeacher ? 640 : 360,
     });
     const reply = extractAssistantText(body);
-    if (!reply) throw new Error('ChatBoss returned an empty reply.');
+    if (!reply) throw new Error('The AI provider returned an empty reply.');
     if (isTeacher && teacherMode === 'adult-companion' && companionReplyCrossesBoundary(reply)) {
       return {
         reply: companionBoundaryReply(),
@@ -793,7 +802,7 @@ function createPolymathAssistant(env = process.env, options = {}) {
     }
     return {
       reply,
-      provider: 'polymath-chatboss',
+      provider: providerName,
       role: isTeacher
         ? (teacherMode === 'adult-companion' ? 'adult-companion' : 'music-teacher')
         : 'customer-service',

@@ -85,6 +85,10 @@ jobs:
           RUNPOD_CHAT_BOSS_ENDPOINT_ID: ${{ vars.RUNPOD_CHAT_BOSS_ENDPOINT_ID || 'lk3brapzdbx0ch' }}
           RUNPOD_CHAT_BOSS_MODEL: ${{ vars.RUNPOD_CHAT_BOSS_MODEL || 'polymath-chat-boss' }}
           RUNPOD_CHAT_BOSS_TIMEOUT_MS: ${{ vars.RUNPOD_CHAT_BOSS_TIMEOUT_MS || '900000' }}
+          POLYMATH_ASSISTANT_PROVIDER: deepseek
+          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL || 'deepseek-v4-flash' }}
+          DEEPSEEK_BASE_URL: https://api.deepseek.com
+          DEEPSEEK_TIMEOUT_MS: ${{ vars.DEEPSEEK_TIMEOUT_MS || '45000' }}
           CLIENT_ORIGINS: ${{ vars.CLIENT_ORIGINS || 'https://www.polymathmusician67.com,https://polymath-musician.pages.dev,https://scaling-preview.polymath-musician.pages.dev' }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition > current-task.json
@@ -94,6 +98,10 @@ jobs:
             --arg chatBossEndpointId "$RUNPOD_CHAT_BOSS_ENDPOINT_ID" \
             --arg chatBossModel "$RUNPOD_CHAT_BOSS_MODEL" \
             --arg chatBossTimeoutMs "$RUNPOD_CHAT_BOSS_TIMEOUT_MS" \
+            --arg assistantProvider "$POLYMATH_ASSISTANT_PROVIDER" \
+            --arg deepSeekModel "$DEEPSEEK_MODEL" \
+            --arg deepSeekBaseUrl "$DEEPSEEK_BASE_URL" \
+            --arg deepSeekTimeoutMs "$DEEPSEEK_TIMEOUT_MS" \
             --arg clientOrigins "$CLIENT_ORIGINS" '
             .containerDefinitions[0].image = $image
             | .containerDefinitions[0].environment = (
@@ -102,12 +110,20 @@ jobs:
                   and .name != "RUNPOD_CHAT_BOSS_ENDPOINT_ID"
                   and .name != "RUNPOD_CHAT_BOSS_MODEL"
                   and .name != "RUNPOD_CHAT_BOSS_TIMEOUT_MS"
+                  and .name != "POLYMATH_ASSISTANT_PROVIDER"
+                  and .name != "DEEPSEEK_MODEL"
+                  and .name != "DEEPSEEK_BASE_URL"
+                  and .name != "DEEPSEEK_TIMEOUT_MS"
                   and .name != "CLIENT_ORIGINS"))
                 + [
                     { name: "RUNPOD_S3_REPLICAS", value: $runpodReplicas },
                     { name: "RUNPOD_CHAT_BOSS_ENDPOINT_ID", value: $chatBossEndpointId },
                     { name: "RUNPOD_CHAT_BOSS_MODEL", value: $chatBossModel },
                     { name: "RUNPOD_CHAT_BOSS_TIMEOUT_MS", value: $chatBossTimeoutMs },
+                    { name: "POLYMATH_ASSISTANT_PROVIDER", value: $assistantProvider },
+                    { name: "DEEPSEEK_MODEL", value: $deepSeekModel },
+                    { name: "DEEPSEEK_BASE_URL", value: $deepSeekBaseUrl },
+                    { name: "DEEPSEEK_TIMEOUT_MS", value: $deepSeekTimeoutMs },
                     { name: "CLIENT_ORIGINS", value: $clientOrigins }
                   ]
               )

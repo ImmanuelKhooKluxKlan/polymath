@@ -12,13 +12,14 @@ process.env.ADMIN_EMAILS = 'admin@example.test';
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 process.env.MUSCRIPTOR_ENABLED = 'false';
-process.env.RUNPOD_CHAT_BOSS_ENDPOINT_ID = 'test-chat-endpoint';
-process.env.RUNPOD_API_KEY = 'test-runpod-key';
+process.env.POLYMATH_ASSISTANT_PROVIDER = 'deepseek';
+process.env.DEEPSEEK_API_KEY = 'test-deepseek-key';
+process.env.DEEPSEEK_MODEL = 'deepseek-v4-flash';
 process.env.SUPPORT_REQUEST_INTERVAL_MS = '0';
 
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = (url, options) => {
-  if (String(url).startsWith('https://api.runpod.ai/')) {
+  if (String(url).startsWith('https://api.deepseek.com/')) {
     if (String(options?.body || '').includes('force-outage')) {
       return Promise.resolve(new Response(JSON.stringify({ error: 'simulated outage' }), {
         status: 503,
