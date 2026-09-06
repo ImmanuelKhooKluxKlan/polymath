@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
+import { trackProductEvent } from '../services/productAnalytics.js';
 
 const FALLBACK_PRODUCTS = [
   { id: 'polymath-chill-monthly', name: 'Chill', price: '7.99', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'chill', translations: 10 },
@@ -111,6 +112,22 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
     () => products.find((product) => product.id === selectedId) || subscriptions[0],
     [products, selectedId, subscriptions],
   );
+
+  useEffect(() => {
+    trackProductEvent('subscription_page_viewed', {
+      productId: initialProductId,
+      signedIn: Boolean(user),
+      audience,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!paymentStatus) return;
+    trackProductEvent('checkout_returned', {
+      productId: initialProductId,
+      outcome: paymentStatus,
+    });
+  }, [paymentStatus]);
 
   useEffect(() => {
     apiRequest('/api/catalog')

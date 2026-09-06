@@ -5,8 +5,40 @@ import {
   fetchProtectedFile,
   uploadProtectedArtifact,
 } from '../services/api.js';
+import { trackProductEvent, uploadSizeBucket } from '../services/productAnalytics.js';
 
 const MEDIA_ACCEPT = 'audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.webm,.mkv,.avi';
+const ACTIVE_JOB_KEY_PREFIX = 'polymath-active-media-transcription-v1:';
+
+function activeJobKey(userId) {
+  return `${ACTIVE_JOB_KEY_PREFIX}${String(userId || 'guest')}`;
+}
+
+function rememberActiveJob(userId, jobId) {
+  try {
+    if (jobId) window.localStorage.setItem(activeJobKey(userId), jobId);
+    else window.localStorage.removeItem(activeJobKey(userId));
+  } catch {
+    // Server-side job history still restores progress when storage is blocked.
+  }
+}
+
+function recalledActiveJob(userId) {
+  try {
+    return window.localStorage.getItem(activeJobKey(userId)) || '';
+  } catch {
+    return '';
+  }
+}
+
+function elapsedLabel(startedAt, now = Date.now()) {
+  const started = Date.parse(startedAt || '');
+  if (!Number.isFinite(started)) return '';
+  const seconds = Math.max(0, Math.floor((now - started) / 1000));
+  if (seconds < 60) return `${seconds}s elapsed`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s elapsed`;
+}
 
 function polymathLabel(value) {
   return String(value || '').replace(/MuScriptor/gi, 'Polymath');
@@ -27,7 +59,15 @@ export default function MediaTranscriptionPanel({
   const [job, setJob] = useState(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [restoredJob, setRestoredJob] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
   const pollTimer = useRef(null);
+  const pollFailures = useRef(0);
+  const mounted = useRef(true);
+  const autoOpenJobId = useRef('');
+  const currentUserId = useRef(String(user?.user_id || ''));
+  currentUserId.current = String(user?.user_id || '');
   const transcriptionUnavailable = capability?.enabled === false
     || Boolean(capability?.adminOnly && !user?.admin);
   const allowance = user?.translationAllowance;
@@ -42,50 +82,114 @@ export default function MediaTranscriptionPanel({
     pollTimer.current = null;
   }
 
+  function schedulePoll(jobId, delay = 4000) {
+    clearPolling();
+    pollTimer.current = window.setTimeout(() => refreshJob(jobId), delay);
+  }
+
   useEffect(() => {
     let cancelled = false;
-    apiRequest('/api/media-transcriptions/capabilities')
-      .then((data) => {
-        if (!cancelled) setCapability(data);
+    mounted.current = true;
+    const capabilityRequest = apiRequest('/api/media-transcriptions/capabilities');
+    const historyRequest = user?.user_id
+      ? apiRequest('/api/media-transcriptions')
+      : Promise.resolve(null);
+    Promise.all([capabilityRequest, historyRequest])
+      .then(([capabilityData, historyData]) => {
+        if (cancelled) return;
+        setCapability(capabilityData);
+        if (historyData?.user && setUser) setUser(historyData.user);
+        const rememberedId = recalledActiveJob(user?.user_id);
+        const jobs = Array.isArray(historyData?.jobs) ? historyData.jobs : [];
+        const active = jobs.find((candidate) => candidate.id === rememberedId && candidate.status === 'processing')
+          || jobs.find((candidate) => candidate.status === 'processing');
+        if (!active) return;
+        setJob(active);
+        setRestoredJob(true);
+        autoOpenJobId.current = active.id;
+        rememberActiveJob(user?.user_id, active.id);
+        setStatus('Reconnected to your transcription. It kept working safely on the server.');
+        trackProductEvent('transcription_restored', {
+          instrument: active.instrument || instrument || 'band',
+          playbackMode: active.playbackMode || playbackMode,
+          restored: true,
+        });
+        schedulePoll(active.id, 250);
       })
       .catch((error) => {
         if (!cancelled) setStatus(error.message);
       });
+
+    const resumePolling = () => {
+      if (!autoOpenJobId.current || document.visibilityState === 'hidden') return;
+      pollFailures.current = 0;
+      schedulePoll(autoOpenJobId.current, 50);
+    };
+    window.addEventListener('online', resumePolling);
+    document.addEventListener('visibilitychange', resumePolling);
     return () => {
       cancelled = true;
+      mounted.current = false;
       clearPolling();
+      window.removeEventListener('online', resumePolling);
+      document.removeEventListener('visibilitychange', resumePolling);
     };
-  }, []);
+  }, [user?.user_id]);
+
+  useEffect(() => {
+    if (job?.status !== 'processing') return undefined;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [job?.status]);
 
   async function refreshJob(jobId) {
+    const requestUserId = String(user?.user_id || '');
     try {
       const data = await apiRequest(`/api/media-transcriptions/${jobId}`);
+      if (!mounted.current || currentUserId.current !== requestUserId) return;
+      pollFailures.current = 0;
       setJob(data.job);
       if (data.user && setUser) setUser(data.user);
       if (data.job.status === 'completed') {
         setStatus('Your ready-to-play sheet is ready. Opening the piano studio...');
         clearPolling();
-        await openReadySheet(data.job);
+        rememberActiveJob(user?.user_id, '');
+        if (autoOpenJobId.current === data.job.id) await openReadySheet(data.job);
+        autoOpenJobId.current = '';
         return;
       }
       if (data.job.status === 'failed') {
-        setStatus(polymathLabel(data.job.error) || 'Polymath could not transcribe this recording.');
+        const refund = data.job.refunded ? ' Your translation was refunded.' : '';
+        setStatus(`${polymathLabel(data.job.error) || 'Polymath could not transcribe this recording.'}${refund}`);
         clearPolling();
+        autoOpenJobId.current = '';
+        rememberActiveJob(user?.user_id, '');
         return;
       }
-      pollTimer.current = window.setTimeout(() => refreshJob(jobId), 4000);
-    } catch (error) {
-      setStatus(error.message);
-      pollTimer.current = window.setTimeout(() => refreshJob(jobId), 6000);
+      schedulePoll(jobId, document.visibilityState === 'hidden' ? 15000 : 4000);
+    } catch {
+      if (!mounted.current || currentUserId.current !== requestUserId) return;
+      pollFailures.current += 1;
+      const retrySeconds = Math.min(30, 4 * (2 ** Math.min(3, pollFailures.current)));
+      setStatus(`The status connection paused, but your server job is safe. Reconnecting in ${retrySeconds} seconds…`);
+      schedulePoll(jobId, retrySeconds * 1000);
     }
   }
 
   function chooseFile(event) {
     const selected = event.target.files?.[0] || null;
     setJob(null);
+    setRestoredJob(false);
     setStatus('');
     setRightsConfirmed(false);
     setFile(selected);
+    if (selected) {
+      trackProductEvent('transcription_file_selected', {
+        instrument: instrument || 'band',
+        sizeBucket: uploadSizeBucket(selected.size),
+        sourceKind: selected.type.startsWith('video/') ? 'video' : 'audio',
+      });
+    }
     event.target.value = '';
   }
 
@@ -130,14 +234,44 @@ export default function MediaTranscriptionPanel({
       setCapability(data.capability);
       if (data.user && setUser) setUser(data.user);
       setJob(data.job);
+      setRestoredJob(false);
       setStatus('Polymath is preparing your recording.');
+      autoOpenJobId.current = data.job.id;
+      rememberActiveJob(user?.user_id, data.job.id);
+      pollFailures.current = 0;
       clearPolling();
-      pollTimer.current = window.setTimeout(() => refreshJob(data.job.id), 1500);
+      schedulePoll(data.job.id, 1500);
     } catch (error) {
       setStatus(error.message);
       if (error.details?.capability) setCapability(error.details.capability);
     } finally {
       setBusy(false);
+    }
+  }
+
+  function resetFailedJob() {
+    clearPolling();
+    setJob(null);
+    setRestoredJob(false);
+    setStatus(file
+      ? 'Ready to retry this file. Nothing will be charged until a new job is accepted.'
+      : 'Choose the recording again to retry.');
+  }
+
+  async function submitFeedback(feedback) {
+    if (!job?.id || job.feedback || feedbackBusy) return;
+    setFeedbackBusy(true);
+    try {
+      const data = await apiRequest(`/api/media-transcriptions/${job.id}/feedback`, {
+        method: 'POST',
+        body: JSON.stringify({ feedback }),
+      });
+      setJob(data.job);
+      setStatus('Thank you. This review goes directly into Polymath quality tracking.');
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setFeedbackBusy(false);
     }
   }
 
@@ -286,24 +420,61 @@ export default function MediaTranscriptionPanel({
       {job && (
         <div className={`media-transcription-job ${job.status}`}>
           <div className="job-status-row">
-            <div><span>{polymathLabel(job.stage)}</span><strong>{job.title}</strong></div>
+            <div>
+              <span>{polymathLabel(job.stage)}</span>
+              <strong>{job.title}</strong>
+              {job.status === 'processing' && (
+                <small>{restoredJob ? 'Restored safely · ' : ''}{elapsedLabel(job.startedAt, clock)} · you may leave this page</small>
+              )}
+            </div>
             <span className="job-state-badge">{job.progress}%</span>
           </div>
           <div className="job-progress-track" aria-label={`Transcription progress ${job.progress}%`}>
             <span style={{ width: `${job.progress}%` }} />
           </div>
           {job.status === 'completed' && (
+            <>
+              <div className="media-result-actions">
+                <button className="primary" type="button" onClick={openReadySheet} disabled={busy}>
+                  Open Ready-to-Play Sheet
+                </button>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => downloadProtectedFile(`/api/media-transcriptions/${job.id}/download`, job.outputFilename)}
+                >
+                  Download JSON
+                </button>
+              </div>
+              <div className="transcription-feedback" aria-label="Rate transcription quality">
+                <span>{job.feedback ? 'Review saved' : 'After listening, was it playable?'}</span>
+                <div>
+                  <button
+                    type="button"
+                    className={job.feedback === 'accurate' ? 'selected' : ''}
+                    disabled={feedbackBusy || Boolean(job.feedback)}
+                    onClick={() => submitFeedback('accurate')}
+                  >
+                    Accurate
+                  </button>
+                  <button
+                    type="button"
+                    className={job.feedback === 'needs-work' ? 'selected' : ''}
+                    disabled={feedbackBusy || Boolean(job.feedback)}
+                    onClick={() => submitFeedback('needs-work')}
+                  >
+                    Needs work
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+          {job.status === 'failed' && (
             <div className="media-result-actions">
-              <button className="primary" type="button" onClick={openReadySheet} disabled={busy}>
-                Open Ready-to-Play Sheet
+              <button className="primary" type="button" onClick={resetFailedJob}>
+                {file ? 'Try this file again' : 'Choose the file again'}
               </button>
-              <button
-                className="ghost"
-                type="button"
-                onClick={() => downloadProtectedFile(`/api/media-transcriptions/${job.id}/download`, job.outputFilename)}
-              >
-                Download JSON
-              </button>
+              {job.refunded && <small>Refund restored automatically.</small>}
             </div>
           )}
         </div>

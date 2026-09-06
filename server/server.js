@@ -14,6 +14,8 @@ const { StateConflictError, createStateStore } = require('./stateStore');
 const { createArtifactStore } = require('./artifactStore');
 const { createDirectUploadService } = require('./directUpload');
 const { createJobQueue } = require('./jobQueue');
+const { createTaskPool } = require('./taskPool');
+const { PUBLIC_PRODUCT_EVENT_NAMES, sanitizeProductEventBatch } = require('./productAnalytics');
 const { createModelLab } = require('./modelLab');
 const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
@@ -73,7 +75,18 @@ const CHAT_BOSS_ASSISTANT = createChatBossAssistant(process.env);
 const CHAT_BOSS_REQUEST_WINDOWS = new Map();
 const TEACHER_SPEECH = createTeacherSpeechService(process.env);
 const PROCESS_INSTANCE_ID = crypto.randomUUID();
-const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
+const BACKGROUND_JOB_CONCURRENCY = Math.max(
+  1,
+  Math.min(8, Math.floor(Number(process.env.BACKGROUND_JOB_CONCURRENCY || 3))),
+);
+const JOB_CLAIM_MS = Math.max(
+  2 * 60 * 1000,
+  Math.min(15 * 60 * 1000, Number(process.env.JOB_CLAIM_MS) || 5 * 60 * 1000),
+);
+const JOB_CLAIM_HEARTBEAT_MS = Math.max(
+  15 * 1000,
+  Math.min(Math.floor(JOB_CLAIM_MS / 2), Number(process.env.JOB_CLAIM_HEARTBEAT_MS) || 60 * 1000),
+);
 const BUILT_IN_VIRTUAL_TEACHERS = Object.freeze({
   aria: Object.freeze({
     id: 'aria', name: 'Aria', title: 'Piano performance teacher',
@@ -147,7 +160,13 @@ const STATE_STORE = createStateStore({
 const JOB_QUEUE = createJobQueue({
   queueUrl: process.env.JOB_QUEUE_URL,
   region: process.env.JOB_QUEUE_REGION || process.env.AWS_REGION,
+  concurrency: process.env.JOB_QUEUE_CONCURRENCY || BACKGROUND_JOB_CONCURRENCY,
+  visibilityTimeoutSeconds: process.env.JOB_QUEUE_VISIBILITY_SECONDS || 300,
+  visibilityHeartbeatSeconds: process.env.JOB_QUEUE_HEARTBEAT_SECONDS || 60,
 });
+const MEDIA_TRANSCRIPTION_POOL = createTaskPool(BACKGROUND_JOB_CONCURRENCY);
+const SCORE_TRANSLATION_POOL = createTaskPool(Math.min(2, BACKGROUND_JOB_CONCURRENCY));
+const PRODUCT_EVENT_REQUEST_WINDOWS = new Map();
 
 const WITHDRAWAL_FEE_RATE = 0.25;
 const MARKETPLACE_FEE_RATE = 0.25;
@@ -2352,6 +2371,7 @@ function muscriptorAvailability() {
     model: MUSCRIPTOR_MODEL,
     checkpoint: RUNPOD_SERVERLESS.inferenceVersion,
     execution,
+    parallelSubmissions: execution === 'runpod-serverless' ? BACKGROUND_JOB_CONCURRENCY : 1,
     storageTargets: serverlessConfigured ? RUNPOD_SERVERLESS.storageTargetCount : 0,
     maxBytes: null,
     maxDurationSeconds: MAX_MEDIA_SECONDS,
@@ -2380,9 +2400,14 @@ function publicMediaTranscriptionJob(job) {
     costMcoins: Number(job.costMcoins || 0),
     vocalMelodyNoteCount: Number(job.vocalMelodyNoteCount || 0),
     startedAt: job.startedAt,
+    updatedAt: job.updatedAt || job.startedAt,
     completedAt: job.completedAt || null,
     failedAt: job.failedAt || null,
     error: job.error || '',
+    attemptCount: Math.max(0, Number(job.attemptCount || 0)),
+    refunded: Boolean(job.refundedAt),
+    retryable: job.status === 'failed',
+    feedback: job.feedback?.value || '',
     outputFilename: job.status === 'completed' ? job.outputFilename : undefined,
     personalSongId: job.status === 'completed' ? job.personalSongId : undefined,
   };
@@ -2392,9 +2417,45 @@ async function updateMediaTranscriptionJob(jobId, changes) {
   const db = await readDb();
   const job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
   if (!job) return null;
-  Object.assign(job, changes);
+  Object.assign(job, changes, { updatedAt: new Date().toISOString() });
   await writeDb(db);
   return job;
+}
+
+function productEventRequestAllowed(actorId) {
+  const actor = String(actorId || '').slice(0, 120);
+  if (!actor) return false;
+  const now = Date.now();
+  const minute = Math.floor(now / 60000);
+  const current = PRODUCT_EVENT_REQUEST_WINDOWS.get(actor);
+  const next = current?.minute === minute
+    ? { minute, count: current.count + 1 }
+    : { minute, count: 1 };
+  PRODUCT_EVENT_REQUEST_WINDOWS.set(actor, next);
+  if (PRODUCT_EVENT_REQUEST_WINDOWS.size > 10000) {
+    for (const [key, value] of PRODUCT_EVENT_REQUEST_WINDOWS) {
+      if (value.minute < minute - 2) PRODUCT_EVENT_REQUEST_WINDOWS.delete(key);
+    }
+  }
+  return next.count <= 30;
+}
+
+async function recordTrustedProductEvent(eventName, userId, properties = {}) {
+  const [event] = sanitizeProductEventBatch([{
+    eventId: `event_${crypto.randomUUID()}`,
+    eventName,
+    occurredAt: new Date().toISOString(),
+    sessionId: `server_${crypto.randomUUID()}`,
+    path: 'server',
+    release: process.env.APP_RELEASE || process.env.GITHUB_SHA || '',
+    properties,
+  }], { userId });
+  if (!event) return;
+  try {
+    await STATE_STORE.recordProductEvents([event]);
+  } catch (error) {
+    console.error(`Product event ${eventName} could not be recorded:`, error.message);
+  }
 }
 
 async function claimBackgroundJob(collection, jobId) {
@@ -2405,8 +2466,13 @@ async function claimBackgroundJob(collection, jobId) {
   const activeClaim = Number.isFinite(claimExpires) && claimExpires > Date.now();
   if (activeClaim && job.claimedBy !== PROCESS_INSTANCE_ID && JOB_QUEUE.enabled) return null;
   if (activeClaim && job.claimedBy === PROCESS_INSTANCE_ID) return null;
+  const claimedAt = new Date().toISOString();
   job.claimedBy = PROCESS_INSTANCE_ID;
   job.claimExpiresAt = new Date(Date.now() + JOB_CLAIM_MS).toISOString();
+  job.claimedAt = claimedAt;
+  job.claimHeartbeatAt = claimedAt;
+  job.updatedAt = claimedAt;
+  job.attemptCount = Math.max(0, Number(job.attemptCount || 0)) + 1;
   try {
     await writeDb(db);
     return job;
@@ -2414,6 +2480,44 @@ async function claimBackgroundJob(collection, jobId) {
     if (error instanceof StateConflictError) return null;
     throw error;
   }
+}
+
+async function renewBackgroundJobClaim(collection, jobId) {
+  const db = await readDb();
+  const job = db[collection]?.find((candidate) => candidate.id === jobId);
+  if (!job || job.status !== 'processing' || job.claimedBy !== PROCESS_INSTANCE_ID) return false;
+  const heartbeatAt = new Date().toISOString();
+  job.claimHeartbeatAt = heartbeatAt;
+  job.claimExpiresAt = new Date(Date.now() + JOB_CLAIM_MS).toISOString();
+  job.updatedAt = heartbeatAt;
+  try {
+    await writeDb(db);
+    return true;
+  } catch (error) {
+    if (error instanceof StateConflictError) return false;
+    throw error;
+  }
+}
+
+function startBackgroundJobClaimHeartbeat(collection, jobId) {
+  let running = false;
+  let stopped = false;
+  const timer = setInterval(async () => {
+    if (running || stopped) return;
+    running = true;
+    try {
+      await renewBackgroundJobClaim(collection, jobId);
+    } catch (error) {
+      console.error(`Background job ${jobId} claim heartbeat failed:`, error);
+    } finally {
+      running = false;
+    }
+  }, JOB_CLAIM_HEARTBEAT_MS);
+  timer.unref?.();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 let mediaProgressWriteQueue = Promise.resolve();
@@ -2619,12 +2723,17 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
 }
 
 async function runServerlessMuscriptor(job, preparedPath, outputPath, constraints) {
+  let lastProgressSignature = '';
   const raw = await RUNPOD_SERVERLESS.transcribe({
     job,
     preparedPath,
     constraints,
     onProgress(remote) {
       const state = String(remote.state || '').trim().toUpperCase();
+      const progressLabel = String(remote.progress || '').trim();
+      const signature = `${state}:${progressLabel}`;
+      if (signature === lastProgressSignature) return;
+      lastProgressSignature = signature;
       if (state === 'IN_QUEUE') {
         queueMediaTranscriptionUpdate(job.id, {
           stage: 'Waiting for a RunPod Serverless GPU worker',
@@ -2632,7 +2741,7 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
         });
       } else if (state === 'IN_PROGRESS') {
         queueMediaTranscriptionUpdate(job.id, {
-          stage: String(remote.progress || 'Polymath is detecting notes and instruments'),
+          stage: progressLabel || 'Polymath is detecting notes and instruments',
           progress: 55,
         });
       }
@@ -2663,6 +2772,7 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
 async function processMediaTranscriptionJob(jobId) {
   let job = await claimBackgroundJob('mediaTranscriptionJobs', jobId);
   if (!job) return;
+  const stopClaimHeartbeat = startBackgroundJobClaimHeartbeat('mediaTranscriptionJobs', jobId);
   let db;
 
   const sourceWorkPath = path.join(UPLOAD_DIR, `${job.id}-source${path.extname(job.filename || '')}`);
@@ -2798,6 +2908,12 @@ async function processMediaTranscriptionJob(jobId) {
       sourceJobType: 'media-transcription',
     });
     await writeDb(db);
+    await recordTrustedProductEvent('transcription_completed', job.userId, {
+      instrument: job.instrument,
+      playbackMode: job.playbackMode,
+      noteCount: job.noteCount,
+      durationSeconds: Math.max(0, (Date.parse(job.completedAt) - Date.parse(job.startedAt)) / 1000),
+    });
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
     if (ARTIFACT_STORE.remote) safeRemoveUpload(outputPath);
@@ -2807,23 +2923,25 @@ async function processMediaTranscriptionJob(jobId) {
     if (job && job.status === 'processing') {
       refundTranslationJob(db, job, error.message || 'Polymath could not transcribe this recording.');
       await writeDb(db);
+      await recordTrustedProductEvent('transcription_failed', job.userId, {
+        instrument: job.instrument,
+        playbackMode: job.playbackMode,
+        refunded: Boolean(job.refundedAt),
+        durationSeconds: Math.max(0, (Date.parse(job.failedAt) - Date.parse(job.startedAt)) / 1000),
+      });
     }
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
     safeRemoveUpload(outputPath);
     safeRemoveUpload(arrangedPath);
   } finally {
+    stopClaimHeartbeat();
     await safeRemoveArtifact(job?.sourcePath);
   }
 }
 
-let mediaTranscriptionQueue = Promise.resolve();
-
 function enqueueMediaTranscription(jobId) {
-  mediaTranscriptionQueue = mediaTranscriptionQueue
-    .then(() => processMediaTranscriptionJob(jobId))
-    .catch((error) => console.error('Polymath queue error:', error));
-  return mediaTranscriptionQueue;
+  return MEDIA_TRANSCRIPTION_POOL.run(() => processMediaTranscriptionJob(jobId));
 }
 
 async function dispatchBackgroundJob(type, jobId) {
@@ -2834,14 +2952,16 @@ async function dispatchBackgroundJob(type, jobId) {
   setImmediate(() => {
     const task = type === 'media-transcription'
       ? enqueueMediaTranscription(jobId)
-      : processTranslationJob(jobId);
+      : SCORE_TRANSLATION_POOL.run(() => processTranslationJob(jobId));
     Promise.resolve(task).catch((error) => console.error('Background job failed:', error));
   });
 }
 
 async function runQueuedJob(message) {
   if (message?.type === 'media-transcription') return enqueueMediaTranscription(message.jobId);
-  if (message?.type === 'score-translation') return processTranslationJob(message.jobId);
+  if (message?.type === 'score-translation') {
+    return SCORE_TRANSLATION_POOL.run(() => processTranslationJob(message.jobId));
+  }
   throw new Error('Unknown background job type.');
 }
 
@@ -3880,6 +4000,43 @@ app.post('/api/chat-boss/jobs/:jobId/cancel', requireAuth, requireAdmin, async (
 
 app.get('/api/media-transcriptions/capabilities', async (req, res) => {
   res.json(muscriptorAvailability());
+});
+
+app.post('/api/product-events', async (req, res, next) => {
+  try {
+    // Production initializes the store before listening. Route tests import the
+    // Express app directly, so initialize once without forcing every anonymous
+    // analytics batch to read the full account document.
+    if (!STATE_STORE.initialized) await readDb();
+    let user = null;
+    if (bearerToken(req)) {
+      const db = await readDb();
+      user = authUser(req, db);
+    }
+    const events = sanitizeProductEventBatch(req.body?.events, {
+      userId: user?.id || '',
+      allowedEventNames: PUBLIC_PRODUCT_EVENT_NAMES,
+    });
+    if (!events.length) return res.status(400).json({ error: 'No valid product events were supplied.' });
+    const actor = user?.id || events[0].anonymousId || events[0].sessionId;
+    if (!productEventRequestAllowed(actor)) {
+      res.set('Retry-After', '60');
+      return res.status(429).json({ error: 'Product event rate limit reached.' });
+    }
+    const accepted = await STATE_STORE.recordProductEvents(events);
+    return res.status(202).json({ accepted });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/admin/product-analytics', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const days = Math.max(1, Math.min(180, Number(req.query.days) || 30));
+    return res.json(await STATE_STORE.productEventSummary(days));
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.get('/api/catalog', async (req, res) => {
@@ -6443,6 +6600,13 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       && Date.now() - new Date(item.createdAt).getTime() < 24 * 60 * 60 * 1000
     ));
     if (reusablePending) {
+      await recordTrustedProductEvent('checkout_started', req.user.id, {
+        productId: product.id,
+        tier: product.tier || '',
+        interval: product.interval || '',
+        audience: product.audience || 'individual',
+        outcome: 'reused',
+      });
       return res.json({
         subscriptionId: reusablePending.subscriptionId,
         approveUrl: reusablePending.approveUrl,
@@ -6510,6 +6674,13 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       req.user.pro = false;
     }
     await writeDb(req.db);
+    await recordTrustedProductEvent('checkout_started', req.user.id, {
+      productId: product.id,
+      tier: product.tier || '',
+      interval: product.interval || '',
+      audience: product.audience || 'individual',
+      outcome: 'created',
+    });
     res.status(201).json({
       subscriptionId: data.id,
       approveUrl,
@@ -6564,6 +6735,15 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
       );
     }
     await writeDb(req.db);
+    if (user?.pro && firstActivation) {
+      await recordTrustedProductEvent('subscription_activated', user.id, {
+        productId: product.id,
+        tier: product.tier || '',
+        interval: product.interval || '',
+        audience: product.audience || 'individual',
+        outcome: record.isUpgrade ? 'upgrade' : 'new',
+      });
+    }
 
     res.json({
       user: safeUser(req.user),
@@ -6619,9 +6799,12 @@ app.post('/api/paypal/webhook', async (req, res) => {
     const webhookStatus = eventType === 'BILLING.SUBSCRIPTION.UPDATED'
       ? resource.status
       : statusByType[eventType];
+    let activatedSubscription = null;
+    let activatedUser = null;
 
     if (subscriptionId && webhookStatus) {
       const record = db.subscriptions.find((item) => item.subscriptionId === subscriptionId);
+      const firstActivation = subscriptionStatusGrantsPro(webhookStatus) && !record?.activatedAt;
       if (subscriptionStatusGrantsPro(webhookStatus) && record?.isUpgrade) {
         try {
           await cancelPreviousSubscriptionForUpgrade(db, record);
@@ -6630,7 +6813,11 @@ app.post('/api/paypal/webhook', async (req, res) => {
           throw error;
         }
       }
-      applySubscriptionStatus(db, subscriptionId, webhookStatus, resource.custom_id || '');
+      const updatedUser = applySubscriptionStatus(db, subscriptionId, webhookStatus, resource.custom_id || '');
+      if (firstActivation && updatedUser?.pro) {
+        activatedSubscription = record;
+        activatedUser = updatedUser;
+      }
     }
 
     db.webhookEvents.push({
@@ -6641,6 +6828,16 @@ app.post('/api/paypal/webhook', async (req, res) => {
     });
     if (db.webhookEvents.length > 1000) db.webhookEvents = db.webhookEvents.slice(-1000);
     await writeDb(db);
+    if (activatedSubscription && activatedUser) {
+      const product = PRODUCTS[activatedSubscription.productId] || PRODUCTS['polymath-pro'];
+      await recordTrustedProductEvent('subscription_activated', activatedUser.id, {
+        productId: product.id,
+        tier: product.tier || '',
+        interval: product.interval || '',
+        audience: product.audience || 'individual',
+        outcome: activatedSubscription.isUpgrade ? 'upgrade' : 'new',
+      });
+    }
     res.json({ received: true });
   } catch (error) {
     console.error('PayPal webhook failed:', error.message);
@@ -7243,6 +7440,7 @@ function normalizeReadyToPlaySong(rawResult, selectedInstrument) {
 async function processTranslationJob(jobId) {
   let job = await claimBackgroundJob('scoreTranslationJobs', jobId);
   if (!job) return;
+  const stopClaimHeartbeat = startBackgroundJobClaimHeartbeat('scoreTranslationJobs', jobId);
   let db;
   let sourcePath = '';
   let outputPath = '';
@@ -7334,6 +7532,7 @@ async function processTranslationJob(jobId) {
     refundTranslationJob(db, job, error.message);
     await writeDb(db);
   } finally {
+    stopClaimHeartbeat();
     safeRemoveUpload(sourcePath);
     if (ARTIFACT_STORE.remote) safeRemoveUpload(outputPath);
     await safeRemoveArtifact(job?.sourcePath);
@@ -7486,6 +7685,7 @@ async function submitMediaTranscription(req, res, {
     stage: 'Queued for Polymath',
     progress: 5,
     startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
   req.db.mediaTranscriptionJobs.push(job);
   if (paymentMethod === 'mcoins') {
@@ -7502,6 +7702,11 @@ async function submitMediaTranscription(req, res, {
     throw error;
   }
   await dispatchBackgroundJob('media-transcription', job.id);
+  await recordTrustedProductEvent('transcription_started', req.user.id, {
+    instrument,
+    playbackMode,
+    execution: capability.execution,
+  });
   return res.status(202).json({
     job: publicMediaTranscriptionJob(job),
     capability,
@@ -7576,6 +7781,35 @@ app.get('/api/media-transcriptions/:jobId', requireAuth, async (req, res) => {
     capability: muscriptorAvailability(),
     user: safeUser(req.user),
   });
+});
+
+app.post('/api/media-transcriptions/:jobId/feedback', requireAuth, async (req, res) => {
+  const job = req.db.mediaTranscriptionJobs.find((candidate) => (
+    candidate.id === req.params.jobId && candidate.userId === req.user.id
+  ));
+  if (!job) return res.status(404).json({ error: 'Music transcription job not found.' });
+  if (job.status !== 'completed') {
+    return res.status(409).json({ error: 'Listen to the completed transcription before reviewing it.' });
+  }
+  const value = String(req.body.feedback || '').trim().toLowerCase();
+  if (!['accurate', 'needs-work'].includes(value)) {
+    return res.status(400).json({ error: 'Choose accurate or needs work.' });
+  }
+  if (job.feedback?.value) {
+    if (job.feedback.value === value) return res.json({ job: publicMediaTranscriptionJob(job) });
+    return res.status(409).json({ error: 'This transcription review is already saved.' });
+  }
+  job.feedback = {
+    value,
+    reviewedAt: new Date().toISOString(),
+  };
+  await writeDb(req.db);
+  await recordTrustedProductEvent('transcription_feedback', req.user.id, {
+    feedback: value,
+    instrument: job.instrument,
+    playbackMode: job.playbackMode,
+  });
+  return res.json({ job: publicMediaTranscriptionJob(job) });
 });
 
 app.get('/api/media-transcriptions/:jobId/download', requireAuth, async (req, res) => {

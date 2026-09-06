@@ -7,6 +7,7 @@ import ModelLabPage from './ModelLabPage.jsx';
 
 const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
+  ['growth', 'Growth', 'Activation, sharing, subscriptions, retention, and transcription reliability'],
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests'],
   ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
   ['teacher-marketplace', 'Human teachers', 'Directory access, rates, reviews, and platform fees'],
@@ -104,6 +105,17 @@ function formatAmount(amount, currency) {
   return `${Number(amount || 0).toLocaleString()} Mcoins`;
 }
 
+function percentLabel(value) {
+  return value === null || value === undefined ? 'Not enough data' : `${Number(value).toFixed(1)}%`;
+}
+
+function durationLabel(seconds) {
+  if (seconds === null || seconds === undefined) return 'Not enough data';
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
+}
+
 function promotionKindLabel(kind) {
   if (kind === 'marketplace_percent') return 'Composers percentage';
   if (kind === 'marketplace_fixed') return 'Composers fixed Mcoin discount';
@@ -142,6 +154,9 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [phoneReviews, setPhoneReviews] = useState(loadPhoneReviews);
   const [characters, setCharacters] = useState([]);
   const [communityReports, setCommunityReports] = useState({ reports: [], openCount: 0 });
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsDays, setAnalyticsDays] = useState(30);
+  const [analyticsStatus, setAnalyticsStatus] = useState('');
   const [characterDraft, setCharacterDraft] = useState(EMPTY_CHARACTER);
   const [editingCharacterId, setEditingCharacterId] = useState('');
   const [characterImage, setCharacterImage] = useState(null);
@@ -169,6 +184,17 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     setCommunityReports(communityData);
   }
 
+  async function loadProductAnalytics(days = analyticsDays) {
+    setAnalyticsStatus('Refreshing growth evidence…');
+    try {
+      const data = await apiRequest(`/api/admin/product-analytics?days=${encodeURIComponent(days)}`);
+      setAnalytics(data);
+      setAnalyticsStatus('');
+    } catch (error) {
+      setAnalyticsStatus(error.message);
+    }
+  }
+
   async function reviewCommunityReport(report, statusValue, removeMessage = false) {
     try {
       await apiRequest(`/api/admin/community/reports/${report.id}`, {
@@ -186,6 +212,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   useEffect(() => {
     if (!user?.admin) return;
     loadConsole().then(() => setStatus('')).catch((error) => setStatus(error.message));
+    loadProductAnalytics();
   }, [user?.admin]);
 
   useEffect(() => {
@@ -626,6 +653,77 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             <div><p className='eyebrow'>Data persistence</p><h2>{database.configuration.persistence || 'Atomic JSON file'}</h2></div>
             <p>User profiles, salted password hashes, purchases, policies, promotions, and login records are stored in <code>server/{database.configuration.databasePath || 'data/database.json'}</code>. New session credentials are stored as hashes, not as the browser's raw token.</p>
           </article>
+        </section>
+      )}
+      {activeSection === 'growth' && (
+        <section className='admin-workspace growth-evidence'>
+          <header className='admin-section-heading'>
+            <div>
+              <p className='eyebrow'>Real behaviour, not guesses</p>
+              <h2>Growth evidence</h2>
+              <p>See where people experience value, leave, share, subscribe, and return.</p>
+            </div>
+            <div className='growth-window-control'>
+              <label>Window
+                <select value={analyticsDays} onChange={(event) => {
+                  const days = Number(event.target.value);
+                  setAnalyticsDays(days);
+                  loadProductAnalytics(days);
+                }}>
+                  <option value='7'>7 days</option>
+                  <option value='30'>30 days</option>
+                  <option value='90'>90 days</option>
+                </select>
+              </label>
+              <button className='ghost' type='button' onClick={() => loadProductAnalytics()}>Refresh</button>
+            </div>
+          </header>
+
+          {analyticsStatus && <p className='form-status'>{analyticsStatus}</p>}
+          {!analytics && !analyticsStatus && <div className='empty-state'><p>Growth evidence will appear as people use this release.</p></div>}
+          {analytics && (
+            <>
+              <div className='growth-proof-grid'>
+                <article>
+                  <span>Lesson score</span>
+                  <strong>{analytics.learning?.averageScore ?? '—'}</strong>
+                  <small>{Number(analytics.learning?.completedAttempts || 0).toLocaleString()} measured attempts</small>
+                </article>
+                <article>
+                  <span>Transcriptions completed</span>
+                  <strong>{percentLabel(analytics.transcription?.completionPercent)}</strong>
+                  <small>Average {durationLabel(analytics.transcription?.averageDurationSeconds)}</small>
+                </article>
+                <article>
+                  <span>Users say playable</span>
+                  <strong>{percentLabel(analytics.transcription?.playablePercent)}</strong>
+                  <small>{Number(analytics.transcription?.feedbackActors || 0).toLocaleString()} quality reviews</small>
+                </article>
+                <article>
+                  <span>Return signal</span>
+                  <strong>{percentLabel(analytics.returnSignal?.returningPercent)}</strong>
+                  <small>{analytics.returnSignal?.definition}</small>
+                </article>
+              </div>
+
+              <article className='growth-funnel-card'>
+                <header><div><p className='eyebrow'>First-song funnel</p><h3>Where momentum survives</h3></div><small>Unique people reaching each step</small></header>
+                <div className='growth-funnel-list'>
+                  {(analytics.stages || []).map((stage) => (
+                    <div className='growth-funnel-row' key={stage.id}>
+                      <div><strong>{stage.label}</strong><small>{stage.actors.toLocaleString()} people</small></div>
+                      <div className='growth-funnel-track' aria-label={`${stage.fromVisitPercent ?? 0}% of visitors`}>
+                        <span style={{ width: `${Math.max(0, Math.min(100, stage.fromVisitPercent ?? 0))}%` }} />
+                      </div>
+                      <b>{stage.id === 'visited' ? 'Starting point' : `${percentLabel(stage.fromPreviousPercent)} from prior step`}</b>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <p className='growth-privacy-note'>{analytics.privacy}</p>
+            </>
+          )}
         </section>
       )}
       {activeSection === 'piano-lab' && (

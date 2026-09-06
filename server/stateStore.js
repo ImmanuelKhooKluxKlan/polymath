@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { isDeepStrictEqual } = require('util');
 const { Pool } = require('pg');
+const { summarizeProductEvents, summaryFromCounts } = require('./productAnalytics');
 
 const STATE_REVISION = Symbol('polymathStateRevision');
 const STATE_BASELINE = Symbol('polymathStateBaseline');
@@ -121,6 +122,7 @@ class StateStore {
     this.stateKey = stateKey;
     this.pool = null;
     this.initialized = false;
+    this.memoryProductEvents = [];
   }
 
   get provider() {
@@ -154,6 +156,32 @@ class StateStore {
         document jsonb NOT NULL,
         updated_at timestamptz NOT NULL DEFAULT now()
       )
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS polymath_product_events (
+        event_id text PRIMARY KEY,
+        event_name text NOT NULL,
+        occurred_at timestamptz NOT NULL,
+        received_at timestamptz NOT NULL DEFAULT now(),
+        user_id text,
+        anonymous_id text,
+        session_id text,
+        path text NOT NULL DEFAULT '',
+        release text NOT NULL DEFAULT '',
+        properties jsonb NOT NULL DEFAULT '{}'::jsonb
+      )
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS polymath_product_events_occurred_idx
+      ON polymath_product_events (occurred_at DESC)
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS polymath_product_events_name_occurred_idx
+      ON polymath_product_events (event_name, occurred_at DESC)
+    `);
+    await this.pool.query(`
+      DELETE FROM polymath_product_events
+      WHERE received_at < now() - interval '180 days'
     `);
     await this.pool.query(
       `INSERT INTO polymath_state (state_key, document)
@@ -223,6 +251,123 @@ class StateStore {
     } finally {
       client.release();
     }
+  }
+
+  async recordProductEvents(events) {
+    if (!this.initialized) throw new Error('State store must be initialized before recording product events.');
+    if (!Array.isArray(events) || !events.length) return 0;
+    const receivedAt = new Date().toISOString();
+    if (!this.pool) {
+      const known = new Set(this.memoryProductEvents.map((event) => event.eventId));
+      let inserted = 0;
+      for (const event of events) {
+        if (known.has(event.eventId)) continue;
+        this.memoryProductEvents.push({ ...event, receivedAt });
+        known.add(event.eventId);
+        inserted += 1;
+      }
+      if (this.memoryProductEvents.length > 10000) {
+        this.memoryProductEvents.splice(0, this.memoryProductEvents.length - 10000);
+      }
+      return inserted;
+    }
+
+    const columnsPerEvent = 10;
+    const values = [];
+    const placeholders = events.map((event, rowIndex) => {
+      const offset = rowIndex * columnsPerEvent;
+      values.push(
+        event.eventId,
+        event.eventName,
+        event.occurredAt,
+        receivedAt,
+        event.userId || null,
+        event.anonymousId || null,
+        event.sessionId || null,
+        event.path || '',
+        event.release || '',
+        JSON.stringify(event.properties || {}),
+      );
+      return `(${Array.from({ length: columnsPerEvent }, (_, index) => `$${offset + index + 1}`).join(',')})`;
+    });
+    const result = await this.pool.query(
+      `INSERT INTO polymath_product_events
+       (event_id, event_name, occurred_at, received_at, user_id, anonymous_id, session_id, path, release, properties)
+       VALUES ${placeholders.join(',')}
+       ON CONFLICT (event_id) DO NOTHING`,
+      values,
+    );
+    return result.rowCount;
+  }
+
+  async productEventSummary(days = 30) {
+    if (!this.initialized) throw new Error('State store must be initialized before reading product events.');
+    const windowDays = Math.max(1, Math.min(180, Math.floor(Number(days) || 30)));
+    const cutoff = new Date(Date.now() - (windowDays * 24 * 60 * 60 * 1000)).toISOString();
+    if (!this.pool) {
+      return summarizeProductEvents(
+        this.memoryProductEvents.filter((event) => String(event.occurredAt) >= cutoff),
+        windowDays,
+      );
+    }
+
+    const [countsResult, dailyResult, returnResult, feedbackResult] = await Promise.all([
+      this.pool.query(`
+        SELECT
+          event_name,
+          count(*)::integer AS events,
+          count(DISTINCT coalesce(nullif(user_id, ''), nullif(anonymous_id, ''), session_id))::integer AS actors,
+          avg(CASE WHEN jsonb_typeof(properties->'score') = 'number' THEN (properties->>'score')::numeric END) AS average_score,
+          avg(CASE WHEN jsonb_typeof(properties->'durationSeconds') = 'number' THEN (properties->>'durationSeconds')::numeric END) AS average_duration_seconds
+        FROM polymath_product_events
+        WHERE occurred_at >= $1::timestamptz
+        GROUP BY event_name
+      `, [cutoff]),
+      this.pool.query(`
+        SELECT occurred_at::date::text AS day, count(*)::integer AS event_count
+        FROM polymath_product_events
+        WHERE occurred_at >= $1::timestamptz
+        GROUP BY occurred_at::date
+        ORDER BY occurred_at::date
+      `, [cutoff]),
+      this.pool.query(`
+        WITH signed_days AS (
+          SELECT user_id, count(DISTINCT occurred_at::date)::integer AS active_days
+          FROM polymath_product_events
+          WHERE occurred_at >= $1::timestamptz AND nullif(user_id, '') IS NOT NULL
+          GROUP BY user_id
+        )
+        SELECT
+          count(*)::integer AS signed_actors,
+          count(*) FILTER (WHERE active_days >= 2)::integer AS returning_actors
+        FROM signed_days
+      `, [cutoff]),
+      this.pool.query(`
+        SELECT properties->>'feedback' AS feedback,
+               count(DISTINCT coalesce(nullif(user_id, ''), nullif(anonymous_id, ''), session_id))::integer AS actors
+        FROM polymath_product_events
+        WHERE occurred_at >= $1::timestamptz
+          AND event_name = 'transcription_feedback'
+          AND properties->>'feedback' IN ('accurate', 'needs-work')
+        GROUP BY properties->>'feedback'
+      `, [cutoff]),
+    ]);
+    const counts = countsResult.rows.map((row) => ({
+      eventName: row.event_name,
+      events: row.events,
+      actors: row.actors,
+      averageScore: row.average_score,
+      averageDurationSeconds: row.average_duration_seconds,
+    }));
+    const daily = dailyResult.rows.map((row) => ({ day: row.day, eventCount: Number(row.event_count || 0) }));
+    return summaryFromCounts({
+      counts,
+      daily,
+      feedback: feedbackResult.rows,
+      days: windowDays,
+      signedActors: Number(returnResult.rows[0]?.signed_actors || 0),
+      returningActors: Number(returnResult.rows[0]?.returning_actors || 0),
+    });
   }
 
   async close() {

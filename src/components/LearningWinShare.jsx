@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { buildLearningWin, shareLearningWin } from '../engine/learningWin.js';
+import { trackProductEvent } from '../services/productAnalytics.js';
 
 export default function LearningWinShare({ report, song, songKey, level, momentum }) {
   const [status, setStatus] = useState('idle');
@@ -17,6 +18,13 @@ export default function LearningWinShare({ report, song, songKey, level, momentu
     setStatus('sharing');
     const result = await shareLearningWin(win);
     setStatus(result);
+    if (result === 'shared' || result === 'copied') {
+      trackProductEvent('learning_win_shared', {
+        outcome: result,
+        score: win.score,
+        level: level?.id || level?.stage || '',
+      });
+    }
   }
 
   const statusText = status === 'copied'

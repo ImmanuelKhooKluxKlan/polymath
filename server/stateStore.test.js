@@ -56,3 +56,22 @@ test('session rows use token hashes as stable merge identifiers', () => {
   const merged = mergeDocuments(base, current, proposed);
   assert.deepEqual(merged.sessions.map((session) => session.tokenHash), ['america', 'singapore']);
 });
+
+test('local state store keeps product events outside the main state document', async () => {
+  const store = createStateStore({ filePath: 'unused.json' });
+  await store.initialize({ users: [] });
+  await store.recordProductEvents([{
+    eventId: 'event_local_1',
+    eventName: 'app_opened',
+    occurredAt: new Date().toISOString(),
+    userId: 'user-1',
+    anonymousId: '',
+    sessionId: 'session-local',
+    path: 'studio',
+    release: 'test',
+    properties: {},
+  }]);
+  const summary = await store.productEventSummary(7);
+  assert.equal(summary.stages[0].actors, 1);
+  assert.equal(summary.windowDays, 7);
+});

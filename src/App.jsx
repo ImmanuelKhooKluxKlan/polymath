@@ -50,6 +50,7 @@ import {
   normalizeSong,
 } from './engine/scheduler.js';
 import { apiAssetUrl, apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
+import { installProductAnalytics, trackProductEvent } from './services/productAnalytics.js';
 import { parseUploadedSongFile } from './utils/songParser.js';
 import { analyzeLearningSections } from './utils/learningSections.js';
 
@@ -329,6 +330,31 @@ export default function App() {
     : null;
   const hasFullLearnAccess = Boolean(user?.admin || user?.access?.learn);
   const freeLearnActive = teachingMode === 'learn' && !hasFullLearnAccess;
+
+  useEffect(() => {
+    const uninstall = installProductAnalytics();
+    trackProductEvent('app_opened', {
+      deviceClass,
+      performanceTier,
+      signedIn: Boolean(getAuthToken()),
+    });
+    return uninstall;
+  }, []);
+
+  useEffect(() => {
+    trackProductEvent('route_viewed', {
+      page: route.page,
+      signedIn: Boolean(getAuthToken()),
+    });
+  }, [route.page]);
+
+  useEffect(() => {
+    if (teachingMode !== 'learn') return;
+    trackProductEvent('learning_preview_opened', {
+      freePreview: !hasFullLearnAccess,
+      level: learningLevel,
+    });
+  }, [teachingMode]);
 
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', '#studio');
@@ -674,6 +700,11 @@ export default function App() {
   async function prepareKeyboard() {
     if (keyboardReadyRef.current) return true;
     if (keyboardPreparationPromise.current) return keyboardPreparationPromise.current;
+    const preparationStartedAt = performance.now();
+    trackProductEvent('keyboard_prepare_started', {
+      deviceClass,
+      performanceTier: performanceTierRef.current,
+    });
 
     // Create/resume Web Audio directly inside the tap event so iOS grants audio access.
     pianoAudio.ensure();
@@ -720,6 +751,11 @@ export default function App() {
         setKeyboardPreparationProgress(100);
         setKeyboardPreparationStatus('ready');
         setKeyboardPreparationStage(performanceTierRef.current + ' mode ready');
+        trackProductEvent('keyboard_prepare_completed', {
+          deviceClass,
+          performanceTier: performanceTierRef.current,
+          durationMs: Math.round(performance.now() - preparationStartedAt),
+        });
         return true;
       })
       .catch((error) => {
@@ -1110,6 +1146,12 @@ export default function App() {
       practiceTargetScore: practicePlan?.goal?.targetScore ?? null,
     };
     setLearningAttemptStatus('running');
+    trackProductEvent('learning_attempt_started', {
+      freePreview: !hasFullLearnAccess,
+      level: learningLevel,
+      hand: pianoHandMode,
+      inputMode: midiInput.status === 'connected' ? 'midi' : 'screen-or-keyboard',
+    });
     focusMobilePlayer(true);
   }
 
@@ -1136,6 +1178,14 @@ export default function App() {
     };
     setLearningAttemptStatus('complete');
     setLearningReport(report);
+    trackProductEvent('learning_attempt_completed', {
+      freePreview: !hasFullLearnAccess,
+      level: capture.levelId,
+      hand: capture.handMode,
+      inputMode: capture.notes.some((note) => note.inputType === 'midi') ? 'midi' : 'screen-or-keyboard',
+      noteCount: capture.notes.length,
+      score: report.score,
+    });
     const learnerId = user?.user_id || 'guest';
     setLearningProgress((current) => {
       const next = recordLearningAttempt(current, capture.songId, report);
@@ -1600,7 +1650,14 @@ export default function App() {
         <PianoLearnJourney
           mode={teachingMode}
           locked={!hasFullLearnAccess}
-          onUpgrade={() => navigate('payment', { productId: 'polymath-musician-monthly' })}
+          onUpgrade={() => {
+            trackProductEvent('learning_upgrade_clicked', {
+              freePreview: !hasFullLearnAccess,
+              level: learningLevel,
+              plan: 'musician',
+            });
+            navigate('payment', { productId: 'polymath-musician-monthly' });
+          }}
           onModeChange={(mode) => {
             stopPlayback();
             setTeachingMode(mode);

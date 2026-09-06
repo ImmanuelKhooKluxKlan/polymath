@@ -190,7 +190,7 @@ async function main() {
             if (!original) return nativeFetch(input, init);
             let parsed;
             try { parsed = new URL(original, window.location.href); } catch { return nativeFetch(input, init); }
-            const isolatedRoutes = ['/api/auth/', '/api/admin/', '/api/learning/', '/api/virtual-lessons', '/api/virtual-teachers'];
+            const isolatedRoutes = ['/api/auth/', '/api/admin/', '/api/learning/', '/api/virtual-lessons', '/api/virtual-teachers', '/api/product-events'];
             if (!isolatedRoutes.some((prefix) => parsed.pathname.startsWith(prefix))) {
               return nativeFetch(input, init);
             }
