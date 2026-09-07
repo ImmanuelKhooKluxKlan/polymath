@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'functions/**'
       - 'public/**'
       - 'index.html'
       - 'package.json'

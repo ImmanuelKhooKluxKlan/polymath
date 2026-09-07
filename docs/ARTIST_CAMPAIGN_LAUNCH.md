@@ -112,7 +112,7 @@ No campaign is seeded or automatically published. Existing copyrighted training 
 - `GET /api/artist-campaigns/:slug` — safe public metadata for one live campaign.
 - `GET /api/artist-campaigns/:slug/song` — generated excerpt JSON, only while the campaign is live; it never returns the original upload.
 - `GET /api/artist-campaigns/:slug/cover` — cover image, only while live.
-- `GET /c/:slug` — production HTML with Open Graph/Twitter metadata, then the React challenge route.
+- `GET /c/:slug` — a narrowly routed Cloudflare Pages Function fetches live-safe AWS metadata, adds Open Graph/Twitter tags to the application shell, and then opens the React challenge. Static routes do not invoke the Function. The AWS route provides a standalone fallback.
 
 Internal asset keys, permission notes, user data, and admin fields never appear in the public campaign response.
 

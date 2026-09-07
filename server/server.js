@@ -8509,6 +8509,7 @@ if (IS_PRODUCTION) {
       const targetHash = `#studio?${params.toString()}`;
       const canonicalBase = new URL(CLIENT_ORIGIN);
       const canonical = new URL(publicCampaign.sharePath, canonicalBase).toString();
+      const destination = new URL(`/${targetHash}`, canonicalBase).toString();
       const cover = publicCampaign.coverUrl ? new URL(publicCampaign.coverUrl, canonicalBase).toString() : '';
       const escapeHtml = (value) => String(value || '')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -8527,12 +8528,12 @@ if (IS_PRODUCTION) {
         `<meta name="twitter:title" content="${escapeHtml(pageTitle)}">`,
         `<meta name="twitter:description" content="${escapeHtml(description)}">`,
         ...(cover ? [`<meta name="twitter:image" content="${escapeHtml(cover)}">`] : []),
-        `<script>history.replaceState(null,"",${JSON.stringify(`/${targetHash}`).replace(/</g, '\\u003c')});</script>`,
+        `<meta http-equiv="refresh" content="0;url=${escapeHtml(destination)}">`,
+        `<script>location.replace(${JSON.stringify(destination).replace(/</g, '\\u003c')});</script>`,
       ].join('');
-      let html = fs.readFileSync(path.join(frontendDir, 'index.html'), 'utf8');
-      html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(pageTitle)}</title>`);
-      html = html.replace('</head>', `${tags}</head>`);
+      const html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(pageTitle)}</title>${tags}</head><body><main><h1>${escapeHtml(campaign.hook || pageTitle)}</h1><p>${escapeHtml(campaign.title)} by ${escapeHtml(campaign.artist)}</p><p><a href="${escapeHtml(destination)}">Open the piano challenge</a></p></main></body></html>`;
       res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+      res.setHeader('X-Polymath-Route', 'artist-campaign-share-fallback');
       return res.type('html').send(html);
     } catch (error) {
       return next(error);
