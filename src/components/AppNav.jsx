@@ -5,7 +5,13 @@ function brandInitials(brand) {
   return parts.map((part) => String(part).trim().charAt(0)).join('').slice(0, 2).toUpperCase() || 'PM';
 }
 
-export default function AppNav({ route, onNavigate, user, siteConfiguration }) {
+export default function AppNav({
+  route,
+  onNavigate,
+  user,
+  focusedCampaign = false,
+  siteConfiguration,
+}) {
   const configuration = normalizePublicSiteConfiguration(siteConfiguration);
   const configuredItems = configuration.navigation
     .filter((item) => item.visible && (item.access !== 'signed-in' || user));
@@ -29,15 +35,20 @@ export default function AppNav({ route, onNavigate, user, siteConfiguration }) {
   }
 
   return (
-    <nav className='app-nav' aria-label='Main navigation'>
-      <button className='brand-button' type='button' onClick={() => onNavigate('studio')} aria-label={`Open ${configuration.brand.name} ${configuration.brand.suffix} home`}>
+    <nav className={`app-nav ${focusedCampaign ? 'is-campaign-nav' : ''}`} aria-label='Main navigation'>
+      <button
+        className='brand-button'
+        type='button'
+        onClick={() => onNavigate('studio')}
+        aria-label={`Open ${configuration.brand.name} ${configuration.brand.suffix} home`}
+      >
         <span className='brand-mark'>{brandInitials(configuration.brand)}</span>
         <span className='brand-copy'>
           <strong>{configuration.brand.name}</strong>
           <small>{configuration.brand.suffix}</small>
         </span>
       </button>
-      <div className='nav-links'>
+      {!focusedCampaign && <div className='nav-links'>
         {primaryItems.map((item) => (
           <button
             key={item.id}
@@ -83,7 +94,7 @@ export default function AppNav({ route, onNavigate, user, siteConfiguration }) {
             ))}
           </div>
         </details>
-      </div>
+      </div>}
     </nav>
   );
 }

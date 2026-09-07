@@ -6,9 +6,18 @@ const {
 } = require('@aws-sdk/client-s3');
 
 const TERMINAL_FAILURES = new Set(['CANCELLED', 'FAILED', 'TIMED_OUT']);
+const INFERENCE_CHECKPOINT_PATTERN = /^(?:original|phase\d+-v\d{3,})$/;
 
 function clean(value) {
   return String(value || '').trim();
+}
+
+function normalizeInferenceCheckpoint(value, fallback = 'original') {
+  const requested = clean(value || fallback).toLowerCase();
+  if (!INFERENCE_CHECKPOINT_PATTERN.test(requested)) {
+    throw new Error('Inference checkpoint must be original or a version such as phase1-v002.');
+  }
+  return requested;
 }
 
 function parseReplicas(value) {
@@ -58,6 +67,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
   const s3SecretAccessKey = clean(configuration.s3SecretAccessKey);
   const timeoutMs = Math.max(60_000, Number(configuration.timeoutMs) || 60 * 60 * 1000);
   const pollIntervalMs = Math.max(250, Number(configuration.pollIntervalMs) || 2_000);
+  const inferenceVersion = normalizeInferenceCheckpoint(configuration.inferenceVersion, 'original');
   const fetchImpl = dependencies.fetchImpl || fetch;
 
   const missing = [];
@@ -168,8 +178,15 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
     return runpodRequest(`/cancel/${encodeURIComponent(id)}`, { method: 'POST' });
   }
 
-  async function transcribe({ job, preparedPath, constraints = [], onProgress = () => {} }) {
+  async function transcribe({
+    job,
+    preparedPath,
+    constraints = [],
+    checkpointVersion = inferenceVersion,
+    onProgress = () => {},
+  }) {
     assertConfigured();
+    const selectedCheckpoint = normalizeInferenceCheckpoint(checkpointVersion, inferenceVersion);
     const key = `jobs/${job.id}.wav`;
     const uploads = await Promise.allSettled(storageClients.map(({ s3, volumeId: targetVolumeId }) => s3.send(new PutObjectCommand({
         Bucket: targetVolumeId,
@@ -196,6 +213,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
             title: job.title,
             instrument: job.instrument,
             instruments: constraints,
+            checkpoint_version: selectedCheckpoint,
           },
           policy: {
             executionTimeout: timeoutMs,
@@ -212,7 +230,7 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
         onProgress({ state, progress: status.progress, delayTime: status.delayTime });
         if (state === 'COMPLETED') {
           if (!status.output || !Array.isArray(status.output.notes)) {
-            throw new Error(status.output?.error || 'RunPod completed without a MuScriptor note result.');
+            throw new Error(status.output?.error || 'RunPod completed without a Polymath note result.');
           }
           return status.output;
         }
@@ -236,9 +254,14 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
     getJobStatus,
     missing,
     storageTargetCount: storageTargets.length,
+    inferenceVersion,
     submitAction,
     transcribe,
   };
 }
 
-module.exports = { createRunpodServerlessClient, parseReplicas };
+module.exports = {
+  createRunpodServerlessClient,
+  normalizeInferenceCheckpoint,
+  parseReplicas,
+};

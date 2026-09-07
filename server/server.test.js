@@ -339,8 +339,14 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     storage: 'atomic-json',
     artifacts: 'local-disk',
     queue: 'in-process',
+    virtualLessons: 'unconfigured',
     region: 'local',
   });
+
+  const stateHealth = await api('/api/health/state');
+  assert.equal(stateHealth.status, 200);
+  assert.equal(stateHealth.data.ok, true);
+  assert.equal(stateHealth.data.state, 'ready');
 
   const catalog = await api('/api/catalog');
   assert.equal(catalog.status, 200);
@@ -474,6 +480,110 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(mcoinGrant.data.user.mcoins, 125.5);
   assert.equal(mcoinGrant.data.user.unlimitedMcoins, false);
 
+  const personalSongPayload = {
+    title: 'Cloud Library Test',
+    composer: 'Test Artist',
+    instrument: 'piano',
+    notes: [{ note: 'C4', time: 0, duration: 0.5, velocity: 0.8 }],
+  };
+  const personalSongUpload = await api('/api/ready-sheet-uploads', {
+    method: 'POST',
+    token: userToken,
+    body: {
+      filename: 'cloud-library-test.json',
+      title: personalSongPayload.title,
+      artist: personalSongPayload.composer,
+      instrument: 'piano',
+      contentBase64: Buffer.from(JSON.stringify(personalSongPayload)).toString('base64'),
+    },
+  });
+  assert.equal(personalSongUpload.status, 201);
+  assert.equal(personalSongUpload.data.personalSong.title, 'Cloud Library Test');
+  assert.equal(personalSongUpload.data.personalSong.artist, 'Test Artist');
+  assert.equal(personalSongUpload.data.personalSong.instrument, 'piano');
+  assert.equal(personalSongUpload.data.alreadySaved, false);
+
+  const duplicatePersonalSong = await api('/api/ready-sheet-uploads', {
+    method: 'POST',
+    token: userToken,
+    body: {
+      filename: 'cloud-library-test-copy.json',
+      title: personalSongPayload.title,
+      artist: personalSongPayload.composer,
+      instrument: 'piano',
+      contentBase64: Buffer.from(JSON.stringify(personalSongPayload)).toString('base64'),
+    },
+  });
+  assert.equal(duplicatePersonalSong.status, 200);
+  assert.equal(duplicatePersonalSong.data.alreadySaved, true);
+  assert.equal(duplicatePersonalSong.data.personalSong.id, personalSongUpload.data.personalSong.id);
+
+  const personalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(personalLibrary.status, 200);
+  assert.equal(personalLibrary.data.personalSongs.length, 1);
+  assert.equal(personalLibrary.data.personalSongs[0].title, 'Cloud Library Test');
+  assert.equal(Object.prototype.hasOwnProperty.call(personalLibrary.data.personalSongs[0], 'assetPath'), false);
+
+  const otherAccountDownload = await api(`/api/personal-songs/${personalSongUpload.data.personalSong.id}/download`, {
+    token: adminToken,
+  });
+  assert.equal(otherAccountDownload.status, 404);
+
+  const personalSongDownload = await api(`/api/personal-songs/${personalSongUpload.data.personalSong.id}/download`, {
+    token: userToken,
+  });
+  assert.equal(personalSongDownload.status, 200);
+  assert.equal(personalSongDownload.data.title, 'Cloud Library Test');
+
+  const personalSongDelete = await api(`/api/personal-songs/${personalSongUpload.data.personalSong.id}`, {
+    method: 'DELETE',
+    token: userToken,
+  });
+  assert.equal(personalSongDelete.status, 200);
+  const emptyPersonalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(emptyPersonalLibrary.data.personalSongs.length, 0);
+
+  const legacyOutputFilename = 'legacy-media-output.json';
+  const legacyOutput = {
+    title: 'Earlier Cloud Translation',
+    instrument: 'piano',
+    notes: [{ note: 'D4', time: 0, duration: 0.75, velocity: 0.7 }],
+  };
+  fs.mkdirSync(path.join(testDataDir, 'uploads'), { recursive: true });
+  fs.writeFileSync(
+    path.join(testDataDir, 'uploads', legacyOutputFilename),
+    JSON.stringify(legacyOutput),
+  );
+  const legacyFixturePath = path.join(testDataDir, 'database.json');
+  const legacyFixture = JSON.parse(fs.readFileSync(legacyFixturePath, 'utf8'));
+  legacyFixture.mediaTranscriptionJobs.push({
+    id: 'media_tx_legacy_cloud_test',
+    userId,
+    filename: 'earlier-song.mp3',
+    title: legacyOutput.title,
+    instrument: 'piano',
+    outputPath: legacyOutputFilename,
+    outputFilename: legacyOutputFilename,
+    status: 'completed',
+    progress: 100,
+    startedAt: new Date(Date.now() - 2000).toISOString(),
+    completedAt: new Date(Date.now() - 1000).toISOString(),
+  });
+  fs.writeFileSync(legacyFixturePath, JSON.stringify(legacyFixture, null, 2));
+
+  const backfilledPersonalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(backfilledPersonalLibrary.data.personalSongs.length, 1);
+  assert.equal(backfilledPersonalLibrary.data.personalSongs[0].title, 'Earlier Cloud Translation');
+  const backfilledSongId = backfilledPersonalLibrary.data.personalSongs[0].id;
+  const removeBackfilledSong = await api(`/api/personal-songs/${backfilledSongId}`, {
+    method: 'DELETE',
+    token: userToken,
+  });
+  assert.equal(removeBackfilledSong.status, 200);
+  const hiddenPersonalLibrary = await api('/api/library', { token: userToken });
+  assert.equal(hiddenPersonalLibrary.data.personalSongs.length, 0);
+  assert.equal(fs.existsSync(path.join(testDataDir, 'uploads', legacyOutputFilename)), true);
+
   const firstSubscriptionGrant = await api(`/api/admin/users/${userId}/subscription`, {
     method: 'POST',
     token: adminToken,
@@ -536,16 +646,41 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
     body: {
       registrationEnabled: true,
       minimumSignupAge: 18,
-      minimumPasswordLength: 10,
+      minimumPasswordLength: 1,
       minimumMarketplacePriceMcoins: 30,
+      maximumMarketplacePriceMcoins: 100000,
+      marketplaceFeePercent: 25,
+      listenerRewardsEnabled: true,
+      maximumListenerRewardMcoins: 5,
+      maximumRewardOutflowPerListingMcoins: 5,
       minimumWithdrawalMcoins: 250,
+      maximumWithdrawalMcoins: 250,
+      dailyWithdrawalLimitMcoins: 250,
+      maximumPendingWithdrawalOutflowMcoins: 187.5,
+      withdrawalFeePercent: 25,
       welcomeMcoins: 25,
       policyNotice: 'Adults only during this test.',
       supportEmail: 'support@example.test',
+      supportPhone: '+65 6123 4567',
     },
   });
   assert.equal(policyUpdate.status, 200);
   assert.equal(policyUpdate.data.policies.minimumSignupAge, 18);
+  assert.equal(policyUpdate.data.policies.minimumPasswordLength, 1);
+  assert.equal(policyUpdate.data.policies.maximumRewardOutflowPerListingMcoins, 5);
+  assert.equal(policyUpdate.data.policies.supportPhone, '+65 6123 4567');
+
+  const oneCharacterPasswordRegistration = await register('/api/auth/register', {
+    method: 'POST',
+    body: {
+      name: 'Admin Policy Minimum Test',
+      email: 'one-character-password@example.test',
+      password: 'x',
+      birthDate: '1990-01-01',
+      termsAccepted: true,
+    },
+  });
+  assert.equal(oneCharacterPasswordRegistration.status, 201);
 
   const underageBlocked = await register('/api/auth/register', {
     method: 'POST',
@@ -600,17 +735,18 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   assert.equal(freeMcoinVoucherBlocked.status, 400);
 
-  const fixedValueCouponBlocked = await api('/api/admin/promotions', {
+  const fixedValueCoupon = await api('/api/admin/promotions', {
     method: 'POST',
     token: adminToken,
     body: {
       code: 'FIXED50',
-      name: 'Blocked fixed-value discount',
+      name: 'Fixed Mcoin discount',
       kind: 'marketplace_fixed',
       value: 50,
     },
   });
-  assert.equal(fixedValueCouponBlocked.status, 400);
+  assert.equal(fixedValueCoupon.status, 201);
+  assert.equal(fixedValueCoupon.data.promotion.value, 50);
 
   const luckyRegistration = await register('/api/auth/register', {
     method: 'POST',
@@ -642,6 +778,14 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   });
   fs.writeFileSync(cashoutFixturePath, JSON.stringify(cashoutFixture, null, 2));
 
+  const overMaximumCashout = await api('/api/wallet/withdraw', {
+    method: 'POST',
+    token: luckyToken,
+    body: { amountMcoins: 251, payoutEmail: 'lucky-payout@example.test' },
+  });
+  assert.equal(overMaximumCashout.status, 400);
+  assert.match(overMaximumCashout.data.error, /maximum withdrawal/i);
+
   const regularAccountCashout = await api('/api/wallet/withdraw', {
     method: 'POST',
     token: luckyToken,
@@ -659,6 +803,18 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(cashoutWallet.data.withdrawalFeeRate, 0.25);
   assert.equal(cashoutWallet.data.withdrawals.length, 1);
   assert.equal(cashoutWallet.data.withdrawals[0].status, 'pending_manual_review');
+
+  const adminWithdrawalQueue = await api('/api/admin/withdrawals', { token: adminToken });
+  assert.equal(adminWithdrawalQueue.status, 200);
+  assert.equal(adminWithdrawalQueue.data.summary.pendingCount, 1);
+  assert.equal(adminWithdrawalQueue.data.summary.pendingNetMcoins, 187.5);
+  const paidWithdrawal = await api(`/api/admin/withdrawals/${regularAccountCashout.data.withdrawal.id}`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { status: 'paid' },
+  });
+  assert.equal(paidWithdrawal.status, 200);
+  assert.equal(paidWithdrawal.data.withdrawal.status, 'paid');
 
   const retiredWalletRedemption = await api('/api/promotions/redeem', {
     method: 'POST',
@@ -716,6 +872,17 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(discountedPurchase.data.purchase.buyerPaidMcoins, 40);
   assert.equal(discountedPurchase.data.user.mcoins, 35);
 
+  const fixedDiscountPurchase = await api(`/api/listings/${listingCreate.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: userToken,
+    body: { promotionCode: 'FIXED50' },
+  });
+  assert.equal(fixedDiscountPurchase.status, 201);
+  assert.equal(fixedDiscountPurchase.data.purchase.grossMcoins, 100);
+  assert.equal(fixedDiscountPurchase.data.purchase.promotionDiscountMcoins, 50);
+  assert.equal(fixedDiscountPurchase.data.purchase.buyerPaidMcoins, 50);
+  assert.equal(fixedDiscountPurchase.data.purchase.sellerEarningsMcoins, 75);
+
   const administratorPurchase = await api(`/api/listings/${listingCreate.data.listing.id}/purchase`, {
     method: 'POST',
     token: adminToken,
@@ -767,15 +934,83 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(composerProfile.status, 200);
   assert.equal(composerProfile.data.composer.averageRating, 2);
   assert.equal(composerProfile.data.composer.ratingCount, 1);
-  assert.equal(composerProfile.data.composer.buyerCount, 2);
+  assert.equal(composerProfile.data.composer.buyerCount, 3);
   assert.deepEqual(composerProfile.data.composer.ranking, {
     ratingPoints: 4,
-    audiencePoints: 2,
-    totalPoints: 6,
+    audiencePoints: 3,
+    totalPoints: 7,
     maximumPoints: 50,
   });
   assert.equal(composerProfile.data.composer.followerCount, 1);
   assert.ok(composerProfile.data.listings.some((listing) => listing.id === listingCreate.data.listing.id));
+
+  const freeListing = await api('/api/listings', {
+    method: 'POST',
+    token: sellerToken,
+    body: {
+      artist: 'Test Artist',
+      title: 'Free Sheet',
+      instrument: 'piano',
+      format: 'JSON',
+      listingMode: 'free',
+      priceMcoins: 0,
+      filename: 'free-sheet.json',
+      contentBase64: Buffer.from(JSON.stringify({ title: 'Free Sheet', notes: [] })).toString('base64'),
+      rightsConfirmed: true,
+      feeConfirmed: false,
+    },
+  });
+  assert.equal(freeListing.status, 201);
+  assert.equal(freeListing.data.listing.listingMode, 'free');
+  const freeClaim = await api(`/api/listings/${freeListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: userToken,
+    body: {},
+  });
+  assert.equal(freeClaim.status, 201);
+  assert.equal(freeClaim.data.purchase.buyerPaidMcoins, 0);
+
+  const rewardListing = await api('/api/listings', {
+    method: 'POST',
+    token: sellerToken,
+    body: {
+      artist: 'Test Artist',
+      title: 'Listener Reward Sheet',
+      instrument: 'piano',
+      format: 'JSON',
+      listingMode: 'listener-reward',
+      listenerRewardMcoins: 5,
+      filename: 'listener-reward-sheet.json',
+      contentBase64: Buffer.from(JSON.stringify({ title: 'Listener Reward Sheet', notes: [] })).toString('base64'),
+      rightsConfirmed: true,
+      feeConfirmed: false,
+    },
+  });
+  assert.equal(rewardListing.status, 201);
+  assert.equal(rewardListing.data.listing.rewardAvailable, true);
+  const rewardClaim = await api(`/api/listings/${rewardListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: adultToken,
+    body: {},
+  });
+  assert.equal(rewardClaim.status, 201);
+  assert.equal(rewardClaim.data.purchase.paymentMethod, 'listener_reward');
+  assert.equal(rewardClaim.data.purchase.listenerRewardMcoins, 5);
+  assert.equal(rewardClaim.data.user.mcoins, 30);
+  const duplicateRewardClaim = await api(`/api/listings/${rewardListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: adultToken,
+    body: {},
+  });
+  assert.equal(duplicateRewardClaim.status, 200);
+  assert.equal(duplicateRewardClaim.data.user.mcoins, 30);
+  const exhaustedRewardClaim = await api(`/api/listings/${rewardListing.data.listing.id}/purchase`, {
+    method: 'POST',
+    token: luckyToken,
+    body: {},
+  });
+  assert.equal(exhaustedRewardClaim.status, 409);
+  assert.match(exhaustedRewardClaim.data.error, /paused|exhausted/i);
 
   const friendVoucherCreate = await api('/api/admin/promotions', {
     method: 'POST',
@@ -842,6 +1077,18 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(temporaryLogin.status, 200);
   assert.equal(temporaryLogin.data.user.mustChangePassword, true);
 
+  const changedPassword = await api('/api/auth/change-password', {
+    method: 'POST',
+    token: temporaryLogin.data.token,
+    body: { password: 'Customer replacement password 2026' },
+  });
+  assert.equal(changedPassword.status, 200);
+  assert.equal(changedPassword.data.user.mustChangePassword, false);
+
+  const retainedCurrentSession = await api('/api/auth/me', { token: temporaryLogin.data.token });
+  assert.equal(retainedCurrentSession.status, 200);
+  assert.equal(retainedCurrentSession.data.user.user_id, userId);
+
   const database = JSON.parse(fs.readFileSync(path.join(testDataDir, 'database.json'), 'utf8'));
   const customer = database.users.find((item) => item.id === userId);
   const policyCompliantUser = database.users.find((item) => item.email === 'adult@example.test');
@@ -851,8 +1098,8 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(policyCompliantUser.birthDate, undefined);
   assert.ok(database.sessions.every((session) => session.tokenHash && !session.token));
   assert.equal(database.settings.minimumWithdrawalMcoins, 250);
-  assert.equal(database.promotions.length, 3);
-  assert.equal(database.promotionRedemptions.length, 4);
+  assert.equal(database.promotions.length, 4);
+  assert.equal(database.promotionRedemptions.length, 5);
   assert.equal(database.promotionRedemptions.filter((entry) => entry.friendId === sellerFriendId).length, 2);
   assert.equal(database.passwordResetEvents.length, 1);
   assert.ok(Array.isArray(database.mediaTranscriptionJobs));

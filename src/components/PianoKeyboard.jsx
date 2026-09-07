@@ -62,7 +62,29 @@ function strikeVersionFor(strikeVersions, note) {
   return strikeVersions?.get?.(note) || 0;
 }
 
-function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease, disabled, showKeyNotes }) {
+function learningTargetClass(midi, targets) {
+  const pressedBy = (side) => Boolean(
+    targets?.[side]?.isPressing
+    && targets[side].notes?.some((note) => Number(note.midi) === Number(midi)),
+  );
+  const left = pressedBy('left');
+  const right = pressedBy('right');
+  if (left && right) return 'learning-target-both';
+  if (left) return 'learning-target-left';
+  if (right) return 'learning-target-right';
+  return '';
+}
+
+function PianoRow({
+  row,
+  activeNotes,
+  strikeVersions,
+  onPress,
+  onRelease,
+  disabled,
+  showKeyNotes,
+  teacherTargets,
+}) {
   return (
     <div
       className="piano-row-shell"
@@ -76,7 +98,7 @@ function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease, disabl
             return (
               <button
                 key={key.note}
-                className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''}`}
+                className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)}`}
                 disabled={disabled}
                 {...(disabled ? {} : pointerHandlers(key.note, onPress, onRelease))}
               >
@@ -94,7 +116,7 @@ function PianoRow({ row, activeNotes, strikeVersions, onPress, onRelease, disabl
             return (
               <button
                 key={key.note}
-                className={`piano-key black ${activeNotes.has(key.note) ? 'active' : ''}`}
+                className={`piano-key black ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)}`}
                 style={{
                   left: `calc(${key.position.leftEdgeWhiteUnits} * (100% / var(--white-count)))`,
                 }}
@@ -126,6 +148,10 @@ export default function PianoKeyboard({
   performanceTier = 'full',
   deviceClass = 'desktop',
   onPrepare,
+  teacherTargets = null,
+  compact = layout.isTwoStorey,
+  showModeLabel = true,
+  showPreparation = true,
 }) {
   useEffect(() => () => {
     activePointers.clear();
@@ -139,15 +165,22 @@ export default function PianoKeyboard({
       ? 'Tablet'
       : 'Computer';
   const liteWarning = performanceTier === 'lite';
+  const layoutLabel = layout.mode === 'learn-grand-single'
+    ? 'Single-row A0-C8 guided grand piano'
+    : layout.parentMode === 'two-storey-grand' || layout.isTwoStorey
+      ? 'Two-storey A0-C8 grand piano'
+      : 'Polymath Musician A1-C7 row';
   return (
     <section
-      className={`piano-shell ${layout.isTwoStorey ? 'two-storey' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
+      className={`piano-shell ${compact ? 'two-storey compact-row' : 'single-storey'} ${disabled ? 'is-locked' : 'is-ready'}`}
       aria-label={`Playable piano section, ${layout.rangeLabel}`}
     >
-      <div className="piano-mode-label">
-        <span>{layout.isTwoStorey ? 'Two-storey A0-C8 grand piano' : 'Polymath Musician A1-C7 row'} • Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
-        <small className="performance-tier-badge">{deviceLabel} · {performanceTier}</small>
-      </div>
+      {showModeLabel && (
+        <div className="piano-mode-label">
+          <span>{layoutLabel} · Song range {layout.songRange.minNote}-{layout.songRange.maxNote}</span>
+          <small className="performance-tier-badge">{deviceLabel} · {performanceTier}</small>
+        </div>
+      )}
       <div className="piano-glow" />
       <div className="piano-rows">
         {layout.rows.map((row) => (
@@ -160,6 +193,7 @@ export default function PianoKeyboard({
             onRelease={onRelease}
             disabled={disabled}
             showKeyNotes={showKeyNotes}
+            teacherTargets={teacherTargets}
           />
         ))}
       </div>
@@ -168,7 +202,7 @@ export default function PianoKeyboard({
           Lite mode: reduced effects for smoother playback on this device.
         </small>
       )}
-      {disabled && (
+      {disabled && showPreparation && (
         <div className="piano-preparation" aria-live="polite">
           {isPreparing ? (
             <>

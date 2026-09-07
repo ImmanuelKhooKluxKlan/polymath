@@ -1,0 +1,31 @@
+{
+  "schema": "polymath-chatboss-training-v1",
+  "status": "candidate-not-approved",
+  "createdAt": "2026-09-04T08:26:18.759221+00:00",
+  "baseModel": "Qwen/Qwen3.5-35B-A3B",
+  "revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",
+  "trainExamples": 204,
+  "validationExamples": 70,
+  "trainSha256": "b07ddb8a49943003c5a8b72eaa5f3af5f00685b9964df6013a98742c8d77955d",
+  "validationSha256": "b5a3abb0e64346f8d8d7aa92eb32326722dc7cb16dbeec582c387b89e90f3c0e",
+  "loraRank": 16,
+  "loraAlpha": 32,
+  "epochs": 3.0,
+  "learningRate": 7.5e-05,
+  "maxLength": 1536,
+  "seed": 67,
+  "quantization": "4-bit NF4 double-quant",
+  "adapterWeightsBytes": 121864672,
+  "adapterWeightsSha256": "92ba2ecd8688acaa8a707b8affe3192a893f44c9d73127d46b33475a82f030e0",
+  "metrics": {
+    "train_runtime": 1119.5912,
+    "train_samples_per_second": 0.547,
+    "train_steps_per_second": 0.035,
+    "total_flos": 1.4640111057797856e+16,
+    "train_loss": 2.3918174352401342,
+    "eval_loss": 2.1404366493225098,
+    "eval_runtime": 21.3078,
+    "eval_samples_per_second": 3.285,
+    "eval_steps_per_second": 3.285
+  }
+}

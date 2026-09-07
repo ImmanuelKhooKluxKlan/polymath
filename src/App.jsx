@@ -2,14 +2,16 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import AppNav from './components/AppNav.jsx';
 import HeaderActions from './components/HeaderActions.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
-import FallingNotes from './components/FallingNotes.jsx';
-import PianoKeyboard, { keyboardMap } from './components/PianoKeyboard.jsx';
+import { keyboardMap } from './components/PianoKeyboard.jsx';
+import PianoRoll from './components/PianoRoll.jsx';
 import SongUploader from './components/SongUploader.jsx';
 import TransportDock from './components/TransportDock.jsx';
-import LearnModePanel from './components/LearnModePanel.jsx';
-import VirtualTeacherAvatar from './components/VirtualTeacherAvatar.jsx';
+import PianoLearnJourney from './components/PianoLearnJourney.jsx';
+import PianoTeacherStudio from './components/PianoTeacherStudio.jsx';
+import SupportAssistant from './components/SupportAssistant.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
+import { campaignPlaybackRange, prepareCampaignSong } from './engine/artistCampaign.js';
 import {
   capTierForDevice,
   calibrateDevice,
@@ -25,12 +27,35 @@ import {
 } from './engine/devicePerformance.js';
 import { buildAdaptivePianoLayout, buildLearningHandLayout } from './engine/grandPianoLayout.js';
 import {
+  analyzePracticeAttempt,
+  buildAdaptivePracticePlan,
+  buildLearningArrangement,
+  evaluateAdaptivePracticeOutcome,
+  learningLevelById,
+  learningProgressFromAttempts,
+  mergeLearningProgress,
+  readLearningProgress,
+  recordLearningAttempt,
+  writeLearningProgress,
+} from './engine/learningCoach.js';
+import { midiToNote } from './engine/noteMath.js';
+import {
+  buildTeacherHandTargets,
+  prepareTeacherHandTimeline,
+  TEACHER_PROFILES,
+} from './engine/teacherHands.js';
+import {
   findStartIndex,
   getPedalStateAt,
   getSongDuration,
   normalizeSong,
 } from './engine/scheduler.js';
-import { apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
+import { apiAssetUrl, apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
+import {
+  installProductAnalytics,
+  rememberCampaignAttribution,
+  trackProductEvent,
+} from './services/productAnalytics.js';
 import { parseUploadedSongFile } from './utils/songParser.js';
 import { analyzeLearningSections } from './utils/learningSections.js';
 import {
@@ -41,12 +66,18 @@ import {
 const AUDIO_LOOKAHEAD_SECONDS = 0.18;
 const AUDIO_SCHEDULER_INTERVAL_MS = 25;
 
+function createLearningAttemptId() {
+  return globalThis.crypto?.randomUUID?.()
+    || `attempt_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
 const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
 const GuitarPage = lazy(() => import('./pages/GuitarPage.jsx'));
 const EnsemblePage = lazy(() => import('./pages/EnsemblePage.jsx'));
 const MarketplacePage = lazy(() => import('./pages/MarketplacePage.jsx'));
 const TeacherMarketplacePage = lazy(() => import('./pages/TeacherMarketplacePage.jsx'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage.jsx'));
+const CommunityPage = lazy(() => import('./pages/CommunityPage.jsx'));
 const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
 const BandPage = lazy(() => import('./pages/BandPage.jsx'));
 const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
@@ -96,15 +127,58 @@ function manualVoiceKey(note, interaction = {}) {
     : `pointer:${interaction.pointerId}`;
 }
 
+function songLibraryId(song) {
+  return song?.libraryId
+    || (song?.personalSongId ? `personal:${song.personalSongId}` : '')
+    || `${song?.libraryType || 'song'}:${song?.title || 'Untitled Song'}:${song?.composer || song?.artist || 'Unknown'}`;
+}
+
+function materializeTeacherProfile(profile, base = {}) {
+  const armTone = profile.armTone || base.armTone || 'light';
+  const image = profile.imagePath ? apiAssetUrl(profile.imagePath) : base.image;
+  return {
+    ...base,
+    ...profile,
+    image,
+    stageImage: image || base.stageImage,
+    portraitPosition: base.portraitPosition || '50% 18%',
+    armImage: base.armImage || (armTone === 'dark'
+      ? '/teachers/arm-dark-full-v1.webp'
+      : '/teachers/arm-light-full-v1.webp'),
+    handCameraImage: base.handCameraImage || (armTone === 'dark'
+      ? '/teachers/pianist-hands-overhead-dark-v1.webp'
+      : '/teachers/pianist-hands-overhead-v1.webp'),
+    pressedHandCameraImage: base.pressedHandCameraImage || (armTone === 'dark'
+      ? '/teachers/pianist-hands-pressed-dark-v2.webp'
+      : '/teachers/pianist-hands-pressed-v2.webp'),
+    modelUrl: profile.modelPath ? apiAssetUrl(profile.modelPath) : base.modelUrl || '',
+    minimumAge: Math.max(0, Number(profile.minimumAge || 0)),
+    requiresAdultConfirmation: Number(profile.minimumAge || 0) >= 18
+      || Boolean(profile.requiresAdultConfirmation),
+    adultCompanionEnabled: Boolean(
+      profile.adultCompanionEnabled
+        ?? base.adultCompanionEnabled
+        ?? profile.requiresAdultConfirmation,
+    ),
+    pricePer30MinutesMcoins: profile.pricePer30MinutesMcoins ?? null,
+    effectivePricePer30MinutesMcoins: profile.effectivePricePer30MinutesMcoins ?? null,
+    look: base.look || 'custom',
+  };
+}
+
 export default function App() {
   const [route, setRoute] = useState(readRoute);
   const [user, setUser] = useState(null);
   const [siteConfiguration, setSiteConfiguration] = useState(DEFAULT_SITE_CONFIGURATION);
   const [songs, setSongs] = useState(() => sampleSongs.map(normalizeSong));
-  const [songTitle, setSongTitle] = useState(sampleSongs[0].title);
+  const [songSelectionId, setSongSelectionId] = useState(() => songLibraryId(sampleSongs[0]));
+  const [personalSongs, setPersonalSongs] = useState([]);
+  const [loadingPersonalSongId, setLoadingPersonalSongId] = useState('');
+  const [personalSongStatus, setPersonalSongStatus] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [activeNotes, setActiveNotes] = useState(new Set());
+  const [activePlaybackEventIds, setActivePlaybackEventIds] = useState(new Set());
   const [strikeVersions, setStrikeVersions] = useState(new Map());
   const [speed, setSpeed] = useState(1);
   const [leadTime, setLeadTime] = useState(3.4);
@@ -115,11 +189,31 @@ export default function App() {
   const [openMusicChooser, setOpenMusicChooser] = useState(null);
   const [playbackEpoch, setPlaybackEpoch] = useState(0);
   const [teachingMode, setTeachingMode] = useState('regular');
-  const [preferredSectionSeconds, setPreferredSectionSeconds] = useState(15);
+  const [learningLevel, setLearningLevel] = useState(() => learningLevelById(window.localStorage.getItem('polymath-learning-level')).id);
+  const [learningAttemptStatus, setLearningAttemptStatus] = useState('idle');
+  const [learningReport, setLearningReport] = useState(null);
+  const [activePracticePlan, setActivePracticePlan] = useState(null);
+  const [learningProgress, setLearningProgress] = useState(() => readLearningProgress(window.localStorage, 'guest'));
+  const [learningSyncStatus, setLearningSyncStatus] = useState('device');
+  const [midiInput, setMidiInput] = useState(() => ({
+    supported: typeof navigator !== 'undefined' && typeof navigator.requestMIDIAccess === 'function',
+    status: 'idle',
+    name: '',
+    error: '',
+  }));
   const [selectedSectionIndex, setSelectedSectionIndex] = useState(0);
   const [repeatSection, setRepeatSection] = useState(true);
   const [practiceRange, setPracticeRange] = useState(null);
-  const [pianoHandMode, setPianoHandMode] = useState('left');
+  const [pianoHandMode, setPianoHandMode] = useState('both');
+  const [pianoTeacherId, setPianoTeacherId] = useState(() => {
+    const savedTeacher = window.localStorage.getItem('polymath-piano-teacher-v2');
+    const adultConfirmed = window.localStorage.getItem('polymath-teacher-adult-confirmed') === 'true';
+    if (savedTeacher === 'padme') return adultConfirmed ? 'nova' : 'aria';
+    if (!savedTeacher || (savedTeacher === 'nova' && !adultConfirmed)) return 'aria';
+    return savedTeacher;
+  });
+  const [remoteTeacherDirectory, setRemoteTeacherDirectory] = useState(null);
+  const [teacherDemonstration, setTeacherDemonstration] = useState(null);
   const [portraitDevice, setPortraitDevice] = useState(() => (
     window.innerWidth <= 1024 && window.innerHeight > window.innerWidth
   ));
@@ -129,6 +223,9 @@ export default function App() {
   const [keyboardPreparationStage, setKeyboardPreparationStage] = useState('Tap once to prepare');
   const [performanceTier, setPerformanceTier] = useState(getInitialPerformanceTier);
   const [deviceClass, setDeviceClass] = useState(detectDeviceClass);
+  const [activeCampaign, setActiveCampaign] = useState(null);
+  const [campaignStatus, setCampaignStatus] = useState('');
+  const [campaignError, setCampaignError] = useState('');
 
   const nextEventIndex = useRef(0);
   const nextPedalIndex = useRef(0);
@@ -142,11 +239,17 @@ export default function App() {
   const visualTimers = useRef([]);
   const pedalTimers = useRef([]);
   const playbackRunId = useRef(0);
+  const activeLearnerIdRef = useRef('guest');
   const seekWasPlaying = useRef(false);
   const studioPlayerRef = useRef(null);
   const keyboardReadyRef = useRef(false);
   const keyboardPreparationPromise = useRef(null);
   const performanceTierRef = useRef(performanceTier);
+  const playbackSpeedRef = useRef(speed);
+  const songDurationRef = useRef(0);
+  const practicePlaybackModeRef = useRef('listen');
+  const learningCaptureRef = useRef({ status: 'idle', notes: [], activeNotes: new Map(), pedals: [] });
+  const midiAccessRef = useRef(null);
   const calibrationRef = useRef(null);
   const runtimePerformanceRef = useRef({
     lastFrame: 0,
@@ -159,25 +262,121 @@ export default function App() {
   });
 
   const song = useMemo(
-    () => songs.find((candidate) => candidate.title === songTitle) || songs[0],
-    [songs, songTitle],
+    () => songs.find((candidate) => songLibraryId(candidate) === songSelectionId) || songs[0],
+    [songs, songSelectionId],
+  );
+  playbackSpeedRef.current = speed;
+  songDurationRef.current = getSongDuration(song);
+  const learningArrangement = useMemo(
+    () => activeCampaign
+      ? song.notes
+      : teachingMode === 'learn' ? buildLearningArrangement(song.notes, learningLevel) : song.notes,
+    [activeCampaign, song, teachingMode, learningLevel],
   );
   const pianoLayout = useMemo(
     () => teachingMode === 'learn'
-      ? buildLearningHandLayout(song, pianoHandMode)
+      ? buildLearningHandLayout({ ...song, notes: learningArrangement }, pianoHandMode)
       : buildAdaptivePianoLayout(song),
-    [song, teachingMode, pianoHandMode],
+    [song, learningArrangement, teachingMode, pianoHandMode],
   );
   const playbackNotes = useMemo(() => (
     teachingMode === 'learn' && pianoHandMode !== 'both'
-      ? song.notes.filter((event) => pianoHandForEvent(event) === pianoHandMode)
-      : song.notes
-  ), [song, teachingMode, pianoHandMode]);
+      ? learningArrangement.filter((event) => pianoHandForEvent(event) === pianoHandMode)
+      : learningArrangement
+  ), [learningArrangement, teachingMode, pianoHandMode]);
   const teachingSong = useMemo(() => ({ ...song, notes: playbackNotes }), [song, playbackNotes]);
-  const learningSections = useMemo(
-    () => analyzeLearningSections(song.notes, getSongDuration(song), preferredSectionSeconds),
-    [song, preferredSectionSeconds],
+  const currentLearningLevel = useMemo(() => learningLevelById(learningLevel), [learningLevel]);
+  const teacherProfiles = useMemo(() => {
+    const baseById = new Map(TEACHER_PROFILES.map((profile) => [profile.id, profile]));
+    if (!remoteTeacherDirectory) return TEACHER_PROFILES;
+    if (remoteTeacherDirectory.authoritative) {
+      return remoteTeacherDirectory.profiles.map((profile) => (
+        materializeTeacherProfile(profile, baseById.get(profile.id) || {})
+      ));
+    }
+    return [
+      ...TEACHER_PROFILES,
+      ...remoteTeacherDirectory.profiles.map((profile) => materializeTeacherProfile(profile)),
+    ];
+  }, [remoteTeacherDirectory]);
+  const pianoTeacher = useMemo(
+    () => teacherProfiles.find((profile) => profile.id === pianoTeacherId)
+      || teacherProfiles.find((profile) => profile.id === 'aria')
+      || teacherProfiles[0],
+    [pianoTeacherId, teacherProfiles],
   );
+  const teacherHandTimeline = useMemo(
+    () => prepareTeacherHandTimeline(teachingSong.notes),
+    [teachingSong],
+  );
+  const teacherHandTargets = useMemo(
+    () => buildTeacherHandTargets(teacherHandTimeline, currentTime, { handMode: pianoHandMode }),
+    [teacherHandTimeline, currentTime, pianoHandMode],
+  );
+  const learningSections = useMemo(
+    () => analyzeLearningSections(
+      learningArrangement,
+      getSongDuration(song),
+      currentLearningLevel.partSeconds,
+    ),
+    [song, learningArrangement, currentLearningLevel.partSeconds],
+  );
+  const activeLearningRange = useMemo(() => {
+    if (activeCampaign) return campaignPlaybackRange(song);
+    if (practiceRange) return practiceRange;
+    if (!currentLearningLevel.usesParts) {
+      const duration = getSongDuration(song);
+      return { id: 'full-song', name: 'Full song', start: 0, end: duration, duration };
+    }
+    return learningSections[selectedSectionIndex] || learningSections[0] || null;
+  }, [activeCampaign, currentLearningLevel.usesParts, learningSections, selectedSectionIndex, song, practiceRange]);
+  const learningCoachPlan = useMemo(() => buildAdaptivePracticePlan({
+    progress: learningProgress,
+    songId: songLibraryId(song),
+    sections: learningSections,
+    levelId: learningLevel,
+  }), [learningProgress, song, learningSections, learningLevel]);
+  const learningPracticeOutcome = useMemo(() => evaluateAdaptivePracticeOutcome({
+    progress: learningProgress,
+    songId: songLibraryId(song),
+    report: learningReport,
+  }), [learningProgress, song, learningReport]);
+  const sharedLearnRequest = route.page === 'studio' && route.params.get('try') === 'learn';
+  const campaignSlug = sharedLearnRequest ? String(route.params.get('campaign') || '').trim().toLowerCase() : '';
+  const campaignAdminPreview = Boolean(campaignSlug && route.params.get('adminPreview') === '1');
+  const campaignReferral = campaignSlug ? String(route.params.get('ref') || '').trim().toUpperCase() : '';
+  const sharedSongId = sharedLearnRequest ? String(route.params.get('song') || '') : '';
+  const sharedChallengeScoreValue = sharedLearnRequest ? String(route.params.get('score') || '').trim() : '';
+  const sharedChallengeScore = sharedChallengeScoreValue && Number.isFinite(Number(sharedChallengeScoreValue))
+    ? Math.max(0, Math.min(100, Math.round(Number(sharedChallengeScoreValue))))
+    : null;
+  const hasFullLearnAccess = Boolean(user?.admin || user?.access?.learn);
+  const freeLearnActive = teachingMode === 'learn' && !hasFullLearnAccess && !campaignSlug;
+
+  useEffect(() => {
+    const uninstall = installProductAnalytics();
+    trackProductEvent('app_opened', {
+      deviceClass,
+      performanceTier,
+      signedIn: Boolean(getAuthToken()),
+    });
+    return uninstall;
+  }, []);
+
+  useEffect(() => {
+    trackProductEvent('route_viewed', {
+      page: route.page,
+      signedIn: Boolean(getAuthToken()),
+    });
+  }, [route.page]);
+
+  useEffect(() => {
+    if (teachingMode !== 'learn') return;
+    trackProductEvent('learning_preview_opened', {
+      freePreview: !hasFullLearnAccess,
+      level: learningLevel,
+    });
+  }, [teachingMode]);
 
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', '#studio');
@@ -187,9 +386,198 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!sharedLearnRequest) return;
+    setTeachingMode('learn');
+    if (sharedSongId && songs.some((candidate) => songLibraryId(candidate) === sharedSongId)) {
+      setSongSelectionId(sharedSongId);
+    }
+  }, [sharedLearnRequest, sharedSongId, songs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!campaignSlug) {
+      setActiveCampaign(null);
+      setCampaignStatus('');
+      setCampaignError('');
+      setSongSelectionId((current) => current.startsWith('campaign:')
+        ? songLibraryId(sampleSongs[0])
+        : current);
+      return () => { cancelled = true; };
+    }
+
+    stopPlayback();
+    setTeachingMode('learn');
+    setLearningReport(null);
+    setCampaignError('');
+    setCampaignStatus('loading');
+    const metadataPath = campaignAdminPreview
+      ? `/api/admin/artist-campaigns/preview/${encodeURIComponent(campaignSlug)}`
+      : `/api/artist-campaigns/${encodeURIComponent(campaignSlug)}`;
+    apiRequest(metadataPath)
+      .then(async ({ campaign }) => {
+        if (cancelled) return;
+        setActiveCampaign(campaign);
+        const attribution = campaign.adminPreview
+          ? {}
+          : rememberCampaignAttribution(campaign, campaignReferral);
+        if (!campaign.adminPreview) {
+          trackProductEvent('campaign_viewed', {
+            campaignId: campaign.id,
+            campaignSlug: campaign.slug,
+            referralCode: attribution.referralCode || '',
+            qaScore: campaign.verification?.qaScore || 0,
+            referrerType: document.referrer ? 'referred' : 'direct',
+          });
+        }
+        const file = await fetchProtectedFile(
+          campaign.songUrl,
+          campaign.songFilename || `${campaign.slug}.json`,
+        );
+        const parsed = await parseUploadedSongFile(file);
+        const prepared = prepareCampaignSong(parsed, campaign);
+        if (cancelled) return;
+        const range = campaignPlaybackRange(prepared);
+        setSongs((previous) => [
+          prepared,
+          ...previous.filter((candidate) => songLibraryId(candidate) !== songLibraryId(prepared)),
+        ]);
+        setSongSelectionId(songLibraryId(prepared));
+        setLearningLevel('piano-king');
+        setPianoHandMode('both');
+        setSpeed(1);
+        setRepeatSection(false);
+        setSelectedSectionIndex(0);
+        setPracticeRange(range);
+        setCurrentTime(0);
+        setActivePracticePlan(null);
+        setCampaignStatus('ready');
+        if (!campaign.adminPreview) {
+          trackProductEvent('campaign_song_loaded', {
+            campaignId: campaign.id,
+            campaignSlug: campaign.slug,
+            referralCode: attribution.referralCode || '',
+            noteCount: prepared.notes.length,
+            durationSeconds: range.duration,
+            qaScore: campaign.verification?.qaScore || 0,
+          });
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setActiveCampaign(null);
+        setCampaignError(error.message || 'This challenge could not be loaded.');
+        setCampaignStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, [campaignSlug, campaignReferral, campaignAdminPreview]);
+
+  useEffect(() => {
+    if (!freeLearnActive) return;
+    const firstStage = learningLevelById('first-keys');
+    const firstSection = learningSections[0];
+    if (learningLevel !== firstStage.id) setLearningLevel(firstStage.id);
+    if (pianoHandMode !== 'right') setPianoHandMode('right');
+    if (selectedSectionIndex !== 0) setSelectedSectionIndex(0);
+    if (Math.abs(speed - firstStage.speed) > 0.001) setSpeed(firstStage.speed);
+    if (firstSection && (
+      practiceRange?.id !== firstSection.id
+      || practiceRange?.start !== firstSection.start
+      || practiceRange?.end !== firstSection.end
+    )) {
+      setPracticeRange(firstSection);
+      setCurrentTime(firstSection.start);
+    }
+  }, [
+    freeLearnActive,
+    learningLevel,
+    learningSections,
+    pianoHandMode,
+    practiceRange,
+    selectedSectionIndex,
+    speed,
+  ]);
+
+  useEffect(() => {
     // Dismissal lasts only for this app session. Remove the legacy permanent
     // preference so the recommendation can return the next time the app opens.
     window.localStorage.removeItem('polymath-orientation-prompt-dismissed');
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadVirtualTeachers = () => {
+      apiRequest('/api/virtual-teachers')
+        .then((data) => {
+          if (cancelled) return;
+          const authoritative = Number(data.catalogVersion || 0) >= 2 && Array.isArray(data.catalog);
+          setRemoteTeacherDirectory({
+            authoritative,
+            profiles: authoritative ? data.catalog : (Array.isArray(data.characters) ? data.characters : []),
+          });
+        })
+        .catch((error) => console.error('Custom virtual teachers could not be loaded:', error));
+    };
+    loadVirtualTeachers();
+    window.addEventListener('polymath:virtual-teachers-changed', loadVirtualTeachers);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('polymath:virtual-teachers-changed', loadVirtualTeachers);
+    };
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('polymath-piano-teacher-v2', pianoTeacher.id);
+  }, [pianoTeacher.id]);
+
+  useEffect(() => {
+    const learnerId = user?.user_id || 'guest';
+    activeLearnerIdRef.current = learnerId;
+    const local = readLearningProgress(window.localStorage, learnerId);
+    setLearningProgress(local);
+    if (!user?.user_id || (!user.admin && !user.access?.learn)) {
+      setLearningSyncStatus('device');
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLearningSyncStatus('syncing');
+    apiRequest('/api/learning/progress/sync', {
+      method: 'POST',
+      networkRetries: 2,
+      body: JSON.stringify({
+        attempts: local.history.map((attempt) => ({
+          attemptId: attempt.id,
+          songId: attempt.songId,
+          report: attempt,
+        })),
+      }),
+    })
+      .then((data) => {
+        if (cancelled || activeLearnerIdRef.current !== learnerId) return;
+        const cloud = learningProgressFromAttempts(data.attempts);
+        const merged = mergeLearningProgress(local, cloud);
+        writeLearningProgress(window.localStorage, learnerId, merged);
+        setLearningProgress(merged);
+        setLearningSyncStatus('synced');
+      })
+      .catch((error) => {
+        if (cancelled || activeLearnerIdRef.current !== learnerId) return;
+        console.warn('Learning progress is saved on this device until cloud sync returns:', error);
+        setLearningSyncStatus('offline');
+      });
+    return () => { cancelled = true; };
+  }, [user?.user_id, user?.admin, user?.access?.learn]);
+
+  useEffect(() => {
+    if (selectedSectionIndex < learningSections.length) return;
+    setSelectedSectionIndex(Math.max(0, learningSections.length - 1));
+  }, [learningSections.length, selectedSectionIndex]);
+
+  useEffect(() => () => {
+    const access = midiAccessRef.current;
+    if (!access) return;
+    access.onstatechange = null;
+    access.inputs.forEach((input) => { input.onmidimessage = null; });
   }, []);
 
   useEffect(() => {
@@ -211,7 +599,10 @@ export default function App() {
         if (cancelled || !featured.length) return;
         const normalized = featured.map(normalizeSong);
         setSongs((previous) => [...normalized, ...previous.filter((item) => !normalized.some((featuredSong) => featuredSong.title === item.title))]);
-        setSongTitle(normalized[0].title);
+        const currentQuery = String(window.location.hash || '').split('?')[1] || '';
+        if (!new URLSearchParams(currentQuery).get('campaign')) {
+          setSongSelectionId(songLibraryId(normalized[0]));
+        }
       })
       .catch((error) => console.error(error));
     return () => { cancelled = true; };
@@ -247,7 +638,7 @@ export default function App() {
         createdSong,
         ...previous.filter((candidate) => candidate.title !== createdSong.title),
       ]);
-      setSongTitle(createdSong.title);
+      setSongSelectionId(songLibraryId(createdSong));
       setOpenMusicChooser(null);
       window.sessionStorage.removeItem('polymath-created-arrangement-v1');
     } catch (error) {
@@ -264,17 +655,30 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!user?.user_id) return undefined;
+    if (!user?.user_id) {
+      setPersonalSongs([]);
+      return undefined;
+    }
     apiRequest('/api/library')
-      .then(async ({ purchasedSongs }) => {
+      .then(async ({ personalSongs: cloudSongs = [], purchasedSongs }) => {
+        if (!cancelled) setPersonalSongs(cloudSongs);
         const pianoSongs = purchasedSongs.filter((item) => item.instrument === 'piano' && ['JSON', 'MIDI', 'MUSICXML'].includes(item.format));
         const loaded = await Promise.all(pianoSongs.map(async (item) => {
           const file = await fetchProtectedFile(`/api/listings/${item.id}/download`, item.filename || `${item.title}.${item.format.toLowerCase()}`);
           const parsed = await parseUploadedSongFile(file);
-          return normalizeSong({ ...parsed, title: item.title, composer: item.artist || parsed.composer });
+          return normalizeSong({
+            ...parsed,
+            title: item.title,
+            composer: item.artist || parsed.composer,
+            libraryId: `purchase:${item.id}`,
+            libraryType: 'purchased',
+          });
         }));
         if (cancelled || !loaded.length) return;
-        setSongs((previous) => [...previous.filter((songItem) => !loaded.some((librarySong) => librarySong.title === songItem.title)), ...loaded]);
+        setSongs((previous) => [
+          ...previous.filter((songItem) => !loaded.some((librarySong) => songLibraryId(librarySong) === songLibraryId(songItem))),
+          ...loaded,
+        ]);
       })
       .catch((error) => console.error('Purchased piano songs could not be loaded:', error));
     return () => { cancelled = true; };
@@ -332,6 +736,7 @@ export default function App() {
   function clearActiveNotes() {
     activeNoteCounts.current.clear();
     setActiveNotes(new Set());
+    setActivePlaybackEventIds(new Set());
   }
 
   function clearTimers(timerRef) {
@@ -343,10 +748,18 @@ export default function App() {
     return Math.max(
       0,
       Math.min(
-        getSongDuration(song),
+        songDurationRef.current,
         Number(value) || 0,
       ),
     );
+  }
+
+  function clampPlaybackTime(value) {
+    const songTime = clampSongTime(value);
+    if (teachingMode !== 'learn' || !practiceRange) return songTime;
+    const start = clampSongTime(practiceRange.start);
+    const end = Math.max(start, clampSongTime(practiceRange.end));
+    return Math.max(start, Math.min(end, songTime));
   }
 
   function focusMobilePlayer(force = false) {
@@ -359,10 +772,53 @@ export default function App() {
     }, 120);
   }
 
-  function setSustainPedal(nextState) {
+  function learningCaptureTime(now = performance.now()) {
+    const capture = learningCaptureRef.current;
+    if (capture.status !== 'running') return clampSongTime(currentTime);
+    return clampSongTime(getSongTimeFromPerformanceClock(now));
+  }
+
+  function finishCapturedNote(key, endTime = learningCaptureTime()) {
+    const capture = learningCaptureRef.current;
+    const started = capture.activeNotes.get(key);
+    if (!started) return;
+    capture.activeNotes.delete(key);
+    capture.notes.push({
+      ...started,
+      end: endTime,
+      duration: Math.max(0.035, endTime - started.start),
+    });
+  }
+
+  function finishAllCapturedNotes(endTime = learningCaptureTime()) {
+    [...learningCaptureRef.current.activeNotes.keys()].forEach((key) => finishCapturedNote(key, endTime));
+  }
+
+  function captureNoteStart(note, velocity, playbackOptions = {}) {
+    const capture = learningCaptureRef.current;
+    if (capture.status !== 'running') return;
+    const key = manualVoiceKey(note, playbackOptions);
+    const start = learningCaptureTime();
+    finishCapturedNote(key, start);
+    capture.activeNotes.set(key, {
+      note,
+      start,
+      velocity: Math.max(0.02, Math.min(1, Number(velocity) || 0.85)),
+      inputType: playbackOptions.inputType || playbackOptions.pointerType || 'screen',
+      dynamicCapable: playbackOptions.inputType === 'midi'
+        || (playbackOptions.pointerType === 'pen' && Number(playbackOptions.pressure) > 0),
+    });
+  }
+
+  function setSustainPedal(nextState, source = 'manual') {
     const down = Boolean(nextState);
     pianoAudio.setSustainPedal(down);
     setPedalDown(down);
+    const capture = learningCaptureRef.current;
+    if (source === 'manual' && capture.status === 'running') {
+      const previous = capture.pedals[capture.pedals.length - 1];
+      if (!previous || previous.down !== down) capture.pedals.push({ time: learningCaptureTime(), down });
+    }
   }
 
   function applyPerformanceTier(nextTier, measurements = {}, preserveSampleSet = keyboardReadyRef.current) {
@@ -385,6 +841,11 @@ export default function App() {
   async function prepareKeyboard() {
     if (keyboardReadyRef.current) return true;
     if (keyboardPreparationPromise.current) return keyboardPreparationPromise.current;
+    const preparationStartedAt = performance.now();
+    trackProductEvent('keyboard_prepare_started', {
+      deviceClass,
+      performanceTier: performanceTierRef.current,
+    });
 
     // Create/resume Web Audio directly inside the tap event so iOS grants audio access.
     pianoAudio.ensure();
@@ -431,6 +892,11 @@ export default function App() {
         setKeyboardPreparationProgress(100);
         setKeyboardPreparationStatus('ready');
         setKeyboardPreparationStage(performanceTierRef.current + ' mode ready');
+        trackProductEvent('keyboard_prepare_completed', {
+          deviceClass,
+          performanceTier: performanceTierRef.current,
+          durationMs: Math.round(performance.now() - preparationStartedAt),
+        });
         return true;
       })
       .catch((error) => {
@@ -457,6 +923,7 @@ export default function App() {
     if (!voice) return null;
     addActiveNote(note, true);
     if (source === 'manual' && duration === null) {
+      captureNoteStart(note, velocity, playbackOptions);
       manualVoices.current.set(
         manualVoiceKey(note, playbackOptions),
         voice
@@ -467,6 +934,7 @@ export default function App() {
 
   function releaseNote(note, interaction = {}) {
     const key = manualVoiceKey(note, interaction);
+    finishCapturedNote(key);
     const manualVoice = manualVoices.current.get(key);
     if (manualVoice && typeof pianoAudio.releaseVoice === 'function') {
       pianoAudio.releaseVoice(manualVoice);
@@ -505,74 +973,118 @@ export default function App() {
   }
 
   function stopPlayback() {
+    if (learningCaptureRef.current.status === 'running' || learningCaptureRef.current.status === 'paused') {
+      resetLearningCapture('idle');
+      practicePlaybackModeRef.current = 'listen';
+    }
     setIsPlaying(false);
     setCurrentTime(0);
     resetPlaybackState();
   }
 
   async function startPlaybackAt(position, speedOverride = speed) {
-    if (!keyboardReadyRef.current && !(await prepareKeyboard())) return;
-    const target = clampSongTime(position);
+    if (!keyboardReadyRef.current && !(await prepareKeyboard())) return false;
+    const target = clampPlaybackTime(position);
     const playbackSpeed = Math.max(0.2, Math.min(2, Number(speedOverride) || 1));
 
     const requestedRunId = playbackRunId.current + 1;
     playbackRunId.current = requestedRunId;
     pianoAudio.setToneMode(toneMode);
     await pianoAudio.preloadSongNotes(song, { startTime: target });
-    if (playbackRunId.current !== requestedRunId) return;
+    if (playbackRunId.current !== requestedRunId) return false;
 
     pauseOffset.current = target;
     nextEventIndex.current = findStartIndex(playbackNotes, Math.max(0, target - 0.0005));
     nextPedalIndex.current = findStartIndex(song.pedals || [], target + 0.0001);
-    setSustainPedal(getPedalStateAt(song.pedals, target));
+    // An attempt starts with the learner's pedal released. Guide playback may
+    // restore the score's pedal state, but that state must never be recorded as
+    // if the learner pressed the pedal themselves.
+    const initialPedalState = practicePlaybackModeRef.current === 'attempt'
+      ? false
+      : getPedalStateAt(song.pedals, target);
+    setSustainPedal(initialPedalState, 'guide');
+    playbackSpeedRef.current = playbackSpeed;
     startStamp.current = performance.now() - (target * 1000) / playbackSpeed;
     setCurrentTime(target);
     setIsPlaying(true);
     setPlaybackEpoch((value) => value + 1);
+    return true;
+  }
+
+  function pauseLearningCapture(position = currentTime) {
+    if (learningCaptureRef.current.status !== 'running') return false;
+    finishAllCapturedNotes(clampSongTime(position));
+    learningCaptureRef.current.status = 'paused';
+    setLearningAttemptStatus('paused');
+    return true;
+  }
+
+  async function resumePlaybackAt(position, speedOverride = speed) {
+    const resumesAttempt = learningCaptureRef.current.status === 'paused';
+    if (resumesAttempt) {
+      learningCaptureRef.current.status = 'preparing';
+      setLearningAttemptStatus('preparing');
+      practicePlaybackModeRef.current = 'attempt';
+    }
+    let started = false;
+    try {
+      started = await startPlaybackAt(position, speedOverride);
+    } catch (error) {
+      console.error('Playback could not resume:', error);
+    } finally {
+      if (resumesAttempt) {
+        learningCaptureRef.current.status = started ? 'running' : 'paused';
+        setLearningAttemptStatus(started ? 'running' : 'paused');
+      }
+    }
+    return started;
   }
 
   async function togglePlayPause() {
     if (isPlaying) {
+      pauseLearningCapture(currentTime);
       silencePlayback(currentTime);
       setIsPlaying(false);
       return;
     }
 
-    await startPlaybackAt(pauseOffset.current);
+    await resumePlaybackAt(pauseOffset.current);
   }
 
   function beginSeek() {
     seekWasPlaying.current = isPlaying;
+    pauseLearningCapture(currentTime);
     silencePlayback(currentTime);
     setIsPlaying(false);
   }
 
   function previewSeek(position) {
-    const target = clampSongTime(position);
+    const target = clampPlaybackTime(position);
     pauseOffset.current = target;
     setCurrentTime(target);
   }
 
   async function commitSeek(position) {
-    const target = clampSongTime(position);
+    const target = clampPlaybackTime(position);
     const shouldResume = seekWasPlaying.current;
     seekWasPlaying.current = false;
     previewSeek(target);
 
     if (shouldResume) {
-      await startPlaybackAt(target);
+      await resumePlaybackAt(target);
     }
   }
 
   async function jumpBy(seconds) {
     const shouldResume = isPlaying;
-    const target = clampSongTime(currentTime + seconds);
+    const target = clampPlaybackTime(currentTime + seconds);
+    pauseLearningCapture(currentTime);
     silencePlayback(currentTime);
     setIsPlaying(false);
     previewSeek(target);
 
     if (shouldResume) {
-      await startPlaybackAt(target);
+      await resumePlaybackAt(target);
     }
   }
 
@@ -583,45 +1095,317 @@ export default function App() {
     const position = currentTime;
 
     if (shouldResume) {
+      pauseLearningCapture(position);
       silencePlayback(position);
       setIsPlaying(false);
     }
 
     setSpeed(safeSpeed);
+    setActivePracticePlan((current) => {
+      if (!current || Math.round(Number(current.speedPercent) || 0) === Math.round(safeSpeed * 100)) return current;
+      return {
+        ...current,
+        speedPercent: Math.round(safeSpeed * 100),
+        goal: current.goal ? {
+          ...current.goal,
+          speedPercent: Math.round(safeSpeed * 100),
+          passes: 0,
+          remainingPasses: current.goal.requiredPasses,
+        } : current.goal,
+      };
+    });
 
     if (shouldResume) {
-      await startPlaybackAt(position, safeSpeed);
+      await resumePlaybackAt(position, safeSpeed);
     }
   }
 
-  function handleSongChange(title) {
+  function handleSongChange(libraryId) {
     stopPlayback();
     setPracticeRange(null);
     setSelectedSectionIndex(0);
-    setSongTitle(title);
+    setLearningReport(null);
+    setActivePracticePlan(null);
+    setSongSelectionId(libraryId);
   }
 
   function handleUpload(uploadedSong) {
     const normalized = normalizeSong(uploadedSong);
+    const libraryId = songLibraryId(normalized);
     stopPlayback();
     setPracticeRange(null);
     setSelectedSectionIndex(0);
-    setSongs((previous) => [normalized, ...previous.filter((candidate) => candidate.title !== normalized.title)]);
-    setSongTitle(normalized.title);
+    setLearningReport(null);
+    setActivePracticePlan(null);
+    setSongs((previous) => [normalized, ...previous.filter((candidate) => songLibraryId(candidate) !== libraryId)]);
+    setSongSelectionId(libraryId);
     setOpenMusicChooser(null);
     focusMobilePlayer();
   }
 
+  function rememberPersonalSong(personalSong) {
+    if (!personalSong?.id) return;
+    setPersonalSongs((previous) => [
+      personalSong,
+      ...previous.filter((candidate) => candidate.id !== personalSong.id),
+    ]);
+  }
+
+  async function loadPersonalPianoSong(personalSong) {
+    if (!personalSong?.id || loadingPersonalSongId) return;
+    setLoadingPersonalSongId(personalSong.id);
+    setPersonalSongStatus('Loading your cloud song…');
+    try {
+      const file = await fetchProtectedFile(
+        `/api/personal-songs/${personalSong.id}/download`,
+        personalSong.filename || `${personalSong.title}.json`,
+      );
+      const parsed = await parseUploadedSongFile(file);
+      if (!parsed.notes?.length) throw new Error('This song does not contain notes that can be played on piano.');
+      handleUpload({
+        ...parsed,
+        title: personalSong.title || parsed.title,
+        composer: personalSong.artist || parsed.composer,
+        personalSongId: personalSong.id,
+        libraryId: `personal:${personalSong.id}`,
+        libraryType: 'personal',
+      });
+      setPersonalSongStatus('Cloud song ready.');
+    } catch (error) {
+      setPersonalSongStatus(error.message || 'The cloud song could not be loaded.');
+    } finally {
+      setLoadingPersonalSongId('');
+    }
+  }
+
+  function connectMidiMessages(access) {
+    const available = [...access.inputs.values()];
+    available.forEach((input) => {
+      input.onmidimessage = (event) => {
+        const [status = 0, data1 = 0, data2 = 0] = event.data || [];
+        const command = status & 0xf0;
+        const channel = status & 0x0f;
+        if (command === 0x90 && data2 > 0) {
+          const note = midiToNote(data1);
+          pressNote(note, data2 / 127, null, 'manual', {
+            pointerId: `midi:${input.id}:${channel}:${data1}`,
+            inputType: 'midi',
+          });
+        } else if (command === 0x80 || (command === 0x90 && data2 === 0)) {
+          releaseNote(midiToNote(data1), { pointerId: `midi:${input.id}:${channel}:${data1}` });
+        } else if (command === 0xb0 && data1 === 64) {
+          setSustainPedal(data2 >= 64, 'manual');
+        }
+      };
+    });
+    const connected = available.filter((input) => input.state === 'connected');
+    setMidiInput((current) => ({
+      ...current,
+      status: connected.length ? 'connected' : 'waiting',
+      name: connected.map((input) => input.name || input.manufacturer || 'MIDI piano').join(', '),
+      error: connected.length ? '' : 'No MIDI keyboard was found. Connect one, then tap Connect MIDI again.',
+    }));
+  }
+
+  async function connectMidiInput() {
+    if (typeof navigator.requestMIDIAccess !== 'function') {
+      setMidiInput({ supported: false, status: 'unsupported', name: '', error: 'This browser does not provide Web MIDI. Screen and computer keys still work.' });
+      return;
+    }
+    setMidiInput((current) => ({ ...current, status: 'connecting', error: '' }));
+    try {
+      const access = await navigator.requestMIDIAccess({ sysex: false });
+      midiAccessRef.current = access;
+      access.onstatechange = () => connectMidiMessages(access);
+      connectMidiMessages(access);
+    } catch (error) {
+      setMidiInput((current) => ({
+        ...current,
+        status: 'error',
+        error: error?.name === 'SecurityError'
+          ? 'MIDI permission was blocked by this browser.'
+          : 'The MIDI keyboard could not be connected.',
+      }));
+    }
+  }
+
+  function resetLearningCapture(status = 'idle') {
+    learningCaptureRef.current = { status, notes: [], activeNotes: new Map(), pedals: [] };
+    setLearningAttemptStatus(status);
+  }
+
+  function prepareLearningRange(range) {
+    if (!range) return false;
+    silencePlayback(range.start);
+    setIsPlaying(false);
+    const index = learningSections.findIndex((candidate) => candidate.id === range.id);
+    if (index >= 0) setSelectedSectionIndex(index);
+    setPracticeRange(range);
+    setCurrentTime(range.start);
+    return true;
+  }
+
+  async function listenToLearningRange(range) {
+    if (!prepareLearningRange(range)) return;
+    practicePlaybackModeRef.current = 'listen';
+    resetLearningCapture('idle');
+    if (activeCampaign?.id && !activeCampaign.adminPreview) {
+      trackProductEvent('campaign_example_started', {
+        campaignId: activeCampaign.id,
+        campaignSlug: activeCampaign.slug,
+        referralCode: activeCampaign.referralCode || '',
+      });
+    }
+    await startPlaybackAt(range.start);
+    focusMobilePlayer(true);
+  }
+
+  async function startLearningAttempt(range) {
+    if (!range) return;
+    if (!keyboardReadyRef.current && !(await prepareKeyboard())) return;
+    prepareLearningRange(range);
+    practicePlaybackModeRef.current = 'attempt';
+    setRepeatSection(false);
+    resetLearningCapture('preparing');
+    let started = false;
+    try {
+      started = await startPlaybackAt(range.start);
+    } catch (error) {
+      console.error('The learning attempt could not start:', error);
+    }
+    if (!started) {
+      resetLearningCapture('idle');
+      practicePlaybackModeRef.current = 'listen';
+      return;
+    }
+    const practicePlan = activePracticePlan || learningCoachPlan;
+    learningCaptureRef.current = {
+      status: 'running',
+      notes: [],
+      activeNotes: new Map(),
+      pedals: [],
+      range,
+      songId: songLibraryId(song),
+      levelId: learningLevel,
+      speedPercent: Math.round(speed * 100),
+      handMode: pianoHandMode,
+      practiceFocusId: practicePlan?.skillId || 'notes',
+      practicePlanSource: practicePlan?.source || 'baseline',
+      practiceTargetScore: practicePlan?.goal?.targetScore ?? null,
+    };
+    setLearningAttemptStatus('running');
+    trackProductEvent('learning_attempt_started', {
+      freePreview: !hasFullLearnAccess,
+      level: learningLevel,
+      hand: pianoHandMode,
+      inputMode: midiInput.status === 'connected' ? 'midi' : 'screen-or-keyboard',
+    });
+    if (activeCampaign?.id && !activeCampaign.adminPreview) {
+      trackProductEvent('campaign_attempt_started', {
+        campaignId: activeCampaign.id,
+        campaignSlug: activeCampaign.slug,
+        referralCode: activeCampaign.referralCode || '',
+        inputMode: midiInput.status === 'connected' ? 'midi' : 'screen-or-keyboard',
+      });
+    }
+    focusMobilePlayer(true);
+  }
+
+  function completeLearningAttempt(endTime) {
+    const capture = learningCaptureRef.current;
+    if (capture.status !== 'running') return;
+    finishAllCapturedNotes(endTime);
+    capture.status = 'complete';
+    const report = {
+      ...analyzePracticeAttempt({
+      expectedNotes: playbackNotes,
+      playedNotes: capture.notes,
+      expectedPedals: song.pedals || [],
+      playedPedals: capture.pedals,
+      range: capture.range,
+      levelId: capture.levelId,
+      }),
+      attemptId: createLearningAttemptId(),
+      speedPercent: capture.speedPercent,
+      handMode: capture.handMode,
+      practiceFocusId: capture.practiceFocusId,
+      practicePlanSource: capture.practicePlanSource,
+      practiceTargetScore: capture.practiceTargetScore,
+    };
+    setLearningAttemptStatus('complete');
+    setLearningReport(report);
+    trackProductEvent('learning_attempt_completed', {
+      freePreview: !hasFullLearnAccess,
+      level: capture.levelId,
+      hand: capture.handMode,
+      inputMode: capture.notes.some((note) => note.inputType === 'midi') ? 'midi' : 'screen-or-keyboard',
+      noteCount: capture.notes.length,
+      score: report.score,
+    });
+    if (activeCampaign?.id && !activeCampaign.adminPreview) {
+      trackProductEvent('campaign_attempt_completed', {
+        campaignId: activeCampaign.id,
+        campaignSlug: activeCampaign.slug,
+        referralCode: activeCampaign.referralCode || '',
+        inputMode: capture.notes.some((note) => note.inputType === 'midi') ? 'midi' : 'screen-or-keyboard',
+        noteCount: capture.notes.length,
+        score: report.score,
+      });
+    }
+    const learnerId = user?.user_id || 'guest';
+    setLearningProgress((current) => {
+      const next = recordLearningAttempt(current, capture.songId, report);
+      writeLearningProgress(window.localStorage, learnerId, next);
+      return next;
+    });
+    if (user?.user_id && (user.admin || user.access?.learn)) {
+      setLearningSyncStatus('syncing');
+      apiRequest('/api/learning/attempts', {
+        method: 'POST',
+        networkRetries: 2,
+        body: JSON.stringify({
+          attemptId: report.attemptId,
+          songId: capture.songId,
+          songTitle: song?.title || 'Selected song',
+          report,
+        }),
+      }).then((data) => {
+        if (activeLearnerIdRef.current !== learnerId) return;
+        setLearningProgress((current) => {
+          const merged = mergeLearningProgress(current, learningProgressFromAttempts(data.attempts));
+          writeLearningProgress(window.localStorage, learnerId, merged);
+          return merged;
+        });
+        setLearningSyncStatus('synced');
+      }).catch((error) => {
+        if (activeLearnerIdRef.current !== learnerId) return;
+        console.warn('Learning attempt remains safely stored on this device:', error);
+        setLearningSyncStatus('offline');
+      });
+    }
+  }
+
   function getSongTimeFromPerformanceClock(now = performance.now()) {
-    return ((now - startStamp.current) / 1000) * speed;
+    return ((now - startStamp.current) / 1000) * playbackSpeedRef.current;
   }
 
   function scheduleVisualStrike(event, delaySeconds, visualDuration, runId) {
     const startTimer = window.setTimeout(() => {
       if (playbackRunId.current !== runId) return;
+      setActivePlaybackEventIds((current) => {
+        const next = new Set(current);
+        next.add(event.id);
+        return next;
+      });
       addActiveNote(event.note, true);
       const stopTimer = window.setTimeout(() => {
-        if (playbackRunId.current === runId) removeActiveNote(event.note);
+        if (playbackRunId.current !== runId) return;
+        setActivePlaybackEventIds((current) => {
+          const next = new Set(current);
+          next.delete(event.id);
+          return next;
+        });
+        removeActiveNote(event.note);
       }, visualDuration * 1000 + 70);
       visualTimers.current.push(stopTimer);
     }, delaySeconds * 1000);
@@ -639,7 +1423,7 @@ export default function App() {
       const note = keyboardMap[event.key.toLowerCase()];
       if (!note) return;
       event.preventDefault();
-      pressNote(note, 0.85, null, 'manual');
+      pressNote(note, 0.85, null, 'manual', { inputType: 'computer' });
     }
 
     function up(event) {
@@ -661,7 +1445,7 @@ export default function App() {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
     };
-  }, [toneMode]);
+  }, [toneMode, speed, song]);
 
   useEffect(() => {
     if (!isPlaying) return undefined;
@@ -753,11 +1537,13 @@ export default function App() {
       while (nextPedalIndex.current < (song.pedals?.length || 0) && song.pedals[nextPedalIndex.current].time <= lookAheadSongTime && song.pedals[nextPedalIndex.current].time < duration) {
         const event = song.pedals[nextPedalIndex.current];
         nextPedalIndex.current += 1;
-        const delaySeconds = Math.max(0, (event.time - songNow) / speed);
-        const timer = window.setTimeout(() => {
-          if (playbackRunId.current === runId) setSustainPedal(event.down);
-        }, delaySeconds * 1000);
-        pedalTimers.current.push(timer);
+        if (practicePlaybackModeRef.current !== 'attempt') {
+          const delaySeconds = Math.max(0, (event.time - songNow) / speed);
+          const timer = window.setTimeout(() => {
+            if (playbackRunId.current === runId) setSustainPedal(event.down, 'guide');
+          }, delaySeconds * 1000);
+          pedalTimers.current.push(timer);
+        }
       }
 
       while (nextEventIndex.current < playbackNotes.length && playbackNotes[nextEventIndex.current].time <= lookAheadSongTime && playbackNotes[nextEventIndex.current].time < duration) {
@@ -774,16 +1560,24 @@ export default function App() {
         const visualDuration = Math.max(0.035, (event.visualDuration ?? event.duration) / speed);
         const eventVelocity = Math.max(0.02, Math.min(1.15, Number(event.velocity ?? 0.7) * autoplayVolume));
 
-        pianoAudio.playAt(event.note, eventVelocity, noteDuration, audioStartAt, {
-          source: 'autoplay',
-          retriggerSameNote: true,
-          releaseSeconds: event.releaseSeconds,
-        });
+        if (practicePlaybackModeRef.current !== 'attempt') {
+          pianoAudio.playAt(event.note, eventVelocity, noteDuration, audioStartAt, {
+            source: 'autoplay',
+            retriggerSameNote: true,
+            releaseSeconds: event.releaseSeconds,
+          });
+        }
         scheduleVisualStrike(event, delaySeconds, visualDuration, runId);
       }
 
       if (songNow >= duration) {
-        if (teachingMode === 'learn' && practiceRange && repeatSection) {
+        if (practicePlaybackModeRef.current === 'attempt' && learningCaptureRef.current.status === 'running') {
+          completeLearningAttempt(duration);
+          practicePlaybackModeRef.current = 'listen';
+          silencePlayback(practiceRange?.start || 0);
+          setIsPlaying(false);
+          setCurrentTime(duration);
+        } else if (teachingMode === 'learn' && practiceRange && repeatSection) {
           const restartAt = practiceRange.start;
           silencePlayback(restartAt);
           setIsPlaying(false);
@@ -842,14 +1636,65 @@ export default function App() {
     setSelectedSectionIndex(safeIndex);
     setPracticeRange(section);
     setCurrentTime(section.start);
+    setActivePracticePlan(null);
   }
 
-  async function practiseLearningSection(section) {
-    const index = learningSections.findIndex((candidate) => candidate.id === section.id);
-    selectLearningSection(index < 0 ? 0 : index);
-    setPracticeRange(section);
-    await startPlaybackAt(section.start);
+  function applyLearningCoachPlan(plan) {
+    if (!plan) return;
+    const level = learningLevelById(plan.recommendedLevelId);
+    const index = Math.max(0, Math.min(
+      learningSections.length - 1,
+      Number(plan.recommendedSectionIndex) || 0,
+    ));
+    const section = learningSections[index] || learningSections[0];
+    const start = Math.max(0, Number(plan.recommendedRange?.start ?? section?.start) || 0);
+    const end = Math.max(start, Number(plan.recommendedRange?.end ?? section?.end) || start);
+    const focusedRange = {
+      ...(section || {}),
+      id: section?.id || `adaptive-${start.toFixed(2)}-${end.toFixed(2)}`,
+      name: section?.name || 'Adaptive focus',
+      start,
+      end,
+      duration: Math.max(0, end - start),
+    };
+    const songDuration = getSongDuration(song);
+    const range = level.usesParts
+      ? focusedRange
+      : { id: 'full-song', name: 'Full song', start: 0, end: songDuration, duration: songDuration };
+    const plannedSpeed = Math.max(0.2, Math.min(1, Number(plan.speedPercent) / 100 || 0.7));
+
+    stopPlayback();
+    setLearningLevel(level.id);
+    setPianoHandMode(plan.recommendedHand || level.handMode);
+    setSpeed(plannedSpeed);
+    setSelectedSectionIndex(index);
+    setPracticeRange(range);
+    setCurrentTime(range.start);
+    setLearningReport(null);
+    setActivePracticePlan({ ...plan, recommendedRange: range, speedPercent: Math.round(plannedSpeed * 100) });
+    window.localStorage.setItem('polymath-learning-level', level.id);
   }
+
+  useEffect(() => {
+    if (!teacherDemonstration) return;
+    const songDuration = getSongDuration(song);
+    if (songDuration <= 0) {
+      setTeacherDemonstration(null);
+      return;
+    }
+    const start = Math.max(0, Math.min(Math.max(0, songDuration - 0.5), Number(teacherDemonstration.startSeconds) || 0));
+    const requestedEnd = Number(teacherDemonstration.endSeconds) || start + 5;
+    const end = Math.min(songDuration, Math.max(start + 0.5, requestedEnd));
+    const range = {
+      id: `teacher-demo-${teacherDemonstration.requestId}`,
+      name: 'Teacher demonstration',
+      start,
+      end,
+      duration: end - start,
+    };
+    setTeacherDemonstration(null);
+    void listenToLearningRange(range);
+  }, [teacherDemonstration]);
 
   if (route.page === 'teacher-projection') {
     return (
@@ -867,6 +1712,50 @@ export default function App() {
     );
   }
 
+  function changeLearningLevel(levelId) {
+    const level = learningLevelById(levelId);
+    stopPlayback();
+    setLearningLevel(level.id);
+    setPianoHandMode(level.handMode);
+    setSpeed(level.speed);
+    setPracticeRange(null);
+    setSelectedSectionIndex(0);
+    setLearningReport(null);
+    setActivePracticePlan(null);
+    window.localStorage.setItem('polymath-learning-level', level.id);
+  }
+
+  function changeLearningHand(hand) {
+    stopPlayback();
+    setPianoHandMode(hand);
+    setPracticeRange(null);
+    setLearningReport(null);
+    setActivePracticePlan(null);
+  }
+
+  function openLearningMusicChoice(choice) {
+    setOpenMusicChooser(choice);
+    window.setTimeout(() => {
+      const selector = choice === 'upload' ? '.uploader-card' : '.control-panel';
+      document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+  }
+
+  function openVirtualTeacher() {
+    window.setTimeout(() => document.querySelector('.piano-teacher-studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }
+
+  function requestVirtualTeacherDemonstration(action) {
+    if (action?.type !== 'demonstrate_range') return;
+    stopPlayback();
+    setRepeatSection(false);
+    if (['left', 'right', 'both'].includes(action.hand)) setPianoHandMode(action.hand);
+    if (action.speed !== null && action.speed !== undefined && Number.isFinite(Number(action.speed))) {
+      setSpeed(Math.max(0.2, Math.min(2, Number(action.speed))));
+    }
+    setTeacherDemonstration({ ...action, requestId: Date.now() });
+  }
+
   const paymentProductId = route.params.get('productId') || 'polymath-chill-monthly';
   const messageUserId = route.params.get('userId');
   const messageName = route.params.get('name') || 'Composer';
@@ -878,9 +1767,25 @@ export default function App() {
     if (user?.mustChangePassword && route.page !== 'account') {
       return <AccountPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
-    if (route.page === 'guitar') return <GuitarPage user={user} setUser={setUser} onNavigate={navigate} />;
     if (route.page === 'create-music') return <CreateMusicPage user={user} onNavigate={navigate} />;
-    if (route.page === 'ensemble') return <EnsemblePage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'guitar') return (
+      <GuitarPage
+        user={user}
+        setUser={setUser}
+        onNavigate={navigate}
+        personalSongs={personalSongs}
+        onPersonalSongSaved={rememberPersonalSong}
+      />
+    );
+    if (route.page === 'ensemble') return (
+      <EnsemblePage
+        user={user}
+        setUser={setUser}
+        onNavigate={navigate}
+        personalSongs={personalSongs}
+        onPersonalSongSaved={rememberPersonalSong}
+      />
+    );
     if (route.page === 'band') {
       if (!user?.admin && !user?.access?.band) {
         return (
@@ -895,6 +1800,7 @@ export default function App() {
       return <BandPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
     if (route.page === 'published-songs') return <MarketplacePage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'community') return <CommunityPage user={user} onNavigate={navigate} />;
     if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} onNavigate={navigate} />;
     if (route.page === 'your-songs') return <YourSongsPage user={user} onNavigate={navigate} />;
     if (route.page === 'admin-database') return <AdminDatabasePage user={user} onNavigate={navigate} />;
@@ -924,68 +1830,83 @@ export default function App() {
     }
 
     return (
-      <section className="studio-page">
-        <LearnModePanel
+      <section className={`studio-page ${teachingMode === 'learn' ? 'is-learning-journey' : ''}`}>
+        <PianoLearnJourney
           mode={teachingMode}
-          locked={!user?.admin && !user?.access?.learn}
-          onUpgrade={() => navigate('payment', { productId: 'polymath-musician-monthly' })}
+          locked={!activeCampaign && !hasFullLearnAccess}
+          onUpgrade={() => {
+            trackProductEvent('learning_upgrade_clicked', {
+              freePreview: !hasFullLearnAccess,
+              level: learningLevel,
+              plan: 'musician',
+            });
+            if (activeCampaign?.id && !activeCampaign.adminPreview) {
+              trackProductEvent('campaign_upgrade_clicked', {
+                campaignId: activeCampaign.id,
+                campaignSlug: activeCampaign.slug,
+                referralCode: activeCampaign.referralCode || '',
+                score: learningReport?.score ?? -1,
+                plan: 'musician',
+              });
+            }
+            navigate('payment', { productId: 'polymath-musician-monthly' });
+          }}
           onModeChange={(mode) => {
             stopPlayback();
             setTeachingMode(mode);
-            if (mode === 'regular') setPracticeRange(null);
+            if (mode === 'regular') {
+              setPracticeRange(null);
+              setActivePracticePlan(null);
+              resetLearningCapture('idle');
+              practicePlaybackModeRef.current = 'listen';
+            }
           }}
+          song={song}
+          songKey={songLibraryId(song)}
+          levelId={learningLevel}
+          onLevelChange={changeLearningLevel}
           sections={learningSections}
           selectedIndex={selectedSectionIndex}
           onSelectSection={selectLearningSection}
-          onPracticeSection={practiseLearningSection}
+          activeRange={activeLearningRange}
           repeatSection={repeatSection}
           onRepeatChange={setRepeatSection}
-          preferredSeconds={preferredSectionSeconds}
-          onPreferredSecondsChange={(value) => setPreferredSectionSeconds(Math.max(5, Math.min(60, value || 15)))}
+          handMode={pianoHandMode}
+          onHandModeChange={changeLearningHand}
+          onChooseMusic={openLearningMusicChoice}
+          onPrepare={prepareKeyboard}
+          preparationStatus={keyboardPreparationStatus}
+          preparationProgress={keyboardPreparationProgress}
+          preparationStage={keyboardPreparationStage}
+          midi={midiInput}
+          onConnectMidi={connectMidiInput}
+          onListen={listenToLearningRange}
+          onStartAttempt={startLearningAttempt}
+          attemptStatus={learningAttemptStatus}
+          report={learningReport}
+          practiceOutcome={learningPracticeOutcome}
+          progress={learningProgress}
+          coachPlan={learningCoachPlan}
+          activePlan={activePracticePlan}
+          syncStatus={learningSyncStatus}
+          onSpeedChange={handleSpeedChange}
+          onApplyCoachPlan={applyLearningCoachPlan}
+          onOpenTeacher={openVirtualTeacher}
+          onFindTeacher={() => navigate('find-teacher')}
+          onOpenBand={() => navigate('band')}
+          onFocusPlayer={() => focusMobilePlayer(true)}
+          challengeScore={sharedChallengeScore}
+          campaign={activeCampaign}
+          campaignStatus={campaignSlug ? (campaignStatus || 'loading') : ''}
+          campaignError={campaignError}
+          onExitCampaign={() => navigate(
+            campaignAdminPreview ? 'admin-database' : 'studio',
+            campaignAdminPreview ? { section: 'growth' } : undefined,
+          )}
         />
 
-        {teachingMode === 'learn' && (
-          <VirtualTeacherAvatar
-            isPlaying={isPlaying}
-            deviceClass={deviceClass}
-            performanceTier={performanceTier}
-            song={teachingSong}
-            currentTime={currentTime}
-          />
-        )}
-
-        {teachingMode === 'learn' && (
-          <section className="piano-hand-selector" aria-label="Choose piano hands to practise">
-            <div>
-              <p className="eyebrow">Hand progression</p>
-              <h3>Build each hand, then combine them.</h3>
-            </div>
-            <div className="piano-hand-options" role="group" aria-label="Piano hand selection">
-              {[
-                ['left', '1. Left hand', 'Bass and accompaniment'],
-                ['right', '2. Right hand', 'Melody and upper voice'],
-                ['both', '3. Both hands', 'Standard double layer'],
-              ].map(([value, label, description]) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={pianoHandMode === value ? 'active' : ''}
-                  onClick={() => {
-                    silencePlayback(currentTime);
-                    setIsPlaying(false);
-                    setPianoHandMode(value);
-                  }}
-                >
-                  <strong>{label}</strong>
-                  <small>{description}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''}`}>
-          <ControlPanel
+        <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''} ${campaignSlug ? 'is-campaign' : ''}`}>
+          {!campaignSlug && <ControlPanel
             song={song}
             songs={songs}
             onSongChange={handleSongChange}
@@ -995,31 +1916,40 @@ export default function App() {
             }}
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
-          />
-          <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
-            <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} performanceTier={performanceTier} />
-            <div className="piano-scroll-wrap">
-              <PianoKeyboard
-                layout={pianoLayout}
-                activeNotes={activeNotes}
-                strikeVersions={strikeVersions}
-                showKeyNotes={showKeyNotes}
-                onPress={(note, interaction) => pressNote(
-                  note,
-                  0.85,
-                  null,
-                  'manual',
-                  interaction
-                )}
-                onRelease={releaseNote}
-                preparationStatus={keyboardPreparationStatus}
-                preparationProgress={keyboardPreparationProgress}
-                preparationStage={keyboardPreparationStage}
-                performanceTier={performanceTier}
-                deviceClass={deviceClass}
-                onPrepare={prepareKeyboard}
-              />
-            </div>
+            personalSongs={personalSongs}
+            onPersonalSongChange={loadPersonalPianoSong}
+            loadingPersonalSongId={loadingPersonalSongId}
+            personalSongStatus={personalSongStatus}
+          />}
+          {(!campaignSlug || campaignStatus === 'ready') && <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
+            <PianoRoll
+              song={teachingSong}
+              layout={pianoLayout}
+              currentTime={currentTime}
+              isPlaying={isPlaying}
+              leadTime={leadTime}
+              activeNotes={activeNotes}
+              activePlaybackEventIds={activePlaybackEventIds}
+              performanceTier={performanceTier}
+              strikeVersions={strikeVersions}
+              showKeyNotes={showKeyNotes}
+              onPress={(note, interaction = {}) => pressNote(
+                note,
+                interaction.pointerType === 'pen' && Number(interaction.pressure) > 0
+                  ? Math.max(0.12, Math.min(1, Number(interaction.pressure)))
+                  : 0.85,
+                null,
+                'manual',
+                { ...interaction, inputType: interaction.pointerType || 'screen' }
+              )}
+              onRelease={releaseNote}
+              preparationStatus={keyboardPreparationStatus}
+              preparationProgress={keyboardPreparationProgress}
+              preparationStage={keyboardPreparationStage}
+              deviceClass={deviceClass}
+              onPrepare={prepareKeyboard}
+              teacherTargets={teachingMode === 'learn' && !campaignSlug ? teacherHandTargets : null}
+            />
             <TransportDock
               song={song}
               isPlaying={isPlaying}
@@ -1038,6 +1968,7 @@ export default function App() {
               showKeyNotes={showKeyNotes}
               onShowKeyNotesChange={setShowKeyNotes}
               minSpeed={0.2}
+              playbackRange={teachingMode === 'learn' ? practiceRange : null}
             />
             <details className="lesson-options player-settings">
               <summary>Settings</summary>
@@ -1059,16 +1990,49 @@ export default function App() {
                 </label>
               </div>
             </details>
-          </div>
+            {teachingMode === 'learn' && hasFullLearnAccess && !campaignSlug && (
+              <PianoTeacherStudio
+                profiles={teacherProfiles}
+                teacherId={pianoTeacher.id}
+                onTeacherChange={setPianoTeacherId}
+                targets={teacherHandTargets}
+                isPlaying={isPlaying}
+                practiceReport={learningReport}
+                practiceOutcome={learningPracticeOutcome}
+                masteryProfile={learningCoachPlan.mastery}
+                coachPlan={learningCoachPlan}
+                lessonContext={{
+                  title: song?.title || 'Selected song',
+                  composer: song?.composer || song?.artist || '',
+                  bpm: song?.bpm || null,
+                  level: learningLevel,
+                  stage: currentLearningLevel.stage,
+                  practiceScope: currentLearningLevel.usesParts ? '20-second parts' : 'full song',
+                  hand: pianoHandMode,
+                  currentTime,
+                  duration: getSongDuration(song),
+                  activeRange: activeLearningRange,
+                  adaptiveFocus: learningCoachPlan.skillLabel,
+                  adaptiveExercise: learningCoachPlan.title,
+                }}
+                user={user}
+                setUser={setUser}
+                onNavigate={navigate}
+                onDemonstrate={requestVirtualTeacherDemonstration}
+                performanceTier={performanceTier}
+              />
+            )}
+          </div>}
 
-          <SongUploader
+          {!campaignSlug && <SongUploader
             onUpload={handleUpload}
             user={user}
             setUser={setUser}
             onNavigate={navigate}
             expanded={openMusicChooser === 'upload'}
             onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
-          />
+            onPersonalSongSaved={rememberPersonalSong}
+          />}
         </section>
       </section>
     );
@@ -1081,9 +2045,7 @@ export default function App() {
           {siteConfiguration.announcement.text}
         </aside>
       )}
-      {['studio', 'guitar', 'ensemble', 'band'].includes(route.page)
-        && portraitDevice
-        && !orientationPromptDismissed && (
+      {!campaignSlug && ['studio', 'guitar', 'ensemble'].includes(route.page) && portraitDevice && !orientationPromptDismissed && (
         <aside className="orientation-recommendation" role="dialog" aria-label="Landscape orientation recommendation">
           <div className="orientation-phone-icon" aria-hidden="true"><span /></div>
           <div>
@@ -1100,14 +2062,15 @@ export default function App() {
         </aside>
       )}
       <div className="top-shell">
-        <AppNav route={route.page} onNavigate={navigate} user={user} siteConfiguration={siteConfiguration} />
-        <HeaderActions user={user} onNavigate={navigate} route={route.page} />
+        <AppNav route={route.page} onNavigate={navigate} user={user} focusedCampaign={Boolean(campaignSlug)} siteConfiguration={siteConfiguration} />
+        {!campaignSlug && <HeaderActions user={user} onNavigate={navigate} route={route.page} />}
       </div>
       <main className="app-shell">
         <Suspense fallback={<div className="route-loading" role="status">Opening this section…</div>}>
           {content}
         </Suspense>
       </main>
+      {user && <SupportAssistant user={user} />}
     </div>
   );
 }

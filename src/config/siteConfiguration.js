@@ -4,13 +4,14 @@ export const DEFAULT_SITE_CONFIGURATION = Object.freeze({
   announcement: Object.freeze({ enabled: false, text: '', tone: 'info' }),
   navigation: Object.freeze([
     Object.freeze({ id: 'studio', label: 'Piano', group: 'primary', order: 10, visible: true, access: 'public' }),
-    Object.freeze({ id: 'create-music', label: 'Create Music', group: 'primary', order: 20, visible: true, access: 'public' }),
-    Object.freeze({ id: 'guitar', label: 'Guitar', group: 'primary', order: 30, visible: true, access: 'public' }),
-    Object.freeze({ id: 'ensemble', label: 'Instruments', group: 'primary', order: 40, visible: true, access: 'public' }),
-    Object.freeze({ id: 'published-songs', label: 'Composers', group: 'more', order: 50, visible: true, access: 'public' }),
-    Object.freeze({ id: 'find-teacher', label: 'Find Teacher', group: 'more', order: 60, visible: true, access: 'public' }),
-    Object.freeze({ id: 'band', label: 'Band', group: 'more', order: 70, visible: true, access: 'public' }),
-    Object.freeze({ id: 'your-songs', label: 'Your Songs', group: 'more', order: 80, visible: true, access: 'signed-in' }),
+    Object.freeze({ id: 'your-songs', label: 'My songs', group: 'primary', order: 20, visible: true, access: 'signed-in' }),
+    Object.freeze({ id: 'create-music', label: 'Create Music', group: 'more', order: 30, visible: true, access: 'public' }),
+    Object.freeze({ id: 'guitar', label: 'Guitar', group: 'more', order: 40, visible: true, access: 'public' }),
+    Object.freeze({ id: 'ensemble', label: 'Other instruments', group: 'more', order: 50, visible: true, access: 'public' }),
+    Object.freeze({ id: 'published-songs', label: 'Composers', group: 'more', order: 60, visible: true, access: 'public' }),
+    Object.freeze({ id: 'find-teacher', label: 'Find Teacher', group: 'more', order: 70, visible: true, access: 'public' }),
+    Object.freeze({ id: 'band', label: 'Band', group: 'more', order: 80, visible: true, access: 'public' }),
+    Object.freeze({ id: 'community', label: 'Community', group: 'more', order: 90, visible: true, access: 'public' }),
   ]),
 });
 

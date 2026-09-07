@@ -34,7 +34,7 @@ def main() -> None:
     args = parser.parse_args()
 
     instruments = [value.strip() for value in args.instruments.split(",") if value.strip()] or None
-    emit({"type": "stage", "stage": f"Loading MuScriptor {args.model.title()}"})
+    emit({"type": "stage", "stage": f"Loading Polymath {args.model.title()}"})
     model = TranscriptionModel.load_model(args.model)
     emit({"type": "stage", "stage": "Listening for notes and instruments"})
 
@@ -80,18 +80,18 @@ def main() -> None:
 
     notes.sort(key=lambda note: (note["time"], note["midi"], note["instrument"]))
     if not notes:
-        raise RuntimeError("MuScriptor could not detect playable notes in this recording.")
+        raise RuntimeError("Polymath could not detect playable notes in this recording.")
 
     payload = {
         "title": args.title.strip() or "Uploaded recording",
-        "composer": "MuScriptor transcription",
+        "composer": "Polymath transcription",
         "instrument": args.instrument,
         "bpm": 120,
         "notes": notes,
         "instrumentGroups": sorted({note["instrument"] for note in notes}),
         "sourceType": "muscriptor-audio-transcription",
         "readyToPlayFormat": "polymath-musician-json-v1",
-        "transcriptionProvider": f"MuScriptor {args.model.title()}",
+        "transcriptionProvider": f"Polymath {args.model.title()}",
         "modelLicense": "CC-BY-NC-4.0",
         "progress": progress,
     }

@@ -1,0 +1,38 @@
+{
+  "schema": "polymath-chatboss-evidence-export-v1",
+  "version": "v002",
+  "exportedAt": "2026-09-04T07:42:02.442Z",
+  "sourceVolumeId": "ccppo4yp9l",
+  "files": [
+    {
+      "filename": "training_manifest.json",
+      "bytes": 657,
+      "sha256": "d893e106474f77ee301ad59e1ef252d533110bfc15dfc45e115ce74bb1ed5f13",
+      "sourceKey": "chatboss/candidates/v002/training_manifest.json"
+    },
+    {
+      "filename": "base.json",
+      "bytes": 14693,
+      "sha256": "5c24c0d01af9a5ee3ca7eb65a440d1d8bfbdcc2f37fc5fc2854e3c9a01e4ab5f",
+      "sourceKey": "chatboss/evals/v002/base.json"
+    },
+    {
+      "filename": "candidate.json",
+      "bytes": 11192,
+      "sha256": "16e5a74abe4378cd6a2cc412cabc9b9f2cf66a84cf0da964babe8e5a82424db8",
+      "sourceKey": "chatboss/evals/v002/candidate.json"
+    },
+    {
+      "filename": "decision.json",
+      "bytes": 636,
+      "sha256": "c0c7a1547467cf974e80544a4656cc0f6fd4f500f733caeffac2d283d0a61909",
+      "sourceKey": "chatboss/evals/v002/decision.json"
+    },
+    {
+      "filename": "status.json",
+      "bytes": 579,
+      "sha256": "035771559be25ca096678e0d77e98b395181662dd450af5155d0d23aa9f76f41",
+      "sourceKey": "chatboss/runs/v002/status.json"
+    }
+  ]
+}

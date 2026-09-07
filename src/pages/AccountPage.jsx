@@ -37,6 +37,10 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
     minimumSignupAge: 0,
     minimumPasswordLength: 8,
     minimumWithdrawalMcoins: 20,
+    maximumWithdrawalMcoins: 1000000,
+    dailyWithdrawalLimitMcoins: 0,
+    maximumPendingWithdrawalOutflowMcoins: 0,
+    withdrawalFeePercent: 25,
     policyNotice: '',
     termsUrl: '',
     privacyUrl: '',
@@ -247,7 +251,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
               )}
             </>
           )}
-          <label className='field'>Password<input type='password' autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? policies.minimumPasswordLength : 8} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
+          <label className='field'>Password<input type='password' autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? policies.minimumPasswordLength : undefined} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required /></label>
           {mode === 'register' && verification && (
             <>
               <label className="field">6-digit verification code<input type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={form.verificationCode} onChange={(event) => setForm({ ...form, verificationCode: event.target.value.replace(/\D/g, '').slice(0, 6) })} required /></label>
@@ -271,8 +275,8 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
           <p>You signed in with an administrator-issued temporary password. Replace it before continuing.</p>
         </div>
         <form className="account-card" onSubmit={changePassword}>
-          <label className='field'>New password<input type='password' minLength={Math.max(12, policies.minimumPasswordLength)} autoComplete='new-password' value={newPassword.password} onChange={(event) => setNewPassword({ ...newPassword, password: event.target.value })} required /></label>
-          <label className='field'>Confirm new password<input type='password' minLength={Math.max(12, policies.minimumPasswordLength)} autoComplete='new-password' value={newPassword.confirm} onChange={(event) => setNewPassword({ ...newPassword, confirm: event.target.value })} required /></label>
+          <label className='field'>New password<input type='password' minLength={policies.minimumPasswordLength} autoComplete='new-password' value={newPassword.password} onChange={(event) => setNewPassword({ ...newPassword, password: event.target.value })} required /></label>
+          <label className='field'>Confirm new password<input type='password' minLength={policies.minimumPasswordLength} autoComplete='new-password' value={newPassword.confirm} onChange={(event) => setNewPassword({ ...newPassword, confirm: event.target.value })} required /></label>
           <button className="primary" type="submit">Save new password</button>
           {status && <p className="form-status">{status}</p>}
         </form>
@@ -295,6 +299,9 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
   const withdrawalAmount = Math.max(0, Number(withdraw.amountMcoins) || 0);
   const withdrawalFeePreview = Number((withdrawalAmount * withdrawalFeeRate).toFixed(2));
   const withdrawalNetPreview = Number((withdrawalAmount - withdrawalFeePreview).toFixed(2));
+  const withdrawalMaximum = policies.maximumWithdrawalMcoins > 0
+    ? Math.min(user.mcoins, policies.maximumWithdrawalMcoins)
+    : user.mcoins;
   return (
     <section className="page-shell">
       <div className="page-heading">
@@ -350,9 +357,9 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
         <article className='wallet-card'>
           <p className='eyebrow'>Cash out</p>
           <h2>Available to every account</h2>
-          <p className="muted">A 25% cash-out fee applies. You receive 75% of the requested amount.</p>
+          <p className="muted">A {policies.withdrawalFeePercent}% cash-out fee applies. You receive {Number((100 - policies.withdrawalFeePercent).toFixed(2))}% of the requested amount.</p>
           <form onSubmit={requestWithdrawal}>
-            <label className='field'>Mcoins to withdraw<input type='number' min={policies.minimumWithdrawalMcoins} max={user.mcoins} step='0.01' value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /><small>Minimum: {policies.minimumWithdrawalMcoins} Mcoins · Available: {user.mcoins.toLocaleString()}</small></label>
+            <label className='field'>Mcoins to withdraw<input type='number' min={Math.max(0.01, policies.minimumWithdrawalMcoins)} max={withdrawalMaximum} step='0.01' value={withdraw.amountMcoins} onChange={(event) => setWithdraw({ ...withdraw, amountMcoins: event.target.value })} required /><small>Minimum: {policies.minimumWithdrawalMcoins} Mcoins · Maximum now: {withdrawalMaximum.toLocaleString()} Mcoins</small></label>
             {withdrawalAmount > 0 && <div className='cashout-preview'><span>Fee: {withdrawalFeePreview.toLocaleString()} Mcoins</span><strong>You receive: {withdrawalNetPreview.toLocaleString()} Mcoins</strong></div>}
             <label className="field">PayPal payout email<input type="email" value={withdraw.payoutEmail} onChange={(event) => setWithdraw({ ...withdraw, payoutEmail: event.target.value })} required /></label>
             <button className="ghost full" type="submit">Request cash-out</button>

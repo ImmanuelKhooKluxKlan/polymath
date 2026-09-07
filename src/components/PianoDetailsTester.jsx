@@ -201,7 +201,7 @@ export default function PianoDetailsTester({ raw, maximumPolyphony = 0 }) {
         <div><span>First → last</span><strong>{selectedKey.count ? `${seconds(selectedKey.firstTime)} → ${seconds(selectedKey.lastTime)}` : 'No detections'}</strong></div>
       </div>
 
-      <p className='piano-test-caveat'>* MuScriptor currently returns synthetic velocity. Use it to test playback plumbing, not to judge the performer’s true softness. Alignment and verified MIDI will provide the supervised piano target.</p>
+      <p className='piano-test-caveat'>* Polymath currently returns synthetic velocity. Use it to test playback plumbing, not to judge the performer’s true softness. Alignment and verified MIDI will provide the supervised piano target.</p>
     </section>
   );
 }

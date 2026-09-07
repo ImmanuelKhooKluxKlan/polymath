@@ -134,7 +134,7 @@ function Get-OrCreateMonitor {
     type = 'https'
     description = $description
     method = 'GET'
-    path = '/api/health'
+    path = '/api/health/state'
     expected_codes = '2xx'
     follow_redirects = $true
     allow_insecure = $false

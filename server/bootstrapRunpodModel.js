@@ -59,7 +59,7 @@ async function main() {
     if (status.status === 'COMPLETED') {
       const result = status.output || {};
       if (!result.testerWeightsPath || Number(result.weightsBytes) < 5_000_000_000) {
-        throw new Error('Bootstrap completed without a verified MuScriptor Large checkpoint');
+        throw new Error('Bootstrap completed without a verified Polymath Large checkpoint');
       }
       console.log(`Tester ready: ${result.testerWeightsPath}`);
       console.log(`Weights verified: ${result.weightsBytes} bytes`);
@@ -74,6 +74,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`MuScriptor bootstrap failed: ${error.message}`);
+  console.error(`Polymath bootstrap failed: ${error.message}`);
   process.exitCode = 1;
 });

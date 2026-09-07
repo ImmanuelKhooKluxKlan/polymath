@@ -1040,6 +1040,17 @@ export function normalizeSong(
     normalizePedalEvents(song);
 
   return {
+    libraryId:
+      song.libraryId ||
+      (song.personalSongId ? `personal:${song.personalSongId}` : undefined) ||
+      `${song.libraryType || 'song'}:${song.title || 'Untitled Song'}:${song.composer || song.artist || 'Unknown'}`,
+
+    personalSongId:
+      song.personalSongId,
+
+    libraryType:
+      song.libraryType,
+
     title:
       song.title ||
       'Untitled Song',

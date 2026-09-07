@@ -27,6 +27,23 @@ const EMPTY_FORM = {
   published: true,
 };
 
+const DEFAULT_MARKETPLACE = Object.freeze({
+  directoryEnabled: true,
+  applicationsEnabled: true,
+  reviewsEnabled: true,
+  minimumHourlyRateMcoins: 0,
+  maximumHourlyRateMcoins: 100000,
+  platformFeePercent: 25,
+  teacherKeepsPercent: 75,
+  withdrawalFeePercent: 25,
+  notice: '',
+  checkoutAvailable: false,
+});
+
+function percentLabel(value) {
+  return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function initials(name) {
   return String(name || 'Music teacher')
     .split(/\s+/)
@@ -87,6 +104,7 @@ function formFromTeacher(teacher) {
 export default function TeacherMarketplacePage({ user, onNavigate }) {
   const [teachers, setTeachers] = useState([]);
   const [ownTeacher, setOwnTeacher] = useState(null);
+  const [marketplace, setMarketplace] = useState(DEFAULT_MARKETPLACE);
   const [filters, setFilters] = useState({ query: '', instrument: '', lessonMode: '', level: '' });
   const [showTeacherForm, setShowTeacherForm] = useState(false);
   const [form, setForm] = useState({ ...EMPTY_FORM });
@@ -100,6 +118,7 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
     try {
       const data = await apiRequest('/api/teachers');
       setTeachers(data.teachers || []);
+      setMarketplace((current) => ({ ...current, ...(data.marketplace || {}) }));
     } catch (error) {
       setStatus(error.message);
     }
@@ -115,6 +134,7 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
       const data = await apiRequest('/api/teachers/me');
       setOwnTeacher(data.teacher || null);
       setForm(formFromTeacher(data.teacher));
+      setMarketplace((current) => ({ ...current, ...(data.marketplace || {}) }));
     } catch (error) {
       setStatus(error.message);
     }
@@ -141,6 +161,10 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
   function openTeacherEditor() {
     if (!user) {
       onNavigate('account', { next: 'find-teacher' });
+      return;
+    }
+    if (!ownTeacher && !marketplace.applicationsEnabled) {
+      setStatus('New teacher profiles are temporarily paused by the administrator.');
       return;
     }
     setForm(formFromTeacher(ownTeacher));
@@ -190,6 +214,9 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
     try {
       const data = await apiRequest(`/api/teachers/${teacher.id}/reviews`);
       setReviewsByTeacher((current) => ({ ...current, [teacher.id]: data.reviews || [] }));
+      if (typeof data.reviewsEnabled === 'boolean') {
+        setMarketplace((current) => ({ ...current, reviewsEnabled: data.reviewsEnabled }));
+      }
       const mine = data.reviews?.find((review) => review.mine);
       if (mine) {
         setReviewDrafts((current) => ({
@@ -245,8 +272,8 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
           <h1>Find a teacher</h1>
           <p>Choose a teacher, chat privately, and learn at your pace.</p>
         </div>
-        <button className="primary" type="button" onClick={openTeacherEditor}>
-          {ownTeacher ? 'Edit teacher profile' : 'Teach on Polymath'}
+        <button className="primary" type="button" disabled={!ownTeacher && !marketplace.applicationsEnabled} onClick={openTeacherEditor}>
+          {ownTeacher ? 'Edit teacher profile' : marketplace.applicationsEnabled ? 'Teach on Polymath' : 'Teacher signup paused'}
         </button>
       </header>
 
@@ -262,7 +289,10 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
               <input maxLength="100" placeholder="Patient piano teacher for beginners" value={form.headline} onChange={(event) => setForm({ ...form, headline: event.target.value })} required />
             </label>
             <label className="field">Hourly rate in Mcoins
-              <input type="number" min="0" max="100000" step="0.5" value={form.hourlyRateMcoins} onChange={(event) => setForm({ ...form, hourlyRateMcoins: event.target.value })} />
+              <input type="number" min={marketplace.minimumHourlyRateMcoins} max={marketplace.maximumHourlyRateMcoins || 1000000000} step="0.01" value={form.hourlyRateMcoins} onChange={(event) => setForm({ ...form, hourlyRateMcoins: event.target.value })} />
+              <small>{marketplace.maximumHourlyRateMcoins > 0
+                ? `${marketplace.minimumHourlyRateMcoins.toLocaleString()}–${marketplace.maximumHourlyRateMcoins.toLocaleString()} Mcoins allowed`
+                : `${marketplace.minimumHourlyRateMcoins.toLocaleString()} Mcoins minimum; no maximum`}</small>
             </label>
             <label className="field">Location
               <input maxLength="100" placeholder="Singapore or online only" value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} />
@@ -300,6 +330,7 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
             <input maxLength="200" placeholder="Weeknights and Saturday mornings" value={form.availability} onChange={(event) => setForm({ ...form, availability: event.target.value })} />
           </label>
           <label className="teacher-publish-toggle"><input type="checkbox" checked={form.published} onChange={(event) => setForm({ ...form, published: event.target.checked })} /><span>Show my profile to students</span></label>
+          <p className="teacher-editor-fee-note">Polymath platform fee: <strong>{percentLabel(marketplace.platformFeePercent)}%</strong> of future lesson payments processed through Polymath. You keep <strong>{percentLabel(marketplace.teacherKeepsPercent)}%</strong> before any cash-out fee.</p>
           <button className="primary" type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save teacher profile'}</button>
         </form>
       )}
@@ -320,7 +351,7 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
         </select>
       </div>
 
-      <div className="teacher-grid">
+      {marketplace.directoryEnabled && <div className="teacher-grid">
         {filteredTeachers.map((teacher) => {
           const reviews = reviewsByTeacher[teacher.id] || [];
           const draft = { rating: 5, comment: '', ...reviewDrafts[teacher.id] };
@@ -365,7 +396,7 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
 
               {reviewsOpen && (
                 <section className="teacher-reviews">
-                  {!teacher.isSelf && teacher.canReview && (
+                  {!teacher.isSelf && teacher.canReview && marketplace.reviewsEnabled && (
                     <form className="teacher-review-form" onSubmit={(event) => submitReview(event, teacher)}>
                       <strong>Your review</strong>
                       <TeacherStars value={draft.rating} onChange={(rating) => updateReviewDraft(teacher.id, { rating })} label="Your rating" />
@@ -373,8 +404,11 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
                       <button className="primary" type="submit">Post review</button>
                     </form>
                   )}
-                  {!teacher.isSelf && !teacher.canReview && (
+                  {!teacher.isSelf && !teacher.canReview && marketplace.reviewsEnabled && (
                     <button className="teacher-review-unlock" type="button" onClick={() => startChat(teacher)}>Private chat with this teacher before reviewing.</button>
+                  )}
+                  {!teacher.isSelf && !marketplace.reviewsEnabled && (
+                    <p className="teacher-no-reviews">New reviews are temporarily paused. Existing reviews remain visible.</p>
                   )}
                   <div className="teacher-review-list">
                     {reviews.map((review) => (
@@ -391,15 +425,32 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
             </article>
           );
         })}
-      </div>
+      </div>}
 
-      {!filteredTeachers.length && (
+      {!marketplace.directoryEnabled && (
+        <div className="teacher-empty-state">
+          <h2>Teacher directory paused</h2>
+          <p>The administrator has temporarily hidden public teacher listings. Existing profiles and reviews are preserved.</p>
+        </div>
+      )}
+      {marketplace.directoryEnabled && !filteredTeachers.length && (
         <div className="teacher-empty-state">
           <h2>No teachers found yet.</h2>
           <p>Try another filter or become the first teacher in this category.</p>
           <button className="primary" type="button" onClick={openTeacherEditor}>Teach on Polymath</button>
         </div>
       )}
+      <aside className="teacher-marketplace-fee-notice" aria-label="Find a Teacher fees and tax notice">
+        <header><p className="eyebrow">Fees and tax notice</p><h2>Clear before you choose</h2></header>
+        <div>
+          <span><small>Polymath teacher fee</small><strong>{percentLabel(marketplace.platformFeePercent)}%</strong></span>
+          <span><small>Teacher keeps</small><strong>{percentLabel(marketplace.teacherKeepsPercent)}%</strong></span>
+          <span><small>Later cash-out fee</small><strong>{percentLabel(marketplace.withdrawalFeePercent)}%</strong></span>
+        </div>
+        <p>The Polymath teacher fee applies only to lesson payments processed through Polymath. It is a platform fee, not a government tax. Government taxes or payment-processor charges may be separate.</p>
+        {!marketplace.checkoutAvailable && <p>Right now, Find a Teacher provides discovery and private chat only. Polymath does not collect a lesson payment from this directory yet.</p>}
+        {marketplace.notice && <p className="teacher-marketplace-custom-notice">{marketplace.notice}</p>}
+      </aside>
       {status && <p className="form-status floating-status">{status}</p>}
     </section>
   );

@@ -29,6 +29,10 @@ function title(value) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+function displayCheckpoint(value) {
+  return String(value || '—').replaceAll('muscriptor-tester', 'polymath-tester');
+}
+
 function number(value, digits = 4) {
   if (!Number.isFinite(Number(value))) return '—';
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
@@ -128,8 +132,8 @@ function ExperimentDetail({ experiment, onRefresh, onEvaluate, onCancel, busy })
 
       <section className="mlops-summary-grid">
         <article><span>Dataset</span><strong>{experiment.datasetId}</strong><small>{experiment.instrument}</small></article>
-        <article><span>Base</span><strong>{experiment.baseCheckpoint?.label}</strong><small>{experiment.baseCheckpoint?.immutable ? 'Immutable' : 'Review required'}</small></article>
-        <article><span>Candidate</span><strong>{experiment.candidateCheckpoint?.label}</strong><small>{experiment.candidateCheckpoint?.promoted ? 'Production' : 'Not promoted'}</small></article>
+        <article><span>Base</span><strong>{displayCheckpoint(experiment.baseCheckpoint?.label)}</strong><small>{experiment.baseCheckpoint?.immutable ? 'Immutable' : 'Review required'}</small></article>
+        <article><span>Candidate</span><strong>{displayCheckpoint(experiment.candidateCheckpoint?.label)}</strong><small>{experiment.candidateCheckpoint?.promoted ? 'Production' : 'Not promoted'}</small></article>
         <article><span>Compute</span><strong>RunPod GPU</strong><small>{experiment.configuration?.precision || 'BF16'} · {experiment.configuration?.optimizer || 'AdamW'}</small></article>
       </section>
 

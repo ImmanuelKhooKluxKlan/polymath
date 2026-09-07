@@ -180,6 +180,13 @@ class ArtifactStore {
     return targetPath;
   }
 
+  async getBuffer(key) {
+    const normalized = safeKey(key);
+    if (!this.remote) return fs.readFileSync(this.localPath(normalized));
+    const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: normalized }));
+    return Buffer.from(await response.Body.transformToByteArray());
+  }
+
   async sendDownload(res, key, filename, contentType = 'application/octet-stream') {
     const normalized = safeKey(key);
     if (!this.remote) return res.download(this.localPath(normalized), filename);

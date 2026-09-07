@@ -14,11 +14,21 @@ const { StateConflictError, createStateStore } = require('./stateStore');
 const { createArtifactStore } = require('./artifactStore');
 const { createDirectUploadService } = require('./directUpload');
 const { createJobQueue } = require('./jobQueue');
+const { createTaskPool } = require('./taskPool');
+const { PUBLIC_PRODUCT_EVENT_NAMES, sanitizeProductEventBatch } = require('./productAnalytics');
+const {
+  adminArtistCampaign,
+  buildCampaignExcerpt,
+  campaignAttribution,
+  campaignIsLive,
+  campaignPublishProblems,
+  normalizeCampaignInput,
+  publicArtistCampaign,
+} = require('./artistCampaigns');
 const { createModelLab } = require('./modelLab');
 const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
 const { createTeacherAssistant } = require('./teacherAssistant');
-const { createChatBossAssistant } = require('./chatBossAssistant');
 const { createTeacherProjectionStore } = require('./teacherProjection');
 const { createMusicCreationAssistant } = require('./musicCreationAssistant');
 const {
@@ -50,6 +60,47 @@ const {
   publicSiteConfiguration,
   updateSiteConfiguration,
 } = require('./siteConfiguration');
+const { createPolymathAssistant } = require('./polymathAssistant');
+const { createTeacherSpeechService, teacherGreeting } = require('./teacherSpeech');
+const { buildClientOrigins, clientOriginAllowed } = require('./clientOrigins');
+const {
+  refundSupportQuestion,
+  reserveSupportQuestion,
+  supportQuestionAllowance,
+} = require('./supportUsage');
+const {
+  activeVirtualLesson,
+  appendSessionMessage,
+  createVirtualLesson,
+  DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
+  endVirtualLesson,
+  expireVirtualLessons,
+  lessonCatalog,
+  lessonQuote,
+  normalizeClientRequestId,
+  normalizeConversationMode,
+  parseTeacherDemonstration,
+  publicVirtualLesson,
+  sessionIsActive,
+  updateSessionMemory,
+} = require('./virtualLessons');
+const {
+  GLOBAL_ROOM_ID,
+  canReadRoom,
+  canWriteRoom,
+  cleanCommunityText,
+  ensureGlobalRoom,
+  membershipFor,
+  publicMessage,
+  publicRoom,
+  trimRoomMessages,
+} = require('./communityChat');
+const { createChatBossAssistant } = require('./chatBossAssistant');
+const {
+  learningAttemptsForUser,
+  sanitizeLearningAttempt,
+  trimUserLearningAttempts,
+} = require('./learningProgress');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -57,18 +108,8 @@ require('dotenv').config({
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-const CLIENT_ORIGINS = new Set(
-  [CLIENT_ORIGIN, ...String(process.env.CLIENT_ORIGINS || '').split(',')]
-    .map((origin) => origin.trim().replace(/\/+$/, ''))
-    .filter(Boolean),
-);
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
-if (!IS_PRODUCTION) {
-  CLIENT_ORIGINS.add('http://localhost:5173');
-  CLIENT_ORIGINS.add('http://127.0.0.1:5173');
-  CLIENT_ORIGINS.add('http://localhost:5174');
-  CLIENT_ORIGINS.add('http://127.0.0.1:5174');
-}
+const CLIENT_ORIGINS = buildClientOrigins(process.env);
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
 const TEACHER_ASSISTANT = createTeacherAssistant(process.env);
 const CHAT_BOSS_ASSISTANT = createChatBossAssistant(process.env);
@@ -84,8 +125,53 @@ const TEACHER_PROJECTIONS = createTeacherProjectionStore({
 const TEACHER_REQUEST_WINDOWS = new Map();
 const CHAT_BOSS_REQUEST_WINDOWS = new Map();
 const MUSIC_CREATION_REQUEST_WINDOWS = new Map();
+const POLYMATH_ASSISTANT = createPolymathAssistant(process.env);
+const TEACHER_SPEECH = createTeacherSpeechService(process.env);
 const PROCESS_INSTANCE_ID = crypto.randomUUID();
-const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
+const BACKGROUND_JOB_CONCURRENCY = Math.max(
+  1,
+  Math.min(8, Math.floor(Number(process.env.BACKGROUND_JOB_CONCURRENCY || 3))),
+);
+const JOB_CLAIM_MS = Math.max(
+  2 * 60 * 1000,
+  Math.min(15 * 60 * 1000, Number(process.env.JOB_CLAIM_MS) || 5 * 60 * 1000),
+);
+const JOB_CLAIM_HEARTBEAT_MS = Math.max(
+  15 * 1000,
+  Math.min(Math.floor(JOB_CLAIM_MS / 2), Number(process.env.JOB_CLAIM_HEARTBEAT_MS) || 60 * 1000),
+);
+const BUILT_IN_VIRTUAL_TEACHERS = Object.freeze({
+  aria: Object.freeze({
+    id: 'aria', name: 'Aria', title: 'Piano performance teacher',
+    style: 'Calm, warm, precise, and focused on posture, phrasing, and connected movement.',
+    voice: 'Warm and precise', voiceType: 'feminine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
+  }),
+  nova: Object.freeze({
+    id: 'nova', name: 'Padme', title: 'Expressive performance coach',
+    style: 'Warm, confident, affectionate, and focused on expressive melody.',
+    voice: 'Warm, expressive, and playfully flirtatious', voiceType: 'feminine', minimumAge: 18,
+    requiresAdultConfirmation: true, adultCompanionEnabled: true,
+  }),
+  anakin: Object.freeze({
+    id: 'anakin', name: 'Anakin', title: 'Technique coach',
+    style: 'Direct, energetic, and focused on timing, power, and confident movement.',
+    voice: 'Focused and assured', voiceType: 'masculine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
+  }),
+  taylor: Object.freeze({
+    id: 'taylor', name: 'Taylor', title: 'Songwriting coach',
+    style: 'Friendly and thoughtful, with strong melody, phrasing, and storytelling guidance.',
+    voice: 'Thoughtful and expressive', voiceType: 'feminine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
+  }),
+  mace: Object.freeze({
+    id: 'mace', name: 'Mace Windu', title: 'Piano master',
+    style: 'Disciplined, exact, concise, and demanding without empty praise.',
+    voice: 'Deep, calm, and exact', voiceType: 'masculine', minimumAge: 0,
+    requiresAdultConfirmation: false, adultCompanionEnabled: false,
+  }),
+});
 
 const PAYPAL_ENV = String(process.env.PAYPAL_ENV || 'live').trim().toLowerCase();
 const PAYPAL_API_BASE = PAYPAL_ENV === 'sandbox'
@@ -127,10 +213,17 @@ const STATE_STORE = createStateStore({
 const JOB_QUEUE = createJobQueue({
   queueUrl: process.env.JOB_QUEUE_URL,
   region: process.env.JOB_QUEUE_REGION || process.env.AWS_REGION,
+  concurrency: process.env.JOB_QUEUE_CONCURRENCY || BACKGROUND_JOB_CONCURRENCY,
+  visibilityTimeoutSeconds: process.env.JOB_QUEUE_VISIBILITY_SECONDS || 300,
+  visibilityHeartbeatSeconds: process.env.JOB_QUEUE_HEARTBEAT_SECONDS || 60,
 });
+const MEDIA_TRANSCRIPTION_POOL = createTaskPool(BACKGROUND_JOB_CONCURRENCY);
+const SCORE_TRANSLATION_POOL = createTaskPool(Math.min(2, BACKGROUND_JOB_CONCURRENCY));
+const PRODUCT_EVENT_REQUEST_WINDOWS = new Map();
 
 const WITHDRAWAL_FEE_RATE = 0.25;
 const MARKETPLACE_FEE_RATE = 0.25;
+const TEACHER_MARKETPLACE_FEE_RATE = 0.25;
 const MCOINS_PER_USD = 1;
 const READY_SHEET_UPLOAD_MCOIN_COST = 0.5;
 const FREE_READY_SHEET_MONTHLY_LIMIT = 2;
@@ -152,6 +245,9 @@ const DIRECT_UPLOAD_MAX_BYTES = Math.max(
 const MAX_MEDIA_SECONDS = 10 * 60;
 const WELCOME_MCOINS = Math.max(0, Math.floor(Number(process.env.WELCOME_MCOINS || 0)));
 const MARKETPLACE_MAX_BYTES = 8 * 1024 * 1024;
+const VIRTUAL_TEACHER_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const VIRTUAL_TEACHER_MODEL_MAX_BYTES = 25 * 1024 * 1024;
+const BUILT_IN_VIRTUAL_TEACHER_IDS = new Set(Object.keys(BUILT_IN_VIRTUAL_TEACHERS));
 const MUSCRIPTOR_ENABLED = String(process.env.MUSCRIPTOR_ENABLED || 'false').trim().toLowerCase() === 'true';
 const MUSCRIPTOR_ADMIN_ONLY = String(
   process.env.MUSCRIPTOR_ADMIN_ONLY || (IS_PRODUCTION ? 'true' : 'false'),
@@ -161,6 +257,9 @@ const MUSCRIPTOR_MODEL = ['small', 'medium', 'large'].includes(
 )
   ? String(process.env.MUSCRIPTOR_MODEL || 'large').trim().toLowerCase()
   : 'large';
+const MUSCRIPTOR_INFERENCE_VERSION = String(
+  process.env.MUSCRIPTOR_INFERENCE_VERSION || 'phase1-v002',
+).trim().toLowerCase();
 const MUSCRIPTOR_PYTHON = String(process.env.MUSCRIPTOR_PYTHON || '').trim() || (
   process.platform === 'win32'
     ? path.join(os.homedir(), 'muscriptor-eval-env', 'Scripts', 'python.exe')
@@ -202,6 +301,7 @@ const RUNPOD_SERVERLESS = createRunpodServerlessClient({
   s3AccessKeyId: process.env.RUNPOD_S3_ACCESS_KEY_ID,
   s3SecretAccessKey: process.env.RUNPOD_S3_SECRET_ACCESS_KEY,
   replicas: process.env.RUNPOD_S3_REPLICAS,
+  inferenceVersion: MUSCRIPTOR_INFERENCE_VERSION,
   timeoutMs: MUSCRIPTOR_TIMEOUT_MS,
   pollIntervalMs: 2_000,
 });
@@ -209,6 +309,7 @@ const RUNPOD_SERVERLESS = createRunpodServerlessClient({
 const MODEL_LAB = createModelLab(process.env, {
   dataRoot: path.join(DATA_DIR, 'model-lab'),
   artifactStore: ARTIFACT_STORE,
+  inferenceVersion: MUSCRIPTOR_INFERENCE_VERSION,
 });
 
 function artifactKey(group, filename) {
@@ -219,6 +320,8 @@ function artifactKey(group, filename) {
 function uploadContentType(filename, suppliedType = '') {
   const extension = path.extname(String(filename || '')).toLowerCase();
   if (extension === '.pdf') return 'application/pdf';
+  if (extension === '.json') return 'application/json';
+  if (extension === '.mid' || extension === '.midi') return 'audio/midi';
   const normalized = String(suppliedType || '').trim().toLowerCase();
   if (/^(audio|video)\/[a-z0-9.+-]+$/.test(normalized)) return normalized;
   return 'application/octet-stream';
@@ -388,13 +491,31 @@ const DEFAULT_SITE_POLICIES = Object.freeze({
   registrationEnabled: true,
   minimumSignupAge: 0,
   minimumPasswordLength: 8,
-  minimumMarketplacePriceMcoins: 10,
+  minimumMarketplacePriceMcoins: 0,
+  maximumMarketplacePriceMcoins: 100000,
+  marketplaceFeePercent: MARKETPLACE_FEE_RATE * 100,
+  teacherDirectoryEnabled: true,
+  teacherApplicationsEnabled: true,
+  teacherReviewsEnabled: true,
+  minimumTeacherHourlyRateMcoins: 0,
+  maximumTeacherHourlyRateMcoins: 100000,
+  teacherMarketplaceFeePercent: TEACHER_MARKETPLACE_FEE_RATE * 100,
+  teacherMarketplaceNotice: '',
+  listenerRewardsEnabled: true,
+  maximumListenerRewardMcoins: 100,
+  maximumRewardOutflowPerListingMcoins: 1000,
   minimumWithdrawalMcoins: 20,
+  maximumWithdrawalMcoins: 1000000,
+  dailyWithdrawalLimitMcoins: 0,
+  maximumPendingWithdrawalOutflowMcoins: 0,
+  withdrawalFeePercent: WITHDRAWAL_FEE_RATE * 100,
   welcomeMcoins: WELCOME_MCOINS,
+  virtualLessonPricePer30MinutesMcoins: DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
   policyNotice: '',
   termsUrl: '',
   privacyUrl: '',
   supportEmail: '',
+  supportPhone: '',
 });
 
 function ensureStorage() {
@@ -452,11 +573,26 @@ function ensureStorage() {
 
       ],
       purchases: [],
+      personalSongs: [],
       listingReviews: [],
       composerFollows: [],
       messages: [],
+      communityRooms: [{
+        id: GLOBAL_ROOM_ID,
+        name: 'Polymath Free Flow',
+        topic: 'Meet musicians, share ideas, and talk about what matters to you.',
+        visibility: 'global',
+        ownerId: 'platform',
+        createdAt: now,
+      }],
+      communityMemberships: [],
+      communityMessages: [],
+      communityReports: [],
       teacherProfiles: [],
       teacherReviews: [],
+      virtualTeacherCharacters: [],
+      virtualLessonSessions: [],
+      learningAttempts: [],
       withdrawals: [],
       paymentOrders: [],
       subscriptions: [],
@@ -466,6 +602,7 @@ function ensureStorage() {
       webhookEvents: [],
       scoreTranslationJobs: [],
       mediaTranscriptionJobs: [],
+      artistCampaigns: [],
       bands: [],
       bandMemberships: [],
       bandMessages: [],
@@ -528,11 +665,19 @@ function normalizeDb(db) {
     'sessions',
     'listings',
     'purchases',
+    'personalSongs',
     'listingReviews',
     'composerFollows',
     'messages',
+    'communityRooms',
+    'communityMemberships',
+    'communityMessages',
+    'communityReports',
     'teacherProfiles',
     'teacherReviews',
+    'virtualTeacherCharacters',
+    'virtualLessonSessions',
+    'learningAttempts',
     'withdrawals',
     'paymentOrders',
     'subscriptions',
@@ -542,6 +687,7 @@ function normalizeDb(db) {
     'webhookEvents',
     'scoreTranslationJobs',
     'mediaTranscriptionJobs',
+    'artistCampaigns',
     'bands',
     'bandMemberships',
     'bandMessages',
@@ -580,10 +726,18 @@ function normalizeDb(db) {
     user.pro = user.proStatus === 'ACTIVE' || user.pro === true;
   });
   normalized.listings.forEach((listing) => {
-    listing.marketplaceFeeRate = MARKETPLACE_FEE_RATE;
+    if (!listing.listingMode) {
+      listing.listingMode = Number(listing.priceMcoins || 0) > 0 ? 'sale' : 'free';
+    }
+    listing.priceMcoins = Number(listing.priceMcoins || 0);
+    listing.listenerRewardMcoins = Number(listing.listenerRewardMcoins || 0);
+    listing.rewardPaidMcoins = Number(listing.rewardPaidMcoins || 0);
+    if (!Number.isFinite(Number(listing.marketplaceFeeRate))) {
+      listing.marketplaceFeeRate = MARKETPLACE_FEE_RATE;
+    }
   });
   normalized.promotions.forEach((promotion) => {
-    if (!['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind)) {
+    if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind)) {
       promotion.active = false;
       promotion.retired = true;
     }
@@ -598,6 +752,7 @@ function normalizeDb(db) {
     normalized.settings.minimumWithdrawal20MigrationApplied = true;
   }
   normalized.siteConfiguration = normalizeSiteConfiguration(normalized.siteConfiguration);
+  ensureGlobalRoom(normalized);
   return normalized;
 }
 
@@ -821,19 +976,74 @@ function clampInteger(value, minimum, maximum, fallback) {
   return Math.min(maximum, Math.max(minimum, number));
 }
 
+function clampDecimal(value, minimum, maximum, fallback, decimals = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  const clamped = Math.min(maximum, Math.max(minimum, number));
+  return Number(clamped.toFixed(decimals));
+}
+
+function mcoinAmount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : Number.NaN;
+}
+
 function sitePolicies(db) {
   const raw = db?.settings && typeof db.settings === 'object' ? db.settings : {};
   return {
     registrationEnabled: raw.registrationEnabled !== false,
     minimumSignupAge: clampInteger(raw.minimumSignupAge, 0, 120, DEFAULT_SITE_POLICIES.minimumSignupAge),
-    minimumPasswordLength: clampInteger(raw.minimumPasswordLength, 8, 64, DEFAULT_SITE_POLICIES.minimumPasswordLength),
-    minimumMarketplacePriceMcoins: clampInteger(raw.minimumMarketplacePriceMcoins, 1, 100000, DEFAULT_SITE_POLICIES.minimumMarketplacePriceMcoins),
-    minimumWithdrawalMcoins: clampInteger(raw.minimumWithdrawalMcoins, 1, 1000000, DEFAULT_SITE_POLICIES.minimumWithdrawalMcoins),
-    welcomeMcoins: clampInteger(raw.welcomeMcoins, 0, 100000, DEFAULT_SITE_POLICIES.welcomeMcoins),
+    minimumPasswordLength: clampInteger(raw.minimumPasswordLength, 1, 256, DEFAULT_SITE_POLICIES.minimumPasswordLength),
+    minimumMarketplacePriceMcoins: clampDecimal(raw.minimumMarketplacePriceMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.minimumMarketplacePriceMcoins),
+    maximumMarketplacePriceMcoins: clampDecimal(raw.maximumMarketplacePriceMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumMarketplacePriceMcoins),
+    marketplaceFeePercent: clampDecimal(raw.marketplaceFeePercent, 0, 100, DEFAULT_SITE_POLICIES.marketplaceFeePercent),
+    teacherDirectoryEnabled: raw.teacherDirectoryEnabled !== false,
+    teacherApplicationsEnabled: raw.teacherApplicationsEnabled !== false,
+    teacherReviewsEnabled: raw.teacherReviewsEnabled !== false,
+    minimumTeacherHourlyRateMcoins: clampDecimal(
+      raw.minimumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.minimumTeacherHourlyRateMcoins,
+    ),
+    maximumTeacherHourlyRateMcoins: clampDecimal(
+      raw.maximumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.maximumTeacherHourlyRateMcoins,
+    ),
+    teacherMarketplaceFeePercent: clampDecimal(
+      raw.teacherMarketplaceFeePercent,
+      0,
+      100,
+      DEFAULT_SITE_POLICIES.teacherMarketplaceFeePercent,
+    ),
+    teacherMarketplaceNotice: String(raw.teacherMarketplaceNotice || '').trim().slice(0, 600),
+    listenerRewardsEnabled: raw.listenerRewardsEnabled !== false,
+    maximumListenerRewardMcoins: clampDecimal(raw.maximumListenerRewardMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumListenerRewardMcoins),
+    maximumRewardOutflowPerListingMcoins: clampDecimal(raw.maximumRewardOutflowPerListingMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumRewardOutflowPerListingMcoins),
+    minimumWithdrawalMcoins: clampDecimal(raw.minimumWithdrawalMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.minimumWithdrawalMcoins),
+    maximumWithdrawalMcoins: clampDecimal(raw.maximumWithdrawalMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumWithdrawalMcoins),
+    dailyWithdrawalLimitMcoins: clampDecimal(raw.dailyWithdrawalLimitMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.dailyWithdrawalLimitMcoins),
+    maximumPendingWithdrawalOutflowMcoins: clampDecimal(raw.maximumPendingWithdrawalOutflowMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.maximumPendingWithdrawalOutflowMcoins),
+    withdrawalFeePercent: clampDecimal(raw.withdrawalFeePercent, 0, 100, DEFAULT_SITE_POLICIES.withdrawalFeePercent),
+    welcomeMcoins: clampDecimal(raw.welcomeMcoins, 0, 1000000000, DEFAULT_SITE_POLICIES.welcomeMcoins),
+    virtualLessonPricePer30MinutesMcoins: clampDecimal(
+      raw.virtualLessonPricePer30MinutesMcoins,
+      0,
+      1000000000,
+      clampDecimal(
+        raw.virtualLessonPricesMcoins?.[30],
+        0,
+        1000000000,
+        DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
+      ),
+    ),
     policyNotice: String(raw.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(raw.termsUrl || '').trim().slice(0, 500),
     privacyUrl: String(raw.privacyUrl || '').trim().slice(0, 500),
     supportEmail: String(raw.supportEmail || '').trim().toLowerCase().slice(0, 254),
+    supportPhone: String(raw.supportPhone || '').trim().replace(/[^+\d() .-]/g, '').slice(0, 40),
     updatedAt: raw.updatedAt || null,
     updatedBy: raw.updatedBy || null,
   };
@@ -1127,6 +1337,7 @@ function safeUser(user) {
     translationAllowance: translationAllowance(user),
     readySheetAllowance: readySheetAllowance(user),
     readySheetUploadCostMcoins: readySheetUploadCost(user),
+    adultCompanionConfirmed: Boolean(user.adultCompanionConfirmedAt),
     admin: administrator,
     access: {
       regular: true,
@@ -1137,6 +1348,7 @@ function safeUser(user) {
       createMusicArrangements: administrator || entitlementSet.has('create_music.arrangements'),
       createMusicExports: administrator || entitlementSet.has('create_music.exports'),
       createMusicGuideVoice: administrator || entitlementSet.has('create_music.guide_voice'),
+      community: administrator || subscriptionTier !== 'free',
     },
     entitlements: administrator ? ['administrator:*'] : entitlements,
     mustChangePassword: Boolean(user.mustChangePassword),
@@ -1177,6 +1389,19 @@ function requireMusician(req, res, next) {
   });
 }
 
+function requireLearn(req, res, next) {
+  return requireAuth(req, res, () => {
+    if (!hasMusicianAccess(req.user)) {
+      res.status(403).json({
+        error: 'Learning progress sync requires the Musician plan.',
+        code: 'LEARN_ACCESS_REQUIRED',
+      });
+      return;
+    }
+    next();
+  });
+}
+
 function requireAdmin(req, res, next) {
   if (ADMIN_EMAILS.size === 0) {
     return res.status(503).json({ error: 'Admin access is not configured. Set ADMIN_EMAILS on the backend.' });
@@ -1185,6 +1410,20 @@ function requireAdmin(req, res, next) {
     return res.status(403).json({ error: 'Administrator access is required.' });
   }
   next();
+}
+
+function chatBossRequestAllowed(userId, intervalMs = 1500) {
+  const now = Date.now();
+  const previous = CHAT_BOSS_REQUEST_WINDOWS.get(userId) || 0;
+  if (now - previous < intervalMs) return false;
+  CHAT_BOSS_REQUEST_WINDOWS.set(userId, now);
+  if (CHAT_BOSS_REQUEST_WINDOWS.size > 5000) {
+    const cutoff = now - (10 * 60 * 1000);
+    for (const [entryUserId, timestamp] of CHAT_BOSS_REQUEST_WINDOWS) {
+      if (timestamp < cutoff) CHAT_BOSS_REQUEST_WINDOWS.delete(entryUserId);
+    }
+  }
+  return true;
 }
 
 function adminPurchaseRows(db) {
@@ -1284,7 +1523,7 @@ function promotionForUse(db, code, user, expectedKinds, spendMcoins = 0) {
   if (promotion.active === false) return { promotion: null, error: 'That promotion is inactive.' };
   if (!expectedKinds.includes(promotion.kind)) {
     return { promotion: null, error: promotion.retired
-      ? 'That legacy promotion has been retired. Polymath promotions now use percentage discounts only.'
+      ? 'That legacy promotion has been retired.'
       : 'This promotion cannot be used for this purchase.' };
   }
   const now = Date.now();
@@ -1489,6 +1728,65 @@ function validateMarketplaceAsset(format, filename, bytes) {
   }
 }
 
+function requireSubscriber(req, res, next) {
+  return requireAuth(req, res, () => {
+    if (!isAdministrator(req.user) && activeSubscriptionTier(req.user) === 'free') {
+      res.status(403).json({
+        error: 'Community chat is included with Chill and Musician subscriptions.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      });
+      return;
+    }
+    next();
+  });
+  normalized.virtualTeacherCharacters.forEach((character) => {
+    character.builtIn = BUILT_IN_VIRTUAL_TEACHER_IDS.has(String(character.id || ''));
+    character.active = character.active !== false;
+    character.adultCompanionEnabled = Boolean(
+      character.adultCompanionEnabled ?? character.requiresAdultConfirmation,
+    );
+    character.minimumAge = normalizeVirtualTeacherMinimumAge(
+      character.minimumAge,
+      character.requiresAdultConfirmation,
+    );
+    if (character.adultCompanionEnabled) character.minimumAge = Math.max(18, character.minimumAge);
+    character.requiresAdultConfirmation = character.minimumAge >= 18;
+    character.pricePer30MinutesMcoins = normalizeVirtualTeacherPrice(
+      character.pricePer30MinutesMcoins,
+    );
+  });
+}
+
+function readySheetFormat(filename) {
+  const extension = path.extname(String(filename || '')).toLowerCase();
+  if (extension === '.json') return 'JSON';
+  if (extension === '.mid' || extension === '.midi') return 'MIDI';
+  return '';
+}
+
+function readySheetMetadata(bytes, format, fallback = {}) {
+  if (format !== 'JSON') return {
+    title: String(fallback.title || '').trim(),
+    artist: String(fallback.artist || '').trim(),
+  };
+  const parsed = JSON.parse(bytes.toString('utf8'));
+  if (!Array.isArray(parsed) && !Array.isArray(parsed?.notes)
+    && !Array.isArray(parsed?.events) && !Array.isArray(parsed?.tabs)) {
+    throw new Error('Ready-to-play JSON must contain notes, events, or tabs.');
+  }
+  return {
+    title: String(fallback.title || parsed?.title || '').trim(),
+    artist: String(fallback.artist || parsed?.artist || parsed?.composer || '').trim(),
+  };
+}
+
+function publicSupportContact(policies) {
+  return {
+    email: String(policies?.supportEmail || ''),
+    phone: String(policies?.supportPhone || ''),
+  };
+}
+
 function decodeYouTubeText(value = '') {
   return String(value)
     .replace(/&amp;/g, '&')
@@ -1566,6 +1864,35 @@ function marketplaceRanking(averageRating = 0, audienceCount = 0) {
   };
 }
 
+function listingMode(listing) {
+  const mode = String(listing?.listingMode || '').trim().toLowerCase();
+  if (['sale', 'free', 'listener-reward'].includes(mode)) return mode;
+  return Number(listing?.priceMcoins || 0) > 0 ? 'sale' : 'free';
+}
+
+function listenerRewardStatus(listing, db) {
+  const policies = sitePolicies(db);
+  const rewardMcoins = Math.max(0, mcoinAmount(listing.listenerRewardMcoins) || 0);
+  const paidMcoins = Math.max(0, mcoinAmount(listing.rewardPaidMcoins) || 0);
+  const capMcoins = policies.maximumRewardOutflowPerListingMcoins;
+  const remainingCapMcoins = capMcoins > 0
+    ? Math.max(0, Number((capMcoins - paidMcoins).toFixed(2)))
+    : null;
+  const seller = db.users.find((user) => user.id === listing.sellerId);
+  const sellerCanFund = Boolean(seller && (hasUnlimitedMcoins(seller) || Number(seller.mcoins || 0) >= rewardMcoins));
+  const withinCap = remainingCapMcoins === null || remainingCapMcoins >= rewardMcoins;
+  return {
+    rewardMcoins,
+    paidMcoins,
+    remainingCapMcoins,
+    available: listingMode(listing) === 'listener-reward'
+      && policies.listenerRewardsEnabled
+      && rewardMcoins > 0
+      && withinCap
+      && sellerCanFund,
+  };
+}
+
 function publicListing(listing, db, viewerId = null) {
   const seller = db.users.find((user) => user.id === listing.sellerId);
   const purchased = Boolean(viewerId && db.purchases.some(
@@ -1573,8 +1900,16 @@ function publicListing(listing, db, viewerId = null) {
   ));
   const reviewSummary = listingReviewSummary(db, listing.id);
   const composer = publicComposer(seller, db, viewerId);
+  const mode = listingMode(listing);
+  const reward = listenerRewardStatus(listing, db);
   return {
     ...listing,
+    listingMode: mode,
+    priceMcoins: mode === 'sale' ? Number(listing.priceMcoins || 0) : 0,
+    listenerRewardMcoins: mode === 'listener-reward' ? reward.rewardMcoins : 0,
+    rewardPaidMcoins: reward.paidMcoins,
+    rewardRemainingMcoins: reward.remainingCapMcoins,
+    rewardAvailable: reward.available,
     assetPath: undefined,
     seller: seller
       ? composer
@@ -1593,6 +1928,114 @@ function publicListing(listing, db, viewerId = null) {
     purchased,
     owned: viewerId === listing.sellerId,
   };
+}
+
+function publicPersonalSong(song) {
+  return {
+    id: song.id,
+    title: song.title,
+    artist: song.artist || '',
+    instrument: song.instrument,
+    format: song.format,
+    filename: song.filename,
+    size: Number(song.size || 0),
+    createdAt: song.createdAt,
+  };
+}
+
+function attachGeneratedPersonalSong(db, job, {
+  title,
+  artist = '',
+  instrument,
+  filename,
+  assetPath,
+  bytes,
+  sourceJobType,
+}) {
+  const existingForJob = db.personalSongs.find((song) => (
+    song.userId === job.userId && song.sourceJobId === job.id
+  ));
+  if (existingForJob) {
+    job.personalSongId = existingForJob.id;
+    return existingForJob;
+  }
+
+  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+  const duplicate = db.personalSongs.find((song) => (
+    song.userId === job.userId && song.sha256 === sha256
+  ));
+  if (duplicate) {
+    job.personalSongId = duplicate.id;
+    return duplicate;
+  }
+
+  const personalSong = {
+    id: id('song'),
+    userId: job.userId,
+    title: String(title || path.basename(filename, path.extname(filename)) || 'Untitled song').slice(0, 160),
+    artist: String(artist || '').slice(0, 120),
+    instrument: String(instrument || 'piano').slice(0, 60),
+    format: 'JSON',
+    filename: sanitizeFilename(filename || 'ready-to-play-song.json'),
+    assetPath,
+    size: bytes.length,
+    sha256,
+    sourceJobId: job.id,
+    sourceJobType,
+    createdAt: new Date().toISOString(),
+  };
+  db.personalSongs.push(personalSong);
+  job.personalSongId = personalSong.id;
+  return personalSong;
+}
+
+function backfillGeneratedPersonalSongs(db, userId) {
+  let changed = false;
+  const sources = [
+    ...(db.mediaTranscriptionJobs || []).map((job) => ({
+      job,
+      sourceJobType: 'media-transcription',
+      title: job.title,
+    })),
+    ...(db.scoreTranslationJobs || []).map((job) => ({
+      job,
+      sourceJobType: 'score-translation',
+      title: path.basename(job.filename || '', path.extname(job.filename || '')),
+    })),
+  ];
+  for (const source of sources) {
+    const { job } = source;
+    if (job.userId !== userId || job.status !== 'completed' || !job.outputPath || job.personalSongHiddenAt) continue;
+    const existing = db.personalSongs.find((song) => (
+      song.userId === userId && song.sourceJobId === job.id
+    ));
+    if (existing) {
+      if (job.personalSongId !== existing.id) {
+        job.personalSongId = existing.id;
+        changed = true;
+      }
+      continue;
+    }
+    const personalSong = {
+      id: job.personalSongId || `song_${job.id}`,
+      userId,
+      title: String(source.title || 'Untitled song').slice(0, 160),
+      artist: '',
+      instrument: String(job.instrument || 'piano').slice(0, 60),
+      format: 'JSON',
+      filename: sanitizeFilename(job.outputFilename || 'ready-to-play-song.json'),
+      assetPath: job.outputPath,
+      size: 0,
+      sha256: '',
+      sourceJobId: job.id,
+      sourceJobType: source.sourceJobType,
+      createdAt: job.completedAt || job.startedAt || new Date().toISOString(),
+    };
+    db.personalSongs.push(personalSong);
+    job.personalSongId = personalSong.id;
+    changed = true;
+  }
+  return changed;
 }
 
 function listingReviewSummary(db, listingId) {
@@ -1621,6 +2064,7 @@ function composerBuyerCount(db, composerId) {
   return new Set(
     db.purchases
       .filter((purchase) => listingIds.has(purchase.listingId))
+      .filter((purchase) => Number(purchase.grossMcoins ?? purchase.amountMcoins ?? purchase.amount ?? 0) > 0)
       .map((purchase) => purchase.buyerId),
   ).size;
 }
@@ -1769,6 +2213,437 @@ const mediaUpload = multer({
   },
 });
 
+const virtualTeacherUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    files: 2,
+    fields: 8,
+    fileSize: VIRTUAL_TEACHER_MODEL_MAX_BYTES,
+  },
+  fileFilter(req, file, callback) {
+    const mimetype = String(file.mimetype || '').toLowerCase();
+    const extension = path.extname(String(file.originalname || '')).toLowerCase();
+    const isImage = file.fieldname === 'image'
+      && ['image/png', 'image/jpeg', 'image/webp'].includes(mimetype);
+    const isModel = file.fieldname === 'model'
+      && extension === '.glb'
+      && ['model/gltf-binary', 'application/octet-stream'].includes(mimetype);
+    if (isImage || isModel) {
+      callback(null, true);
+      return;
+    }
+    const error = new Error(file.fieldname === 'model'
+      ? 'The optional 3D model must be a binary glTF 2.0 (.glb) file.'
+      : 'Upload a PNG, JPEG, or WebP character image.');
+    error.status = 400;
+    callback(error);
+  },
+});
+
+function virtualTeacherImageContentType(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if (buffer.length >= 12
+      && buffer.subarray(0, 4).equals(Buffer.from('RIFF'))
+      && buffer.subarray(8, 12).equals(Buffer.from('WEBP'))) return 'image/webp';
+  if (buffer.length >= 8
+      && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  return '';
+}
+
+function activatedSubscriptionValue(record, product) {
+  if (!record || !product) return 0;
+  if (record.isUpgrade) {
+    const previous = PRODUCTS[record.upgradeFromProductId];
+    return Number(Math.max(0, Number(product.price || 0) - Number(previous?.price || 0)).toFixed(2));
+  }
+  return Number(Math.max(0, Number(record.checkoutPrice || product.price || 0)).toFixed(2));
+}
+
+function subscriptionAttributionProperties(record, product) {
+  if (!record?.campaignId) return {};
+  return {
+    campaignId: record.campaignId,
+    campaignSlug: record.campaignSlug || '',
+    referralCode: record.referralCode || '',
+    activationValueUsd: activatedSubscriptionValue(record, product),
+  };
+}
+
+function campaignSongContentType(format) {
+  return format === 'JSON' ? 'application/json' : 'audio/midi';
+}
+
+function uniqueCampaignSlug(campaigns, slug, ignoredId = '') {
+  return !campaigns.some((campaign) => campaign.id !== ignoredId && campaign.slug === slug);
+}
+
+function campaignUploadFiles(req) {
+  return {
+    song: req.files?.song?.[0] || null,
+    cover: req.files?.cover?.[0] || null,
+  };
+}
+
+async function persistCampaignFiles(campaignId, files, current = {}) {
+  let songAssetKey = '';
+  let coverAssetKey = '';
+  const changes = {};
+  const revision = `${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
+  try {
+    if (files.song?.buffer?.length) {
+      const songFilename = sanitizeFilename(files.song.originalname || 'challenge.json');
+      const songFormat = readySheetFormat(songFilename);
+      if (!songFormat) throw Object.assign(new Error('Use a ready-to-play JSON or MIDI challenge.'), { status: 400 });
+      validateMarketplaceAsset(songFormat, songFilename, files.song.buffer);
+      const metadata = readySheetMetadata(files.song.buffer, songFormat);
+      songAssetKey = artifactKey(
+        `artist-campaigns/${campaignId}`,
+        `${campaignId}-${revision}-challenge-${songFilename}`,
+      );
+      await ARTIFACT_STORE.putBuffer(songAssetKey, files.song.buffer, campaignSongContentType(songFormat));
+      Object.assign(changes, {
+        songAssetKey,
+        songFilename,
+        songFormat,
+        songSize: files.song.buffer.length,
+        songSha256: crypto.createHash('sha256').update(files.song.buffer).digest('hex'),
+        detectedTitle: metadata.title || '',
+        detectedArtist: metadata.artist || '',
+      });
+    }
+    if (files.cover?.buffer?.length) {
+      const coverContentType = virtualTeacherImageContentType(files.cover.buffer);
+      if (!coverContentType) {
+        throw Object.assign(new Error('The campaign cover is not a valid PNG, JPEG, or WebP image.'), { status: 400 });
+      }
+      const extension = coverContentType === 'image/png' ? 'png' : coverContentType === 'image/jpeg' ? 'jpg' : 'webp';
+      coverAssetKey = artifactKey(
+        `artist-campaigns/${campaignId}`,
+        `${campaignId}-${revision}-cover.${extension}`,
+      );
+      await ARTIFACT_STORE.putBuffer(coverAssetKey, files.cover.buffer, coverContentType);
+      Object.assign(changes, { coverAssetKey, coverContentType });
+    }
+    return changes;
+  } catch (error) {
+    await Promise.all([
+      songAssetKey && songAssetKey !== current.songAssetKey ? safeRemoveArtifact(songAssetKey) : null,
+      coverAssetKey && coverAssetKey !== current.coverAssetKey ? safeRemoveArtifact(coverAssetKey) : null,
+    ]);
+    throw error;
+  }
+}
+
+function campaignExcerptNeedsRefresh(current = {}, candidate = {}, files = {}) {
+  return Boolean(
+    !current.publicSongAssetKey
+    || files.songAssetKey
+    || current.songAssetKey !== candidate.songAssetKey
+    || current.previewStartSeconds !== candidate.previewStartSeconds
+    || current.previewDurationSeconds !== candidate.previewDurationSeconds
+    || current.artist !== candidate.artist
+    || current.title !== candidate.title
+    || current.slug !== candidate.slug
+  );
+}
+
+function enforceCampaignRevisionSafety(current = {}, candidate = {}, files = {}) {
+  const songChanged = Boolean(files.songAssetKey && files.songAssetKey !== current.songAssetKey);
+  const performanceChanged = songChanged
+    || current.previewStartSeconds !== candidate.previewStartSeconds
+    || current.previewDurationSeconds !== candidate.previewDurationSeconds;
+  const identityChanged = current.artist !== candidate.artist || current.title !== candidate.title;
+  const publicCreativeChanged = identityChanged
+    || current.slug !== candidate.slug
+    || current.hook !== candidate.hook
+    || current.description !== candidate.description
+    || current.artistUrl !== candidate.artistUrl
+    || current.challengeScore !== candidate.challengeScore
+    || Boolean(files.coverAssetKey && files.coverAssetKey !== current.coverAssetKey);
+
+  if (performanceChanged) {
+    candidate.humanVerified = false;
+    candidate.qaScore = 0;
+    candidate.verificationNotes = '';
+  }
+  if (performanceChanged || publicCreativeChanged) candidate.artistApproved = false;
+  if (songChanged || identityChanged) {
+    candidate.rightsConfirmed = false;
+    candidate.rightsHolder = '';
+    candidate.rightsBasis = '';
+  }
+  if (performanceChanged || publicCreativeChanged) candidate.status = 'draft';
+  return candidate;
+}
+
+async function persistCampaignExcerpt(campaign) {
+  if (!campaign.songAssetKey || !campaign.songFormat) return {};
+  const source = await ARTIFACT_STORE.getBuffer(campaign.songAssetKey);
+  const excerpt = buildCampaignExcerpt(source, campaign.songFormat, campaign);
+  const revision = `${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
+  const publicSongAssetKey = artifactKey(
+    `artist-campaigns/${campaign.id}`,
+    `${campaign.id}-${revision}-public.json`,
+  );
+  try {
+    await ARTIFACT_STORE.putBuffer(publicSongAssetKey, excerpt.buffer, 'application/json');
+    return {
+      publicSongAssetKey,
+      publicSongSize: excerpt.buffer.length,
+      publicSongSha256: crypto.createHash('sha256').update(excerpt.buffer).digest('hex'),
+      excerptNoteCount: excerpt.noteCount,
+      excerptDurationSeconds: excerpt.durationSeconds,
+      excerptGeneratedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    await safeRemoveArtifact(publicSongAssetKey);
+    throw error;
+  }
+}
+
+function inspectVirtualTeacherGlb(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if (buffer.length < 20 || buffer.subarray(0, 4).toString('ascii') !== 'glTF') {
+    throw Object.assign(new Error('The uploaded model is not a valid binary glTF file.'), { status: 400 });
+  }
+  const version = buffer.readUInt32LE(4);
+  const declaredLength = buffer.readUInt32LE(8);
+  if (version !== 2 || declaredLength !== buffer.length) {
+    throw Object.assign(new Error('The character model must use binary glTF 2.0.'), { status: 400 });
+  }
+  const jsonLength = buffer.readUInt32LE(12);
+  const jsonType = buffer.readUInt32LE(16);
+  if (jsonType !== 0x4e4f534a || jsonLength < 2 || 20 + jsonLength > buffer.length) {
+    throw Object.assign(new Error('The GLB is missing its required JSON scene data.'), { status: 400 });
+  }
+  let document;
+  try {
+    document = JSON.parse(buffer.subarray(20, 20 + jsonLength).toString('utf8').trim());
+  } catch {
+    throw Object.assign(new Error('The GLB contains invalid scene data.'), { status: 400 });
+  }
+  if (String(document?.asset?.version || '') !== '2.0') {
+    throw Object.assign(new Error('The character model must declare glTF 2.0.'), { status: 400 });
+  }
+  const nodes = Array.isArray(document.nodes) ? document.nodes : [];
+  const skins = Array.isArray(document.skins) ? document.skins : [];
+  const meshes = Array.isArray(document.meshes) ? document.meshes : [];
+  if (nodes.length > 2500 || skins.length > 50 || meshes.length > 200 || (document.accessors || []).length > 5000) {
+    throw Object.assign(new Error('The GLB rig is too complex for safe browser playback.'), { status: 400 });
+  }
+  const externalResources = [
+    ...(Array.isArray(document.buffers) ? document.buffers : []),
+    ...(Array.isArray(document.images) ? document.images : []),
+  ].some((resource) => typeof resource?.uri === 'string' && resource.uri.trim());
+  if (externalResources) {
+    throw Object.assign(new Error('The GLB must contain all geometry and textures internally; external links are not allowed.'), { status: 400 });
+  }
+  const jointIndexes = new Set(skins.flatMap((skin) => Array.isArray(skin.joints) ? skin.joints : []));
+  if (!skins.length || !meshes.length || jointIndexes.size < 6) {
+    throw Object.assign(new Error('The GLB needs a skinned human rig with at least 6 joints and a mesh.'), { status: 400 });
+  }
+  const recognisedPatterns = [
+    /hip|pelvis/i, /spine|chest/i, /head/i, /(left|[_ .-]l).*arm|arm.*(left|[_ .-]l)/i,
+    /(right|[_ .-]r).*arm|arm.*(right|[_ .-]r)/i, /(left|right).*leg|leg.*(left|right)/i,
+  ];
+  const names = [...jointIndexes].map((index) => String(nodes[index]?.name || '')).filter(Boolean);
+  const recognised = recognisedPatterns.filter((pattern) => names.some((name) => pattern.test(name))).length;
+  if (recognised < 4) {
+    throw Object.assign(new Error('Use a human GLB rig with named hips, spine, head, arms, and legs.'), { status: 400 });
+  }
+  return { version, jointCount: jointIndexes.size, nodeCount: nodes.length, meshCount: meshes.length };
+}
+
+function normalizeVirtualTeacherMinimumAge(value, legacyAdultConfirmation = false) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return legacyAdultConfirmation ? 18 : 0;
+  }
+  return clampInteger(value, 0, 99, legacyAdultConfirmation ? 18 : 0);
+}
+
+function normalizeVirtualTeacherPrice(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Number(Math.min(1000000000, Math.max(0, number)).toFixed(2));
+}
+
+function virtualTeacherInput(body = {}, fallback = {}) {
+  const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
+  const text = (key, maximum) => String(has(key) ? body[key] : fallback[key] || '').trim().slice(0, maximum);
+  const name = text('name', 50);
+  const title = text('title', 80);
+  const description = text('description', 240);
+  const voice = text('voice', 50);
+  const requestedVoiceType = String(has('voiceType') ? body.voiceType : fallback.voiceType || '').trim().toLowerCase();
+  const voiceType = ['feminine', 'masculine'].includes(requestedVoiceType) ? requestedVoiceType : 'neutral';
+  const armTone = String(has('armTone') ? body.armTone : fallback.armTone || '').trim().toLowerCase() === 'dark'
+    ? 'dark'
+    : 'light';
+  const legacyAdult = has('requiresAdultConfirmation')
+    ? String(body.requiresAdultConfirmation).trim().toLowerCase() === 'true'
+    : Boolean(fallback.requiresAdultConfirmation);
+  const adultCompanionEnabled = has('adultCompanionEnabled')
+    ? String(body.adultCompanionEnabled).trim().toLowerCase() === 'true'
+    : Boolean(fallback.adultCompanionEnabled ?? legacyAdult);
+  const ageValue = has('minimumAge') ? body.minimumAge : fallback.minimumAge;
+  if (ageValue !== null && ageValue !== undefined && String(ageValue).trim() !== '') {
+    const parsedAge = Number(ageValue);
+    if (!Number.isInteger(parsedAge) || parsedAge < 0 || parsedAge > 99) {
+      throw Object.assign(new Error('Character minimum age must be a whole number from 0 to 99.'), { status: 400 });
+    }
+  }
+  const minimumAge = Math.max(
+    adultCompanionEnabled ? 18 : 0,
+    normalizeVirtualTeacherMinimumAge(ageValue, legacyAdult),
+  );
+  const priceValue = has('pricePer30MinutesMcoins')
+    ? body.pricePer30MinutesMcoins
+    : fallback.pricePer30MinutesMcoins;
+  if (priceValue !== null && priceValue !== undefined && String(priceValue).trim() !== '') {
+    const parsedPrice = Number(priceValue);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0 || parsedPrice > 1000000000) {
+      throw Object.assign(new Error('Character price must be between 0 and 1,000,000,000 Mcoins per 30 minutes.'), { status: 400 });
+    }
+  }
+  if (name.length < 2) throw Object.assign(new Error('Character name must contain at least 2 characters.'), { status: 400 });
+  if (title.length < 2) throw Object.assign(new Error('Add a short role or title.'), { status: 400 });
+  if (description.length < 5) throw Object.assign(new Error('Add a short character description.'), { status: 400 });
+  if (voice.length < 2) throw Object.assign(new Error('Describe the character voice or teaching style.'), { status: 400 });
+  return {
+    name,
+    title,
+    description,
+    voice,
+    voiceType,
+    armTone,
+    minimumAge,
+    requiresAdultConfirmation: minimumAge >= 18,
+    adultCompanionEnabled,
+    pricePer30MinutesMcoins: normalizeVirtualTeacherPrice(priceValue),
+    active: has('active') ? String(body.active).trim().toLowerCase() !== 'false' : fallback.active !== false,
+  };
+}
+
+function mergedVirtualTeacher(character, fallback = null) {
+  const source = character || {};
+  const base = fallback || {};
+  const adultCompanionEnabled = Boolean(
+    source.adultCompanionEnabled
+      ?? base.adultCompanionEnabled
+      ?? source.requiresAdultConfirmation
+      ?? base.requiresAdultConfirmation,
+  );
+  const minimumAge = Math.max(
+    adultCompanionEnabled ? 18 : 0,
+    normalizeVirtualTeacherMinimumAge(
+      source.minimumAge ?? base.minimumAge,
+      source.requiresAdultConfirmation ?? base.requiresAdultConfirmation,
+    ),
+  );
+  return {
+    ...base,
+    ...source,
+    id: String(source.id || base.id || '').trim(),
+    name: String(source.name || base.name || 'Virtual teacher').trim().slice(0, 80),
+    title: String(source.title || base.title || 'Polymath music teacher').trim().slice(0, 120),
+    description: String(source.description || source.style || base.description || base.style || 'Clear, patient, and precise').trim().slice(0, 280),
+    style: String(source.description || source.style || base.description || base.style || 'Clear, patient, and precise').trim().slice(0, 280),
+    voice: String(source.voice || base.voice || 'Natural and expressive').trim().slice(0, 100),
+    voiceType: ['feminine', 'masculine'].includes(String(source.voiceType || base.voiceType || '').toLowerCase())
+      ? String(source.voiceType || base.voiceType).toLowerCase()
+      : 'neutral',
+    armTone: (source.armTone || base.armTone) === 'dark' ? 'dark' : 'light',
+    minimumAge,
+    requiresAdultConfirmation: minimumAge >= 18,
+    adultCompanionEnabled,
+    pricePer30MinutesMcoins: normalizeVirtualTeacherPrice(
+      source.pricePer30MinutesMcoins ?? base.pricePer30MinutesMcoins,
+    ),
+    active: source.active !== false,
+    builtIn: Boolean(source.builtIn || base.builtIn),
+  };
+}
+
+function virtualTeacherCatalog(db, { includeInactive = false } = {}) {
+  const records = Array.isArray(db?.virtualTeacherCharacters) ? db.virtualTeacherCharacters : [];
+  const overrideById = new Map(
+    records
+      .filter((character) => BUILT_IN_VIRTUAL_TEACHER_IDS.has(String(character.id || '')))
+      .map((character) => [character.id, character]),
+  );
+  const builtIns = Object.values(BUILT_IN_VIRTUAL_TEACHERS).map((teacher) => mergedVirtualTeacher(
+    overrideById.get(teacher.id),
+    { ...teacher, description: teacher.style, builtIn: true, active: true },
+  ));
+  const custom = records
+    .filter((character) => !BUILT_IN_VIRTUAL_TEACHER_IDS.has(String(character.id || '')))
+    .map((character) => mergedVirtualTeacher(character));
+  return [...builtIns, ...custom]
+    .filter((character) => includeInactive || character.active)
+    .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' }));
+}
+
+function publicVirtualTeacherCharacter(character, globalPricePer30MinutesMcoins) {
+  const pricePer30MinutesMcoins = normalizeVirtualTeacherPrice(character.pricePer30MinutesMcoins);
+  const effectivePricePer30MinutesMcoins = pricePer30MinutesMcoins === null
+    ? clampDecimal(
+      globalPricePer30MinutesMcoins,
+      0,
+      1000000000,
+      DEFAULT_LESSON_PRICE_PER_30_MINUTES_MCOINS,
+    )
+    : pricePer30MinutesMcoins;
+  return {
+    id: character.id,
+    name: character.name,
+    title: character.title,
+    description: character.description || character.style,
+    voice: character.voice,
+    voiceType: ['feminine', 'masculine'].includes(character.voiceType) ? character.voiceType : 'neutral',
+    armTone: character.armTone === 'dark' ? 'dark' : 'light',
+    minimumAge: normalizeVirtualTeacherMinimumAge(character.minimumAge, character.requiresAdultConfirmation),
+    requiresAdultConfirmation: normalizeVirtualTeacherMinimumAge(character.minimumAge, character.requiresAdultConfirmation) >= 18,
+    adultCompanionEnabled: Boolean(character.adultCompanionEnabled),
+    pricePer30MinutesMcoins,
+    effectivePricePer30MinutesMcoins,
+    active: character.active !== false,
+    builtIn: Boolean(character.builtIn),
+    imagePath: character.imageKey
+      ? `/api/virtual-teachers/${encodeURIComponent(character.id)}/image?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`
+      : '',
+    modelPath: character.modelKey
+      ? `/api/virtual-teachers/${encodeURIComponent(character.id)}/model?v=${encodeURIComponent(character.updatedAt || character.createdAt || '')}`
+      : '',
+    rig: character.rig || null,
+    custom: !character.builtIn,
+    createdAt: character.createdAt || null,
+    updatedAt: character.updatedAt || character.createdAt || null,
+  };
+}
+
+function resolvedVirtualLessonTeacher(db, candidate) {
+  const requestedId = String(candidate?.id || '').trim().replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+  const catalog = virtualTeacherCatalog(db);
+  const teacher = requestedId
+    ? catalog.find((character) => character.id === requestedId) || null
+    : catalog.find((character) => character.id === 'aria') || catalog[0] || null;
+  if (!teacher) return null;
+  return {
+    id: teacher.id,
+    name: teacher.name,
+    title: teacher.title,
+    style: teacher.style || teacher.description,
+    voice: teacher.voice,
+    voiceType: teacher.voiceType,
+    minimumAge: teacher.minimumAge,
+    requiresAdultConfirmation: teacher.requiresAdultConfirmation,
+    adultCompanionEnabled: teacher.adultCompanionEnabled,
+    pricePer30MinutesMcoins: teacher.pricePer30MinutesMcoins,
+  };
+}
+
 function selectMuscriptorExecution({ serverlessConfigured, remoteUrl }) {
   if (serverlessConfigured) return 'runpod-serverless';
   if (String(remoteUrl || '').trim()) return 'remote-gpu';
@@ -1789,11 +2664,11 @@ function muscriptorAvailability() {
   const workerExists = fs.existsSync(MUSCRIPTOR_WORKER);
   let reason = '';
   if (!MUSCRIPTOR_ENABLED) {
-    reason = 'MuScriptor is disabled. Enable it only for use permitted by the model license.';
+    reason = 'Polymath transcription is disabled. Enable it only for use permitted by the model licence.';
   } else if (!serverlessConfigured && !remoteConfigured && !pythonExists) {
-    reason = 'The MuScriptor Python environment was not found.';
+    reason = 'The Polymath transcription environment was not found.';
   } else if (!serverlessConfigured && !remoteConfigured && !workerExists) {
-    reason = 'The Polymath MuScriptor worker was not found.';
+    reason = 'The Polymath transcription worker was not found.';
   } else if (!ffmpegExists) {
     reason = 'FFmpeg is unavailable for audio and video preparation.';
   }
@@ -1804,7 +2679,9 @@ function muscriptorAvailability() {
     configured: MUSCRIPTOR_ENABLED,
     adminOnly: MUSCRIPTOR_ADMIN_ONLY,
     model: MUSCRIPTOR_MODEL,
+    checkpoint: RUNPOD_SERVERLESS.inferenceVersion,
     execution,
+    parallelSubmissions: execution === 'runpod-serverless' ? BACKGROUND_JOB_CONCURRENCY : 1,
     storageTargets: serverlessConfigured ? RUNPOD_SERVERLESS.storageTargetCount : 0,
     maxBytes: null,
     maxDurationSeconds: MAX_MEDIA_SECONDS,
@@ -1833,10 +2710,16 @@ function publicMediaTranscriptionJob(job) {
     costMcoins: Number(job.costMcoins || 0),
     vocalMelodyNoteCount: Number(job.vocalMelodyNoteCount || 0),
     startedAt: job.startedAt,
+    updatedAt: job.updatedAt || job.startedAt,
     completedAt: job.completedAt || null,
     failedAt: job.failedAt || null,
     error: job.error || '',
+    attemptCount: Math.max(0, Number(job.attemptCount || 0)),
+    refunded: Boolean(job.refundedAt),
+    retryable: job.status === 'failed',
+    feedback: job.feedback?.value || '',
     outputFilename: job.status === 'completed' ? job.outputFilename : undefined,
+    personalSongId: job.status === 'completed' ? job.personalSongId : undefined,
   };
 }
 
@@ -1844,9 +2727,45 @@ async function updateMediaTranscriptionJob(jobId, changes) {
   const db = await readDb();
   const job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
   if (!job) return null;
-  Object.assign(job, changes);
+  Object.assign(job, changes, { updatedAt: new Date().toISOString() });
   await writeDb(db);
   return job;
+}
+
+function productEventRequestAllowed(actorId) {
+  const actor = String(actorId || '').slice(0, 120);
+  if (!actor) return false;
+  const now = Date.now();
+  const minute = Math.floor(now / 60000);
+  const current = PRODUCT_EVENT_REQUEST_WINDOWS.get(actor);
+  const next = current?.minute === minute
+    ? { minute, count: current.count + 1 }
+    : { minute, count: 1 };
+  PRODUCT_EVENT_REQUEST_WINDOWS.set(actor, next);
+  if (PRODUCT_EVENT_REQUEST_WINDOWS.size > 10000) {
+    for (const [key, value] of PRODUCT_EVENT_REQUEST_WINDOWS) {
+      if (value.minute < minute - 2) PRODUCT_EVENT_REQUEST_WINDOWS.delete(key);
+    }
+  }
+  return next.count <= 30;
+}
+
+async function recordTrustedProductEvent(eventName, userId, properties = {}) {
+  const [event] = sanitizeProductEventBatch([{
+    eventId: `event_${crypto.randomUUID()}`,
+    eventName,
+    occurredAt: new Date().toISOString(),
+    sessionId: `server_${crypto.randomUUID()}`,
+    path: 'server',
+    release: process.env.APP_RELEASE || process.env.GITHUB_SHA || '',
+    properties,
+  }], { userId });
+  if (!event) return;
+  try {
+    await STATE_STORE.recordProductEvents([event]);
+  } catch (error) {
+    console.error(`Product event ${eventName} could not be recorded:`, error.message);
+  }
 }
 
 async function claimBackgroundJob(collection, jobId) {
@@ -1857,8 +2776,13 @@ async function claimBackgroundJob(collection, jobId) {
   const activeClaim = Number.isFinite(claimExpires) && claimExpires > Date.now();
   if (activeClaim && job.claimedBy !== PROCESS_INSTANCE_ID && JOB_QUEUE.enabled) return null;
   if (activeClaim && job.claimedBy === PROCESS_INSTANCE_ID) return null;
+  const claimedAt = new Date().toISOString();
   job.claimedBy = PROCESS_INSTANCE_ID;
   job.claimExpiresAt = new Date(Date.now() + JOB_CLAIM_MS).toISOString();
+  job.claimedAt = claimedAt;
+  job.claimHeartbeatAt = claimedAt;
+  job.updatedAt = claimedAt;
+  job.attemptCount = Math.max(0, Number(job.attemptCount || 0)) + 1;
   try {
     await writeDb(db);
     return job;
@@ -1868,12 +2792,50 @@ async function claimBackgroundJob(collection, jobId) {
   }
 }
 
+async function renewBackgroundJobClaim(collection, jobId) {
+  const db = await readDb();
+  const job = db[collection]?.find((candidate) => candidate.id === jobId);
+  if (!job || job.status !== 'processing' || job.claimedBy !== PROCESS_INSTANCE_ID) return false;
+  const heartbeatAt = new Date().toISOString();
+  job.claimHeartbeatAt = heartbeatAt;
+  job.claimExpiresAt = new Date(Date.now() + JOB_CLAIM_MS).toISOString();
+  job.updatedAt = heartbeatAt;
+  try {
+    await writeDb(db);
+    return true;
+  } catch (error) {
+    if (error instanceof StateConflictError) return false;
+    throw error;
+  }
+}
+
+function startBackgroundJobClaimHeartbeat(collection, jobId) {
+  let running = false;
+  let stopped = false;
+  const timer = setInterval(async () => {
+    if (running || stopped) return;
+    running = true;
+    try {
+      await renewBackgroundJobClaim(collection, jobId);
+    } catch (error) {
+      console.error(`Background job ${jobId} claim heartbeat failed:`, error);
+    } finally {
+      running = false;
+    }
+  }, JOB_CLAIM_HEARTBEAT_MS);
+  timer.unref?.();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
 let mediaProgressWriteQueue = Promise.resolve();
 
 function queueMediaTranscriptionUpdate(jobId, changes) {
   mediaProgressWriteQueue = mediaProgressWriteQueue
     .then(() => updateMediaTranscriptionJob(jobId, changes))
-    .catch((error) => console.error('MuScriptor progress update failed:', error));
+    .catch((error) => console.error('Polymath progress update failed:', error));
 }
 
 function safeRemoveUpload(filePath) {
@@ -1986,13 +2948,13 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     if (error.name === 'AbortError') {
       throw new Error(`Music transcription took longer than the ${Math.round(MUSCRIPTOR_TIMEOUT_MS / 60000)}-minute processing limit.`);
     }
-    throw new Error(`Could not reach the RunPod MuScriptor worker: ${error.message}`);
+    throw new Error(`Could not reach the RunPod Polymath worker: ${error.message}`);
   }
 
   if (!response.ok || !response.body) {
     clearTimeout(timer);
     const details = (await response.text().catch(() => '')).trim().slice(0, 1000);
-    throw new Error(`RunPod MuScriptor returned HTTP ${response.status}${details ? `: ${details}` : ''}`);
+    throw new Error(`RunPod Polymath returned HTTP ${response.status}${details ? `: ${details}` : ''}`);
   }
 
   const collector = createMuscriptorEventCollector({
@@ -2048,11 +3010,11 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
   }
 
   const { notes, progress, beatGrid, diagnostics } = collector.finish();
-  if (!notes.length) throw new Error('MuScriptor could not detect playable notes in this recording.');
+  if (!notes.length) throw new Error('Polymath could not detect playable notes in this recording.');
 
   const payload = {
     title: job.title || 'Uploaded recording',
-    composer: 'MuScriptor transcription',
+    composer: 'Polymath transcription',
     instrument: job.instrument,
     bpm: beatGrid?.bpm || 120,
     beatsPerBar: beatGrid?.beatsPerBar || 4,
@@ -2061,7 +3023,7 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
     instrumentGroups: [...new Set(notes.map((note) => note.instrument))].sort(),
     sourceType: 'muscriptor-audio-transcription',
     readyToPlayFormat: 'polymath-musician-json-v1',
-    transcriptionProvider: `MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`,
+    transcriptionProvider: `Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`,
     modelLicense: 'CC-BY-NC-4.0',
     progress,
     transcriptionDiagnostics: diagnostics,
@@ -2071,12 +3033,17 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
 }
 
 async function runServerlessMuscriptor(job, preparedPath, outputPath, constraints) {
+  let lastProgressSignature = '';
   const raw = await RUNPOD_SERVERLESS.transcribe({
     job,
     preparedPath,
     constraints,
     onProgress(remote) {
       const state = String(remote.state || '').trim().toUpperCase();
+      const progressLabel = String(remote.progress || '').trim();
+      const signature = `${state}:${progressLabel}`;
+      if (signature === lastProgressSignature) return;
+      lastProgressSignature = signature;
       if (state === 'IN_QUEUE') {
         queueMediaTranscriptionUpdate(job.id, {
           stage: 'Waiting for a RunPod Serverless GPU worker',
@@ -2084,7 +3051,7 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
         });
       } else if (state === 'IN_PROGRESS') {
         queueMediaTranscriptionUpdate(job.id, {
-          stage: String(remote.progress || 'MuScriptor is detecting notes and instruments'),
+          stage: progressLabel || 'Polymath is detecting notes and instruments',
           progress: 55,
         });
       }
@@ -2093,7 +3060,7 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
   const payload = {
     ...raw,
     title: raw.title || job.title || 'Uploaded recording',
-    composer: raw.composer || 'MuScriptor transcription',
+    composer: raw.composer || 'Polymath transcription',
     instrument: raw.instrument || job.instrument || 'band',
     bpm: Number(raw.bpm) || 120,
     notes: Array.isArray(raw.notes) ? raw.notes : [],
@@ -2102,11 +3069,11 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
       : [...new Set((raw.notes || []).map((note) => note.instrument).filter(Boolean))].sort(),
     sourceType: raw.sourceType || 'muscriptor-audio-transcription',
     readyToPlayFormat: raw.readyToPlayFormat || 'polymath-musician-json-v1',
-    transcriptionProvider: raw.transcriptionProvider || `MuScriptor ${MUSCRIPTOR_MODEL} on RunPod Serverless`,
+    transcriptionProvider: raw.transcriptionProvider || `Polymath ${MUSCRIPTOR_MODEL} on RunPod Serverless`,
     modelLicense: raw.modelLicense || 'CC-BY-NC-4.0',
   };
   if (!payload.notes.length) {
-    throw new Error('RunPod Serverless completed without playable MuScriptor notes.');
+    throw new Error('RunPod Serverless completed without playable Polymath notes.');
   }
   fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
   return payload;
@@ -2115,6 +3082,7 @@ async function runServerlessMuscriptor(job, preparedPath, outputPath, constraint
 async function processMediaTranscriptionJob(jobId) {
   let job = await claimBackgroundJob('mediaTranscriptionJobs', jobId);
   if (!job) return;
+  const stopClaimHeartbeat = startBackgroundJobClaimHeartbeat('mediaTranscriptionJobs', jobId);
   let db;
 
   const sourceWorkPath = path.join(UPLOAD_DIR, `${job.id}-source${path.extname(job.filename || '')}`);
@@ -2143,10 +3111,10 @@ async function processMediaTranscriptionJob(jobId) {
     });
     await updateMediaTranscriptionJob(jobId, {
       stage: execution === 'runpod-serverless'
-        ? `Submitting MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} to RunPod Serverless`
+        ? `Submitting Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} to RunPod Serverless`
         : execution === 'remote-gpu'
-          ? `Connecting to MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
-          : `Loading MuScriptor ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
+          ? `Connecting to Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)} on RunPod GPU`
+          : `Loading Polymath ${MUSCRIPTOR_MODEL[0].toUpperCase()}${MUSCRIPTOR_MODEL.slice(1)}`,
       progress: 20,
     });
     const constraints = muscriptorConstraints(job.instrument, job.playbackMode);
@@ -2236,7 +3204,7 @@ async function processMediaTranscriptionJob(jobId) {
       outputPath,
       'application/json',
     );
-    job.outputFilename = `${sanitizeFilename(job.title || 'muscriptor-transcription')}.json`;
+    job.outputFilename = `${sanitizeFilename(job.title || 'polymath-transcription')}.json`;
     job.vocalMelodyNoteCount = Number(result.transcriptionCleanup?.vocalMelodyNotes || 0);
     job.noteCount = Array.isArray(result.notes) ? result.notes.length : 0;
     job.instrumentGroups = Array.isArray(result.instrumentGroups) ? result.instrumentGroups : [];
@@ -2244,7 +3212,22 @@ async function processMediaTranscriptionJob(jobId) {
     job.stage = 'Ready to play';
     job.progress = 100;
     job.completedAt = new Date().toISOString();
+    attachGeneratedPersonalSong(db, job, {
+      title: result.title || job.title,
+      artist: result.artist || result.composer || '',
+      instrument: job.instrument,
+      filename: job.outputFilename,
+      assetPath: job.outputPath,
+      bytes: fs.readFileSync(outputPath),
+      sourceJobType: 'media-transcription',
+    });
     await writeDb(db);
+    await recordTrustedProductEvent('transcription_completed', job.userId, {
+      instrument: job.instrument,
+      playbackMode: job.playbackMode,
+      noteCount: job.noteCount,
+      durationSeconds: Math.max(0, (Date.parse(job.completedAt) - Date.parse(job.startedAt)) / 1000),
+    });
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
     if (ARTIFACT_STORE.remote) safeRemoveUpload(outputPath);
@@ -2252,25 +3235,27 @@ async function processMediaTranscriptionJob(jobId) {
     db = await readDb();
     job = db.mediaTranscriptionJobs.find((candidate) => candidate.id === jobId);
     if (job && job.status === 'processing') {
-      refundTranslationJob(db, job, error.message || 'MuScriptor could not transcribe this recording.');
+      refundTranslationJob(db, job, error.message || 'Polymath could not transcribe this recording.');
       await writeDb(db);
+      await recordTrustedProductEvent('transcription_failed', job.userId, {
+        instrument: job.instrument,
+        playbackMode: job.playbackMode,
+        refunded: Boolean(job.refundedAt),
+        durationSeconds: Math.max(0, (Date.parse(job.failedAt) - Date.parse(job.startedAt)) / 1000),
+      });
     }
     safeRemoveUpload(sourcePath);
     safeRemoveUpload(preparedPath);
     safeRemoveUpload(outputPath);
     safeRemoveUpload(arrangedPath);
   } finally {
+    stopClaimHeartbeat();
     await safeRemoveArtifact(job?.sourcePath);
   }
 }
 
-let mediaTranscriptionQueue = Promise.resolve();
-
 function enqueueMediaTranscription(jobId) {
-  mediaTranscriptionQueue = mediaTranscriptionQueue
-    .then(() => processMediaTranscriptionJob(jobId))
-    .catch((error) => console.error('MuScriptor queue error:', error));
-  return mediaTranscriptionQueue;
+  return MEDIA_TRANSCRIPTION_POOL.run(() => processMediaTranscriptionJob(jobId));
 }
 
 async function dispatchBackgroundJob(type, jobId) {
@@ -2281,21 +3266,46 @@ async function dispatchBackgroundJob(type, jobId) {
   setImmediate(() => {
     const task = type === 'media-transcription'
       ? enqueueMediaTranscription(jobId)
-      : processTranslationJob(jobId);
+      : SCORE_TRANSLATION_POOL.run(() => processTranslationJob(jobId));
     Promise.resolve(task).catch((error) => console.error('Background job failed:', error));
   });
 }
 
 async function runQueuedJob(message) {
   if (message?.type === 'media-transcription') return enqueueMediaTranscription(message.jobId);
-  if (message?.type === 'score-translation') return processTranslationJob(message.jobId);
+  if (message?.type === 'score-translation') {
+    return SCORE_TRANSLATION_POOL.run(() => processTranslationJob(message.jobId));
+  }
   throw new Error('Unknown background job type.');
+}
+
+const ASSISTANT_REQUEST_TIMES = new Map();
+const COMMUNITY_REQUEST_TIMES = new Map();
+const SUPPORT_REQUEST_INTERVAL_MS = Number.isFinite(Number(process.env.SUPPORT_REQUEST_INTERVAL_MS))
+  ? Math.max(0, Number(process.env.SUPPORT_REQUEST_INTERVAL_MS))
+  : 1400;
+
+function requestIntervalAllowed(store, key, minimumIntervalMs) {
+  const now = Date.now();
+  const previous = Number(store.get(key) || 0);
+  if (now - previous < minimumIntervalMs) return false;
+  store.set(key, now);
+  if (store.size > 10000) {
+    for (const [candidate, timestamp] of store.entries()) {
+      if (now - timestamp > 24 * 60 * 60 * 1000) store.delete(candidate);
+    }
+    while (store.size > 10000) {
+      const oldestKey = store.keys().next().value;
+      if (oldestKey === undefined) break;
+      store.delete(oldestKey);
+    }
+  }
+  return true;
 }
 
 app.use(cors({
   origin(origin, callback) {
-    const normalizedOrigin = String(origin || '').replace(/\/+$/, '');
-    if (!origin || CLIENT_ORIGINS.has(normalizedOrigin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)) {
+    if (clientOriginAllowed(origin, CLIENT_ORIGINS)) {
       callback(null, true);
       return;
     }
@@ -2315,6 +3325,7 @@ app.get('/api/health', async (req, res) => res.json({
   storage: STATE_STORE.provider,
   artifacts: ARTIFACT_STORE.provider,
   queue: JOB_QUEUE.enabled ? 'sqs' : 'in-process',
+  virtualLessons: POLYMATH_ASSISTANT.capabilities().available ? 'configured' : 'unconfigured',
   region: process.env.APP_REGION || 'local',
 }));
 app.get('/api/site-configuration', async (req, res) => {
@@ -2322,11 +3333,943 @@ app.get('/api/site-configuration', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   return res.json({ configuration: publicSiteConfiguration(db) });
 });
+
+app.get('/api/health/state', async (req, res) => {
+  try {
+    await readDb();
+    return res.json({
+      ok: true,
+      storage: STATE_STORE.provider,
+      state: 'ready',
+      region: process.env.APP_REGION || 'local',
+    });
+  } catch (error) {
+    console.error('State dependency health check failed:', error);
+    const rawCode = String(error?.code || '').trim().toUpperCase();
+    const code = /^[A-Z0-9_]{2,64}$/.test(rawCode)
+      ? rawCode
+      : 'STATE_READ_FAILED';
+    return res.status(503).json({
+      ok: false,
+      storage: STATE_STORE.provider,
+      state: 'unavailable',
+      code,
+      region: process.env.APP_REGION || 'local',
+    });
+  }
+});
 app.get('/api/test', async (req, res) => res.json({
   message: 'Backend is working',
   environment: PAYPAL_ENV,
   scoreTranslation: localOmrAvailability(),
 }));
+
+app.get('/api/learning/progress', requireLearn, async (req, res) => res.json({
+  version: 1,
+  attempts: learningAttemptsForUser(req.db, req.user.id),
+}));
+
+app.post('/api/learning/progress/sync', requireLearn, async (req, res) => {
+  try {
+    const payloads = Array.isArray(req.body?.attempts) ? req.body.attempts.slice(0, 240) : [];
+    const existingIds = new Set(req.db.learningAttempts
+      .filter((attempt) => attempt.userId === req.user.id)
+      .map((attempt) => attempt.clientAttemptId));
+    let savedCount = 0;
+    payloads.forEach((payload) => {
+      const candidate = sanitizeLearningAttempt(payload, req.user.id, { idFactory: id });
+      if (existingIds.has(candidate.clientAttemptId)) return;
+      req.db.learningAttempts.push(candidate);
+      existingIds.add(candidate.clientAttemptId);
+      savedCount += 1;
+    });
+    if (savedCount) {
+      trimUserLearningAttempts(req.db, req.user.id);
+      await writeDb(req.db);
+    }
+    return res.json({
+      version: 1,
+      savedCount,
+      attempts: learningAttemptsForUser(req.db, req.user.id),
+    });
+  } catch (error) {
+    if (String(error?.code || '').startsWith('INVALID_LEARNING_')) {
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
+    throw error;
+  }
+});
+
+app.post('/api/learning/attempts', requireLearn, async (req, res) => {
+  try {
+    const candidate = sanitizeLearningAttempt(req.body, req.user.id, { idFactory: id });
+    const duplicate = req.db.learningAttempts.find((attempt) => (
+      attempt.userId === req.user.id && attempt.clientAttemptId === candidate.clientAttemptId
+    ));
+    if (!duplicate) {
+      req.db.learningAttempts.push(candidate);
+      trimUserLearningAttempts(req.db, req.user.id);
+      await writeDb(req.db);
+    }
+    return res.status(duplicate ? 200 : 201).json({
+      version: 1,
+      duplicate: Boolean(duplicate),
+      attempts: learningAttemptsForUser(req.db, req.user.id),
+    });
+  } catch (error) {
+    if (String(error?.code || '').startsWith('INVALID_LEARNING_')) {
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
+    throw error;
+  }
+});
+
+app.get('/api/assistant/capabilities', requireAuth, async (req, res) => {
+  const policies = sitePolicies(req.db);
+  res.json({
+    ...POLYMATH_ASSISTANT.capabilities(),
+    support: {
+      ...supportQuestionAllowance(req.user, { unlimited: isAdministrator(req.user) }),
+      contact: publicSupportContact(policies),
+    },
+  });
+});
+
+app.post('/api/assistant/support', requireAuth, async (req, res) => {
+  const policies = sitePolicies(req.db);
+  const supportContact = publicSupportContact(policies);
+  const unlimited = isAdministrator(req.user);
+  const currentAllowance = supportQuestionAllowance(req.user, { unlimited });
+  if (!currentAllowance.unlimited && currentAllowance.remainingQuestions <= 0) {
+    return res.status(429).json({
+      error: 'You have used today\'s 7 Help questions. Contact the Polymath helpline or return after the daily reset.',
+      code: 'SUPPORT_DAILY_LIMIT_REACHED',
+      support: { ...currentAllowance, contact: supportContact },
+    });
+  }
+  if (!requestIntervalAllowed(ASSISTANT_REQUEST_TIMES, `${req.user.id}:support`, SUPPORT_REQUEST_INTERVAL_MS)) {
+    res.set('Retry-After', '2');
+    return res.status(429).json({
+      error: 'Give Polymath Support a moment to finish the previous reply.',
+      code: 'SUPPORT_REPLY_IN_PROGRESS',
+      support: { ...currentAllowance, contact: supportContact },
+    });
+  }
+  const reservation = reserveSupportQuestion(req.user, { unlimited });
+  try {
+    if (reservation.reserved) await writeDb(req.db);
+    const safe = safeUser(req.user);
+    const answer = await POLYMATH_ASSISTANT.supportChat({
+      messages: req.body?.messages,
+      accountContext: {
+        tier: safe.subscriptionTier,
+        admin: safe.admin,
+        translationAllowance: safe.translationAllowance,
+        readySheetAllowance: safe.readySheetAllowance,
+      },
+    });
+    return res.json({
+      ...answer,
+      support: {
+        ...supportQuestionAllowance(req.user, { unlimited }),
+        contact: supportContact,
+      },
+    });
+  } catch (error) {
+    if (refundSupportQuestion(req.user, reservation)) {
+      try {
+        await writeDb(req.db);
+      } catch (refundError) {
+        console.error('Polymath support quota refund failed:', refundError);
+      }
+    }
+    const unavailable = error?.code === 'ASSISTANT_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_ASSISTANT_REQUEST';
+    console.error('Polymath support failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : error?.name === 'AbortError' ? 504 : 502).json({
+      error: unavailable || invalid
+        ? error.message
+        : 'Polymath Support could not reply. Please try again.',
+      support: {
+        ...supportQuestionAllowance(req.user, { unlimited }),
+        contact: supportContact,
+      },
+    });
+  }
+});
+
+app.get('/api/virtual-lessons', requireAuth, async (req, res) => {
+  const changed = expireVirtualLessons(req.db);
+  if (changed) await writeDb(req.db);
+  return res.json({
+    catalog: lessonCatalog(sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins),
+    assistantAvailable: POLYMATH_ASSISTANT.capabilities().available,
+    teacherSpeech: TEACHER_SPEECH.capabilities(),
+    session: publicVirtualLesson(activeVirtualLesson(req.db, req.user.id)),
+    user: safeUser(req.user),
+  });
+});
+
+app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
+  const clientRequestId = normalizeClientRequestId(req.body?.clientRequestId);
+  if (!clientRequestId) {
+    return res.status(400).json({ error: 'A valid lesson checkout reference is required.' });
+  }
+  const existing = req.db.virtualLessonSessions.find((session) => (
+    session.userId === req.user.id && session.clientRequestId === clientRequestId
+  ));
+  if (existing) {
+    return res.json({
+      duplicate: true,
+      session: publicVirtualLesson(existing),
+      greeting: teacherGreeting({
+        teacher: existing.teacher,
+        studentName: req.user.name,
+        conversationMode: existing.conversationMode,
+      }),
+      user: safeUser(req.user),
+    });
+  }
+  const active = activeVirtualLesson(req.db, req.user.id);
+  if (active) {
+    return res.status(409).json({
+      error: `Your active lesson is locked to ${active.teacher?.name || 'the selected teacher'} until it ends.`,
+      code: 'VIRTUAL_LESSON_TEACHER_LOCKED',
+      lockedTeacherId: active.teacher?.id || '',
+      session: publicVirtualLesson(active),
+    });
+  }
+  if (!POLYMATH_ASSISTANT.capabilities().available) {
+    return res.status(503).json({
+      error: 'Virtual lessons are not available on this server yet. Nothing was charged.',
+      code: 'VIRTUAL_TEACHER_UNAVAILABLE',
+    });
+  }
+  const administrator = isAdministrator(req.user);
+  const conversationMode = normalizeConversationMode(req.body?.conversationMode);
+  const teacher = resolvedVirtualLessonTeacher(req.db, req.body?.teacher);
+  if (!teacher) {
+    return res.status(409).json({
+      error: 'That virtual teacher is no longer available. Choose another active teacher.',
+      code: 'VIRTUAL_TEACHER_NOT_ACTIVE',
+    });
+  }
+  const confirmedAge = Math.max(
+    req.body?.adultConfirmed === true ? 18 : 0,
+    clampInteger(req.body?.confirmedAge, 0, 99, 0),
+  );
+  if (!administrator && teacher.minimumAge > confirmedAge) {
+    return res.status(403).json({
+      error: `Confirm that you are at least ${teacher.minimumAge} before choosing ${teacher.name}.`,
+      code: 'VIRTUAL_TEACHER_AGE_CONFIRMATION_REQUIRED',
+      minimumAge: teacher.minimumAge,
+    });
+  }
+  const globalLessonPrice = sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins;
+  const quote = lessonQuote(
+    req.body?.durationMinutes,
+    teacher.pricePer30MinutesMcoins ?? globalLessonPrice,
+  );
+  if (!quote) {
+    return res.status(400).json({ error: 'Enter a valid private-session duration.' });
+  }
+  const adultConfirmed = req.body?.adultConfirmed === true;
+  const companionConsent = req.body?.companionConsent === true;
+  if (conversationMode === 'adult-companion') {
+    if (!teacher.adultCompanionEnabled) {
+      return res.status(400).json({
+        error: 'Choose an adult-eligible character for companion mode.',
+        code: 'ADULT_COMPANION_TEACHER_REQUIRED',
+      });
+    }
+    if (!adultConfirmed || !companionConsent) {
+      return res.status(403).json({
+        error: 'Confirm that you are 18+ and opt in before starting companion mode.',
+        code: 'ADULT_COMPANION_CONFIRMATION_REQUIRED',
+      });
+    }
+  }
+  const priceMcoins = administrator ? 0 : quote.priceMcoins;
+  if (!administrator && Number(req.user.mcoins || 0) < priceMcoins) {
+    return res.status(402).json({
+      error: `You need ${priceMcoins} Mcoins for this ${quote.durationMinutes}-minute lesson.`,
+      requiredMcoins: priceMcoins,
+      availableMcoins: Number(req.user.mcoins || 0),
+    });
+  }
+
+  if (!administrator) {
+    req.user.mcoins = Number((Number(req.user.mcoins || 0) - priceMcoins).toFixed(2));
+  }
+  const session = createVirtualLesson({
+    id: id('virtual_lesson'),
+    userId: req.user.id,
+    clientRequestId,
+    durationMinutes: quote.durationMinutes,
+    priceMcoins,
+    teacher,
+    conversationMode,
+    conversationPreferences: req.body?.conversationPreferences,
+    adultConfirmed,
+    companionConsent,
+    studentName: req.user.name,
+  });
+  if (conversationMode === 'adult-companion') {
+    req.user.adultCompanionConfirmedAt = session.adultConfirmedAt;
+  }
+  req.db.virtualLessonSessions.push(session);
+  addLedger(
+    req.db,
+    req.user.id,
+    -priceMcoins,
+    administrator ? 'admin_virtual_lesson' : 'virtual_lesson',
+    `${quote.durationMinutes}-minute private ${conversationMode === 'adult-companion' ? 'adult companion session' : 'virtual music lesson'} with ${session.teacher.name}`,
+  );
+  await writeDb(req.db);
+  return res.status(201).json({
+    session: publicVirtualLesson(session),
+    greeting: teacherGreeting({
+      teacher: session.teacher,
+      studentName: req.user.name,
+      conversationMode: session.conversationMode,
+    }),
+    user: safeUser(req.user),
+    chargedMcoins: priceMcoins,
+  });
+});
+
+app.post('/api/virtual-lessons/:sessionId/speech', requireAuth, async (req, res) => {
+  if (!requestIntervalAllowed(ASSISTANT_REQUEST_TIMES, `${req.user.id}:teacher-speech`, 350)) {
+    res.set('Retry-After', '1');
+    return res.status(429).json({ error: 'Give the teacher voice a moment to finish the previous line.' });
+  }
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+  if (!sessionIsActive(session)) {
+    return res.status(410).json({ error: 'This virtual lesson has ended.' });
+  }
+
+  const kind = String(req.body?.kind || '').trim().toLowerCase();
+  let text = '';
+  if (kind === 'greeting') {
+    text = teacherGreeting({
+      teacher: session.teacher,
+      studentName: req.user.name,
+      conversationMode: session.conversationMode,
+    });
+  } else {
+    const messageId = String(req.body?.messageId || '').trim();
+    const message = (session.messages || []).find((candidate) => (
+      candidate.id === messageId && candidate.role === 'assistant'
+    ));
+    if (!message) {
+      return res.status(404).json({ error: 'That teacher reply is no longer available to speak.' });
+    }
+    text = message.text;
+  }
+
+  try {
+    const speech = await TEACHER_SPEECH.synthesize({ teacher: session.teacher, text });
+    res.setHeader('Content-Type', speech.contentType);
+    res.setHeader('Content-Length', speech.audio.length);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Polymath-Voice-Quality', speech.profile.quality);
+    res.setHeader('X-Polymath-Voice-Character', encodeURIComponent(speech.profile.character));
+    return res.send(speech.audio);
+  } catch (error) {
+    const unavailable = error?.code === 'TEACHER_SPEECH_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_TEACHER_SPEECH';
+    if (!unavailable && !invalid) console.error('Natural teacher speech failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid
+        ? error.message
+        : 'The natural teacher voice could not load. Your device voice is still available.',
+    });
+  }
+});
+
+const TEACHER_REPLY_HOLD_MS = 20 * 60 * 1000;
+
+function resumeLessonAfterTeacherReply(session, pending, now = new Date()) {
+  const remainingSeconds = Math.max(1, Number(pending?.remainingSecondsAtSubmit) || 1);
+  session.expiresAt = new Date(now.getTime() + remainingSeconds * 1000).toISOString();
+}
+
+function completeTeacherReply(session, pending, result, user, now = new Date()) {
+  if (pending?.id) resumeLessonAfterTeacherReply(session, pending, now);
+  const context = pending?.context || {};
+  updateSessionMemory(session, {
+    studentName: user.name,
+    userMessage: context.userText,
+    lessonContext: context.lessonContext,
+    practiceReport: context.observations?.practiceReport,
+    action: pending?.action || null,
+  });
+  const spokenMessage = appendSessionMessage(session, {
+    id: id('lesson_message'),
+    role: 'assistant',
+    text: result.reply,
+    createdAt: now.toISOString(),
+  }, now);
+  if (pending?.id) {
+    session.lastReplyJob = {
+      id: pending.id,
+      messageId: spokenMessage.id,
+      provider: result.provider,
+      role: result.role,
+      action: pending.action || null,
+      completedAt: now.toISOString(),
+    };
+    session.pendingReply = null;
+  }
+  return spokenMessage;
+}
+
+function rollbackTeacherReply(session, pending, now = new Date()) {
+  if (pending) resumeLessonAfterTeacherReply(session, pending, now);
+  const lastMessage = session.messages?.[session.messages.length - 1];
+  if (lastMessage?.id === pending?.userMessageId && lastMessage.role === 'user') session.messages.pop();
+  session.pendingReply = null;
+  session.aiFailureCount = Number(session.aiFailureCount || 0) + 1;
+  session.lastFailureAt = now.toISOString();
+}
+
+function queuedTeacherPayload(session) {
+  const pending = session.pendingReply;
+  return {
+    pending: true,
+    requestId: pending.id,
+    status: pending.status,
+    message: pending.status === 'IN_PROGRESS'
+      ? `${session.teacher?.name || 'Your teacher'} is preparing the reply...`
+      : `Waking ${session.teacher?.name || 'your teacher'}'s private GPU...`,
+    session: publicVirtualLesson(session),
+  };
+}
+
+app.post('/api/virtual-lessons/:sessionId/messages', requireAuth, async (req, res) => {
+  if (!requestIntervalAllowed(ASSISTANT_REQUEST_TIMES, `${req.user.id}:teacher`, 1400)) {
+    res.set('Retry-After', '2');
+    return res.status(429).json({ error: 'Give your teacher a moment to finish the previous reply.' });
+  }
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+  if (!sessionIsActive(session)) {
+    if (session.status === 'active') {
+      expireVirtualLessons(req.db);
+      await writeDb(req.db);
+    }
+    return res.status(410).json({
+      error: 'This virtual lesson has ended. Choose a new duration to continue.',
+      session: publicVirtualLesson(session),
+    });
+  }
+  if (session.pendingReply) return res.status(202).json(queuedTeacherPayload(session));
+
+  const userText = String(req.body?.message || '').trim().slice(0, 1600);
+  if (!userText) return res.status(400).json({ error: 'Say or type a message first.' });
+  const requestedAt = new Date();
+  const lessonContext = req.body?.lessonContext;
+  const observations = req.body?.observations;
+  const action = parseTeacherDemonstration(
+    userText,
+    lessonContext,
+    session.memory?.lastDemonstration,
+  );
+  const userMessage = appendSessionMessage(session, {
+    id: id('lesson_message'),
+    role: 'user',
+    text: userText,
+    createdAt: requestedAt.toISOString(),
+  }, requestedAt);
+
+  try {
+    if (action) {
+      const start = Math.floor(action.startSeconds / 60) + ':' + String(Math.floor(action.startSeconds % 60)).padStart(2, '0');
+      const end = Math.floor(action.endSeconds / 60) + ':' + String(Math.floor(action.endSeconds % 60)).padStart(2, '0');
+      const hand = action.hand === 'both' ? 'both hands' : `the ${action.hand} hand`;
+      const speed = action.speed ? ` at ${Math.round(action.speed * 100)}% speed` : '';
+      const result = {
+        reply: `${req.user.name?.split(' ')[0] || 'Ready'}, watch ${hand} from ${start} to ${end}${speed}. Notice where each fingertip lands, then copy only this short phrase once.`,
+        provider: 'polymath-demonstration-engine',
+        role: 'piano-teacher',
+      };
+      const spokenMessage = completeTeacherReply(session, {
+        context: { userText, lessonContext, observations }, action,
+      }, result, req.user, requestedAt);
+      await writeDb(req.db);
+      return res.json({
+        ...result,
+        action,
+        speechMessageId: spokenMessage.id,
+        session: publicVirtualLesson(session, requestedAt),
+      });
+    }
+
+    const submission = await POLYMATH_ASSISTANT.submitTeacherChat({
+      messages: session.messages.map((message) => ({
+        role: message.role === 'assistant' ? 'assistant' : 'user',
+        content: message.text,
+      })),
+      teacher: session.teacher,
+      conversationMode: session.conversationMode,
+      conversationPreferences: session.conversationPreferences,
+      accountContext: {
+        studentName: req.user.name,
+        sessionMemory: session.memory,
+        sessionEndsAt: session.expiresAt,
+      },
+      lessonContext,
+      observations,
+    });
+    if (submission.completed) {
+      const spokenMessage = completeTeacherReply(session, {
+        context: { userText, lessonContext, observations }, action: null,
+      }, submission.result, req.user, new Date());
+      await writeDb(req.db);
+      return res.json({
+        ...submission.result,
+        action: null,
+        speechMessageId: spokenMessage.id,
+        session: publicVirtualLesson(session),
+      });
+    }
+
+    const remainingSecondsAtSubmit = Math.max(
+      1,
+      Math.ceil((new Date(session.expiresAt).getTime() - requestedAt.getTime()) / 1000),
+    );
+    const holdUntil = new Date(requestedAt.getTime() + TEACHER_REPLY_HOLD_MS);
+    session.expiresAt = new Date(holdUntil.getTime() + remainingSecondsAtSubmit * 1000).toISOString();
+    session.pendingReply = {
+      id: id('teacher_reply'),
+      providerJobId: submission.jobId,
+      userMessageId: userMessage.id,
+      status: submission.status,
+      submittedAt: requestedAt.toISOString(),
+      holdUntil: holdUntil.toISOString(),
+      remainingSecondsAtSubmit,
+      context: submission.context,
+      action: null,
+    };
+    await writeDb(req.db);
+    return res.status(202).json(queuedTeacherPayload(session));
+  } catch (error) {
+    const unavailable = error?.code === 'ASSISTANT_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_ASSISTANT_REQUEST';
+    console.error('Polymath teacher job submission failed:', error);
+    const recoverySeconds = Math.min(120, Math.max(15, Math.ceil((Date.now() - requestedAt.getTime()) / 1000) + 10));
+    session.expiresAt = new Date(new Date(session.expiresAt).getTime() + recoverySeconds * 1000).toISOString();
+    if (session.messages?.at(-1)?.id === userMessage.id) session.messages.pop();
+    session.aiFailureCount = Number(session.aiFailureCount || 0) + 1;
+    session.lastFailureAt = new Date().toISOString();
+    await writeDb(req.db);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid
+        ? error.message
+        : 'Your virtual teacher could not start this reply. Please try again.',
+      session: publicVirtualLesson(session),
+      recoveredSeconds: recoverySeconds,
+    });
+  }
+});
+
+app.get('/api/virtual-lessons/:sessionId/replies/:requestId', requireAuth, async (req, res) => {
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+
+  if (session.lastReplyJob?.id === req.params.requestId) {
+    const message = (session.messages || []).find((candidate) => candidate.id === session.lastReplyJob.messageId);
+    if (message) {
+      return res.json({
+        pending: false,
+        reply: message.text,
+        provider: session.lastReplyJob.provider,
+        role: session.lastReplyJob.role,
+        action: session.lastReplyJob.action,
+        speechMessageId: message.id,
+        session: publicVirtualLesson(session),
+      });
+    }
+  }
+
+  const pending = session.pendingReply;
+  if (!pending || pending.id !== req.params.requestId) {
+    return res.status(404).json({ error: 'That teacher reply is no longer pending.' });
+  }
+  try {
+    const job = await POLYMATH_ASSISTANT.teacherChatJobStatus(
+      pending.providerJobId,
+      pending.context,
+    );
+    if (!job.completed && !job.failed) {
+      if (pending.status !== job.status) {
+        pending.status = job.status;
+        await writeDb(req.db);
+      }
+      return res.status(202).json(queuedTeacherPayload(session));
+    }
+    if (job.failed) {
+      console.error(`Polymath teacher job ${pending.id} ended with ${job.status}: ${job.providerError || 'no provider detail'}`);
+      const recoveredSeconds = pending.remainingSecondsAtSubmit;
+      rollbackTeacherReply(session, pending, new Date());
+      await writeDb(req.db);
+      return res.status(502).json({
+        error: 'Your teacher could not complete that reply. Your lesson clock was restored; please try again.',
+        recoveredSeconds,
+        session: publicVirtualLesson(session),
+      });
+    }
+
+    const repliedAt = new Date();
+    const spokenMessage = completeTeacherReply(session, pending, job.result, req.user, repliedAt);
+    await writeDb(req.db);
+    return res.json({
+      pending: false,
+      ...job.result,
+      action: pending.action || null,
+      speechMessageId: spokenMessage.id,
+      session: publicVirtualLesson(session, repliedAt),
+    });
+  } catch (error) {
+    console.error('Polymath teacher job status check failed:', error);
+    return res.status(503).json({
+      error: 'Your teacher is still reconnecting. Keep this page open.',
+      retryable: true,
+      requestId: pending.id,
+      session: publicVirtualLesson(session),
+    });
+  }
+});
+
+app.post('/api/virtual-lessons/:sessionId/end', requireAuth, async (req, res) => {
+  const session = req.db.virtualLessonSessions.find((candidate) => (
+    candidate.id === req.params.sessionId && candidate.userId === req.user.id
+  ));
+  if (!session) return res.status(404).json({ error: 'Virtual lesson not found.' });
+  const pendingProviderJobId = session.pendingReply?.providerJobId;
+  if (session.status === 'active') endVirtualLesson(session);
+  await writeDb(req.db);
+  if (pendingProviderJobId) {
+    POLYMATH_ASSISTANT.cancelTeacherChatJob(pendingProviderJobId).catch((error) => {
+      console.error('Could not cancel ended virtual teacher job:', error.message);
+    });
+  }
+  return res.json({ session: publicVirtualLesson(session), user: safeUser(req.user) });
+});
+
+app.post('/api/assistant/teacher', requireAuth, async (req, res) => {
+  return res.status(410).json({
+    error: 'Teacher chat now runs inside a timed private virtual lesson.',
+    code: 'VIRTUAL_LESSON_REQUIRED',
+  });
+});
+
+app.get('/api/virtual-teachers', async (req, res) => {
+  const db = await readDb();
+  const globalPrice = sitePolicies(db).virtualLessonPricePer30MinutesMcoins;
+  const characters = virtualTeacherCatalog(db)
+    .filter((character) => !character.builtIn)
+    .map((character) => publicVirtualTeacherCharacter(character, globalPrice))
+    .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' }));
+  const catalog = virtualTeacherCatalog(db)
+    .map((character) => publicVirtualTeacherCharacter(character, globalPrice));
+  res.json({ characters, catalog, catalogVersion: 2 });
+});
+
+app.get('/api/virtual-teachers/:characterId/image', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const character = db.virtualTeacherCharacters.find((item) => item.id === req.params.characterId);
+    if (!character?.imageKey) return res.status(404).json({ error: 'Character image not found.' });
+    const bytes = await ARTIFACT_STORE.getBuffer(character.imageKey);
+    res.setHeader('Content-Type', character.contentType || 'image/webp');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Character image not found.' });
+    }
+    return next(error);
+  }
+});
+
+app.get('/api/virtual-teachers/:characterId/model', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const character = db.virtualTeacherCharacters.find((item) => item.id === req.params.characterId);
+    if (!character?.modelKey) return res.status(404).json({ error: 'Rigged character model not found.' });
+    const bytes = await ARTIFACT_STORE.getBuffer(character.modelKey);
+    res.setHeader('Content-Type', 'model/gltf-binary');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Rigged character model not found.' });
+    }
+    return next(error);
+  }
+});
+
+app.get('/api/admin/virtual-teachers', requireAuth, requireAdmin, async (req, res) => {
+  const globalPrice = sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins;
+  res.json({
+    characters: req.db.virtualTeacherCharacters
+      .filter((character) => !BUILT_IN_VIRTUAL_TEACHER_IDS.has(character.id))
+      .map((character) => publicVirtualTeacherCharacter(character, globalPrice))
+      .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' })),
+    catalog: virtualTeacherCatalog(req.db, { includeInactive: true })
+      .map((character) => publicVirtualTeacherCharacter(character, globalPrice)),
+    catalogVersion: 2,
+    builtInCharacterIds: [...BUILT_IN_VIRTUAL_TEACHER_IDS],
+  });
+});
+
+app.post(
+  '/api/admin/virtual-teachers',
+  requireAuth,
+  requireAdmin,
+  virtualTeacherUpload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'model', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    let imageKey = '';
+    let modelKey = '';
+    try {
+      const fields = virtualTeacherInput(req.body);
+      const imageFile = req.files?.image?.[0];
+      const modelFile = req.files?.model?.[0];
+      if (!imageFile?.buffer?.length) return res.status(400).json({ error: 'Choose a character image.' });
+      if (imageFile.buffer.length > VIRTUAL_TEACHER_IMAGE_MAX_BYTES) {
+        return res.status(400).json({ error: 'The character image must be 8 MB or smaller.' });
+      }
+      const contentType = virtualTeacherImageContentType(imageFile.buffer);
+      if (!contentType) return res.status(400).json({ error: 'The uploaded file is not a valid PNG, JPEG, or WebP image.' });
+      const rig = modelFile?.buffer?.length ? inspectVirtualTeacherGlb(modelFile.buffer) : null;
+
+      const characterId = id('virtual_teacher');
+      const extension = contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp';
+      imageKey = artifactKey(`virtual-teachers/${characterId}`, `portrait-${characterId}.${extension}`);
+      await ARTIFACT_STORE.putBuffer(imageKey, imageFile.buffer, contentType);
+      if (modelFile?.buffer?.length) {
+        modelKey = artifactKey(`virtual-teachers/${characterId}`, `rig-${characterId}.glb`);
+        await ARTIFACT_STORE.putBuffer(modelKey, modelFile.buffer, 'model/gltf-binary');
+      }
+      const now = new Date().toISOString();
+      const character = {
+        id: characterId,
+        ...fields,
+        builtIn: false,
+        imageKey,
+        contentType,
+        modelKey,
+        rig,
+        createdBy: req.user.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      req.db.virtualTeacherCharacters.push(character);
+      await writeDb(req.db);
+      return res.status(201).json({
+        character: publicVirtualTeacherCharacter(
+          character,
+          sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+        ),
+        message: `${fields.name} is now available in the virtual teacher library.`,
+      });
+    } catch (error) {
+      if (imageKey) await safeRemoveArtifact(imageKey).catch(() => {});
+      if (modelKey) await safeRemoveArtifact(modelKey).catch(() => {});
+      return next(error);
+    }
+  },
+);
+
+app.patch(
+  '/api/admin/virtual-teachers/:characterId',
+  requireAuth,
+  requireAdmin,
+  virtualTeacherUpload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'model', maxCount: 1 },
+  ]),
+  async (req, res, next) => {
+    let newImageKey = '';
+    let newModelKey = '';
+    try {
+      const characterId = String(req.params.characterId || '').trim();
+      const builtIn = BUILT_IN_VIRTUAL_TEACHER_IDS.has(characterId);
+      const currentIndex = req.db.virtualTeacherCharacters.findIndex((item) => item.id === characterId);
+      const currentRecord = currentIndex >= 0 ? req.db.virtualTeacherCharacters[currentIndex] : null;
+      if (!builtIn && !currentRecord) return res.status(404).json({ error: 'Character not found.' });
+
+      const builtInDefault = builtIn
+        ? {
+          ...BUILT_IN_VIRTUAL_TEACHERS[characterId],
+          description: BUILT_IN_VIRTUAL_TEACHERS[characterId].style,
+          builtIn: true,
+          active: true,
+        }
+        : null;
+      const current = mergedVirtualTeacher(currentRecord, builtInDefault);
+      const fields = virtualTeacherInput(req.body, current);
+      const imageFile = req.files?.image?.[0];
+      const modelFile = req.files?.model?.[0];
+      const removeImage = String(req.body.removeImage || '').trim().toLowerCase() === 'true';
+      const removeModel = String(req.body.removeModel || '').trim().toLowerCase() === 'true';
+      let contentType = currentRecord?.contentType || '';
+
+      if (imageFile?.buffer?.length) {
+        if (imageFile.buffer.length > VIRTUAL_TEACHER_IMAGE_MAX_BYTES) {
+          return res.status(400).json({ error: 'The character image must be 8 MB or smaller.' });
+        }
+        contentType = virtualTeacherImageContentType(imageFile.buffer);
+        if (!contentType) return res.status(400).json({ error: 'The uploaded file is not a valid PNG, JPEG, or WebP image.' });
+        const extension = contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp';
+        newImageKey = artifactKey(
+          `virtual-teachers/${characterId}`,
+          `portrait-${characterId}-${Date.now()}.${extension}`,
+        );
+        await ARTIFACT_STORE.putBuffer(newImageKey, imageFile.buffer, contentType);
+      }
+      if (modelFile?.buffer?.length) {
+        const rig = inspectVirtualTeacherGlb(modelFile.buffer);
+        newModelKey = artifactKey(
+          `virtual-teachers/${characterId}`,
+          `rig-${characterId}-${Date.now()}.glb`,
+        );
+        await ARTIFACT_STORE.putBuffer(newModelKey, modelFile.buffer, 'model/gltf-binary');
+        current.rig = rig;
+      }
+
+      const imageKey = newImageKey || (removeImage && builtIn ? '' : currentRecord?.imageKey || '');
+      if (!builtIn && !imageKey) {
+        throw Object.assign(new Error('A custom character must keep a portrait image.'), { status: 400 });
+      }
+      const modelKey = newModelKey || (removeModel ? '' : currentRecord?.modelKey || '');
+      const now = new Date().toISOString();
+      const character = {
+        ...(currentRecord || {}),
+        id: characterId,
+        ...fields,
+        builtIn,
+        imageKey,
+        contentType: imageKey ? contentType : '',
+        modelKey,
+        rig: modelKey ? current.rig || currentRecord?.rig || null : null,
+        createdBy: currentRecord?.createdBy || req.user.id,
+        createdAt: currentRecord?.createdAt || now,
+        updatedBy: req.user.id,
+        updatedAt: now,
+      };
+      const nextRecords = [...req.db.virtualTeacherCharacters];
+      if (currentIndex >= 0) nextRecords[currentIndex] = character;
+      else nextRecords.push(character);
+      const previewDb = { ...req.db, virtualTeacherCharacters: nextRecords };
+      if (!virtualTeacherCatalog(previewDb).length) {
+        throw Object.assign(new Error('Keep at least one virtual teacher active.'), { status: 409 });
+      }
+      req.db.virtualTeacherCharacters = nextRecords;
+      await writeDb(req.db);
+
+      if (currentRecord?.imageKey && currentRecord.imageKey !== imageKey) {
+        await safeRemoveArtifact(currentRecord.imageKey).catch((error) => {
+          console.error(`Could not remove replaced virtual teacher image ${currentRecord.imageKey}:`, error);
+        });
+      }
+      if (currentRecord?.modelKey && currentRecord.modelKey !== modelKey) {
+        await safeRemoveArtifact(currentRecord.modelKey).catch((error) => {
+          console.error(`Could not remove replaced virtual teacher model ${currentRecord.modelKey}:`, error);
+        });
+      }
+      return res.json({
+        character: publicVirtualTeacherCharacter(
+          character,
+          sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+        ),
+        message: `${fields.name} was updated.`,
+      });
+    } catch (error) {
+      if (newImageKey) await safeRemoveArtifact(newImageKey).catch(() => {});
+      if (newModelKey) await safeRemoveArtifact(newModelKey).catch(() => {});
+      return next(error);
+    }
+  },
+);
+
+app.delete('/api/admin/virtual-teachers/:characterId', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const characterId = String(req.params.characterId || '');
+    if (BUILT_IN_VIRTUAL_TEACHER_IDS.has(characterId)) {
+      const currentIndex = req.db.virtualTeacherCharacters.findIndex((item) => item.id === characterId);
+      const currentRecord = currentIndex >= 0 ? req.db.virtualTeacherCharacters[currentIndex] : null;
+      const teacher = mergedVirtualTeacher(currentRecord, {
+        ...BUILT_IN_VIRTUAL_TEACHERS[characterId],
+        description: BUILT_IN_VIRTUAL_TEACHERS[characterId].style,
+        builtIn: true,
+        active: true,
+      });
+      const disabled = {
+        ...(currentRecord || {}),
+        ...teacher,
+        id: characterId,
+        builtIn: true,
+        active: false,
+        createdBy: currentRecord?.createdBy || req.user.id,
+        createdAt: currentRecord?.createdAt || new Date().toISOString(),
+        updatedBy: req.user.id,
+        updatedAt: new Date().toISOString(),
+      };
+      const nextRecords = [...req.db.virtualTeacherCharacters];
+      if (currentIndex >= 0) nextRecords[currentIndex] = disabled;
+      else nextRecords.push(disabled);
+      const previewDb = { ...req.db, virtualTeacherCharacters: nextRecords };
+      if (!virtualTeacherCatalog(previewDb).length) {
+        return res.status(409).json({ error: 'Keep at least one virtual teacher active.' });
+      }
+      req.db.virtualTeacherCharacters = nextRecords;
+      await writeDb(req.db);
+      return res.json({
+        id: disabled.id,
+        disabled: true,
+        character: publicVirtualTeacherCharacter(
+          disabled,
+          sitePolicies(req.db).virtualLessonPricePer30MinutesMcoins,
+        ),
+        message: `${disabled.name} was removed from the public teacher library. You can enable the character again from Edit.`,
+      });
+    }
+    const index = req.db.virtualTeacherCharacters.findIndex((item) => item.id === characterId);
+    if (index < 0) return res.status(404).json({ error: 'Character not found.' });
+    const [character] = req.db.virtualTeacherCharacters.splice(index, 1);
+    await writeDb(req.db);
+    if (character.imageKey) {
+      await safeRemoveArtifact(character.imageKey).catch((error) => {
+        console.error(`Could not remove deleted virtual teacher artifact ${character.imageKey}:`, error);
+      });
+    }
+    if (character.modelKey) {
+      await safeRemoveArtifact(character.modelKey).catch((error) => {
+        console.error(`Could not remove deleted virtual teacher model ${character.modelKey}:`, error);
+      });
+    }
+    return res.json({ id: character.id, message: `${character.name} was deleted.` });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 app.get('/api/chat-boss/capabilities', requireAuth, requireAdmin, async (req, res) => {
   res.json(CHAT_BOSS_ASSISTANT.capabilities());
@@ -2648,20 +4591,346 @@ app.delete('/api/teacher/projection-sessions/:sessionId', requireMusician, async
   if (!closed) return res.status(404).json({ error: 'Projection session was not found or has expired.' });
   return res.status(204).end();
 });
-
 app.get('/api/media-transcriptions/capabilities', async (req, res) => {
   res.json(muscriptorAvailability());
+});
+
+const artistCampaignUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    files: 2,
+    fields: 24,
+    fileSize: MARKETPLACE_MAX_BYTES,
+  },
+  fileFilter(req, file, callback) {
+    const mimetype = String(file.mimetype || '').toLowerCase();
+    const extension = path.extname(String(file.originalname || '')).toLowerCase();
+    const isSong = file.fieldname === 'song' && ['.json', '.mid', '.midi'].includes(extension);
+    const isCover = file.fieldname === 'cover'
+      && ['.png', '.jpg', '.jpeg', '.webp'].includes(extension)
+      && ['image/png', 'image/jpeg', 'image/webp'].includes(mimetype);
+    if (isSong || isCover) {
+      callback(null, true);
+      return;
+    }
+    const error = new Error(file.fieldname === 'song'
+      ? 'Campaign challenges require a ready-to-play JSON or MIDI file.'
+      : 'Campaign covers must be PNG, JPEG, or WebP images.');
+    error.status = 400;
+    callback(error);
+  },
+});
+
+app.post('/api/product-events', async (req, res, next) => {
+  try {
+    // Production initializes the store before listening. Route tests import the
+    // Express app directly, so initialize once without forcing every anonymous
+    // analytics batch to read the full account document.
+    if (!STATE_STORE.initialized) await readDb();
+    let user = null;
+    if (bearerToken(req)) {
+      const db = await readDb();
+      user = authUser(req, db);
+    }
+    const events = sanitizeProductEventBatch(req.body?.events, {
+      userId: user?.id || '',
+      allowedEventNames: PUBLIC_PRODUCT_EVENT_NAMES,
+    });
+    if (!events.length) return res.status(400).json({ error: 'No valid product events were supplied.' });
+    const actor = user?.id || events[0].anonymousId || events[0].sessionId;
+    if (!productEventRequestAllowed(actor)) {
+      res.set('Retry-After', '60');
+      return res.status(429).json({ error: 'Product event rate limit reached.' });
+    }
+    const accepted = await STATE_STORE.recordProductEvents(events);
+    return res.status(202).json({ accepted });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/admin/product-analytics', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const days = Math.max(1, Math.min(180, Number(req.query.days) || 30));
+    const [summary, db] = await Promise.all([
+      STATE_STORE.productEventSummary(days),
+      readDb(),
+    ]);
+    const campaigns = new Map(db.artistCampaigns.map((campaign) => [campaign.id, campaign]));
+    summary.campaigns = (summary.campaigns || []).map((entry) => {
+      const campaign = campaigns.get(entry.campaignId) || {};
+      const affiliatePercent = Number(campaign.affiliatePercent || 0);
+      return {
+        ...entry,
+        title: campaign.title || entry.campaignSlug || 'Archived campaign',
+        artist: campaign.artist || '',
+        status: campaign.status || 'archived',
+        affiliatePercent,
+        estimatedCreatorCommissionUsd: Number(
+          (Number(entry.attributedActivationValueUsd || 0) * affiliatePercent / 100).toFixed(2),
+        ),
+      };
+    });
+    summary.commissionNotice = 'Creator commission is an estimate for reconciliation. Polymath does not issue automatic payouts.';
+    return res.json(summary);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/artist-campaigns', async (req, res) => {
+  const db = await readDb();
+  const campaigns = db.artistCampaigns
+    .filter((campaign) => campaignIsLive(campaign))
+    .map((campaign) => publicArtistCampaign(campaign))
+    .sort((left, right) => String(right.launchesAt || '').localeCompare(String(left.launchesAt || '')));
+  res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+  return res.json({ campaigns });
+});
+
+app.get('/api/artist-campaigns/:slug', async (req, res) => {
+  const db = await readDb();
+  const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+  if (!campaign || !campaignIsLive(campaign)) return res.status(404).json({ error: 'This artist challenge is not live.' });
+  res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+  return res.json({ campaign: publicArtistCampaign(campaign) });
+});
+
+app.get('/api/artist-campaigns/:slug/song', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+    if (!campaign || !campaignIsLive(campaign) || !campaign.publicSongAssetKey) {
+      return res.status(404).json({ error: 'This artist challenge is not live.' });
+    }
+    const bytes = await ARTIFACT_STORE.getBuffer(campaign.publicSongAssetKey);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Content-Disposition', `inline; filename="${sanitizeFilename(`${campaign.slug}-challenge.json`)}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'The campaign song file is unavailable.' });
+    }
+    return next(error);
+  }
+});
+
+app.get('/api/artist-campaigns/:slug/cover', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+    if (!campaign || !campaignIsLive(campaign) || !campaign.coverAssetKey) {
+      return res.status(404).json({ error: 'Campaign cover not found.' });
+    }
+    const bytes = await ARTIFACT_STORE.getBuffer(campaign.coverAssetKey);
+    res.setHeader('Content-Type', campaign.coverContentType || 'image/webp');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Campaign cover not found.' });
+    }
+    return next(error);
+  }
+});
+
+app.get('/api/admin/artist-campaigns', requireAuth, requireAdmin, async (req, res) => {
+  const campaigns = req.db.artistCampaigns
+    .map((campaign) => adminArtistCampaign(campaign))
+    .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')));
+  return res.json({
+    campaigns,
+    publishGate: {
+      minimumQaScore: 80,
+      previewSeconds: { minimum: 10, maximum: 45 },
+      automaticCreatorPayouts: false,
+    },
+  });
+});
+
+app.get('/api/admin/artist-campaigns/preview/:slug', requireAuth, requireAdmin, async (req, res) => {
+  const campaign = req.db.artistCampaigns.find(
+    (candidate) => candidate.slug === String(req.params.slug || '').toLowerCase(),
+  );
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found.' });
+  if (!campaign.publicSongAssetKey || Number(campaign.excerptNoteCount || 0) < 1) {
+    return res.status(409).json({ error: 'Generate a playable campaign excerpt before opening the private preview.' });
+  }
+  const preview = publicArtistCampaign(campaign);
+  preview.adminPreview = true;
+  preview.live = false;
+  preview.songUrl = `/api/admin/artist-campaigns/${encodeURIComponent(campaign.id)}/preview-song`;
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ campaign: preview });
+});
+
+app.get('/api/admin/artist-campaigns/:campaignId/preview-song', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const campaign = req.db.artistCampaigns.find((candidate) => candidate.id === req.params.campaignId);
+    if (!campaign || !campaign.publicSongAssetKey) return res.status(404).json({ error: 'Campaign preview not found.' });
+    const bytes = await ARTIFACT_STORE.getBuffer(campaign.publicSongAssetKey);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Content-Disposition', `inline; filename="${sanitizeFilename(`${campaign.slug}-private-preview.json`)}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Campaign preview not found.' });
+    }
+    return next(error);
+  }
+});
+
+app.post(
+  '/api/admin/artist-campaigns',
+  requireAuth,
+  requireAdmin,
+  artistCampaignUpload.fields([{ name: 'song', maxCount: 1 }, { name: 'cover', maxCount: 1 }]),
+  async (req, res, next) => {
+    const campaignId = id('artist_campaign');
+    let files = {};
+    let excerpt = {};
+    try {
+      files = await persistCampaignFiles(campaignId, campaignUploadFiles(req));
+      const normalized = normalizeCampaignInput(req.body);
+      if (!uniqueCampaignSlug(req.db.artistCampaigns, normalized.slug)) {
+        throw Object.assign(new Error('That campaign URL slug is already in use.'), { status: 409 });
+      }
+      const now = new Date().toISOString();
+      const campaign = {
+        id: campaignId,
+        ...normalized,
+        ...files,
+        createdBy: req.user.id,
+        createdAt: now,
+        updatedAt: now,
+        publishedAt: normalized.status === 'published' ? now : null,
+      };
+      excerpt = await persistCampaignExcerpt(campaign);
+      Object.assign(campaign, excerpt);
+      const problems = campaignPublishProblems(campaign);
+      if (campaign.status === 'published' && problems.length) {
+        const error = Object.assign(new Error('Campaign cannot be published until every launch gate passes.'), {
+          status: 409,
+          publishProblems: problems,
+        });
+        throw error;
+      }
+      req.db.artistCampaigns.push(campaign);
+      await writeDb(req.db);
+      return res.status(201).json({ campaign: adminArtistCampaign(campaign) });
+    } catch (error) {
+      await Promise.all([
+        safeRemoveArtifact(files.songAssetKey),
+        safeRemoveArtifact(files.coverAssetKey),
+        safeRemoveArtifact(excerpt.publicSongAssetKey),
+      ]);
+      if (error.publishProblems) return res.status(error.status || 409).json({ error: error.message, publishProblems: error.publishProblems });
+      return next(error);
+    }
+  },
+);
+
+app.patch(
+  '/api/admin/artist-campaigns/:campaignId',
+  requireAuth,
+  requireAdmin,
+  artistCampaignUpload.fields([{ name: 'song', maxCount: 1 }, { name: 'cover', maxCount: 1 }]),
+  async (req, res, next) => {
+    const current = req.db.artistCampaigns.find((campaign) => campaign.id === req.params.campaignId);
+    if (!current) return res.status(404).json({ error: 'Campaign not found.' });
+    const oldSongAssetKey = current.songAssetKey || '';
+    const oldCoverAssetKey = current.coverAssetKey || '';
+    const oldPublicSongAssetKey = current.publicSongAssetKey || '';
+    let files = {};
+    let excerpt = {};
+    try {
+      files = await persistCampaignFiles(current.id, campaignUploadFiles(req), current);
+      const normalized = normalizeCampaignInput(req.body, current);
+      if (!uniqueCampaignSlug(req.db.artistCampaigns, normalized.slug, current.id)) {
+        throw Object.assign(new Error('That campaign URL slug is already in use.'), { status: 409 });
+      }
+      const candidate = {
+        ...current,
+        ...normalized,
+        ...files,
+        updatedAt: new Date().toISOString(),
+      };
+      enforceCampaignRevisionSafety(current, candidate, files);
+      if (campaignExcerptNeedsRefresh(current, candidate, files)) {
+        excerpt = await persistCampaignExcerpt(candidate);
+        Object.assign(candidate, excerpt);
+      }
+      const problems = campaignPublishProblems(candidate);
+      if (candidate.status === 'published' && problems.length) {
+        const error = Object.assign(new Error('Campaign cannot be published until every launch gate passes.'), {
+          status: 409,
+          publishProblems: problems,
+        });
+        throw error;
+      }
+      if (candidate.status === 'published' && current.status !== 'published') {
+        candidate.publishedAt = new Date().toISOString();
+      }
+      Object.assign(current, candidate);
+      await writeDb(req.db);
+      await Promise.all([
+        files.songAssetKey && oldSongAssetKey && oldSongAssetKey !== files.songAssetKey
+          ? safeRemoveArtifact(oldSongAssetKey)
+          : null,
+        files.coverAssetKey && oldCoverAssetKey && oldCoverAssetKey !== files.coverAssetKey
+          ? safeRemoveArtifact(oldCoverAssetKey)
+          : null,
+        excerpt.publicSongAssetKey && oldPublicSongAssetKey
+          && oldPublicSongAssetKey !== excerpt.publicSongAssetKey
+          ? safeRemoveArtifact(oldPublicSongAssetKey)
+          : null,
+      ]);
+      return res.json({ campaign: adminArtistCampaign(current) });
+    } catch (error) {
+      await Promise.all([
+        safeRemoveArtifact(files.songAssetKey),
+        safeRemoveArtifact(files.coverAssetKey),
+        safeRemoveArtifact(excerpt.publicSongAssetKey),
+      ]);
+      if (error.publishProblems) return res.status(error.status || 409).json({ error: error.message, publishProblems: error.publishProblems });
+      return next(error);
+    }
+  },
+);
+
+app.delete('/api/admin/artist-campaigns/:campaignId', requireAuth, requireAdmin, async (req, res) => {
+  const index = req.db.artistCampaigns.findIndex((campaign) => campaign.id === req.params.campaignId);
+  if (index < 0) return res.status(404).json({ error: 'Campaign not found.' });
+  const [campaign] = req.db.artistCampaigns.splice(index, 1);
+  await writeDb(req.db);
+  await Promise.all([
+    safeRemoveArtifact(campaign.songAssetKey),
+    safeRemoveArtifact(campaign.publicSongAssetKey),
+    safeRemoveArtifact(campaign.coverAssetKey),
+  ]);
+  return res.json({ deleted: true });
 });
 
 app.get('/api/catalog', async (req, res) => {
   const db = await readDb();
   const { updatedBy: _updatedBy, ...publicPolicies } = sitePolicies(db);
   const catalog = listPublicCatalog(db, PRODUCTS);
+  const withdrawalFeeRate = publicPolicies.withdrawalFeePercent / 100;
+  const marketplaceFeeRate = publicPolicies.marketplaceFeePercent / 100;
   res.json({
     ...catalog,
-    withdrawalFeeRate: WITHDRAWAL_FEE_RATE,
-    withdrawalFeeLabel: '25% cash-out fee for every account',
-    marketplaceFeeRate: MARKETPLACE_FEE_RATE,
+    withdrawalFeeRate,
+    withdrawalFeeLabel: `${publicPolicies.withdrawalFeePercent}% cash-out fee for every account`,
+    marketplaceFeeRate,
+    teacherMarketplace: teacherMarketplaceTerms(publicPolicies),
     mcoinsPerUsd: MCOINS_PER_USD,
     translationMcoinCosts: {
       subscriber: SUBSCRIBER_TRANSLATION_MCOIN_COST,
@@ -2883,37 +5152,150 @@ app.put('/api/profile/avatar', requireAuth, async (req, res) => {
   res.json({ user: safeUser(req.user) });
 });
 
-app.post('/api/ready-sheet-uploads', requireAuth, async (req, res) => {
-  const filename = sanitizeFilename(String(req.body.filename || 'ready-to-play-sheet'));
-  const format = path.extname(filename).slice(1).toLowerCase();
-  if (!['json', 'mid', 'midi'].includes(format)) {
+app.post('/api/ready-sheet-uploads', requireAuth, async (req, res, next) => {
+  let filename = sanitizeFilename(String(req.body.filename || 'ready-to-play-sheet'));
+  let format = readySheetFormat(filename);
+  const directUploadReceipt = String(req.body.directUploadReceipt || '').trim();
+  const contentBase64 = String(req.body.contentBase64 || '').trim();
+  let pendingKey = '';
+  let finalKey = '';
+
+  if (!format) {
     return res.status(400).json({ error: 'Only ready-to-play JSON or MIDI sheets count as direct uploads.' });
   }
-  const charged = chargeReadySheetUpload(req.db, req.user, filename);
-  if (!charged) {
-    return res.status(402).json({
-      error: `You need ${READY_SHEET_UPLOAD_MCOIN_COST} Mcoin to upload this ready-to-play sheet.`,
-      costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+
+  // Older clients only record allowance usage. Current clients also send the
+  // normalized ready-to-play file so it can become part of the account cloud library.
+  if (!directUploadReceipt && !contentBase64) {
+    const charged = chargeReadySheetUpload(req.db, req.user, filename);
+    if (!charged) {
+      return res.status(402).json({
+        error: `You need ${READY_SHEET_UPLOAD_MCOIN_COST} Mcoin to upload this ready-to-play sheet.`,
+        costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+      });
+    }
+    await writeDb(req.db);
+    return res.status(201).json({
+      user: safeUser(req.user),
+      costMcoins: charged.costMcoins,
+      paymentMethod: charged.paymentMethod,
+      personalSong: null,
     });
   }
-  await writeDb(req.db);
-  return res.status(201).json({
-    user: safeUser(req.user),
-    costMcoins: charged.costMcoins,
-    paymentMethod: charged.paymentMethod,
-  });
+
+  try {
+    let bytes;
+    if (directUploadReceipt) {
+      const upload = await DIRECT_UPLOADS.inspect(directUploadReceipt, {
+        userId: req.user.id,
+        purpose: 'personal-song',
+      });
+      pendingKey = upload.key;
+      filename = sanitizeFilename(upload.filename);
+      format = readySheetFormat(filename);
+      if (!format) throw Object.assign(new Error('Use a ready-to-play JSON or MIDI sheet.'), { status: 400 });
+      bytes = await ARTIFACT_STORE.getBuffer(upload.key);
+    } else {
+      bytes = Buffer.from(contentBase64, 'base64');
+    }
+
+    validateMarketplaceAsset(format, filename, bytes);
+    const metadata = readySheetMetadata(bytes, format, {
+      title: req.body.title,
+      artist: req.body.artist,
+    });
+    const instrument = String(req.body.instrument || 'piano').trim().toLowerCase();
+    if (!INSTRUMENTS[instrument]) {
+      throw Object.assign(new Error('Choose a supported instrument for this song.'), { status: 400 });
+    }
+    const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    const duplicate = req.db.personalSongs.find((song) => (
+      song.userId === req.user.id && song.sha256 === sha256
+    ));
+    if (duplicate) {
+      if (pendingKey) await safeRemoveArtifact(pendingKey);
+      return res.json({
+        user: safeUser(req.user),
+        costMcoins: 0,
+        paymentMethod: 'existing',
+        personalSong: publicPersonalSong(duplicate),
+        alreadySaved: true,
+      });
+    }
+
+    const charged = chargeReadySheetUpload(req.db, req.user, filename);
+    if (!charged) {
+      if (pendingKey) await safeRemoveArtifact(pendingKey);
+      return res.status(402).json({
+        error: `You need ${READY_SHEET_UPLOAD_MCOIN_COST} Mcoin to upload this ready-to-play sheet.`,
+        costMcoins: READY_SHEET_UPLOAD_MCOIN_COST,
+      });
+    }
+
+    const songId = id('song');
+    const userSegment = String(req.user.id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    finalKey = artifactKey(`personal-songs/${userSegment}`, `${songId}-${filename}`);
+    if (pendingKey) await ARTIFACT_STORE.promote(pendingKey, finalKey);
+    else await ARTIFACT_STORE.putBuffer(
+      finalKey,
+      bytes,
+      format === 'JSON' ? 'application/json' : 'audio/midi',
+    );
+    pendingKey = '';
+
+    const personalSong = {
+      id: songId,
+      userId: req.user.id,
+      title: String(metadata.title || path.basename(filename, path.extname(filename)) || 'Untitled song').slice(0, 160),
+      artist: String(metadata.artist || '').slice(0, 120),
+      instrument,
+      format,
+      filename,
+      assetPath: finalKey,
+      size: bytes.length,
+      sha256,
+      createdAt: new Date().toISOString(),
+    };
+    req.db.personalSongs.push(personalSong);
+    try {
+      await writeDb(req.db);
+    } catch (error) {
+      await safeRemoveArtifact(finalKey);
+      throw error;
+    }
+    finalKey = '';
+    return res.status(201).json({
+      user: safeUser(req.user),
+      costMcoins: charged.costMcoins,
+      paymentMethod: charged.paymentMethod,
+      personalSong: publicPersonalSong(personalSong),
+      alreadySaved: false,
+    });
+  } catch (error) {
+    if (pendingKey) await safeRemoveArtifact(pendingKey);
+    if (finalKey) await safeRemoveArtifact(finalKey);
+    if (!error.status && /invalid|must contain|smaller than|filename|file type/i.test(error.message || '')) {
+      error.status = 400;
+    }
+    return next(error);
+  }
 });
 
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const password = String(req.body.password || '');
-  const minimumLength = Math.max(12, sitePolicies(req.db).minimumPasswordLength);
+  const minimumLength = sitePolicies(req.db).minimumPasswordLength;
   if (password.length < minimumLength) return res.status(400).json({ error: `Your new password must contain at least ${minimumLength} characters.` });
   const { salt, hash } = hashPassword(password);
   req.user.passwordHash = hash;
   req.user.passwordSalt = salt;
   req.user.mustChangePassword = false;
   const currentToken = bearerToken(req);
-  req.db.sessions = req.db.sessions.filter((session) => session.userId !== req.user.id || session.token === currentToken);
+  const currentTokenHash = hashSessionToken(currentToken);
+  req.db.sessions = req.db.sessions.filter((session) => (
+    session.userId !== req.user.id
+    || session.tokenHash === currentTokenHash
+    || session.token === currentToken
+  ));
   await writeDb(req.db);
   res.json({ user: safeUser(req.user) });
 });
@@ -2928,6 +5310,11 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
 
 app.get('/api/teachers', async (req, res) => {
   const db = await readDb();
+  const policies = sitePolicies(db);
+  const marketplace = teacherMarketplaceTerms(policies);
+  if (!policies.teacherDirectoryEnabled) {
+    return res.json({ teachers: [], marketplace });
+  }
   const viewer = authUser(req, db);
   const query = String(req.query.query || '').trim().toLowerCase();
   const instrument = String(req.query.instrument || '').trim().toLowerCase();
@@ -2954,15 +5341,23 @@ app.get('/api/teachers', async (req, res) => {
       || Number(b.reviewSummary.reviewCount) - Number(a.reviewSummary.reviewCount)
       || String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt))
     ));
-  res.json({ teachers });
+  return res.json({ teachers, marketplace });
 });
 
 app.get('/api/teachers/me', requireAuth, async (req, res) => {
   const profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
-  res.json({ teacher: profile ? publicTeacherProfile(profile, req.db, req.user.id) : null });
+  res.json({
+    teacher: profile ? publicTeacherProfile(profile, req.db, req.user.id) : null,
+    marketplace: teacherMarketplaceTerms(sitePolicies(req.db)),
+  });
 });
 
 app.put('/api/teachers/me', requireAuth, async (req, res) => {
+  const policies = sitePolicies(req.db);
+  let profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
+  if (!profile && !policies.teacherApplicationsEnabled) {
+    return res.status(403).json({ error: 'New teacher profiles are temporarily paused.' });
+  }
   const headline = String(req.body.headline || '').trim().slice(0, 100);
   const bio = String(req.body.bio || '').trim().slice(0, 1200);
   const instruments = cleanStringList(req.body.instruments, {
@@ -2983,12 +5378,19 @@ app.put('/api/teachers/me', requireAuth, async (req, res) => {
   if (!instruments.length) return res.status(400).json({ error: 'Choose at least one instrument.' });
   if (!levels.length) return res.status(400).json({ error: 'Choose at least one student level.' });
   if (!lessonModes.length) return res.status(400).json({ error: 'Choose online lessons, in-person lessons, or both.' });
-  if (!Number.isFinite(hourlyRateMcoins) || hourlyRateMcoins < 0 || hourlyRateMcoins > 100000) {
-    return res.status(400).json({ error: 'Enter an hourly rate between 0 and 100,000 Mcoins.' });
+  if (!Number.isFinite(hourlyRateMcoins)
+    || hourlyRateMcoins < policies.minimumTeacherHourlyRateMcoins
+    || (policies.maximumTeacherHourlyRateMcoins > 0
+      && hourlyRateMcoins > policies.maximumTeacherHourlyRateMcoins)) {
+    const maximum = policies.maximumTeacherHourlyRateMcoins > 0
+      ? policies.maximumTeacherHourlyRateMcoins.toLocaleString()
+      : 'unlimited';
+    return res.status(400).json({
+      error: `Enter an hourly rate from ${policies.minimumTeacherHourlyRateMcoins.toLocaleString()} Mcoins to ${maximum}.`,
+    });
   }
 
   const now = new Date().toISOString();
-  let profile = req.db.teacherProfiles.find((item) => item.userId === req.user.id);
   if (profile) {
     Object.assign(profile, {
       headline,
@@ -3036,10 +5438,17 @@ app.get('/api/teachers/:teacherProfileId/reviews', async (req, res) => {
     .filter((review) => review.teacherProfileId === profile.id)
     .sort((a, b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)))
     .map((review) => publicTeacherReview(review, db, viewer?.id));
-  return res.json({ reviews, summary: teacherReviewSummary(db, profile.id) });
+  return res.json({
+    reviews,
+    summary: teacherReviewSummary(db, profile.id),
+    reviewsEnabled: sitePolicies(db).teacherReviewsEnabled,
+  });
 });
 
 app.post('/api/teachers/:teacherProfileId/reviews', requireAuth, async (req, res) => {
+  if (!sitePolicies(req.db).teacherReviewsEnabled) {
+    return res.status(403).json({ error: 'New teacher reviews are temporarily paused.' });
+  }
   const profile = req.db.teacherProfiles.find(
     (item) => item.id === req.params.teacherProfileId && item.published !== false,
   );
@@ -3215,6 +5624,12 @@ app.delete('/api/composers/:composerId/follow', requireAuth, async (req, res) =>
 });
 
 app.get('/api/library', requireAuth, async (req, res) => {
+  const backfilled = backfillGeneratedPersonalSongs(req.db, req.user.id);
+  if (backfilled) await writeDb(req.db);
+  const personalSongs = req.db.personalSongs
+    .filter((song) => song.userId === req.user.id)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map(publicPersonalSong);
   const purchasedSongs = req.db.purchases
     .filter((purchase) => purchase.buyerId === req.user.id)
     .map((purchase) => {
@@ -3232,8 +5647,80 @@ app.get('/api/library', requireAuth, async (req, res) => {
     .filter((listing) => listing.sellerId === req.user.id)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((listing) => publicListing(listing, req.db, req.user.id));
-  res.json({ purchasedSongs, sellingSongs });
+  res.json({ personalSongs, purchasedSongs, sellingSongs });
 });
+
+app.get('/api/personal-songs/:songId/download', requireAuth, async (req, res) => {
+  const song = req.db.personalSongs.find((item) => (
+    item.id === req.params.songId && item.userId === req.user.id
+  ));
+  if (!song) return res.status(404).json({ error: 'Song not found in your cloud library.' });
+  return ARTIFACT_STORE.sendDownload(
+    res,
+    song.assetPath,
+    song.filename,
+    song.format === 'JSON' ? 'application/json' : 'audio/midi',
+  );
+});
+
+app.delete('/api/personal-songs/:songId', requireAuth, async (req, res, next) => {
+  const index = req.db.personalSongs.findIndex((item) => (
+    item.id === req.params.songId && item.userId === req.user.id
+  ));
+  if (index < 0) return res.status(404).json({ error: 'Song not found in your cloud library.' });
+  const [song] = req.db.personalSongs.splice(index, 1);
+  try {
+    if (song.sourceJobId) {
+      const sourceJob = [
+        ...(req.db.mediaTranscriptionJobs || []),
+        ...(req.db.scoreTranslationJobs || []),
+      ].find((job) => job.id === song.sourceJobId && job.userId === req.user.id);
+      if (sourceJob) {
+        sourceJob.personalSongId = null;
+        sourceJob.personalSongHiddenAt = new Date().toISOString();
+      }
+    }
+    await writeDb(req.db);
+    if (!song.sourceJobId) {
+      await safeRemoveArtifact(song.assetPath).catch((error) => {
+        console.error('Orphaned personal song artifact could not be removed:', error);
+      });
+    }
+    return res.json({ ok: true, song: publicPersonalSong(song) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+function listingCommercialTerms(input, policies, fallback = {}) {
+  const mode = String(input.listingMode ?? fallback.listingMode ?? 'sale').trim().toLowerCase();
+  if (!['sale', 'free', 'listener-reward'].includes(mode)) {
+    return { error: 'Choose Sell, Free, or Reward listeners.' };
+  }
+
+  if (mode === 'listener-reward') {
+    if (!policies.listenerRewardsEnabled) return { error: 'Listener rewards are disabled by the site rules.' };
+    const listenerRewardMcoins = mcoinAmount(input.listenerRewardMcoins ?? fallback.listenerRewardMcoins);
+    if (!Number.isFinite(listenerRewardMcoins) || listenerRewardMcoins <= 0) {
+      return { error: 'Listener reward must be greater than 0 Mcoins.' };
+    }
+    if (policies.maximumListenerRewardMcoins > 0 && listenerRewardMcoins > policies.maximumListenerRewardMcoins) {
+      return { error: `Listener reward cannot exceed ${policies.maximumListenerRewardMcoins.toLocaleString()} Mcoins per listener.` };
+    }
+    return { listingMode: mode, priceMcoins: 0, listenerRewardMcoins };
+  }
+
+  if (mode === 'free') return { listingMode: mode, priceMcoins: 0, listenerRewardMcoins: 0 };
+
+  const priceMcoins = mcoinAmount(input.priceMcoins ?? fallback.priceMcoins);
+  if (!Number.isFinite(priceMcoins) || priceMcoins < policies.minimumMarketplacePriceMcoins) {
+    return { error: `Price must be at least ${policies.minimumMarketplacePriceMcoins.toLocaleString()} Mcoins.` };
+  }
+  if (policies.maximumMarketplacePriceMcoins > 0 && priceMcoins > policies.maximumMarketplacePriceMcoins) {
+    return { error: `Price cannot exceed ${policies.maximumMarketplacePriceMcoins.toLocaleString()} Mcoins.` };
+  }
+  return { listingMode: mode, priceMcoins, listenerRewardMcoins: 0 };
+}
 
 app.post('/api/listings', requireAuth, async (req, res) => {
   const artist = String(req.body.artist || '').trim();
@@ -3241,20 +5728,21 @@ app.post('/api/listings', requireAuth, async (req, res) => {
   const instrument = String(req.body.instrument || '').trim().toLowerCase();
   const format = String(req.body.format || '').trim().toUpperCase();
   const description = String(req.body.description || '').trim().slice(0, 800);
-  const priceMcoins = Math.floor(Number(req.body.priceMcoins));
   const filename = sanitizeFilename(req.body.filename || `${title}.${format.toLowerCase()}`);
   const contentBase64 = String(req.body.contentBase64 || '');
   const rightsConfirmed = req.body.rightsConfirmed === true;
   const feeConfirmed = req.body.feeConfirmed === true;
   const policies = sitePolicies(req.db);
-  const minimumListingPrice = Math.ceil(policies.minimumMarketplacePriceMcoins / 10) * 10;
+  const commercial = listingCommercialTerms(req.body, policies);
 
   if (!artist || !title) return res.status(400).json({ error: 'Artist and song title are required.' });
-  if (!rightsConfirmed) return res.status(400).json({ error: 'Confirm that you own the rights or have permission to sell this file.' });
-  if (!feeConfirmed) return res.status(400).json({ error: 'Confirm the 25% sale fee before publishing.' });
+  if (!rightsConfirmed) return res.status(400).json({ error: 'Confirm that you own the rights or have permission to publish this file.' });
   if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
   if (!['JSON', 'PDF', 'MIDI', 'MUSICXML'].includes(format)) return res.status(400).json({ error: 'Unsupported listing format.' });
-  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments.` });
+  if (commercial.error) return res.status(400).json({ error: commercial.error });
+  if (commercial.listingMode === 'sale' && policies.marketplaceFeePercent > 0 && !feeConfirmed) {
+    return res.status(400).json({ error: `Confirm the ${policies.marketplaceFeePercent}% sale fee before publishing.` });
+  }
   if (!contentBase64) return res.status(400).json({ error: 'Attach the song file before publishing.' });
 
   let bytes;
@@ -3283,15 +5771,18 @@ app.post('/api/listings', requireAuth, async (req, res) => {
     title,
     instrument,
     format,
-    priceMcoins,
+    listingMode: commercial.listingMode,
+    priceMcoins: commercial.priceMcoins,
+    listenerRewardMcoins: commercial.listenerRewardMcoins,
+    rewardPaidMcoins: 0,
     description,
     cover: INSTRUMENTS[instrument].cover,
     filename,
     assetPath: storedKey,
     demo: false,
     rightsConfirmed: true,
-    feeConfirmed: true,
-    marketplaceFeeRate: MARKETPLACE_FEE_RATE,
+    feeConfirmed: commercial.listingMode !== 'sale' || feeConfirmed,
+    marketplaceFeeRate: policies.marketplaceFeePercent / 100,
     createdAt: new Date().toISOString(),
   };
   req.db.listings.push(listing);
@@ -3310,20 +5801,25 @@ app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
   const title = String(req.body.title ?? listing.title).trim();
   const instrument = String(req.body.instrument ?? listing.instrument).trim().toLowerCase();
   const description = String(req.body.description ?? listing.description).trim().slice(0, 800);
-  const priceMcoins = Math.floor(Number(req.body.priceMcoins ?? listing.priceMcoins));
-  const minimumListingPrice = Math.ceil(sitePolicies(req.db).minimumMarketplacePriceMcoins / 10) * 10;
+  const policies = sitePolicies(req.db);
+  const commercial = listingCommercialTerms(req.body, policies, {
+    listingMode: listingMode(listing),
+    priceMcoins: listing.priceMcoins,
+    listenerRewardMcoins: listing.listenerRewardMcoins,
+  });
   if (!artist || !title) return res.status(400).json({ error: 'Artist and song title are required.' });
   if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported Polymath Musician instrument.' });
-  if (!Number.isFinite(priceMcoins) || priceMcoins < minimumListingPrice || priceMcoins > 100000 || priceMcoins % 10 !== 0) {
-    return res.status(400).json({ error: `Price must be between ${minimumListingPrice.toLocaleString()} and 100,000 Mcoins in 10-Mcoin increments.` });
-  }
+  if (commercial.error) return res.status(400).json({ error: commercial.error });
 
   Object.assign(listing, {
     artist,
     title,
     instrument,
     description,
-    priceMcoins,
+    listingMode: commercial.listingMode,
+    priceMcoins: commercial.priceMcoins,
+    listenerRewardMcoins: commercial.listenerRewardMcoins,
+    marketplaceFeeRate: policies.marketplaceFeePercent / 100,
     cover: INSTRUMENTS[instrument].cover,
     updatedAt: new Date().toISOString(),
   });
@@ -3338,8 +5834,57 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
   const existing = req.db.purchases.find((purchase) => purchase.listingId === listing.id && purchase.buyerId === req.user.id);
   if (existing) return res.json({ purchase: existing, user: safeUser(req.user) });
 
+  const mode = listingMode(listing);
+  const seller = req.db.users.find((user) => user.id === listing.sellerId);
+  const platform = req.db.users.find((user) => user.id === 'platform');
+
+  if (mode === 'listener-reward') {
+    const reward = listenerRewardStatus(listing, req.db);
+    if (!reward.available) {
+      return res.status(409).json({ error: 'This listener reward is paused, exhausted, or cannot currently be funded.' });
+    }
+    if (!seller) return res.status(409).json({ error: 'The composer account is unavailable.' });
+
+    if (!hasUnlimitedMcoins(seller)) {
+      seller.mcoins = Number((Number(seller.mcoins || 0) - reward.rewardMcoins).toFixed(2));
+      seller.withdrawableMcoins = Math.min(Number(seller.withdrawableMcoins || 0), seller.mcoins);
+    }
+    req.user.mcoins = Number((Number(req.user.mcoins || 0) + reward.rewardMcoins).toFixed(2));
+    req.user.withdrawableMcoins = Number((Number(req.user.withdrawableMcoins || 0) + reward.rewardMcoins).toFixed(2));
+    listing.rewardPaidMcoins = Number((reward.paidMcoins + reward.rewardMcoins).toFixed(2));
+
+    const purchase = {
+      id: id('purchase'),
+      listingId: listing.id,
+      buyerId: req.user.id,
+      sellerId: listing.sellerId,
+      amount: 0,
+      currency: 'MCOINS',
+      amountMcoins: 0,
+      grossMcoins: 0,
+      buyerPaidMcoins: 0,
+      listenerRewardMcoins: reward.rewardMcoins,
+      paymentMethod: 'listener_reward',
+      promotionDiscountMcoins: 0,
+      platformFeeMcoins: 0,
+      platformFeeRate: 0,
+      sellerEarningsMcoins: 0,
+      format: listing.format,
+      instrument: listing.instrument,
+      createdAt: new Date().toISOString(),
+    };
+    req.db.purchases.push(purchase);
+    addLedger(req.db, seller.id, hasUnlimitedMcoins(seller) ? 0 : -reward.rewardMcoins, 'listener_reward_paid', `${listing.title}; rewarded ${req.user.name}`);
+    addLedger(req.db, req.user.id, reward.rewardMcoins, 'listener_reward_received', `${listing.title}; paid by ${seller.name}`);
+    await writeDb(req.db);
+    return res.status(201).json({ purchase, user: safeUser(req.user) });
+  }
+
   const promotionCode = String(req.body.promotionCode || '').trim();
   const requestedFriendId = String(req.body.friendId || '').trim();
+  if (mode !== 'sale' && (promotionCode || requestedFriendId)) {
+    return res.status(400).json({ error: 'Coupons and Friend IDs only apply to paid listings.' });
+  }
   if (promotionCode && requestedFriendId) {
     return res.status(400).json({ error: 'Use either a music-sheet coupon or a Friend ID voucher, not both together.' });
   }
@@ -3349,33 +5894,37 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
       req.db,
       promotionCode,
       req.user,
-      ['marketplace_percent'],
+      ['marketplace_percent', 'marketplace_fixed'],
       listing.priceMcoins,
     );
   if (promotionResult.error) return res.status(400).json({ error: promotionResult.error });
   const promotion = promotionResult.promotion;
   const friendUser = promotionResult.friendUser || null;
   const discountMcoins = promotion
-    ? Math.min(listing.priceMcoins, Math.floor(listing.priceMcoins * promotion.value / 100))
+    ? Math.min(
+      listing.priceMcoins,
+      promotion.kind === 'marketplace_fixed'
+        ? Number(Number(promotion.value).toFixed(2))
+        : Number((listing.priceMcoins * promotion.value / 100).toFixed(2)),
+    )
     : 0;
-  const buyerPaidMcoins = listing.priceMcoins - discountMcoins;
+  const buyerPaidMcoins = Number((listing.priceMcoins - discountMcoins).toFixed(2));
   const administratorPurchase = hasUnlimitedMcoins(req.user);
   if (!administratorPurchase && req.user.mcoins < buyerPaidMcoins) {
     return res.status(402).json({ error: 'Not enough Mcoins.' });
   }
 
-  const seller = req.db.users.find((user) => user.id === listing.sellerId);
-  const platform = req.db.users.find((user) => user.id === 'platform');
-  const platformFeeMcoins = listing.priceMcoins * MARKETPLACE_FEE_RATE;
-  const sellerEarningsMcoins = listing.priceMcoins - platformFeeMcoins;
+  const marketplaceFeeRate = Math.min(1, Math.max(0, Number(listing.marketplaceFeeRate ?? sitePolicies(req.db).marketplaceFeePercent / 100)));
+  const platformFeeMcoins = Number((listing.priceMcoins * marketplaceFeeRate).toFixed(2));
+  const sellerEarningsMcoins = Number((listing.priceMcoins - platformFeeMcoins).toFixed(2));
 
-  if (!administratorPurchase) req.user.mcoins -= buyerPaidMcoins;
+  if (!administratorPurchase) req.user.mcoins = Number((req.user.mcoins - buyerPaidMcoins).toFixed(2));
   if (seller) {
-    seller.mcoins += sellerEarningsMcoins;
-    seller.withdrawableMcoins = Number(seller.withdrawableMcoins || 0) + sellerEarningsMcoins;
+    seller.mcoins = Number((Number(seller.mcoins || 0) + sellerEarningsMcoins).toFixed(2));
+    seller.withdrawableMcoins = Number((Number(seller.withdrawableMcoins || 0) + sellerEarningsMcoins).toFixed(2));
   }
   if (platform) {
-    platform.mcoins += platformFeeMcoins - discountMcoins;
+    platform.mcoins = Number((Number(platform.mcoins || 0) + platformFeeMcoins - discountMcoins).toFixed(2));
   }
 
   const purchase = {
@@ -3395,7 +5944,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     friendUserId: friendUser?.id || null,
     friendId: friendUser?.friendId || null,
     platformFeeMcoins,
-    platformFeeRate: MARKETPLACE_FEE_RATE,
+    platformFeeRate: marketplaceFeeRate,
     sellerEarningsMcoins,
     format: listing.format,
     instrument: listing.instrument,
@@ -3409,7 +5958,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     administratorPurchase ? 'admin_listing_purchase' : 'listing_purchase',
     `${listing.title} (${listing.format})${administratorPurchase ? '; unlimited administrator wallet' : ''}${promotion ? `; coupon ${promotion.code}: -${discountMcoins} Mcoins` : ''}`,
   );
-  if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; 25% platform fee: ${platformFeeMcoins} Mcoins`);
+  if (seller) addLedger(req.db, seller.id, sellerEarningsMcoins, 'listing_sale', `${listing.title}; ${Number((marketplaceFeeRate * 100).toFixed(2))}% platform fee: ${platformFeeMcoins} Mcoins`);
   if (platform) addLedger(req.db, platform.id, platformFeeMcoins - discountMcoins, 'marketplace_fee', promotion ? `${listing.title}; sponsored discount ${discountMcoins} Mcoins` : listing.title);
   if (promotion) {
     recordPromotionRedemption(req.db, promotion, req.user, {
@@ -3440,6 +5989,181 @@ app.get('/api/listings/:listingId/download', requireAuth, async (req, res) => {
     listing.assetPath,
     listing.filename || path.basename(listing.assetPath),
   );
+});
+
+app.get('/api/community/rooms', requireSubscriber, async (req, res) => {
+  const rooms = req.db.communityRooms
+    .filter((room) => canReadRoom(req.db, room, req.user.id))
+    .map((room) => publicRoom(room, req.db, req.user.id, isAdministrator(req.user)))
+    .sort((a, b) => {
+      if (a.id === GLOBAL_ROOM_ID) return -1;
+      if (b.id === GLOBAL_ROOM_ID) return 1;
+      return String(b.lastMessageAt || '').localeCompare(String(a.lastMessageAt || ''));
+    });
+  return res.json({ rooms, access: 'subscriber' });
+});
+
+app.post('/api/community/rooms', requireSubscriber, async (req, res) => {
+  const name = cleanCommunityText(req.body?.name, 60);
+  const topic = cleanCommunityText(req.body?.topic, 180);
+  const visibility = req.body?.visibility === 'private' ? 'private' : 'public';
+  if (name.length < 2) return res.status(400).json({ error: 'Give the group a name with at least 2 characters.' });
+  const ownedCount = req.db.communityRooms.filter((room) => room.ownerId === req.user.id).length;
+  if (!isAdministrator(req.user) && ownedCount >= 12) {
+    return res.status(400).json({ error: 'You can own up to 12 community groups.' });
+  }
+  const now = new Date().toISOString();
+  const room = {
+    id: id('community_room'),
+    name,
+    topic,
+    visibility,
+    ownerId: req.user.id,
+    inviteCode: crypto.randomBytes(5).toString('hex').toUpperCase(),
+    createdAt: now,
+  };
+  req.db.communityRooms.push(room);
+  req.db.communityMemberships.push({
+    id: id('community_member'),
+    roomId: room.id,
+    userId: req.user.id,
+    role: 'owner',
+    joinedAt: now,
+  });
+  await writeDb(req.db);
+  return res.status(201).json({ room: publicRoom(room, req.db, req.user.id, isAdministrator(req.user)) });
+});
+
+app.post('/api/community/rooms/join', requireSubscriber, async (req, res) => {
+  const inviteCode = cleanCommunityText(req.body?.inviteCode, 20).toUpperCase();
+  const roomId = cleanCommunityText(req.body?.roomId, 100);
+  const room = inviteCode
+    ? req.db.communityRooms.find((candidate) => candidate.inviteCode === inviteCode)
+    : req.db.communityRooms.find((candidate) => candidate.id === roomId);
+  if (!room || room.id === GLOBAL_ROOM_ID) return res.status(404).json({ error: 'That community group was not found.' });
+  if (room.visibility === 'private' && !inviteCode) {
+    return res.status(403).json({ error: 'Enter this private group’s invite code.' });
+  }
+  if (!membershipFor(req.db, room.id, req.user.id)) {
+    req.db.communityMemberships.push({
+      id: id('community_member'),
+      roomId: room.id,
+      userId: req.user.id,
+      role: 'member',
+      joinedAt: new Date().toISOString(),
+    });
+    await writeDb(req.db);
+  }
+  return res.json({ room: publicRoom(room, req.db, req.user.id, isAdministrator(req.user)) });
+});
+
+app.delete('/api/community/rooms/:roomId/membership', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || room.id === GLOBAL_ROOM_ID) return res.status(404).json({ error: 'That community group was not found.' });
+  if (room.ownerId === req.user.id) return res.status(400).json({ error: 'The group owner can delete the group instead of leaving it.' });
+  req.db.communityMemberships = req.db.communityMemberships.filter(
+    (membership) => !(membership.roomId === room.id && membership.userId === req.user.id),
+  );
+  await writeDb(req.db);
+  return res.status(204).end();
+});
+
+app.delete('/api/community/rooms/:roomId', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || room.id === GLOBAL_ROOM_ID) return res.status(404).json({ error: 'That community group was not found.' });
+  if (room.ownerId !== req.user.id && !isAdministrator(req.user)) {
+    return res.status(403).json({ error: 'Only the group owner or an administrator can delete this group.' });
+  }
+  req.db.communityRooms = req.db.communityRooms.filter((candidate) => candidate.id !== room.id);
+  req.db.communityMemberships = req.db.communityMemberships.filter((membership) => membership.roomId !== room.id);
+  req.db.communityMessages = req.db.communityMessages.filter((message) => message.roomId !== room.id);
+  await writeDb(req.db);
+  return res.status(204).end();
+});
+
+app.get('/api/community/rooms/:roomId/messages', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || !canReadRoom(req.db, room, req.user.id)) {
+    return res.status(404).json({ error: 'That community group was not found.' });
+  }
+  const since = String(req.query.since || '');
+  const messages = req.db.communityMessages
+    .filter((message) => message.roomId === room.id && (!since || String(message.createdAt) > since))
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+    .slice(-250)
+    .map((message) => publicMessage(message, req.db, req.user.id, room, isAdministrator(req.user)));
+  return res.json({
+    room: publicRoom(room, req.db, req.user.id, isAdministrator(req.user)),
+    messages,
+  });
+});
+
+app.post('/api/community/rooms/:roomId/messages', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  if (!room || !canReadRoom(req.db, room, req.user.id)) {
+    return res.status(404).json({ error: 'That community group was not found.' });
+  }
+  if (!canWriteRoom(req.db, room, req.user.id)) {
+    return res.status(403).json({ error: 'Join this group before sending a message.' });
+  }
+  if (!requestIntervalAllowed(COMMUNITY_REQUEST_TIMES, req.user.id, 700)) {
+    res.set('Retry-After', '1');
+    return res.status(429).json({ error: 'Please wait a moment before sending another message.' });
+  }
+  const text = cleanCommunityText(req.body?.text);
+  if (!text) return res.status(400).json({ error: 'Write a message first.' });
+  const message = {
+    id: id('community_message'),
+    roomId: room.id,
+    userId: req.user.id,
+    text,
+    createdAt: new Date().toISOString(),
+  };
+  req.db.communityMessages.push(message);
+  trimRoomMessages(req.db, room.id, room.id === GLOBAL_ROOM_ID ? 1500 : 750);
+  await writeDb(req.db);
+  return res.status(201).json({ message: publicMessage(message, req.db, req.user.id, room, isAdministrator(req.user)) });
+});
+
+app.delete('/api/community/rooms/:roomId/messages/:messageId', requireSubscriber, async (req, res) => {
+  const room = req.db.communityRooms.find((candidate) => candidate.id === req.params.roomId);
+  const message = req.db.communityMessages.find(
+    (candidate) => candidate.id === req.params.messageId && candidate.roomId === req.params.roomId,
+  );
+  if (!room || !message) return res.status(404).json({ error: 'That message was not found.' });
+  const membership = membershipFor(req.db, room.id, req.user.id);
+  const canDelete = isAdministrator(req.user)
+    || message.userId === req.user.id
+    || room.ownerId === req.user.id
+    || membership?.role === 'moderator';
+  if (!canDelete) return res.status(403).json({ error: 'You cannot remove that message.' });
+  req.db.communityMessages = req.db.communityMessages.filter((candidate) => candidate.id !== message.id);
+  await writeDb(req.db);
+  return res.status(204).end();
+});
+
+app.post('/api/community/messages/:messageId/report', requireSubscriber, async (req, res) => {
+  const message = req.db.communityMessages.find((candidate) => candidate.id === req.params.messageId);
+  if (!message) return res.status(404).json({ error: 'That message was not found.' });
+  const room = req.db.communityRooms.find((candidate) => candidate.id === message.roomId);
+  if (!room || !canReadRoom(req.db, room, req.user.id)) return res.status(404).json({ error: 'That message was not found.' });
+  if (message.userId === req.user.id) return res.status(400).json({ error: 'You do not need to report your own message.' });
+  const existing = req.db.communityReports.find(
+    (report) => report.messageId === message.id && report.reporterUserId === req.user.id,
+  );
+  if (!existing) {
+    req.db.communityReports.push({
+      id: id('community_report'),
+      messageId: message.id,
+      roomId: room.id,
+      reporterUserId: req.user.id,
+      reason: cleanCommunityText(req.body?.reason, 300) || 'Community safety review requested.',
+      status: 'open',
+      createdAt: new Date().toISOString(),
+    });
+    await writeDb(req.db);
+  }
+  return res.status(201).json({ message: 'Report sent privately to the moderation queue.' });
 });
 
 app.get('/api/bands', requireMusician, async (req, res) => {
@@ -3797,7 +6521,8 @@ app.post('/api/messages', requireAuth, async (req, res) => {
 app.get('/api/wallet', requireAuth, async (req, res) => {
   const ledger = req.db.ledger.filter((entry) => entry.userId === req.user.id).slice(-100).reverse();
   const withdrawals = req.db.withdrawals.filter((item) => item.userId === req.user.id).slice(-20).reverse();
-  res.json({ user: safeUser(req.user), ledger, withdrawals, withdrawalFeeRate: WITHDRAWAL_FEE_RATE });
+  const policies = sitePolicies(req.db);
+  res.json({ user: safeUser(req.user), ledger, withdrawals, withdrawalFeeRate: policies.withdrawalFeePercent / 100, policies });
 });
 
 app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, async (req, res) => {
@@ -3814,6 +6539,43 @@ app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, async (req, 
       amounts: totals,
     },
   });
+});
+
+app.get('/api/admin/community/reports', requireAuth, requireAdmin, async (req, res) => {
+  const reports = req.db.communityReports
+    .slice()
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map((report) => {
+      const message = req.db.communityMessages.find((candidate) => candidate.id === report.messageId);
+      const room = req.db.communityRooms.find((candidate) => candidate.id === report.roomId);
+      const reporter = req.db.users.find((candidate) => candidate.id === report.reporterUserId);
+      const author = message && req.db.users.find((candidate) => candidate.id === message.userId);
+      return {
+        id: report.id,
+        status: report.status,
+        reason: report.reason,
+        createdAt: report.createdAt,
+        resolvedAt: report.resolvedAt || null,
+        room: { id: report.roomId, name: room?.name || 'Deleted group' },
+        message: message ? { id: message.id, text: message.text, author: author?.name || 'Former member' } : null,
+        reporter: reporter?.name || 'Former member',
+      };
+    });
+  return res.json({ reports, openCount: reports.filter((report) => report.status === 'open').length });
+});
+
+app.patch('/api/admin/community/reports/:reportId', requireAuth, requireAdmin, async (req, res) => {
+  const report = req.db.communityReports.find((candidate) => candidate.id === req.params.reportId);
+  if (!report) return res.status(404).json({ error: 'Community report not found.' });
+  const status = ['resolved', 'dismissed'].includes(req.body?.status) ? req.body.status : 'resolved';
+  if (req.body?.removeMessage) {
+    req.db.communityMessages = req.db.communityMessages.filter((message) => message.id !== report.messageId);
+  }
+  report.status = status;
+  report.resolvedAt = new Date().toISOString();
+  report.resolvedBy = req.user.id;
+  await writeDb(req.db);
+  return res.json({ report: { id: report.id, status: report.status, resolvedAt: report.resolvedAt } });
 });
 
 app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
@@ -4039,24 +6801,151 @@ app.get('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   res.json({ policies: sitePolicies(req.db) });
 });
 
+app.get('/api/admin/withdrawals', requireAuth, requireAdmin, async (req, res) => {
+  const withdrawals = req.db.withdrawals
+    .slice()
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+    .map((withdrawal) => {
+      const account = req.db.users.find((user) => user.id === withdrawal.userId);
+      return {
+        ...withdrawal,
+        account: account ? {
+          userId: account.id,
+          name: account.name,
+          email: account.email,
+          phone: account.phone || '',
+        } : null,
+      };
+    });
+  const pending = withdrawals.filter((item) => String(item.status || '').toLowerCase().startsWith('pending'));
+  res.json({
+    withdrawals,
+    summary: {
+      pendingCount: pending.length,
+      pendingGrossMcoins: Number(pending.reduce((total, item) => total + Number(item.amountMcoins || 0), 0).toFixed(2)),
+      pendingNetMcoins: Number(pending.reduce((total, item) => total + Number(item.netMcoins || 0), 0).toFixed(2)),
+    },
+  });
+});
+
+app.patch('/api/admin/withdrawals/:withdrawalId', requireAuth, requireAdmin, async (req, res) => {
+  const withdrawal = req.db.withdrawals.find((item) => item.id === req.params.withdrawalId);
+  if (!withdrawal) return res.status(404).json({ error: 'Withdrawal request not found.' });
+  if (!String(withdrawal.status || '').toLowerCase().startsWith('pending')) {
+    return res.status(409).json({ error: 'Only a pending withdrawal can be completed or rejected.' });
+  }
+  const nextStatus = String(req.body.status || '').trim().toLowerCase();
+  if (!['paid', 'rejected'].includes(nextStatus)) {
+    return res.status(400).json({ error: 'Choose paid or rejected.' });
+  }
+
+  const account = req.db.users.find((user) => user.id === withdrawal.userId);
+  if (nextStatus === 'rejected' && account) {
+    const amountMcoins = Number(withdrawal.amountMcoins || 0);
+    const feeMcoins = Number(withdrawal.feeMcoins || 0);
+    account.mcoins = Number((Number(account.mcoins || 0) + amountMcoins).toFixed(2));
+    account.withdrawableMcoins = Math.min(
+      account.mcoins,
+      Number((Number(account.withdrawableMcoins || 0) + amountMcoins).toFixed(2)),
+    );
+    const platform = req.db.users.find((user) => user.id === 'platform');
+    if (platform) {
+      platform.mcoins = Number((Number(platform.mcoins || 0) - feeMcoins).toFixed(2));
+      addLedger(req.db, platform.id, -feeMcoins, 'cashout_fee_reversed', `${account.name} rejected cash-out`);
+    }
+    addLedger(req.db, account.id, amountMcoins, 'withdrawal_rejected_refund', `Withdrawal ${withdrawal.id} rejected by administrator`);
+  }
+
+  withdrawal.status = nextStatus;
+  withdrawal.reviewedAt = new Date().toISOString();
+  withdrawal.reviewedBy = req.user.id;
+  await writeDb(req.db);
+  res.json({ withdrawal, message: nextStatus === 'paid' ? 'Withdrawal marked as paid.' : 'Withdrawal rejected and refunded.' });
+});
+
 app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
+  const current = sitePolicies(req.db);
   const next = {
     registrationEnabled: req.body.registrationEnabled !== false,
-    minimumSignupAge: clampInteger(req.body.minimumSignupAge, 0, 120, 0),
-    minimumPasswordLength: clampInteger(req.body.minimumPasswordLength, 8, 64, 8),
-    minimumMarketplacePriceMcoins: clampInteger(req.body.minimumMarketplacePriceMcoins, 1, 100000, 10),
-    minimumWithdrawalMcoins: clampInteger(req.body.minimumWithdrawalMcoins, 1, 1000000, 20),
+    minimumSignupAge: clampInteger(req.body.minimumSignupAge, 0, 120, current.minimumSignupAge),
+    minimumPasswordLength: clampInteger(req.body.minimumPasswordLength, 1, 256, current.minimumPasswordLength),
+    minimumMarketplacePriceMcoins: clampDecimal(req.body.minimumMarketplacePriceMcoins, 0, 1000000000, current.minimumMarketplacePriceMcoins),
+    maximumMarketplacePriceMcoins: clampDecimal(req.body.maximumMarketplacePriceMcoins, 0, 1000000000, current.maximumMarketplacePriceMcoins),
+    marketplaceFeePercent: clampDecimal(req.body.marketplaceFeePercent, 0, 100, current.marketplaceFeePercent),
+    teacherDirectoryEnabled: typeof req.body.teacherDirectoryEnabled === 'boolean'
+      ? req.body.teacherDirectoryEnabled
+      : current.teacherDirectoryEnabled,
+    teacherApplicationsEnabled: typeof req.body.teacherApplicationsEnabled === 'boolean'
+      ? req.body.teacherApplicationsEnabled
+      : current.teacherApplicationsEnabled,
+    teacherReviewsEnabled: typeof req.body.teacherReviewsEnabled === 'boolean'
+      ? req.body.teacherReviewsEnabled
+      : current.teacherReviewsEnabled,
+    minimumTeacherHourlyRateMcoins: clampDecimal(
+      req.body.minimumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      current.minimumTeacherHourlyRateMcoins,
+    ),
+    maximumTeacherHourlyRateMcoins: clampDecimal(
+      req.body.maximumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      current.maximumTeacherHourlyRateMcoins,
+    ),
+    teacherMarketplaceFeePercent: clampDecimal(
+      req.body.teacherMarketplaceFeePercent,
+      0,
+      100,
+      current.teacherMarketplaceFeePercent,
+    ),
+    teacherMarketplaceNotice: String(
+      req.body.teacherMarketplaceNotice ?? current.teacherMarketplaceNotice ?? '',
+    ).trim().slice(0, 600),
+    listenerRewardsEnabled: req.body.listenerRewardsEnabled !== false,
+    maximumListenerRewardMcoins: clampDecimal(req.body.maximumListenerRewardMcoins, 0, 1000000000, current.maximumListenerRewardMcoins),
+    maximumRewardOutflowPerListingMcoins: clampDecimal(req.body.maximumRewardOutflowPerListingMcoins, 0, 1000000000, current.maximumRewardOutflowPerListingMcoins),
+    minimumWithdrawalMcoins: clampDecimal(req.body.minimumWithdrawalMcoins, 0, 1000000000, current.minimumWithdrawalMcoins),
+    maximumWithdrawalMcoins: clampDecimal(req.body.maximumWithdrawalMcoins, 0, 1000000000, current.maximumWithdrawalMcoins),
+    dailyWithdrawalLimitMcoins: clampDecimal(req.body.dailyWithdrawalLimitMcoins, 0, 1000000000, current.dailyWithdrawalLimitMcoins),
+    maximumPendingWithdrawalOutflowMcoins: clampDecimal(req.body.maximumPendingWithdrawalOutflowMcoins, 0, 1000000000, current.maximumPendingWithdrawalOutflowMcoins),
+    withdrawalFeePercent: clampDecimal(req.body.withdrawalFeePercent, 0, 100, current.withdrawalFeePercent),
     minimumWithdrawal20MigrationApplied: true,
-    welcomeMcoins: clampInteger(req.body.welcomeMcoins, 0, 100000, 0),
+    welcomeMcoins: clampDecimal(req.body.welcomeMcoins, 0, 1000000000, current.welcomeMcoins),
+    virtualLessonPricePer30MinutesMcoins: clampDecimal(
+      req.body.virtualLessonPricePer30MinutesMcoins,
+      0,
+      1000000000,
+      current.virtualLessonPricePer30MinutesMcoins,
+    ),
     policyNotice: String(req.body.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(req.body.termsUrl || '').trim().slice(0, 500),
     privacyUrl: String(req.body.privacyUrl || '').trim().slice(0, 500),
     supportEmail: String(req.body.supportEmail || '').trim().toLowerCase().slice(0, 254),
+    supportPhone: String(req.body.supportPhone || '').trim().slice(0, 40),
     updatedAt: new Date().toISOString(),
     updatedBy: req.user.id,
   };
+  if (next.maximumMarketplacePriceMcoins > 0 && next.maximumMarketplacePriceMcoins < next.minimumMarketplacePriceMcoins) {
+    return res.status(400).json({ error: 'Maximum listing price must be 0 (unlimited) or at least the minimum listing price.' });
+  }
+  if (next.maximumTeacherHourlyRateMcoins > 0
+    && next.maximumTeacherHourlyRateMcoins < next.minimumTeacherHourlyRateMcoins) {
+    return res.status(400).json({
+      error: 'Maximum teacher hourly rate must be 0 (unlimited) or at least the minimum teacher hourly rate.',
+    });
+  }
+  if (next.maximumWithdrawalMcoins > 0 && next.maximumWithdrawalMcoins < next.minimumWithdrawalMcoins) {
+    return res.status(400).json({ error: 'Maximum withdrawal must be 0 (unlimited) or at least the minimum withdrawal.' });
+  }
   if (next.supportEmail && !/^\S+@\S+\.\S+$/.test(next.supportEmail)) {
     return res.status(400).json({ error: 'Enter a valid support email or leave it blank.' });
+  }
+  if (next.supportPhone) {
+    const phoneDigits = next.supportPhone.replace(/\D/g, '');
+    if (!/^\+?[\d() .-]+$/.test(next.supportPhone) || phoneDigits.length < 7 || phoneDigits.length > 18) {
+      return res.status(400).json({ error: 'Enter a valid helpline number or leave it blank.' });
+    }
   }
   for (const [label, value] of [['Terms', next.termsUrl], ['Privacy', next.privacyUrl]]) {
     if (value && !/^https?:\/\//i.test(value)) {
@@ -4136,13 +7025,22 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) =>
   const code = normalizePromotionCode(req.body.code);
   const name = String(req.body.name || '').trim().slice(0, 100);
   const kind = String(req.body.kind || '');
-  const value = clampInteger(req.body.value, 1, 100, 1);
+  const fixedMcoinDiscount = kind === 'marketplace_fixed';
+  const rawValue = Number(req.body.value);
+  const value = fixedMcoinDiscount
+    ? clampDecimal(rawValue, 0.01, 1000000000, 0.01)
+    : clampInteger(rawValue, 1, 100, 1);
   const startsAtDate = req.body.startsAt ? new Date(req.body.startsAt) : null;
   const expiresAtDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
   if (code.length < 3) return res.status(400).json({ error: 'Promotion code must contain at least 3 letters or numbers.' });
   if (!name) return res.status(400).json({ error: 'Give the promotion a short name.' });
-  if (!['marketplace_percent', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
-    return res.status(400).json({ error: 'Promotions must be a Composers, subscription, or Friend ID percentage discount.' });
+  if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
+    return res.status(400).json({ error: 'Choose a supported percentage or fixed-Mcoin discount.' });
+  }
+  if (!Number.isFinite(rawValue) || rawValue <= 0 || (!fixedMcoinDiscount && rawValue > 100)) {
+    return res.status(400).json({ error: fixedMcoinDiscount
+      ? 'Fixed discounts must be greater than 0 Mcoins.'
+      : 'Percentage discounts must be between 1% and 100%.' });
   }
   if (req.db.promotions.some((promotion) => promotion.code === code)) {
     return res.status(409).json({ error: 'That promotion code already exists.' });
@@ -4190,7 +7088,7 @@ app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, async
   const promotion = req.db.promotions.find((item) => item.id === req.params.promotionId);
   if (!promotion) return res.status(404).json({ error: 'Promotion not found.' });
   if (promotion.retired && req.body.active === true) {
-    return res.status(400).json({ error: 'Legacy Mcoin and fixed-value promotions are permanently retired.' });
+    return res.status(400).json({ error: 'This legacy promotion is permanently retired.' });
   }
   if (req.body.active !== undefined) promotion.active = Boolean(req.body.active);
   promotion.updatedAt = new Date().toISOString();
@@ -4254,12 +7152,31 @@ app.post('/api/wallet/withdraw', requireAuth, async (req, res) => {
     ? Math.floor(requestedMcoins * 100) / 100
     : Number.NaN;
   const payoutEmail = String(req.body.payoutEmail || '').trim().toLowerCase();
-  const minimumWithdrawalMcoins = sitePolicies(req.db).minimumWithdrawalMcoins;
-  if (!Number.isFinite(amountMcoins) || amountMcoins < minimumWithdrawalMcoins) return res.status(400).json({ error: `Minimum withdrawal is ${minimumWithdrawalMcoins.toLocaleString()} Mcoins.` });
+  const policies = sitePolicies(req.db);
+  const minimumWithdrawalMcoins = policies.minimumWithdrawalMcoins;
+  if (!Number.isFinite(amountMcoins) || amountMcoins <= 0 || amountMcoins < minimumWithdrawalMcoins) return res.status(400).json({ error: `Withdrawal must be greater than 0 and at least ${minimumWithdrawalMcoins.toLocaleString()} Mcoins.` });
+  if (policies.maximumWithdrawalMcoins > 0 && amountMcoins > policies.maximumWithdrawalMcoins) {
+    return res.status(400).json({ error: `Maximum withdrawal is ${policies.maximumWithdrawalMcoins.toLocaleString()} Mcoins per request.` });
+  }
   if (req.user.mcoins < amountMcoins) return res.status(402).json({ error: 'Insufficient Mcoin balance.' });
   if (!/^\S+@\S+\.\S+$/.test(payoutEmail)) return res.status(400).json({ error: 'Enter a valid payout email.' });
-  const feeMcoins = Number((amountMcoins * WITHDRAWAL_FEE_RATE).toFixed(2));
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const userOutflowToday = req.db.withdrawals
+    .filter((item) => item.userId === req.user.id && String(item.createdAt || '').startsWith(todayUtc) && !['rejected', 'cancelled'].includes(String(item.status || '').toLowerCase()))
+    .reduce((total, item) => total + Number(item.amountMcoins || 0), 0);
+  if (policies.dailyWithdrawalLimitMcoins > 0 && userOutflowToday + amountMcoins > policies.dailyWithdrawalLimitMcoins) {
+    const remaining = Math.max(0, Number((policies.dailyWithdrawalLimitMcoins - userOutflowToday).toFixed(2)));
+    return res.status(400).json({ error: `Daily withdrawal limit reached. ${remaining.toLocaleString()} Mcoins remain today.` });
+  }
+  const withdrawalFeeRate = policies.withdrawalFeePercent / 100;
+  const feeMcoins = Number((amountMcoins * withdrawalFeeRate).toFixed(2));
   const netMcoins = Number((amountMcoins - feeMcoins).toFixed(2));
+  const pendingOutflow = req.db.withdrawals
+    .filter((item) => String(item.status || '').toLowerCase().startsWith('pending'))
+    .reduce((total, item) => total + Number(item.netMcoins || 0), 0);
+  if (policies.maximumPendingWithdrawalOutflowMcoins > 0 && pendingOutflow + netMcoins > policies.maximumPendingWithdrawalOutflowMcoins) {
+    return res.status(409).json({ error: 'The platform pending payout limit has been reached. Please try again after an administrator processes existing payouts.' });
+  }
   req.user.mcoins = Number((req.user.mcoins - amountMcoins).toFixed(2));
   req.user.withdrawableMcoins = Math.min(
     Number(req.user.withdrawableMcoins || 0),
@@ -4276,13 +7193,13 @@ app.post('/api/wallet/withdraw', requireAuth, async (req, res) => {
     amountMcoins,
     feeMcoins,
     netMcoins,
-    feeRate: WITHDRAWAL_FEE_RATE,
+    feeRate: withdrawalFeeRate,
     payoutEmail,
     status: 'pending_manual_review',
     createdAt: new Date().toISOString(),
   };
   req.db.withdrawals.push(withdrawal);
-  addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `25% cash-out fee: ${feeMcoins} Mcoins; net: ${netMcoins} Mcoins`);
+  addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `${policies.withdrawalFeePercent}% cash-out fee: ${feeMcoins} Mcoins; net: ${netMcoins} Mcoins`);
   await writeDb(req.db);
   res.status(201).json({ withdrawal, user: safeUser(req.user) });
 });
@@ -4675,17 +7592,28 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       });
     }
     const pricing = subscriptionPriceForUser(product, req.user);
+    const attribution = campaignAttribution(req.db, req.body);
 
     const reusablePending = req.db.subscriptions.find((item) => (
       item.userId === req.user.id
       && item.productId === product.id
       && String(item.checkoutPrice || product.price) === pricing.price
       && String(item.luckyCode || '') === pricing.luckyCode
+      && String(item.campaignId || '') === String(attribution.campaignId || '')
+      && String(item.referralCode || '') === String(attribution.referralCode || '')
       && ['APPROVAL_PENDING', 'APPROVED', 'CREATED'].includes(String(item.status || '').toUpperCase())
       && item.approveUrl
       && Date.now() - new Date(item.createdAt).getTime() < 24 * 60 * 60 * 1000
     ));
     if (reusablePending) {
+      await recordTrustedProductEvent('checkout_started', req.user.id, {
+        productId: product.id,
+        tier: product.tier || '',
+        interval: product.interval || '',
+        audience: product.audience || 'individual',
+        outcome: 'reused',
+        ...attribution,
+      });
       return res.json({
         subscriptionId: reusablePending.subscriptionId,
         approveUrl: reusablePending.approveUrl,
@@ -4742,6 +7670,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       checkoutPrice: pricing.price,
       discountPercent: pricing.discountPercent,
       luckyCode: pricing.luckyCode,
+      ...attribution,
       isUpgrade,
       upgradeFromSubscriptionId: isUpgrade ? req.user.paypalSubscriptionId : null,
       upgradeFromProductId: upgradeFrom?.id || null,
@@ -4755,6 +7684,14 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       req.user.pro = false;
     }
     await writeDb(req.db);
+    await recordTrustedProductEvent('checkout_started', req.user.id, {
+      productId: product.id,
+      tier: product.tier || '',
+      interval: product.interval || '',
+      audience: product.audience || 'individual',
+      outcome: 'created',
+      ...attribution,
+    });
     res.status(201).json({
       subscriptionId: data.id,
       approveUrl,
@@ -4811,6 +7748,16 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
       );
     }
     await writeDb(req.db);
+    if (user?.pro && firstActivation) {
+      await recordTrustedProductEvent('subscription_activated', user.id, {
+        productId: product.id,
+        tier: product.tier || '',
+        interval: product.interval || '',
+        audience: product.audience || 'individual',
+        outcome: record.isUpgrade ? 'upgrade' : 'new',
+        ...subscriptionAttributionProperties(record, product),
+      });
+    }
 
     res.json({
       user: safeUser(req.user),
@@ -4866,9 +7813,12 @@ app.post('/api/paypal/webhook', async (req, res) => {
     const webhookStatus = eventType === 'BILLING.SUBSCRIPTION.UPDATED'
       ? resource.status
       : statusByType[eventType];
+    let activatedSubscription = null;
+    let activatedUser = null;
 
     if (subscriptionId && webhookStatus) {
       const record = db.subscriptions.find((item) => item.subscriptionId === subscriptionId);
+      const firstActivation = subscriptionStatusGrantsPro(webhookStatus) && !record?.activatedAt;
       if (subscriptionStatusGrantsPro(webhookStatus) && record?.isUpgrade) {
         try {
           await cancelPreviousSubscriptionForUpgrade(db, record);
@@ -4877,7 +7827,11 @@ app.post('/api/paypal/webhook', async (req, res) => {
           throw error;
         }
       }
-      applySubscriptionStatus(db, subscriptionId, webhookStatus, resource.custom_id || '');
+      const updatedUser = applySubscriptionStatus(db, subscriptionId, webhookStatus, resource.custom_id || '');
+      if (firstActivation && updatedUser?.pro) {
+        activatedSubscription = record;
+        activatedUser = updatedUser;
+      }
     }
 
     db.webhookEvents.push({
@@ -4888,6 +7842,17 @@ app.post('/api/paypal/webhook', async (req, res) => {
     });
     if (db.webhookEvents.length > 1000) db.webhookEvents = db.webhookEvents.slice(-1000);
     await writeDb(db);
+    if (activatedSubscription && activatedUser) {
+      const product = PRODUCTS[activatedSubscription.productId] || PRODUCTS['polymath-pro'];
+      await recordTrustedProductEvent('subscription_activated', activatedUser.id, {
+        productId: product.id,
+        tier: product.tier || '',
+        interval: product.interval || '',
+        audience: product.audience || 'individual',
+        outcome: activatedSubscription.isUpgrade ? 'upgrade' : 'new',
+        ...subscriptionAttributionProperties(activatedSubscription, product),
+      });
+    }
     res.json({ received: true });
   } catch (error) {
     console.error('PayPal webhook failed:', error.message);
@@ -5014,11 +7979,49 @@ function publicTranslationJob(job) {
     pianoPerformance: job.pianoPerformance && typeof job.pianoPerformance === 'object'
       ? job.pianoPerformance
       : null,
+    outputFilename: job.status === 'completed' ? job.outputFilename : undefined,
+    personalSongId: job.status === 'completed' ? job.personalSongId : undefined,
   };
 }
 
 const TEACHER_LEVELS = new Set(['beginner', 'intermediate', 'advanced']);
 const TEACHER_LESSON_MODES = new Set(['online', 'in-person']);
+
+function teacherMarketplaceTerms(policies) {
+  const feePercent = clampDecimal(
+    policies?.teacherMarketplaceFeePercent,
+    0,
+    100,
+    DEFAULT_SITE_POLICIES.teacherMarketplaceFeePercent,
+  );
+  return {
+    directoryEnabled: policies?.teacherDirectoryEnabled !== false,
+    applicationsEnabled: policies?.teacherApplicationsEnabled !== false,
+    reviewsEnabled: policies?.teacherReviewsEnabled !== false,
+    minimumHourlyRateMcoins: clampDecimal(
+      policies?.minimumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.minimumTeacherHourlyRateMcoins,
+    ),
+    maximumHourlyRateMcoins: clampDecimal(
+      policies?.maximumTeacherHourlyRateMcoins,
+      0,
+      1000000000,
+      DEFAULT_SITE_POLICIES.maximumTeacherHourlyRateMcoins,
+    ),
+    platformFeePercent: feePercent,
+    teacherKeepsPercent: Number((100 - feePercent).toFixed(2)),
+    withdrawalFeePercent: clampDecimal(
+      policies?.withdrawalFeePercent,
+      0,
+      100,
+      DEFAULT_SITE_POLICIES.withdrawalFeePercent,
+    ),
+    notice: String(policies?.teacherMarketplaceNotice || '').trim().slice(0, 600),
+    checkoutAvailable: false,
+  };
+}
 
 function teacherReviewSummary(db, teacherProfileId) {
   const reviews = db.teacherReviews.filter((review) => review.teacherProfileId === teacherProfileId);
@@ -5452,6 +8455,7 @@ function normalizeReadyToPlaySong(rawResult, selectedInstrument) {
 async function processTranslationJob(jobId) {
   let job = await claimBackgroundJob('scoreTranslationJobs', jobId);
   if (!job) return;
+  const stopClaimHeartbeat = startBackgroundJobClaimHeartbeat('scoreTranslationJobs', jobId);
   let db;
   let sourcePath = '';
   let outputPath = '';
@@ -5522,6 +8526,15 @@ async function processTranslationJob(jobId) {
     job.stage = 'Ready to download';
     job.progress = 100;
     job.completedAt = new Date().toISOString();
+    attachGeneratedPersonalSong(db, job, {
+      title: result.title || path.basename(job.filename, path.extname(job.filename)),
+      artist: result.artist || result.composer || '',
+      instrument: job.instrument,
+      filename: job.outputFilename,
+      assetPath: job.outputPath,
+      bytes: fs.readFileSync(outputPath),
+      sourceJobType: 'score-translation',
+    });
     await writeDb(db);
     if (ARTIFACT_STORE.remote) {
       safeRemoveUpload(sourcePath);
@@ -5534,6 +8547,7 @@ async function processTranslationJob(jobId) {
     refundTranslationJob(db, job, error.message);
     await writeDb(db);
   } finally {
+    stopClaimHeartbeat();
     safeRemoveUpload(sourcePath);
     if (ARTIFACT_STORE.remote) safeRemoveUpload(outputPath);
     await safeRemoveArtifact(job?.sourcePath);
@@ -5563,12 +8577,16 @@ app.post('/api/artifact-upload-intents', requireAuth, async (req, res) => {
     if (!capability.enabled) return res.status(503).json({ error: capability.reason, capability });
     if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
       return res.status(403).json({
-        error: 'MuScriptor is currently available only to administrators for model testing.',
+        error: 'Polymath is currently available only to administrators for model testing.',
         capability,
       });
     }
     if (!MEDIA_EXTENSIONS.has(extension)) {
       return res.status(400).json({ error: 'Use MP3, WAV, FLAC, M4A, MP4, MOV, WebM, MKV, or AVI.' });
+    }
+  } else if (purpose === 'personal-song') {
+    if (!['.json', '.mid', '.midi'].includes(extension) || size > MARKETPLACE_MAX_BYTES) {
+      return res.status(400).json({ error: 'Ready-to-play JSON or MIDI songs must be smaller than 8 MB.' });
     }
   } else {
     return res.status(400).json({ error: 'Choose a supported upload purpose.' });
@@ -5604,7 +8622,7 @@ async function submitMediaTranscription(req, res, {
     return cleanupAndReject(503, capability.reason, { capability });
   }
   if (MUSCRIPTOR_ADMIN_ONLY && !isAdministrator(req.user)) {
-    return cleanupAndReject(403, 'MuScriptor is currently available only to administrators for model testing.', { capability });
+    return cleanupAndReject(403, 'Polymath is currently available only to administrators for model testing.', { capability });
   }
 
   const extension = path.extname(originalName || '').toLowerCase();
@@ -5675,13 +8693,14 @@ async function submitMediaTranscription(req, res, {
     paymentMethod,
     allowanceBucket,
     costMcoins: paymentMethod === 'mcoins' ? mcoinCost : 0,
-    model: `muscriptor-${MUSCRIPTOR_MODEL}`,
+    model: `polymath-${MUSCRIPTOR_MODEL}`,
     modelLicense: 'CC-BY-NC-4.0',
     sourcePath: persistedSourceKey,
     status: 'processing',
-    stage: 'Queued for MuScriptor',
+    stage: 'Queued for Polymath',
     progress: 5,
     startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
   req.db.mediaTranscriptionJobs.push(job);
   if (paymentMethod === 'mcoins') {
@@ -5698,6 +8717,11 @@ async function submitMediaTranscription(req, res, {
     throw error;
   }
   await dispatchBackgroundJob('media-transcription', job.id);
+  await recordTrustedProductEvent('transcription_started', req.user.id, {
+    instrument,
+    playbackMode,
+    execution: capability.execution,
+  });
   return res.status(202).json({
     job: publicMediaTranscriptionJob(job),
     capability,
@@ -5774,6 +8798,35 @@ app.get('/api/media-transcriptions/:jobId', requireAuth, async (req, res) => {
   });
 });
 
+app.post('/api/media-transcriptions/:jobId/feedback', requireAuth, async (req, res) => {
+  const job = req.db.mediaTranscriptionJobs.find((candidate) => (
+    candidate.id === req.params.jobId && candidate.userId === req.user.id
+  ));
+  if (!job) return res.status(404).json({ error: 'Music transcription job not found.' });
+  if (job.status !== 'completed') {
+    return res.status(409).json({ error: 'Listen to the completed transcription before reviewing it.' });
+  }
+  const value = String(req.body.feedback || '').trim().toLowerCase();
+  if (!['accurate', 'needs-work'].includes(value)) {
+    return res.status(400).json({ error: 'Choose accurate or needs work.' });
+  }
+  if (job.feedback?.value) {
+    if (job.feedback.value === value) return res.json({ job: publicMediaTranscriptionJob(job) });
+    return res.status(409).json({ error: 'This transcription review is already saved.' });
+  }
+  job.feedback = {
+    value,
+    reviewedAt: new Date().toISOString(),
+  };
+  await writeDb(req.db);
+  await recordTrustedProductEvent('transcription_feedback', req.user.id, {
+    feedback: value,
+    instrument: job.instrument,
+    playbackMode: job.playbackMode,
+  });
+  return res.json({ job: publicMediaTranscriptionJob(job) });
+});
+
 app.get('/api/media-transcriptions/:jobId/download', requireAuth, async (req, res) => {
   const job = req.db.mediaTranscriptionJobs.find((candidate) => (
     candidate.id === req.params.jobId && candidate.userId === req.user.id
@@ -5785,7 +8838,7 @@ app.get('/api/media-transcriptions/:jobId/download', requireAuth, async (req, re
   return ARTIFACT_STORE.sendDownload(
     res,
     job.outputPath,
-    job.outputFilename || 'muscriptor-ready-to-play.json',
+    job.outputFilename || 'polymath-ready-to-play.json',
     'application/json',
   );
 });
@@ -5992,6 +9045,54 @@ app.post('/api/score-import', async (req, res) => {
 if (IS_PRODUCTION) {
   const frontendDir = path.resolve(__dirname, '..', 'dist');
 
+  app.get('/c/:slug', async (req, res, next) => {
+    try {
+      const db = await readDb();
+      const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+      if (!campaign || !campaignIsLive(campaign)) return next();
+      const publicCampaign = publicArtistCampaign(campaign);
+      const score = Number.isFinite(Number(req.query.score))
+        ? Math.max(0, Math.min(100, Math.round(Number(req.query.score))))
+        : null;
+      const requestedReferral = String(req.query.ref || '').trim().toUpperCase();
+      const referral = requestedReferral === campaign.referralCode ? campaign.referralCode : '';
+      const params = new URLSearchParams({ try: 'learn', campaign: campaign.slug });
+      if (score !== null) params.set('score', String(score));
+      if (referral) params.set('ref', referral);
+      const targetHash = `#studio?${params.toString()}`;
+      const canonicalBase = new URL(CLIENT_ORIGIN);
+      const canonical = new URL(publicCampaign.sharePath, canonicalBase).toString();
+      const destination = new URL(`/${targetHash}`, canonicalBase).toString();
+      const cover = publicCampaign.coverUrl ? new URL(publicCampaign.coverUrl, canonicalBase).toString() : '';
+      const escapeHtml = (value) => String(value || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const pageTitle = `${campaign.title} by ${campaign.artist} | Polymath challenge`;
+      const description = campaign.hook || `Play a ${campaign.previewDurationSeconds}-second piano challenge and share your score.`;
+      const tags = [
+        `<meta name="description" content="${escapeHtml(description)}">`,
+        `<link rel="canonical" href="${escapeHtml(canonical)}">`,
+        '<meta property="og:type" content="website">',
+        `<meta property="og:title" content="${escapeHtml(pageTitle)}">`,
+        `<meta property="og:description" content="${escapeHtml(description)}">`,
+        `<meta property="og:url" content="${escapeHtml(canonical)}">`,
+        ...(cover ? [`<meta property="og:image" content="${escapeHtml(cover)}">`] : []),
+        '<meta name="twitter:card" content="summary_large_image">',
+        `<meta name="twitter:title" content="${escapeHtml(pageTitle)}">`,
+        `<meta name="twitter:description" content="${escapeHtml(description)}">`,
+        ...(cover ? [`<meta name="twitter:image" content="${escapeHtml(cover)}">`] : []),
+        `<meta http-equiv="refresh" content="0;url=${escapeHtml(destination)}">`,
+        `<script>location.replace(${JSON.stringify(destination).replace(/</g, '\\u003c')});</script>`,
+      ].join('');
+      const html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(pageTitle)}</title>${tags}</head><body><main><h1>${escapeHtml(campaign.hook || pageTitle)}</h1><p>${escapeHtml(campaign.title)} by ${escapeHtml(campaign.artist)}</p><p><a href="${escapeHtml(destination)}">Open the piano challenge</a></p></main></body></html>`;
+      res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+      res.setHeader('X-Polymath-Route', 'artist-campaign-share-fallback');
+      return res.type('html').send(html);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   app.use('/samples', express.static(path.join(frontendDir, 'samples'), {
     etag: true,
     setHeaders(res, filename) {
@@ -6023,6 +9124,12 @@ if (IS_PRODUCTION) {
 }
 
 app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'The upload is too large for this form.'
+      : 'The upload form was not accepted. Check the selected files and try again.';
+    return res.status(400).json({ error: message, code: error.code });
+  }
   if (error instanceof StateConflictError) {
     return res.status(409).json({
       error: 'Another request updated the same account data. Please retry.',
@@ -6054,6 +9161,26 @@ async function resumePendingMediaTranscriptionJobs() {
   }
 }
 
+let virtualLessonExpiryTimer = null;
+let virtualLessonExpirySweepRunning = false;
+
+function startVirtualLessonExpirySweep() {
+  if (virtualLessonExpiryTimer) return;
+  virtualLessonExpiryTimer = setInterval(async () => {
+    if (virtualLessonExpirySweepRunning) return;
+    virtualLessonExpirySweepRunning = true;
+    try {
+      const db = await readDb();
+      if (expireVirtualLessons(db)) await writeDb(db);
+    } catch (error) {
+      console.error('Virtual lesson expiry sweep failed:', error.message);
+    } finally {
+      virtualLessonExpirySweepRunning = false;
+    }
+  }, 30000);
+  virtualLessonExpiryTimer.unref?.();
+}
+
 async function startServer() {
   ensureStorage();
   await bootstrapAdminAccounts();
@@ -6063,6 +9190,7 @@ async function startServer() {
   }
   await resumePendingTranslationJobs();
   await resumePendingMediaTranscriptionJobs();
+  startVirtualLessonExpirySweep();
   return app.listen(PORT, () => {
     console.log(
       `Polymath Musician backend running on http://localhost:${PORT} `

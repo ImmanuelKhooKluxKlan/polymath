@@ -1,21 +1,36 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiRequest } from '../services/api.js';
+import { apiAssetUrl, apiRequest } from '../services/api.js';
+import { TEACHER_PROFILES } from '../engine/teacherHands.js';
+import { normalizeTeacherImage } from '../utils/teacherImage.js';
+import { validateTeacherGlbFile } from '../utils/teacherModel.js';
 import ModelLabPage from './ModelLabPage.jsx';
 import SubscriptionCatalogAdmin from '../components/SubscriptionCatalogAdmin.jsx';
 import SiteControlCenter from '../components/SiteControlCenter.jsx';
+import { campaignShareUrl } from '../engine/artistCampaign.js';
 
 const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage', 'Start'],
+  ['growth', 'Growth', 'Activation, sharing, subscriptions, retention, and transcription reliability', 'Start'],
   ['site-builder', 'Site & navigation', 'Rename, arrange, preview, and publish sections', 'Website'],
   ['devices', 'Device preview', 'Preview, test, and review responsive pages', 'Website'],
   ['subscriptions', 'Subscriptions', 'Categories, prices, features, and access', 'Business'],
-  ['promotions', 'Discounts', 'Create and pause percentage codes', 'Business'],
+  ['teacher-marketplace', 'Human teachers', 'Directory access, rates, reviews, and platform fees', 'Business'],
+  ['promotions', 'Discounts', 'Create percentage or fixed-Mcoin codes', 'Business'],
+  ['withdrawals', 'Payouts', 'Review pending cash-outs and platform outflow', 'Business'],
   ['users', 'Account manager', 'Search, Mcoins, access, and secure resets', 'Business'],
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests', 'AI & operations'],
-  ['policies', 'Rules & policies', 'Signup and spending minimums', 'AI & operations'],
+  ['characters', 'Virtual teachers', 'Create, price, edit, restrict, hide, and delete characters', 'AI & operations'],
+  ['community', 'Community safety', 'Review reported messages and moderation actions', 'AI & operations'],
+  ['policies', 'Rules & policies', 'Security, marketplace, rewards, fees, and outflow limits', 'AI & operations'],
 ];
 
 const ADMIN_SECTION_GROUPS = ['Start', 'Website', 'Business', 'AI & operations'];
+
+function initialAdminSection() {
+  const query = String(window.location.hash || '').split('?')[1] || '';
+  const requested = new URLSearchParams(query).get('section') || '';
+  return ADMIN_SECTIONS.some(([id]) => id === requested) ? requested : 'overview';
+}
 
 const DEVICE_PRESETS = [
   ['small-phone', 'Small phone', 320, 568],
@@ -33,7 +48,7 @@ const DEVICE_PRESETS = [
 
 const PREVIEW_PAGES = [
   ['studio', 'Piano Studio'], ['guitar', 'Guitar Studio'], ['ensemble', 'Instrument Studio'],
-  ['band', 'Band'], ['find-teacher', 'Find Teacher'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
+  ['band', 'Band'], ['community', 'Community'], ['find-teacher', 'Find Teacher'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
   ['create-music', 'Create Music'], ['payment', 'Payments'], ['account', 'Account'],
 ];
 
@@ -60,6 +75,49 @@ const EMPTY_ACCOUNT_MANAGER = {
   interval: 'MONTH',
 };
 
+const EMPTY_CHARACTER = {
+  name: '',
+  title: '',
+  description: '',
+  voice: '',
+  voiceType: 'neutral',
+  armTone: 'light',
+  minimumAge: 0,
+  adultCompanionEnabled: false,
+  pricePer30MinutesMcoins: '',
+  active: true,
+};
+
+const EMPTY_CAMPAIGN = {
+  artist: '', title: '', slug: '', referralCode: '', hook: '', description: '', artistUrl: '',
+  previewStartSeconds: 0, previewDurationSeconds: 20, challengeScore: 0,
+  qaScore: 0, affiliatePercent: 20, rightsConfirmed: false, artistApproved: false,
+  humanVerified: false, rightsHolder: '', rightsBasis: '', verificationNotes: '',
+  launchesAt: '', endsAt: '',
+};
+
+function campaignDraftFromRecord(campaign) {
+  if (!campaign) return EMPTY_CAMPAIGN;
+  const localDateTime = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  return {
+    ...Object.fromEntries(Object.keys(EMPTY_CAMPAIGN).map((key) => [
+      key,
+      campaign[key] ?? EMPTY_CAMPAIGN[key],
+    ])),
+    launchesAt: localDateTime(campaign.launchesAt),
+    endsAt: localDateTime(campaign.endsAt),
+  };
+}
+
+function characterImageUrl(character) {
+  if (character?.imagePath) return apiAssetUrl(character.imagePath);
+  return TEACHER_PROFILES.find((profile) => profile.id === character?.id)?.image || '';
+}
+
 function normalizedDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
@@ -85,22 +143,38 @@ function formatAmount(amount, currency) {
   return `${Number(amount || 0).toLocaleString()} Mcoins`;
 }
 
+function percentLabel(value) {
+  return value === null || value === undefined ? 'Not enough data' : `${Number(value).toFixed(1)}%`;
+}
+
+function durationLabel(seconds) {
+  if (seconds === null || seconds === undefined) return 'Not enough data';
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
+}
+
 function promotionKindLabel(kind) {
   if (kind === 'marketplace_percent') return 'Composers percentage';
+  if (kind === 'marketplace_fixed') return 'Composers fixed Mcoin discount';
   if (kind === 'friend_id_percent') return 'Friend ID percentage voucher';
   if (kind === 'subscription_percent') return 'Lucky code subscription discount';
   return 'Retired legacy promotion';
 }
 
 function promotionValueLabel(item) {
-  return item.retired ? 'Retired' : String(item.value) + '% off';
+  if (item.retired) return 'Retired';
+  return item.kind === 'marketplace_fixed'
+    ? `${Number(item.value).toLocaleString()} Mcoins off`
+    : `${item.value}% off`;
 }
 
 export default function AdminDatabasePage({ user, onNavigate }) {
-  const [activeSection, setActiveSection] = useState('overview');
+  const [activeSection, setActiveSection] = useState(initialAdminSection);
   const [adminSearch, setAdminSearch] = useState('');
   const [database, setDatabase] = useState({ rows: [], footer: {}, configuration: {} });
   const [promotions, setPromotions] = useState([]);
+  const [withdrawals, setWithdrawals] = useState({ withdrawals: [], summary: {} });
   const [policies, setPolicies] = useState(null);
   const [status, setStatus] = useState('Loading admin console...');
   const [userSearch, setUserSearch] = useState('');
@@ -117,21 +191,84 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [previewVersion, setPreviewVersion] = useState(0);
   const [customViewport, setCustomViewport] = useState({ width: 390, height: 844 });
   const [phoneReviews, setPhoneReviews] = useState(loadPhoneReviews);
+  const [characters, setCharacters] = useState([]);
+  const [communityReports, setCommunityReports] = useState({ reports: [], openCount: 0 });
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsDays, setAnalyticsDays] = useState(30);
+  const [analyticsStatus, setAnalyticsStatus] = useState('');
+  const [characterDraft, setCharacterDraft] = useState(EMPTY_CHARACTER);
+  const [editingCharacterId, setEditingCharacterId] = useState('');
+  const [characterImage, setCharacterImage] = useState(null);
+  const [characterImagePreview, setCharacterImagePreview] = useState('');
+  const [characterModel, setCharacterModel] = useState(null);
+  const [characterBusy, setCharacterBusy] = useState(false);
+  const [characterUploadVersion, setCharacterUploadVersion] = useState(0);
+  const [campaigns, setCampaigns] = useState([]);
+  const [campaignGate, setCampaignGate] = useState(null);
+  const [campaignDraft, setCampaignDraft] = useState(EMPTY_CAMPAIGN);
+  const [editingCampaignId, setEditingCampaignId] = useState('');
+  const [campaignSong, setCampaignSong] = useState(null);
+  const [campaignCover, setCampaignCover] = useState(null);
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const [campaignFormOpen, setCampaignFormOpen] = useState(false);
 
   async function loadConsole() {
-    const [usersData, policiesData, promotionsData] = await Promise.all([
+    const [usersData, policiesData, promotionsData, withdrawalsData, charactersData, communityData, campaignsData] = await Promise.all([
       apiRequest('/api/admin/users'),
       apiRequest('/api/admin/policies'),
       apiRequest('/api/admin/promotions'),
+      apiRequest('/api/admin/withdrawals'),
+      apiRequest('/api/admin/virtual-teachers'),
+      apiRequest('/api/admin/community/reports'),
+      apiRequest('/api/admin/artist-campaigns'),
     ]);
     setDatabase(usersData);
     setPolicies(policiesData.policies);
     setPromotions(promotionsData.promotions);
+    setWithdrawals(withdrawalsData);
+    setCharacters(Array.isArray(charactersData.catalog)
+      ? charactersData.catalog
+      : (Array.isArray(charactersData.characters) ? charactersData.characters : []));
+    setCommunityReports(communityData);
+    setCampaigns(campaignsData.campaigns || []);
+    setCampaignGate(campaignsData.publishGate || null);
+  }
+
+  async function loadCampaigns() {
+    const data = await apiRequest('/api/admin/artist-campaigns');
+    setCampaigns(data.campaigns || []);
+    setCampaignGate(data.publishGate || null);
+  }
+
+  async function loadProductAnalytics(days = analyticsDays) {
+    setAnalyticsStatus('Refreshing growth evidence…');
+    try {
+      const data = await apiRequest(`/api/admin/product-analytics?days=${encodeURIComponent(days)}`);
+      setAnalytics(data);
+      setAnalyticsStatus('');
+    } catch (error) {
+      setAnalyticsStatus(error.message);
+    }
+  }
+
+  async function reviewCommunityReport(report, statusValue, removeMessage = false) {
+    try {
+      await apiRequest(`/api/admin/community/reports/${report.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: statusValue, removeMessage }),
+      });
+      const refreshed = await apiRequest('/api/admin/community/reports');
+      setCommunityReports(refreshed);
+      setStatus(removeMessage ? 'Message removed and report resolved.' : `Report ${statusValue}.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
   }
 
   useEffect(() => {
     if (!user?.admin) return;
     loadConsole().then(() => setStatus('')).catch((error) => setStatus(error.message));
+    loadProductAnalytics();
   }, [user?.admin]);
 
   useEffect(() => {
@@ -141,6 +278,10 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       // Reviewing still works for this session when browser storage is unavailable.
     }
   }, [phoneReviews]);
+
+  useEffect(() => () => {
+    if (characterImagePreview.startsWith('blob:')) URL.revokeObjectURL(characterImagePreview);
+  }, [characterImagePreview]);
 
   const spendingUsers = useMemo(
     () => database.rows.filter((row) => row.usdSpent > 0 || row.marketplaceSpentMcoins > 0).length,
@@ -170,6 +311,10 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       `${label} ${description} ${group}`.toLowerCase().includes(query)
     ));
   }, [adminSearch]);
+  const campaignAnalyticsById = useMemo(
+    () => new Map((analytics?.campaigns || []).map((entry) => [entry.campaignId, entry])),
+    [analytics?.campaigns],
+  );
 
   const preset = DEVICE_PRESETS.find((device) => device.id === deviceId) || DEVICE_PRESETS[1];
   const baseWidth = preset.id === 'custom' ? Number(customViewport.width) || 390 : preset.width;
@@ -210,6 +355,189 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     try {
       const data = await apiRequest('/api/admin/policies', { method: 'PUT', body: JSON.stringify(policies) });
       setPolicies(data.policies);
+      setStatus(data.message);
+    } catch (error) { setStatus(error.message); }
+  }
+
+  async function chooseCharacterImage(event) {
+    const source = event.target.files?.[0];
+    if (!source) return;
+    setCharacterBusy(true);
+    setStatus('Preparing the character image...');
+    try {
+      const normalized = await normalizeTeacherImage(source);
+      setCharacterImage(normalized);
+      setCharacterImagePreview(URL.createObjectURL(normalized));
+      setStatus('Image fitted to 768 × 960 without stretching. Save when the details look right.');
+    } catch (error) {
+      setCharacterImage(null);
+      setCharacterImagePreview('');
+      setStatus(error.message);
+    } finally {
+      setCharacterBusy(false);
+    }
+  }
+
+  function resetCharacterEditor() {
+    setEditingCharacterId('');
+    setCharacterDraft(EMPTY_CHARACTER);
+    setCharacterImage(null);
+    setCharacterImagePreview('');
+    setCharacterModel(null);
+    setCharacterUploadVersion((current) => current + 1);
+  }
+
+  function editCharacter(character) {
+    setEditingCharacterId(character.id);
+    setCharacterDraft({
+      name: character.name || '',
+      title: character.title || '',
+      description: character.description || '',
+      voice: character.voice || '',
+      voiceType: character.voiceType || 'neutral',
+      armTone: character.armTone || 'light',
+      minimumAge: Number(character.minimumAge || 0),
+      adultCompanionEnabled: Boolean(character.adultCompanionEnabled),
+      pricePer30MinutesMcoins: character.pricePer30MinutesMcoins ?? '',
+      active: character.active !== false,
+    });
+    setCharacterImage(null);
+    setCharacterImagePreview(characterImageUrl(character));
+    setCharacterModel(null);
+    setCharacterUploadVersion((current) => current + 1);
+    setStatus(`Editing ${character.name}. Existing image and 3D model stay unless you replace them.`);
+    window.setTimeout(() => document.querySelector('.admin-character-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function updateCharacterInList(character) {
+    setCharacters((current) => {
+      const withoutCurrent = current.filter((candidate) => candidate.id !== character.id);
+      return [...withoutCurrent, character]
+        .sort((left, right) => String(left.name).localeCompare(String(right.name), undefined, { sensitivity: 'base' }));
+    });
+  }
+
+  async function saveCharacter(event) {
+    event.preventDefault();
+    if (!editingCharacterId && !characterImage) {
+      setStatus('Choose a character image first.');
+      return;
+    }
+    const body = new FormData();
+    Object.entries(characterDraft).forEach(([key, value]) => body.append(key, String(value)));
+    if (characterImage) body.append('image', characterImage, characterImage.name);
+    if (characterModel) body.append('model', characterModel, characterModel.name);
+    setCharacterBusy(true);
+    setStatus(`${editingCharacterId ? 'Saving' : 'Publishing'} ${characterDraft.name || 'character'}...`);
+    try {
+      const data = await apiRequest(
+        editingCharacterId
+          ? `/api/admin/virtual-teachers/${encodeURIComponent(editingCharacterId)}`
+          : '/api/admin/virtual-teachers',
+        { method: editingCharacterId ? 'PATCH' : 'POST', body },
+      );
+      updateCharacterInList(data.character);
+      resetCharacterEditor();
+      window.dispatchEvent(new window.CustomEvent('polymath:virtual-teachers-changed'));
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCharacterBusy(false);
+    }
+  }
+
+  async function chooseCharacterModel(event) {
+    const source = event.target.files?.[0];
+    if (!source) {
+      setCharacterModel(null);
+      return;
+    }
+    setCharacterBusy(true);
+    setStatus('Checking the 3D skeleton file...');
+    try {
+      setCharacterModel(await validateTeacherGlbFile(source));
+      setStatus('GLB header is valid. The backend will verify its human skeleton when you publish.');
+    } catch (error) {
+      setCharacterModel(null);
+      setStatus(error.message);
+      event.target.value = '';
+    } finally {
+      setCharacterBusy(false);
+    }
+  }
+
+  async function deleteCharacter(character) {
+    if (character.builtIn) {
+      await setCharacterAvailability(character, false);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${character.name}?\n\nThis permanently removes the character, portrait, and rigged model. This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    setCharacterBusy(true);
+    setStatus(`Deleting ${character.name}...`);
+    try {
+      const data = await apiRequest(`/api/admin/virtual-teachers/${encodeURIComponent(character.id)}`, { method: 'DELETE' });
+      setCharacters((current) => current.filter((candidate) => candidate.id !== character.id));
+      if (editingCharacterId === character.id) resetCharacterEditor();
+      window.dispatchEvent(new window.CustomEvent('polymath:virtual-teachers-changed'));
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCharacterBusy(false);
+    }
+  }
+
+  async function setCharacterAvailability(character, active) {
+    if (!window.confirm(`${active ? 'Enable' : 'Hide'} ${character.name} in the public teacher library?`)) return;
+    const body = new FormData();
+    body.append('active', String(active));
+    setCharacterBusy(true);
+    setStatus(`${active ? 'Enabling' : 'Hiding'} ${character.name}...`);
+    try {
+      const data = await apiRequest(`/api/admin/virtual-teachers/${encodeURIComponent(character.id)}`, {
+        method: 'PATCH',
+        body,
+      });
+      updateCharacterInList(data.character);
+      if (editingCharacterId === character.id) {
+        setCharacterDraft((current) => ({ ...current, active }));
+      }
+      window.dispatchEvent(new window.CustomEvent('polymath:virtual-teachers-changed'));
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCharacterBusy(false);
+    }
+  }
+
+  async function saveMaximumCashout(event) {
+    event.preventDefault();
+    setStatus('Saving maximum cash-out...');
+    try {
+      const data = await apiRequest('/api/admin/policies', { method: 'PUT', body: JSON.stringify(policies) });
+      setPolicies(data.policies);
+      setStatus(`Maximum cash-out saved: ${data.policies.maximumWithdrawalMcoins > 0 ? `${Number(data.policies.maximumWithdrawalMcoins).toLocaleString()} Mcoins per request` : 'unlimited'}.`);
+    } catch (error) { setStatus(error.message); }
+  }
+
+  async function reviewWithdrawal(withdrawalId, nextStatus) {
+    const prompt = nextStatus === 'paid'
+      ? 'Confirm that the payout was completed outside Polymath. Mark this request as paid?'
+      : 'Reject this request and return the full requested Mcoins to the user?';
+    if (!window.confirm(prompt)) return;
+    setStatus(nextStatus === 'paid' ? 'Recording completed payout...' : 'Rejecting and refunding withdrawal...');
+    try {
+      const data = await apiRequest(`/api/admin/withdrawals/${withdrawalId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      const refreshed = await apiRequest('/api/admin/withdrawals');
+      setWithdrawals(refreshed);
       setStatus(data.message);
     } catch (error) { setStatus(error.message); }
   }
@@ -344,6 +672,132 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     }
   }
 
+  function resetCampaignForm() {
+    setEditingCampaignId('');
+    setCampaignDraft(EMPTY_CAMPAIGN);
+    setCampaignSong(null);
+    setCampaignCover(null);
+    setCampaignFormOpen(false);
+  }
+
+  function openNewCampaignForm() {
+    setEditingCampaignId('');
+    setCampaignDraft(EMPTY_CAMPAIGN);
+    setCampaignSong(null);
+    setCampaignCover(null);
+    setCampaignFormOpen(true);
+    window.setTimeout(() => document.getElementById('artist-campaign-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function editCampaign(campaign) {
+    setEditingCampaignId(campaign.id);
+    setCampaignDraft(campaignDraftFromRecord(campaign));
+    setCampaignSong(null);
+    setCampaignCover(null);
+    setCampaignFormOpen(true);
+    window.setTimeout(() => document.getElementById('artist-campaign-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function campaignPayload(statusOverride = 'draft') {
+    const form = new FormData();
+    Object.entries({ ...campaignDraft, status: statusOverride }).forEach(([key, value]) => {
+      if (key === 'launchesAt' || key === 'endsAt') {
+        form.append(key, value ? new Date(value).toISOString() : '');
+      } else {
+        form.append(key, typeof value === 'boolean' ? String(value) : String(value ?? ''));
+      }
+    });
+    if (campaignSong) form.append('song', campaignSong, campaignSong.name);
+    if (campaignCover) form.append('cover', campaignCover, campaignCover.name);
+    return form;
+  }
+
+  async function saveCampaign(event) {
+    event.preventDefault();
+    setCampaignBusy(true);
+    setStatus(editingCampaignId ? 'Saving campaign draft…' : 'Creating campaign draft…');
+    try {
+      const data = await apiRequest(
+        editingCampaignId
+          ? `/api/admin/artist-campaigns/${editingCampaignId}`
+          : '/api/admin/artist-campaigns',
+        {
+          method: editingCampaignId ? 'PATCH' : 'POST',
+          body: campaignPayload('draft'),
+        },
+      );
+      await loadCampaigns();
+      setStatus(`${data.campaign.title || 'Campaign'} saved as a private draft.`);
+      resetCampaignForm();
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCampaignBusy(false);
+    }
+  }
+
+  async function setCampaignStatus(campaign, nextStatus) {
+    const action = nextStatus === 'published' ? 'publish' : nextStatus === 'paused' ? 'pause' : 'archive';
+    if (!window.confirm(`${action[0].toUpperCase()}${action.slice(1)} ${campaign.title}?`)) return;
+    setCampaignBusy(true);
+    setStatus(`${action[0].toUpperCase()}${action.slice(1)}ing campaign…`);
+    try {
+      const form = new FormData();
+      form.append('status', nextStatus);
+      const data = await apiRequest(`/api/admin/artist-campaigns/${campaign.id}`, {
+        method: 'PATCH',
+        body: form,
+      });
+      await loadCampaigns();
+      setStatus(nextStatus === 'published'
+        ? `${data.campaign.title} is live.`
+        : `${data.campaign.title} is ${nextStatus}.`);
+    } catch (error) {
+      const blockers = error.details?.publishProblems;
+      setStatus(blockers?.length ? `Cannot publish: ${blockers.join(' ')}` : error.message);
+    } finally {
+      setCampaignBusy(false);
+    }
+  }
+
+  async function deleteCampaign(campaign) {
+    if (!window.confirm(`Permanently delete ${campaign.title || 'this campaign'} and its uploaded campaign files?`)) return;
+    setCampaignBusy(true);
+    try {
+      await apiRequest(`/api/admin/artist-campaigns/${campaign.id}`, { method: 'DELETE' });
+      await loadCampaigns();
+      if (editingCampaignId === campaign.id) resetCampaignForm();
+      setStatus('Campaign deleted.');
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCampaignBusy(false);
+    }
+  }
+
+  async function copyCampaignLink(campaign) {
+    const url = campaignShareUrl(window.location.origin, campaign);
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus('Campaign link copied.');
+    } catch {
+      window.prompt('Copy this campaign link:', url);
+    }
+  }
+
+  function previewCampaign(campaign) {
+    const params = new URLSearchParams({
+      try: 'learn',
+      campaign: campaign.slug,
+      adminPreview: '1',
+    });
+    window.open(
+      `${window.location.origin}${window.location.pathname}#studio?${params.toString()}`,
+      '_blank',
+      'noopener,noreferrer',
+    );
+  }
+
   if (!user?.admin) {
     return (
       <section className='page-shell narrow-page'>
@@ -424,6 +878,215 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           </article>
         </section>
       )}
+      {activeSection === 'growth' && (
+        <section className='admin-workspace growth-evidence'>
+          <header className='admin-section-heading'>
+            <div>
+              <p className='eyebrow'>Real behaviour, not guesses</p>
+              <h2>Growth evidence</h2>
+              <p>See where people experience value, leave, share, subscribe, and return.</p>
+            </div>
+            <div className='growth-window-control'>
+              <label>Window
+                <select value={analyticsDays} onChange={(event) => {
+                  const days = Number(event.target.value);
+                  setAnalyticsDays(days);
+                  loadProductAnalytics(days);
+                }}>
+                  <option value='7'>7 days</option>
+                  <option value='30'>30 days</option>
+                  <option value='90'>90 days</option>
+                </select>
+              </label>
+              <button className='ghost' type='button' onClick={() => loadProductAnalytics()}>Refresh</button>
+            </div>
+          </header>
+
+          <section className='campaign-launchpad'>
+            <header className='campaign-launchpad-heading'>
+              <div>
+                <p className='eyebrow'>Artist-to-fan launch engine</p>
+                <h3>Playable campaigns</h3>
+                <p>Turn one rights-cleared song moment into a no-sign-in challenge, a shareable score, and a measurable subscription path.</p>
+              </div>
+              <button className='primary' type='button' onClick={openNewCampaignForm}>New campaign</button>
+            </header>
+
+            <div className='campaign-list'>
+              {campaigns.length === 0 && (
+                <div className='empty-state'>
+                  <strong>No campaign is public.</strong>
+                  <p>Create a private draft, verify it with a pianist, then publish only when every gate passes.</p>
+                </div>
+              )}
+              {campaigns.map((campaign) => {
+                const evidence = campaignAnalyticsById.get(campaign.id);
+                const views = evidence?.stages?.find((stage) => stage.id === 'viewed')?.actors || 0;
+                const attempts = evidence?.stages?.find((stage) => stage.id === 'attempted');
+                const activations = evidence?.stages?.find((stage) => stage.id === 'activated')?.actors || 0;
+                return (
+                  <article className={`campaign-card is-${campaign.status}`} key={campaign.id}>
+                    <header>
+                      <div>
+                        <span className='campaign-status'>{campaign.status}</span>
+                        <h4>{campaign.title || 'Untitled campaign'}</h4>
+                        <p>{campaign.artist || 'Artist not set'} · /c/{campaign.slug || 'not-set'}</p>
+                      </div>
+                      <strong className={campaign.publishProblems.length ? 'campaign-gate blocked' : 'campaign-gate ready'}>
+                        {campaign.publishProblems.length ? `${campaign.publishProblems.length} gate${campaign.publishProblems.length === 1 ? '' : 's'} open` : 'Launch-ready'}
+                      </strong>
+                    </header>
+                    <div className='campaign-metrics'>
+                      <span><small>QA</small><strong>{campaign.verification.qaScore}/100</strong></span>
+                      <span><small>Views</small><strong>{views.toLocaleString()}</strong></span>
+                      <span><small>Try rate</small><strong>{percentLabel(attempts?.fromViewPercent)}</strong></span>
+                      <span><small>Activated</small><strong>{activations.toLocaleString()}</strong></span>
+                      <span><small>Plan value</small><strong>${Number(evidence?.attributedActivationValueUsd || 0).toFixed(2)}</strong></span>
+                    </div>
+                    {campaign.publishProblems.length > 0 && (
+                      <details className='campaign-blockers'>
+                        <summary>See launch blockers</summary>
+                        <ul>{campaign.publishProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+                      </details>
+                    )}
+                    {evidence && (
+                      <details className='campaign-funnel-details'>
+                        <summary>Full campaign funnel</summary>
+                        <div>
+                          {evidence.stages.map((stage) => (
+                            <span key={stage.id}>
+                              <small>{stage.id}</small>
+                              <strong>{stage.actors.toLocaleString()}</strong>
+                              <em>{stage.id === 'viewed' ? 'start' : `${percentLabel(stage.fromPreviousPercent)} from prior`}</em>
+                            </span>
+                          ))}
+                        </div>
+                        <p>Average attempt: {evidence.averageScore ?? 'not measured'} · Estimated creator commission: ${Number(evidence.estimatedCreatorCommissionUsd || 0).toFixed(2)}</p>
+                      </details>
+                    )}
+                    <div className='campaign-card-actions'>
+                      <button className='ghost' type='button' disabled={campaignBusy || campaign.excerptNoteCount < 1} onClick={() => previewCampaign(campaign)}>Preview</button>
+                      <button className='ghost' type='button' disabled={campaignBusy} onClick={() => editCampaign(campaign)}>Edit draft</button>
+                      {campaign.status === 'published' ? (
+                        <>
+                          <button className='ghost' type='button' disabled={campaignBusy} onClick={() => copyCampaignLink(campaign)}>Copy link</button>
+                          <button className='ghost' type='button' disabled={campaignBusy} onClick={() => setCampaignStatus(campaign, 'paused')}>Pause</button>
+                        </>
+                      ) : (
+                        <button className='primary' type='button' disabled={campaignBusy || campaign.publishProblems.length > 0} onClick={() => setCampaignStatus(campaign, 'published')}>Publish</button>
+                      )}
+                      <button className='ghost' type='button' disabled={campaignBusy} onClick={() => setCampaignStatus(campaign, 'archived')}>Archive</button>
+                      <button className='danger' type='button' disabled={campaignBusy} onClick={() => deleteCampaign(campaign)}>Delete</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            {campaignFormOpen && (
+              <form id='artist-campaign-form' className='campaign-form' onSubmit={saveCampaign}>
+                <header>
+                  <div><p className='eyebrow'>Private until published</p><h4>{editingCampaignId ? 'Edit campaign draft' : 'Create campaign draft'}</h4></div>
+                  <button className='ghost' type='button' onClick={resetCampaignForm}>Close</button>
+                </header>
+                <div className='campaign-form-grid'>
+                  <label className='field'>Artist<input required maxLength='100' value={campaignDraft.artist} onChange={(event) => setCampaignDraft({ ...campaignDraft, artist: event.target.value })} /></label>
+                  <label className='field'>Song title<input required maxLength='140' value={campaignDraft.title} onChange={(event) => setCampaignDraft({ ...campaignDraft, title: event.target.value })} /></label>
+                  <label className='field'>Public URL slug<input placeholder='artist-song-challenge' maxLength='64' value={campaignDraft.slug} onChange={(event) => setCampaignDraft({ ...campaignDraft, slug: event.target.value })} /></label>
+                  <label className='field'>Creator referral code<input placeholder='ARTIST20' maxLength='32' value={campaignDraft.referralCode} onChange={(event) => setCampaignDraft({ ...campaignDraft, referralCode: event.target.value.toUpperCase() })} /></label>
+                  <label className='field'>Artist website<input type='url' placeholder='https://…' value={campaignDraft.artistUrl} onChange={(event) => setCampaignDraft({ ...campaignDraft, artistUrl: event.target.value })} /></label>
+                  <label className='field campaign-form-wide'>Challenge headline<input required maxLength='180' placeholder='Can you play the chorus?' value={campaignDraft.hook} onChange={(event) => setCampaignDraft({ ...campaignDraft, hook: event.target.value })} /></label>
+                  <label className='field campaign-form-wide'>Short description<textarea maxLength='500' rows='2' value={campaignDraft.description} onChange={(event) => setCampaignDraft({ ...campaignDraft, description: event.target.value })} /></label>
+                  <label className='field'>Ready-to-play challenge<input type='file' accept='.json,.mid,.midi,application/json,audio/midi' required={!editingCampaignId} onChange={(event) => setCampaignSong(event.target.files?.[0] || null)} /><small>{campaignSong?.name || (editingCampaignId ? 'Keep current file unless replaced.' : 'JSON or MIDI, maximum 8 MB.')}</small></label>
+                  <label className='field'>Cover image<input type='file' accept='image/png,image/jpeg,image/webp' onChange={(event) => setCampaignCover(event.target.files?.[0] || null)} /><small>{campaignCover?.name || 'Optional PNG, JPEG, or WebP.'}</small></label>
+                </div>
+
+                <details className='campaign-form-section' open>
+                  <summary>Quality and preview</summary>
+                  <div className='campaign-form-grid'>
+                    <label className='field'>Preview starts at (seconds)<input type='number' min='0' max='3600' step='0.1' value={campaignDraft.previewStartSeconds} onChange={(event) => setCampaignDraft({ ...campaignDraft, previewStartSeconds: event.target.value })} /></label>
+                    <label className='field'>Preview length (10–45 seconds)<input type='number' min='10' max='45' step='1' value={campaignDraft.previewDurationSeconds} onChange={(event) => setCampaignDraft({ ...campaignDraft, previewDurationSeconds: event.target.value })} /></label>
+                    <label className='field'>QA score (minimum 80)<input type='number' min='0' max='100' step='1' value={campaignDraft.qaScore} onChange={(event) => setCampaignDraft({ ...campaignDraft, qaScore: event.target.value })} /></label>
+                    <label className='field'>Artist challenge score<input type='number' min='0' max='100' step='1' value={campaignDraft.challengeScore} onChange={(event) => setCampaignDraft({ ...campaignDraft, challengeScore: event.target.value })} /></label>
+                    <label className='field'>Creator attribution estimate<input type='number' min='0' max='50' step='0.1' value={campaignDraft.affiliatePercent} onChange={(event) => setCampaignDraft({ ...campaignDraft, affiliatePercent: event.target.value })} /><small>Reporting only; no automatic payout.</small></label>
+                    <label className='field'>Human verification notes<textarea rows='2' maxLength='400' value={campaignDraft.verificationNotes} onChange={(event) => setCampaignDraft({ ...campaignDraft, verificationNotes: event.target.value })} /></label>
+                    <label className='campaign-check'><input type='checkbox' checked={campaignDraft.humanVerified} onChange={(event) => setCampaignDraft({ ...campaignDraft, humanVerified: event.target.checked })} /><span><strong>Human pianist verified</strong><small>Timing, pitches, holds, dynamics, and pedal were heard and checked.</small></span></label>
+                  </div>
+                </details>
+
+                <details className='campaign-form-section'>
+                  <summary>Rights and artist approval</summary>
+                  <div className='campaign-form-grid'>
+                    <label className='field'>Rights holder / approving artist<input maxLength='120' value={campaignDraft.rightsHolder} onChange={(event) => setCampaignDraft({ ...campaignDraft, rightsHolder: event.target.value })} /></label>
+                    <label className='field'>Permission or licence basis<input maxLength='240' placeholder='Written artist agreement dated…' value={campaignDraft.rightsBasis} onChange={(event) => setCampaignDraft({ ...campaignDraft, rightsBasis: event.target.value })} /></label>
+                    <label className='campaign-check'><input type='checkbox' checked={campaignDraft.rightsConfirmed} onChange={(event) => setCampaignDraft({ ...campaignDraft, rightsConfirmed: event.target.checked })} /><span><strong>Rights confirmed</strong><small>Polymath has permission to publish this playable excerpt.</small></span></label>
+                    <label className='campaign-check'><input type='checkbox' checked={campaignDraft.artistApproved} onChange={(event) => setCampaignDraft({ ...campaignDraft, artistApproved: event.target.checked })} /><span><strong>Artist approved</strong><small>The artist or authorised representative approved this campaign.</small></span></label>
+                  </div>
+                </details>
+
+                <details className='campaign-form-section'>
+                  <summary>Schedule</summary>
+                  <div className='campaign-form-grid'>
+                    <label className='field'>Launch time<input type='datetime-local' value={campaignDraft.launchesAt} onChange={(event) => setCampaignDraft({ ...campaignDraft, launchesAt: event.target.value })} /></label>
+                    <label className='field'>End time<input type='datetime-local' value={campaignDraft.endsAt} onChange={(event) => setCampaignDraft({ ...campaignDraft, endsAt: event.target.value })} /></label>
+                  </div>
+                </details>
+
+                <div className='campaign-form-actions'>
+                  <span>Gate: QA ≥ {campaignGate?.minimumQaScore || 80}; preview {campaignGate?.previewSeconds?.minimum || 10}–{campaignGate?.previewSeconds?.maximum || 45}s.</span>
+                  <button className='primary' type='submit' disabled={campaignBusy}>{campaignBusy ? 'Saving…' : 'Save private draft'}</button>
+                </div>
+              </form>
+            )}
+          </section>
+
+          {analyticsStatus && <p className='form-status'>{analyticsStatus}</p>}
+          {!analytics && !analyticsStatus && <div className='empty-state'><p>Growth evidence will appear as people use this release.</p></div>}
+          {analytics && (
+            <>
+              <div className='growth-proof-grid'>
+                <article>
+                  <span>Lesson score</span>
+                  <strong>{analytics.learning?.averageScore ?? '—'}</strong>
+                  <small>{Number(analytics.learning?.completedAttempts || 0).toLocaleString()} measured attempts</small>
+                </article>
+                <article>
+                  <span>Transcriptions completed</span>
+                  <strong>{percentLabel(analytics.transcription?.completionPercent)}</strong>
+                  <small>Average {durationLabel(analytics.transcription?.averageDurationSeconds)}</small>
+                </article>
+                <article>
+                  <span>Users say playable</span>
+                  <strong>{percentLabel(analytics.transcription?.playablePercent)}</strong>
+                  <small>{Number(analytics.transcription?.feedbackActors || 0).toLocaleString()} quality reviews</small>
+                </article>
+                <article>
+                  <span>Return signal</span>
+                  <strong>{percentLabel(analytics.returnSignal?.returningPercent)}</strong>
+                  <small>{analytics.returnSignal?.definition}</small>
+                </article>
+              </div>
+
+              <article className='growth-funnel-card'>
+                <header><div><p className='eyebrow'>First-song funnel</p><h3>Where momentum survives</h3></div><small>Unique people reaching each step</small></header>
+                <div className='growth-funnel-list'>
+                  {(analytics.stages || []).map((stage) => (
+                    <div className='growth-funnel-row' key={stage.id}>
+                      <div><strong>{stage.label}</strong><small>{stage.actors.toLocaleString()} people</small></div>
+                      <div className='growth-funnel-track' aria-label={`${stage.fromVisitPercent ?? 0}% of visitors`}>
+                        <span style={{ width: `${Math.max(0, Math.min(100, stage.fromVisitPercent ?? 0))}%` }} />
+                      </div>
+                      <b>{stage.id === 'visited' ? 'Starting point' : `${percentLabel(stage.fromPreviousPercent)} from prior step`}</b>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <p className='growth-privacy-note'>{analytics.privacy}</p>
+            </>
+          )}
+        </section>
+      )}
       {activeSection === 'piano-lab' && (
         <section className='admin-workspace admin-piano-lab'>
           <ModelLabPage onNavigate={onNavigate} embedded />
@@ -498,17 +1161,195 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           </div>
         </section>
       )}
+      {activeSection === 'teacher-marketplace' && policies && (
+        <section className='admin-workspace admin-teacher-marketplace'>
+          <div className='admin-section-heading'>
+            <div>
+              <p className='eyebrow'>Find a Teacher controls</p>
+              <h2>Human teacher marketplace</h2>
+              <p>Control public access, new teacher profiles, review activity, allowed rates, and the fee disclosed to teachers and students.</p>
+            </div>
+            <span className='status-pill'>{policies.teacherDirectoryEnabled !== false ? 'Directory live' : 'Directory paused'}</span>
+          </div>
+
+          <div className='admin-summary-grid'>
+            <article className='wallet-card'>
+              <p className='eyebrow'>Platform fee</p>
+              <strong className='admin-metric'>{Number(policies.teacherMarketplaceFeePercent ?? 25).toFixed(2)}%</strong>
+              <p className='muted'>Applied only to future lesson payments processed by Polymath.</p>
+            </article>
+            <article className='wallet-card'>
+              <p className='eyebrow'>Teacher keeps</p>
+              <strong className='admin-metric'>{Math.max(0, 100 - Number(policies.teacherMarketplaceFeePercent ?? 25)).toFixed(2)}%</strong>
+              <p className='muted'>Before any later cash-out fee.</p>
+            </article>
+            <article className='wallet-card'>
+              <p className='eyebrow'>100-Mcoin lesson net</p>
+              <strong className='admin-metric'>{(
+                Math.max(0, 100 - Number(policies.teacherMarketplaceFeePercent ?? 25))
+                * Math.max(0, 100 - Number(policies.withdrawalFeePercent ?? 25))
+                / 100
+              ).toFixed(2)}</strong>
+              <p className='muted'>Illustrative net after both configured platform fees.</p>
+            </article>
+          </div>
+
+          <form className='admin-form-card' onSubmit={savePolicies}>
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'>
+                <div><h3>Access switches</h3><p>Pause one part without deleting profiles, conversations, or existing reviews.</p></div>
+              </div>
+              <label className='rights-check'><input type='checkbox' checked={policies.teacherDirectoryEnabled !== false} onChange={(event) => setPolicies({ ...policies, teacherDirectoryEnabled: event.target.checked })} /><span>Show the public Find a Teacher directory</span></label>
+              <label className='rights-check'><input type='checkbox' checked={policies.teacherApplicationsEnabled !== false} onChange={(event) => setPolicies({ ...policies, teacherApplicationsEnabled: event.target.checked })} /><span>Allow users to create new teacher profiles</span></label>
+              <label className='rights-check'><input type='checkbox' checked={policies.teacherReviewsEnabled !== false} onChange={(event) => setPolicies({ ...policies, teacherReviewsEnabled: event.target.checked })} /><span>Allow students to post or update teacher reviews</span></label>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'>
+                <div><h3>Rates and platform fee</h3><p>Zero maximum means unlimited. The fee is a Polymath platform charge, not a government tax rate.</p></div>
+              </div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum hourly rate<input type='number' min='0' max='1000000000' step='0.01' value={policies.minimumTeacherHourlyRateMcoins ?? 0} onChange={(event) => setPolicies({ ...policies, minimumTeacherHourlyRateMcoins: Number(event.target.value) })} /><small>0 permits “Ask for rate”</small></label>
+                <label className='field'>Maximum hourly rate<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumTeacherHourlyRateMcoins ?? 100000} onChange={(event) => setPolicies({ ...policies, maximumTeacherHourlyRateMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Teacher platform fee<input type='number' min='0' max='100' step='0.01' value={policies.teacherMarketplaceFeePercent ?? 25} onChange={(event) => setPolicies({ ...policies, teacherMarketplaceFeePercent: Number(event.target.value) })} /><small>Percentage of Polymath-processed lesson payments</small></label>
+                <label className='field'>Cash-out fee<input type='number' min='0' max='100' step='0.01' value={policies.withdrawalFeePercent ?? 25} onChange={(event) => setPolicies({ ...policies, withdrawalFeePercent: Number(event.target.value) })} /><small>Also controlled in Payout rules</small></label>
+              </div>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Public teacher notice</h3><p>Optional text appears with the automatic fee disclosure at the bottom of Find a Teacher.</p></div></div>
+              <label className='field'>Additional notice<textarea rows='4' maxLength='600' value={policies.teacherMarketplaceNotice || ''} onChange={(event) => setPolicies({ ...policies, teacherMarketplaceNotice: event.target.value })} placeholder='Example: Introductory rates may vary by teacher.' /></label>
+            </div>
+
+            <div className='admin-teacher-fee-preview'>
+              <strong>Public disclosure preview</strong>
+              <p>Polymath platform fee: {Number(policies.teacherMarketplaceFeePercent ?? 25).toFixed(2)}%. Teachers keep {Math.max(0, 100 - Number(policies.teacherMarketplaceFeePercent ?? 25)).toFixed(2)}% before the separate {Number(policies.withdrawalFeePercent ?? 25).toFixed(2)}% cash-out fee.</p>
+              <small>Current teacher listings are discovery and private-chat tools. No directory payment is collected until a Polymath checkout is introduced.</small>
+            </div>
+            <button className='primary' type='submit'>Save teacher marketplace controls</button>
+          </form>
+        </section>
+      )}
+      {activeSection === 'characters' && (
+        <section className='admin-workspace admin-character-manager'>
+          <div className='admin-section-heading'>
+            <div>
+              <p className='eyebrow'>Virtual teacher library</p>
+              <h2>Create and manage characters</h2>
+              <p>Control each teacher’s identity, portrait, age gate, visibility, and private-session rate.</p>
+            </div>
+            <span className='status-pill'>{characters.filter((character) => character.active !== false).length} active</span>
+          </div>
+
+          <div className='admin-character-workspace'>
+            <form className='admin-form-card admin-character-form' onSubmit={saveCharacter}>
+              <header className='admin-character-editor-heading'>
+                <div><strong>{editingCharacterId ? `Edit ${characterDraft.name}` : 'Create a character'}</strong><small>{editingCharacterId ? 'Only the fields you save are changed.' : 'Start with a full-body portrait and a clear teaching identity.'}</small></div>
+                {editingCharacterId && <button type='button' className='ghost' onClick={resetCharacterEditor} disabled={characterBusy}>Cancel edit</button>}
+              </header>
+              <div className='admin-character-upload'>
+                <div className='admin-character-preview'>
+                  {characterImagePreview
+                    ? <img src={characterImagePreview} alt='Prepared character preview' />
+                    : <span><strong>Full-body image</strong><small>PNG, JPEG, or WebP</small></span>}
+                </div>
+                <label className='primary admin-character-file-button'>
+                  {characterImagePreview ? 'Replace image' : 'Choose image'}
+                  <input key={characterUploadVersion} type='file' accept='image/png,image/jpeg,image/webp' onChange={chooseCharacterImage} disabled={characterBusy} />
+                </label>
+                <small>Images are contained, centred, and resized to 768 x 960 without stretching.</small>
+              </div>
+              <div className='admin-character-model-upload'>
+                <div><strong>Optional articulated 3D body</strong><small>Upload a rigged binary glTF 2.0 model with named human bones. Maximum 25 MB.</small></div>
+                <label className='ghost admin-character-file-button'>
+                  {characterModel ? 'Replace GLB' : 'Choose rigged GLB'}
+                  <input key={`model-${characterUploadVersion}`} type='file' accept='.glb,model/gltf-binary' onChange={chooseCharacterModel} disabled={characterBusy} />
+                </label>
+                {characterModel && <span>{characterModel.name} · {(characterModel.size / 1048576).toFixed(1)} MB</span>}
+              </div>
+              <div className='admin-form-grid'>
+                <label className='field'>Character name<input maxLength='50' value={characterDraft.name} onChange={(event) => setCharacterDraft({ ...characterDraft, name: event.target.value })} placeholder='Lyra' required /></label>
+                <label className='field'>Teacher role<input maxLength='80' value={characterDraft.title} onChange={(event) => setCharacterDraft({ ...characterDraft, title: event.target.value })} placeholder='Performance coach' required /></label>
+                <label className='field'>Voice / style<input maxLength='50' value={characterDraft.voice} onChange={(event) => setCharacterDraft({ ...characterDraft, voice: event.target.value })} placeholder='Encouraging' required /></label>
+                <label className='field'>Voice type<select value={characterDraft.voiceType} onChange={(event) => setCharacterDraft({ ...characterDraft, voiceType: event.target.value })}><option value='neutral'>Neutral / automatic</option><option value='feminine'>Feminine</option><option value='masculine'>Masculine</option></select></label>
+                <label className='field'>Teacher hand tone<select value={characterDraft.armTone} onChange={(event) => setCharacterDraft({ ...characterDraft, armTone: event.target.value })}><option value='light'>Light</option><option value='dark'>Dark</option></select></label>
+                <label className='field'>Minimum age<input type='number' inputMode='numeric' min='0' max='99' step='1' value={characterDraft.minimumAge} onChange={(event) => setCharacterDraft({ ...characterDraft, minimumAge: event.target.value })} /><small>0 means all ages; use 18 for 18+.</small></label>
+                <label className='field'>Price per 30 minutes<input type='number' inputMode='decimal' min='0' max='1000000000' step='0.01' value={characterDraft.pricePer30MinutesMcoins} onChange={(event) => setCharacterDraft({ ...characterDraft, pricePer30MinutesMcoins: event.target.value })} placeholder={`Global rate · ${Number(policies?.virtualLessonPricePer30MinutesMcoins ?? 5).toFixed(2)}`} /><small>Blank uses the global rate; 0 makes this teacher free.</small></label>
+              </div>
+              <label className='field'>Short description<textarea rows='3' maxLength='240' value={characterDraft.description} onChange={(event) => setCharacterDraft({ ...characterDraft, description: event.target.value })} placeholder='How this teacher helps a student.' required /></label>
+              <label className='rights-check'><input type='checkbox' checked={characterDraft.adultCompanionEnabled} onChange={(event) => setCharacterDraft({ ...characterDraft, adultCompanionEnabled: event.target.checked, minimumAge: event.target.checked ? Math.max(18, Number(characterDraft.minimumAge || 0)) : characterDraft.minimumAge })} /><span>Allow optional 18+ companion conversation for this character</span></label>
+              <label className='rights-check'><input type='checkbox' checked={characterDraft.active} onChange={(event) => setCharacterDraft({ ...characterDraft, active: event.target.checked })} /><span>Show this character in the public teacher library</span></label>
+              <div className='button-row'>
+                <button className='primary' type='submit' disabled={characterBusy || (!editingCharacterId && !characterImage)}>{characterBusy ? 'Working...' : editingCharacterId ? 'Save character' : 'Publish character'}</button>
+                {editingCharacterId && <button className='ghost' type='button' onClick={resetCharacterEditor} disabled={characterBusy}>Cancel</button>}
+              </div>
+            </form>
+
+            <div className='admin-character-library'>
+              <article className='admin-character-protection-note'>
+                <strong>One focused control centre</strong>
+                <span>Edit any teacher. Built-ins can be hidden and restored; uploaded characters can also be permanently deleted.</span>
+              </article>
+              <div className='admin-character-list'>
+                {characters.map((character) => (
+                  <article className={`admin-character-row${character.active === false ? ' is-hidden' : ''}`} key={character.id}>
+                    <div className='admin-character-row-image'>{characterImageUrl(character) ? <img src={characterImageUrl(character)} alt={`${character.name} preview`} loading='lazy' /> : <span aria-hidden='true'>♪</span>}</div>
+                    <div>
+                      <strong>{character.name}</strong>
+                      <span>{character.title}</span>
+                      <small>{character.description}</small>
+                      <div className='admin-character-badges'>
+                        <b>{character.builtIn ? 'Built-in' : 'Uploaded'}</b>
+                        <b>{character.modelPath ? `Rigged 3D · ${character.rig?.jointCount || '?'} joints` : 'Procedural 3D body'}</b>
+                        {Number(character.minimumAge || 0) > 0 && <b>{Number(character.minimumAge)}+</b>}
+                        {character.adultCompanionEnabled && <b>Adult companion</b>}
+                        <b>{character.pricePer30MinutesMcoins === null || character.pricePer30MinutesMcoins === undefined ? `Global · ${Number(character.effectivePricePer30MinutesMcoins || 0).toFixed(2)}` : `${Number(character.pricePer30MinutesMcoins).toFixed(2)} Mcoins / 30 min`}</b>
+                        {character.active === false && <b>Hidden</b>}
+                      </div>
+                    </div>
+                    <div className='admin-character-row-actions'>
+                      <button className='ghost' type='button' disabled={characterBusy} onClick={() => editCharacter(character)}>Edit</button>
+                      <button className='ghost' type='button' disabled={characterBusy} onClick={() => setCharacterAvailability(character, character.active === false)}>{character.active === false ? 'Enable' : 'Hide'}</button>
+                      {!character.builtIn && <button className='admin-character-delete' type='button' disabled={characterBusy} onClick={() => deleteCharacter(character)}>Delete</button>}
+                    </div>
+                  </article>
+                ))}
+                {!characters.length && <div className='empty-state'>No characters are configured yet. Create the first one on the left.</div>}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+      {activeSection === 'community' && (
+        <section className='admin-workspace admin-community-safety'>
+          <div className='admin-section-heading'>
+            <div><p className='eyebrow'>Community moderation</p><h2>Reported messages</h2><p>Review context before removing content. Reports stay private from the message author.</p></div>
+            <span className='status-pill'>{communityReports.openCount || 0} open</span>
+          </div>
+          <div className='admin-community-report-list'>
+            {(communityReports.reports || []).map((report) => (
+              <article key={report.id} className={`admin-community-report is-${report.status}`}>
+                <header><div><strong>{report.room.name}</strong><small>Reported by {report.reporter} · {new Date(report.createdAt).toLocaleString()}</small></div><span className='status-pill'>{report.status}</span></header>
+                <blockquote>{report.message ? <><b>{report.message.author}</b><span>{report.message.text}</span></> : <span>Message was already removed.</span>}</blockquote>
+                <p>{report.reason}</p>
+                {report.status === 'open' && <div className='button-row'><button type='button' className='primary' disabled={!report.message} onClick={() => reviewCommunityReport(report, 'resolved', true)}>Remove message</button><button type='button' className='ghost' onClick={() => reviewCommunityReport(report, 'dismissed')}>Keep message</button></div>}
+              </article>
+            ))}
+            {!communityReports.reports?.length && <div className='empty-state'>No community reports. Free Flow is clear.</div>}
+          </div>
+        </section>
+      )}
       {activeSection === 'promotions' && (
         <section className='admin-workspace'>
           <div className='admin-section-heading'>
-            <div><p className='eyebrow'>Commercial tools</p><h2>Percentage discounts</h2><p>Codes reduce a subscription or Composers purchase by a percentage. They never add Mcoins to a wallet.</p></div>
+            <div><p className='eyebrow'>Commercial tools</p><h2>Discount codes</h2><p>Use a percentage for subscriptions or Composers, or take an exact Mcoin amount off a Composers purchase.</p></div>
           </div>
           <form className='admin-form-card' onSubmit={createPromotion}>
             <div className='admin-form-grid'>
               <label className='field'>Code<input value={promotion.code} maxLength='32' placeholder='WELCOME50' onChange={(event) => setPromotion({ ...promotion, code: event.target.value.toUpperCase() })} required /></label>
               <label className='field'>Internal name<input value={promotion.name} placeholder='Launch voucher' onChange={(event) => setPromotion({ ...promotion, name: event.target.value })} required /></label>
-              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value })}><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
-              <label className='field'>Percentage off<input type='number' min='1' max='100' value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /></label>
+              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value, value: event.target.value === 'marketplace_fixed' ? 10 : 20 })}><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='marketplace_fixed'>Composers fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
+              <label className='field'>{promotion.kind === 'marketplace_fixed' ? 'Mcoins off' : 'Percentage off'}<input type='number' min={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} max={promotion.kind === 'marketplace_fixed' ? '1000000000' : '100'} step={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /><small>{promotion.kind === 'marketplace_fixed' ? 'The platform funds this exact discount; it cannot exceed the song price.' : 'Enter a value from 1 to 100.'}</small></label>
               <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>
               <label className='field'>Minimum account age (days)<input type='number' min='0' value={promotion.minimumAccountAgeDays} onChange={(event) => setPromotion({ ...promotion, minimumAccountAgeDays: event.target.value })} /></label>
               <label className='field'>Total redemption limit<input type='number' min='0' value={promotion.maxRedemptions} onChange={(event) => setPromotion({ ...promotion, maxRedemptions: event.target.value })} /><small>0 means unlimited</small></label>
@@ -527,7 +1368,52 @@ export default function AdminDatabasePage({ user, onNavigate }) {
                 <button className='ghost compact-action' type='button' disabled={item.retired} onClick={() => togglePromotion(item)}>{item.retired ? 'Retired' : item.active ? 'Pause' : 'Activate'}</button>
               </article>
             ))}
-            {!promotions.length && <div className='empty-state'>No percentage discounts yet.</div>}
+            {!promotions.length && <div className='empty-state'>No discount codes yet.</div>}
+          </div>
+        </section>
+      )}
+      {activeSection === 'withdrawals' && (
+        <section className='admin-workspace'>
+          <div className='admin-section-heading'>
+            <div><p className='eyebrow'>Manual payout queue</p><h2>Cash-out requests</h2><p>Send the net payout outside Polymath before marking it paid. Rejecting a pending request refunds the user and reverses its platform fee.</p></div>
+          </div>
+          <div className='admin-summary-grid payout-summary-grid'>
+            <article><span>Pending requests</span><strong>{Number(withdrawals.summary?.pendingCount || 0).toLocaleString()}</strong></article>
+            <article><span>Pending gross</span><strong>{Number(withdrawals.summary?.pendingGrossMcoins || 0).toLocaleString()} Mcoins</strong></article>
+            <article><span>Pending net outflow</span><strong>{Number(withdrawals.summary?.pendingNetMcoins || 0).toLocaleString()} Mcoins</strong></article>
+          </div>
+          {policies && (
+            <form className='admin-form-card' onSubmit={saveMaximumCashout}>
+              <div className='admin-section-heading'>
+                <div><p className='eyebrow'>Cash-out guardrail</p><h3>Maximum per request</h3><p>This backend rule blocks any single cash-out above your chosen amount.</p></div>
+              </div>
+              <div className='admin-form-grid'>
+                <label className='field'>Maximum cash-out (Mcoins)<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, maximumWithdrawalMcoins: Number(event.target.value) })} /><small>0 means unlimited. It cannot be lower than the current minimum cash-out.</small></label>
+              </div>
+              <button className='primary' type='submit'>Save maximum cash-out</button>
+            </form>
+          )}
+          <div className='database-table-wrap'>
+            <table className='database-table payout-table'>
+              <thead><tr><th>Account</th><th>Requested</th><th>Fee</th><th>Net payout</th><th>Payout email</th><th>Status</th><th>Review</th></tr></thead>
+              <tbody>
+                {withdrawals.withdrawals.map((item) => {
+                  const pending = String(item.status || '').toLowerCase().startsWith('pending');
+                  return (
+                    <tr key={item.id}>
+                      <td><strong>{item.account?.name || 'Deleted account'}</strong><small>{item.account?.email || item.userId}</small></td>
+                      <td>{Number(item.amountMcoins || 0).toLocaleString()} Mcoins<small>{new Date(item.createdAt).toLocaleString()}</small></td>
+                      <td>{Number(item.feeMcoins || 0).toLocaleString()} Mcoins</td>
+                      <td className='amount-cell'>{Number(item.netMcoins || 0).toLocaleString()} Mcoins</td>
+                      <td>{item.payoutEmail}</td>
+                      <td><span className='status-pill'>{String(item.status || 'pending').replaceAll('_', ' ')}</span>{item.reviewedAt && <small>{new Date(item.reviewedAt).toLocaleString()}</small>}</td>
+                      <td>{pending ? <div className='admin-user-actions'><button className='primary compact-action' type='button' onClick={() => reviewWithdrawal(item.id, 'paid')}>Mark paid</button><button className='ghost compact-action' type='button' onClick={() => reviewWithdrawal(item.id, 'rejected')}>Reject + refund</button></div> : <small>Completed</small>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!withdrawals.withdrawals.length && <div className='empty-state'>No cash-out requests yet.</div>}
           </div>
         </section>
       )}
@@ -547,18 +1433,61 @@ export default function AdminDatabasePage({ user, onNavigate }) {
             <div><p className='eyebrow'>Platform controls</p><h2>Rules and policies</h2><p>These values are enforced by the backend, not only displayed in the browser.</p></div>
           </div>
           <form className='admin-form-card' onSubmit={savePolicies}>
-            <label className='rights-check'><input type='checkbox' checked={policies.registrationEnabled} onChange={(event) => setPolicies({ ...policies, registrationEnabled: event.target.checked })} /><span>Allow new account registration</span></label>
-            <div className='admin-form-grid policy-form-grid'>
-              <label className='field'>Minimum signup age<input type='number' min='0' max='120' value={policies.minimumSignupAge} onChange={(event) => setPolicies({ ...policies, minimumSignupAge: Number(event.target.value) })} /><small>0 disables the age requirement</small></label>
-              <label className='field'>Minimum password length<input type='number' min='8' max='64' value={policies.minimumPasswordLength} onChange={(event) => setPolicies({ ...policies, minimumPasswordLength: Number(event.target.value) })} /></label>
-              <label className='field'>Minimum listing price<input type='number' min='1' step='10' value={policies.minimumMarketplacePriceMcoins} onChange={(event) => setPolicies({ ...policies, minimumMarketplacePriceMcoins: Number(event.target.value) })} /><small>Mcoins; rounded to a valid 10-Mcoin price</small></label>
-              <label className='field'>Minimum withdrawal<input type='number' min='1' value={policies.minimumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, minimumWithdrawalMcoins: Number(event.target.value) })} /><small>Mcoins</small></label>
-              <label className='field'>Welcome balance<input type='number' min='0' value={policies.welcomeMcoins} onChange={(event) => setPolicies({ ...policies, welcomeMcoins: Number(event.target.value) })} /><small>Applied only to new accounts</small></label>
-              <label className='field'>Support email<input type='email' value={policies.supportEmail} onChange={(event) => setPolicies({ ...policies, supportEmail: event.target.value })} /></label>
-              <label className='field'>Terms URL<input type='url' placeholder='https://' value={policies.termsUrl} onChange={(event) => setPolicies({ ...policies, termsUrl: event.target.value })} /></label>
-              <label className='field'>Privacy URL<input type='url' placeholder='https://' value={policies.privacyUrl} onChange={(event) => setPolicies({ ...policies, privacyUrl: event.target.value })} /></label>
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Accounts and registration</h3><p>Control who can register and the weakest password the backend accepts.</p></div></div>
+              <label className='rights-check'><input type='checkbox' checked={policies.registrationEnabled} onChange={(event) => setPolicies({ ...policies, registrationEnabled: event.target.checked })} /><span>Allow new account registration</span></label>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum signup age<input type='number' min='0' max='120' value={policies.minimumSignupAge} onChange={(event) => setPolicies({ ...policies, minimumSignupAge: Number(event.target.value) })} /><small>0 disables the age requirement</small></label>
+                <label className='field'>Minimum password length<input type='number' min='1' max='256' value={policies.minimumPasswordLength} onChange={(event) => setPolicies({ ...policies, minimumPasswordLength: Number(event.target.value) })} /><small>1 is allowed. Under 8 is easy to attack.</small></label>
+                <label className='field'>Welcome balance<input type='number' min='0' max='1000000000' step='0.01' value={policies.welcomeMcoins} onChange={(event) => setPolicies({ ...policies, welcomeMcoins: Number(event.target.value) })} /><small>Applied only to new accounts</small></label>
+              </div>
             </div>
-            <label className='field'>Registration notice<textarea rows='4' value={policies.policyNotice} onChange={(event) => setPolicies({ ...policies, policyNotice: event.target.value })} placeholder='Short rules shown before signup.' /></label>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'>
+                <div>
+                  <h3>Private voice lessons</h3>
+                  <p>Sessions use 30-minute blocks. Set one block price; longer lessons scale automatically.</p>
+                </div>
+              </div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Price per 30 minutes<input type='number' min='0' max='1000000000' step='0.01' value={policies.virtualLessonPricePer30MinutesMcoins ?? 5} onChange={(event) => setPolicies({ ...policies, virtualLessonPricePer30MinutesMcoins: Number(event.target.value) })} /><small>Mcoins / US dollars; 0 makes private sessions free</small></label>
+              </div>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Composers marketplace</h3><p>Listings can be sold, free, or pay each listener a reward funded by the composer.</p></div></div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum sale price<input type='number' min='0' max='1000000000' step='0.01' value={policies.minimumMarketplacePriceMcoins} onChange={(event) => setPolicies({ ...policies, minimumMarketplacePriceMcoins: Number(event.target.value) })} /><small>0 allows zero-price sales</small></label>
+                <label className='field'>Maximum sale price<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumMarketplacePriceMcoins} onChange={(event) => setPolicies({ ...policies, maximumMarketplacePriceMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Marketplace fee<input type='number' min='0' max='100' step='0.01' value={policies.marketplaceFeePercent} onChange={(event) => setPolicies({ ...policies, marketplaceFeePercent: Number(event.target.value) })} /><small>Percentage charged on new sale listings</small></label>
+                <label className='field'>Maximum reward per listener<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumListenerRewardMcoins} onChange={(event) => setPolicies({ ...policies, maximumListenerRewardMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Maximum reward outflow per listing<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumRewardOutflowPerListingMcoins} onChange={(event) => setPolicies({ ...policies, maximumRewardOutflowPerListingMcoins: Number(event.target.value) })} /><small>Total composer-funded rewards; 0 means unlimited</small></label>
+              </div>
+              <label className='rights-check'><input type='checkbox' checked={policies.listenerRewardsEnabled} onChange={(event) => setPolicies({ ...policies, listenerRewardsEnabled: event.target.checked })} /><span>Allow composers to pay people to claim and listen to their songs</span></label>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Cash-out and maximum outflow</h3><p>Limit individual requests, each account’s daily requests, and the platform’s combined pending payout exposure.</p></div></div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Minimum withdrawal<input type='number' min='0' max='1000000000' step='0.01' value={policies.minimumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, minimumWithdrawalMcoins: Number(event.target.value) })} /><small>0 removes the policy minimum; requests must still exceed 0</small></label>
+                <label className='field'>Maximum per withdrawal<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumWithdrawalMcoins} onChange={(event) => setPolicies({ ...policies, maximumWithdrawalMcoins: Number(event.target.value) })} /><small>0 means unlimited</small></label>
+                <label className='field'>Daily limit per account<input type='number' min='0' max='1000000000' step='0.01' value={policies.dailyWithdrawalLimitMcoins} onChange={(event) => setPolicies({ ...policies, dailyWithdrawalLimitMcoins: Number(event.target.value) })} /><small>Gross requested Mcoins; 0 means unlimited</small></label>
+                <label className='field'>Maximum pending platform outflow<input type='number' min='0' max='1000000000' step='0.01' value={policies.maximumPendingWithdrawalOutflowMcoins} onChange={(event) => setPolicies({ ...policies, maximumPendingWithdrawalOutflowMcoins: Number(event.target.value) })} /><small>Combined net pending payouts; 0 means unlimited</small></label>
+                <label className='field'>Cash-out fee<input type='number' min='0' max='100' step='0.01' value={policies.withdrawalFeePercent} onChange={(event) => setPolicies({ ...policies, withdrawalFeePercent: Number(event.target.value) })} /><small>Percentage retained by the platform</small></label>
+              </div>
+            </div>
+
+            <div className='policy-control-group'>
+              <div className='policy-control-heading'><div><h3>Published policy details</h3><p>Support contacts and links shown to users.</p></div></div>
+              <div className='admin-form-grid policy-form-grid'>
+                <label className='field'>Support email<input type='email' value={policies.supportEmail} onChange={(event) => setPolicies({ ...policies, supportEmail: event.target.value })} /></label>
+                <label className='field'>Helpline phone<input type='tel' placeholder='+65 6123 4567' value={policies.supportPhone || ''} onChange={(event) => setPolicies({ ...policies, supportPhone: event.target.value })} /><small>Shown after a user reaches the daily Help limit</small></label>
+                <label className='field'>Terms URL<input type='url' placeholder='https://' value={policies.termsUrl} onChange={(event) => setPolicies({ ...policies, termsUrl: event.target.value })} /></label>
+                <label className='field'>Privacy URL<input type='url' placeholder='https://' value={policies.privacyUrl} onChange={(event) => setPolicies({ ...policies, privacyUrl: event.target.value })} /></label>
+              </div>
+              <label className='field'>Registration notice<textarea rows='4' value={policies.policyNotice} onChange={(event) => setPolicies({ ...policies, policyNotice: event.target.value })} placeholder='Short rules shown before signup.' /></label>
+            </div>
             <button className='primary' type='submit'>Save rules and policies</button>
           </form>
         </section>

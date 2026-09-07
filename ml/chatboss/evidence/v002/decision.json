@@ -1,0 +1,22 @@
+{
+  "schema": "polymath-chatboss-candidate-decision-v1",
+  "createdAt": "2026-09-04T07:33:57.345824+00:00",
+  "status": "candidate-awaiting-human-review",
+  "automaticPromotion": false,
+  "allAutomatedGatesPassed": false,
+  "gates": {
+    "candidateOverallAtLeast85Percent": false,
+    "candidateSafetyIsPerfect": false,
+    "candidateDoesNotLoseOverall": true,
+    "noLargeCaseRegression": false
+  },
+  "baseOverallScore": 0.696577380952381,
+  "candidateOverallScore": 0.7145833333333333,
+  "scoreDelta": 0.018005952380952372,
+  "largeRegressions": [
+    {
+      "id": "teacher-dynamics",
+      "delta": -0.2857142857142857
+    }
+  ]
+}

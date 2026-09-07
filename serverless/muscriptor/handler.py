@@ -36,7 +36,7 @@ BOOTSTRAP_REVISION = os.environ.get(
 ).strip()
 
 if not MODEL_SOURCE_VALUE and MODEL_NAME not in VALID_MODELS:
-    raise RuntimeError(f'Unsupported MuScriptor model: {MODEL_NAME}')
+    raise RuntimeError(f'Unsupported Polymath model: {MODEL_NAME}')
 
 if MODEL_SOURCE_VALUE:
     if MODEL_SOURCE_VALUE.startswith('hf://'):
@@ -47,35 +47,63 @@ if MODEL_SOURCE_VALUE:
     else:
         MODEL_SOURCE = Path(MODEL_SOURCE_VALUE).expanduser().resolve()
         if MODEL_SOURCE.suffix.lower() != '.safetensors':
-            raise RuntimeError('Custom MuScriptor weights must be a .safetensors file')
+            raise RuntimeError('Custom Polymath weights must be a .safetensors file')
         if not MODEL_SOURCE.is_file():
-            raise RuntimeError(f'Custom MuScriptor weights were not found: {MODEL_SOURCE}')
+            raise RuntimeError(f'Custom Polymath weights were not found: {MODEL_SOURCE}')
         if not MODEL_SOURCE.with_name('config.json').is_file():
-            raise RuntimeError('Custom MuScriptor weights require config.json in the same folder')
+            raise RuntimeError('Custom Polymath weights require config.json in the same folder')
         MODEL_LABEL = f'custom volume model ({MODEL_SOURCE.name})'
     MODEL_SOURCE_ID = 'muscriptor-custom-runpod-serverless'
-    MODEL_PROVIDER = 'Custom MuScriptor on RunPod Serverless GPU'
+    MODEL_PROVIDER = 'Custom Polymath model on RunPod Serverless GPU'
 else:
     MODEL_SOURCE = MODEL_NAME
     MODEL_LABEL = MODEL_NAME.title()
     MODEL_SOURCE_ID = f'muscriptor-{MODEL_NAME}-runpod-serverless'
-    MODEL_PROVIDER = f'MuScriptor {MODEL_NAME.title()} on RunPod Serverless GPU'
+    MODEL_PROVIDER = f'Polymath {MODEL_NAME.title()} on RunPod Serverless GPU'
 
 
 def load_model() -> TranscriptionModel:
-    print(f'Loading MuScriptor {MODEL_LABEL} into GPU memory', flush=True)
+    print(f'Loading Polymath {MODEL_LABEL} into GPU memory', flush=True)
     loaded = TranscriptionModel.load_model(MODEL_SOURCE)
-    print(f'MuScriptor {MODEL_LABEL} is ready', flush=True)
+    print(f'Polymath {MODEL_LABEL} is ready', flush=True)
     return loaded
 
 
 MODEL: TranscriptionModel | None = None
+MODEL_ACTIVE_SOURCE = ''
 
 
-def get_model() -> TranscriptionModel:
-    global MODEL
-    if MODEL is None:
-        MODEL = load_model()
+def resolve_inference_source(version: Any) -> tuple[Any, str, str, str]:
+    """Resolve only the immutable original or a versioned tester checkpoint."""
+    requested = str(version or '').strip().lower()
+    if not requested or requested == 'original':
+        return MODEL_SOURCE, str(MODEL_SOURCE), MODEL_PROVIDER, MODEL_SOURCE_ID
+    if not re.fullmatch(r'phase\d+-v\d{3,}', requested):
+        raise ValueError('Inference checkpoint must be original or look like phase1-v002')
+    root = (TEST_MODEL_ROOT / requested).resolve()
+    if not root.is_relative_to(TEST_MODEL_ROOT):
+        raise ValueError('Inference checkpoint escaped the tester model directory')
+    weights = root / 'model.safetensors'
+    config = root / 'config.json'
+    if not weights.is_file() or not config.is_file():
+        raise FileNotFoundError(f'Inference checkpoint is incomplete: {requested}')
+    return (
+        weights,
+        str(weights),
+        f'Polymath candidate {requested} on RunPod Serverless GPU',
+        f'polymath-{requested}-runpod-serverless',
+    )
+
+
+def get_model(source: Any, source_key: str) -> TranscriptionModel:
+    global MODEL, MODEL_ACTIVE_SOURCE
+    if MODEL is None or MODEL_ACTIVE_SOURCE != source_key:
+        MODEL = None
+        gc.collect()
+        print(f'Loading Polymath checkpoint {source_key} into GPU memory', flush=True)
+        MODEL = TranscriptionModel.load_model(source)
+        MODEL_ACTIVE_SOURCE = source_key
+        print(f'Polymath checkpoint {source_key} is ready', flush=True)
     return MODEL
 
 
@@ -101,7 +129,7 @@ def bootstrap_model_copies(job: dict[str, Any], job_input: dict[str, Any]) -> di
     if not re.fullmatch(r'v\d{3,}', version):
         raise ValueError('Bootstrap version must look like v001, v002, and so on')
 
-    runpod.serverless.progress_update(job, 'Locating cached MuScriptor Large weights')
+    runpod.serverless.progress_update(job, 'Locating cached Polymath Large weights')
     weights = Path(hf_hub_download(
         repo_id=BOOTSTRAP_REPO,
         filename='model.safetensors',
@@ -348,7 +376,10 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
     notes: list[dict[str, Any]] = []
     progress = {'completed': 0, 'total': 0}
 
-    model = get_model()
+    model_source, source_key, model_provider, model_source_id = resolve_inference_source(
+        job_input.get('checkpoint_version')
+    )
+    model = get_model(model_source, source_key)
     for event in model.transcribe(str(audio_path), instruments=instruments):
         if hasattr(event, 'start_time') and hasattr(event, 'pitch'):
             starts[int(event.index)] = event
@@ -365,7 +396,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
                 'velocity': 0.78,
                 'hand': 'left' if midi < 60 else 'right',
                 'instrument': str(start.instrument),
-                'source': MODEL_SOURCE_ID,
+                'source': model_source_id,
             })
             starts.pop(int(start.index), None)
         elif hasattr(event, 'completed') and hasattr(event, 'total'):
@@ -385,23 +416,24 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
             'velocity': 0.7,
             'hand': 'left' if midi < 60 else 'right',
             'instrument': str(start.instrument),
-            'source': MODEL_SOURCE_ID,
+            'source': model_source_id,
         })
 
     notes.sort(key=lambda note: (note['time'], note['midi'], note['instrument']))
     if not notes:
-        raise RuntimeError('MuScriptor could not detect playable notes in this recording')
+        raise RuntimeError('Polymath could not detect playable notes in this recording')
 
     return {
         'title': str(job_input.get('title') or 'Uploaded recording')[:120],
-        'composer': 'MuScriptor transcription',
+        'composer': 'Polymath transcription',
         'instrument': str(job_input.get('instrument') or 'band'),
         'bpm': 120,
         'notes': notes,
         'instrumentGroups': sorted({note['instrument'] for note in notes}),
         'sourceType': 'muscriptor-audio-transcription',
         'readyToPlayFormat': 'polymath-musician-json-v1',
-        'transcriptionProvider': MODEL_PROVIDER,
+        'transcriptionProvider': model_provider,
+        'checkpointVersion': str(job_input.get('checkpoint_version') or 'original'),
         'modelLicense': 'CC-BY-NC-4.0',
         'progress': progress,
     }

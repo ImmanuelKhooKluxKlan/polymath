@@ -53,7 +53,7 @@ function findLocalModelDirectory() {
       && fs.existsSync(path.join(directory, CONFIG_FILE))
     ));
   if (!candidates.length) {
-    throw new Error('MuScriptor Large was not found in the local Hugging Face cache.');
+    throw new Error('Polymath Large was not found in the local model cache.');
   }
   return candidates[0];
 }
@@ -311,12 +311,12 @@ async function main() {
     configPath,
   );
 
-  console.log('MuScriptor model bootstrap complete.');
+  console.log('Polymath model bootstrap complete.');
   console.log(`Original: /runpod-volume/${ORIGINAL_PREFIX}/${WEIGHTS_FILE}`);
   console.log(`Tester:   /runpod-volume/${TEST_PREFIX}/${WEIGHTS_FILE}`);
 }
 
 main().catch((error) => {
-  console.error(`MuScriptor upload failed: ${error.message}`);
+  console.error(`Polymath model upload failed: ${error.message}`);
   process.exitCode = 1;
 });

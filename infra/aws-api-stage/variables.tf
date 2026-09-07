@@ -71,7 +71,7 @@ variable "client_origin" {
 
 variable "client_origins" {
   type    = string
-  default = "https://polymath-musician.pages.dev,https://scaling-preview.polymath-musician.pages.dev"
+  default = "https://www.polymathmusician67.com,https://polymath-musician.pages.dev,https://scaling-preview.polymath-musician.pages.dev"
 }
 
 locals {

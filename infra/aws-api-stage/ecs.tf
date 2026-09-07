@@ -19,6 +19,7 @@ locals {
     { name = "ARTIFACT_S3_REGION", value = "auto" },
     { name = "ARTIFACT_S3_FORCE_PATH_STYLE", value = "false" },
     { name = "AWS_SECRET_REGION", value = "us-east-2" },
+    { name = "TEACHER_TTS_ENABLED", value = "true" },
     { name = "AWS_RUNTIME_SECRET_ARN", value = data.aws_secretsmanager_secret.runtime.arn },
     { name = "AWS_RDS_SECRET_ARN", value = aws_db_instance.primary.master_user_secret[0].secret_arn },
   ]

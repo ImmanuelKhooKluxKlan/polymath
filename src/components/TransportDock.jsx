@@ -26,8 +26,16 @@ export default function TransportDock({
   showKeyNotes = true,
   onShowKeyNotesChange,
   minSpeed = 0.45,
+  playbackRange = null,
 }) {
-  const duration = getSongDuration(song);
+  const songDuration = getSongDuration(song);
+  const rangeStart = playbackRange
+    ? Math.max(0, Math.min(songDuration, Number(playbackRange.start) || 0))
+    : 0;
+  const rangeEnd = playbackRange
+    ? Math.max(rangeStart, Math.min(songDuration, Number(playbackRange.end) || songDuration))
+    : songDuration;
+  const duration = Math.max(0, rangeEnd - rangeStart);
   const [scrubTime, setScrubTime] = useState(null);
   const scrubbingRef = useRef(false);
   const scrubTimeRef = useRef(0);
@@ -35,6 +43,7 @@ export default function TransportDock({
   const displayedTime = scrubTime === null
     ? currentTime
     : scrubTime;
+  const displayedElapsed = Math.max(0, Math.min(duration, displayedTime - rangeStart));
 
   function beginScrub() {
     if (scrubbingRef.current) return;
@@ -45,7 +54,7 @@ export default function TransportDock({
   }
 
   function previewScrub(value) {
-    const next = Math.max(0, Math.min(duration, Number(value) || 0));
+    const next = Math.max(rangeStart, Math.min(rangeEnd, Number(value) || rangeStart));
     scrubTimeRef.current = next;
     setScrubTime(next);
     onSeekPreview?.(next);
@@ -77,7 +86,7 @@ export default function TransportDock({
     <section className="transport-dock" aria-label="Playback controls">
       <div className="transport-button-group">
         <button className="primary transport-main" type="button" onClick={onPlayPause}>
-          {isPlaying ? 'Pause' : currentTime > 0 ? 'Resume' : 'Play'}
+          {isPlaying ? 'Pause' : displayedElapsed > 0.01 ? 'Resume' : 'Play'}
         </button>
         <button className="ghost" type="button" onClick={onStop}>Stop</button>
         <button className="ghost seek-jump" type="button" onClick={onRewind} aria-label="Rewind 10 seconds">↶ 10s</button>
@@ -121,14 +130,14 @@ export default function TransportDock({
       </button>
 
       <label className="dock-progress">
-        <span className="timeline-time">{formatTime(displayedTime)}</span>
+        <span className="timeline-time">{formatTime(displayedElapsed)}</span>
         <input
           className="timeline-range"
           type="range"
-          min="0"
-          max={Math.max(duration, 0.01)}
+          min={rangeStart}
+          max={Math.max(rangeEnd, rangeStart + 0.01)}
           step="0.01"
-          value={Math.min(displayedTime, duration)}
+          value={Math.max(rangeStart, Math.min(displayedTime, rangeEnd))}
           onPointerDown={beginScrub}
           onKeyDown={beginScrub}
           onChange={(event) => previewScrub(event.target.value)}

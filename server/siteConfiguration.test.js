@@ -89,7 +89,7 @@ test('normalization restores every immutable route and admin history is newest f
   const normalized = normalizeSiteConfiguration({
     navigation: [{ id: 'studio', label: '', group: 'broken', order: -10, visible: false }],
   });
-  assert.equal(normalized.navigation.length, 8);
+  assert.equal(normalized.navigation.length, 9);
   assert.equal(normalized.navigation.find((item) => item.id === 'studio').label, 'Piano');
   assert.equal(normalized.navigation.find((item) => item.id === 'studio').group, 'primary');
 

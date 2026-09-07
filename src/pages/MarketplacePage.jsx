@@ -16,10 +16,14 @@ const FORMAT_DETAILS = {
   PDF: { label: 'PDF Music Sheet', extension: 'pdf' },
 };
 
-const MARKETPLACE_FEE_RATE = 0.25;
+function marketplaceFee(price, feeRate) {
+  return Number(Math.max(0, (Number(price) || 0) * feeRate).toFixed(2));
+}
 
-function marketplaceFee(price) {
-  return Math.max(0, (Number(price) || 0) * MARKETPLACE_FEE_RATE);
+function listingOfferLabel(listing) {
+  if (listing.listingMode === 'listener-reward') return `Earn ${Number(listing.listenerRewardMcoins || 0).toLocaleString()} Mcoins`;
+  if (listing.listingMode === 'free') return 'Free';
+  return `${Number(listing.priceMcoins || 0).toLocaleString()} Mcoins`;
 }
 
 function initials(name) {
@@ -56,9 +60,21 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
   const [composerProfile, setComposerProfile] = useState(null);
   const [composerLoading, setComposerLoading] = useState(false);
   const [status, setStatus] = useState('');
+  const [marketplace, setMarketplace] = useState({
+    feeRate: 0.25,
+    policies: {
+      minimumMarketplacePriceMcoins: 0,
+      maximumMarketplacePriceMcoins: 100000,
+      marketplaceFeePercent: 25,
+      listenerRewardsEnabled: true,
+      maximumListenerRewardMcoins: 100,
+      maximumRewardOutflowPerListingMcoins: 1000,
+    },
+  });
   const [publish, setPublish] = useState({
     artistChoice: '', artist: '', title: '', instrument: 'piano', format: 'JSON',
-    priceMcoins: 100, description: '', file: null, rightsConfirmed: false, feeConfirmed: false,
+    listingMode: 'sale', priceMcoins: 100, listenerRewardMcoins: 1,
+    description: '', file: null, rightsConfirmed: false, feeConfirmed: false,
   });
 
   async function loadListings() {
@@ -71,6 +87,14 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
   }
 
   useEffect(() => { loadListings(); }, [user?.user_id]);
+  useEffect(() => {
+    apiRequest('/api/catalog')
+      .then((data) => setMarketplace((current) => ({
+        feeRate: Number(data.marketplaceFeeRate || 0),
+        policies: { ...current.policies, ...(data.policies || {}) },
+      })))
+      .catch(() => {});
+  }, []);
 
   const artists = useMemo(() => [...new Set(listings.map((item) => item.artist))].sort(), [listings]);
   const filtered = useMemo(() => listings.filter((listing) => {
@@ -80,12 +104,16 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
       && (!filters.format || listing.format === filters.format);
   }), [listings, filters]);
 
-  const feePreview = marketplaceFee(publish.priceMcoins);
+  const feePreview = marketplaceFee(publish.priceMcoins, marketplace.feeRate);
   const sellerPreview = Math.max(0, Number(publish.priceMcoins || 0) - feePreview);
 
   function openCheckout(listing) {
     if (!user) {
       onNavigate('account', { next: 'published-songs' });
+      return;
+    }
+    if (listing.listingMode !== 'sale') {
+      purchase(listing);
       return;
     }
     setCheckoutId((current) => current === listing.id ? '' : listing.id);
@@ -103,7 +131,11 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
       setCheckoutId('');
       setPromotionCode('');
       setFriendId('');
-      setStatus(`Purchased “${listing.title}”.`);
+      setStatus(listing.listingMode === 'listener-reward'
+        ? `Claimed ${listing.listenerRewardMcoins} Mcoins for “${listing.title}”.`
+        : listing.listingMode === 'free'
+          ? `Added “${listing.title}” to your songs.`
+          : `Purchased “${listing.title}”.`);
       await loadListings();
     } catch (error) {
       setStatus(error.message);
@@ -223,7 +255,9 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
           title: publish.title,
           instrument: publish.instrument,
           format: publish.format,
+          listingMode: publish.listingMode,
           priceMcoins: Number(publish.priceMcoins),
+          listenerRewardMcoins: Number(publish.listenerRewardMcoins),
           description: publish.description,
           filename: publish.file.name,
           contentBase64,
@@ -235,7 +269,8 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
       setStatus('Music sheet published.');
       setPublish({
         artistChoice: '', artist: '', title: '', instrument: 'piano', format: 'JSON',
-        priceMcoins: 100, description: '', file: null, rightsConfirmed: false, feeConfirmed: false,
+        listingMode: 'sale', priceMcoins: 100, listenerRewardMcoins: 1,
+        description: '', file: null, rightsConfirmed: false, feeConfirmed: false,
       });
       await loadListings();
     } catch (error) {
@@ -252,14 +287,19 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
     <section className='page-shell marketplace-page composers-page'>
       <header className='composers-heading'>
         <h1>Composers</h1>
-        <button className='primary publish-button' type='button' onClick={() => setShowPublish((value) => !value)}>Sell a music sheet</button>
+        <button className='primary publish-button' type='button' onClick={() => setShowPublish((value) => !value)}>Publish music</button>
       </header>
 
       {showPublish && (
         <form className='publish-panel' onSubmit={publishListing}>
           <div className='publish-panel-heading'>
-            <div><p className='eyebrow'>For sellers</p><h2>Publish a music sheet</h2><p>Buyers will see the file type, price, composer profile, and public reviews.</p></div>
+            <div><p className='eyebrow'>For composers</p><h2>Publish a music sheet</h2><p>Sell it, share it free, or fund a reward for each listener.</p></div>
             <button className='ghost' type='button' onClick={() => setShowPublish(false)}>Close</button>
+          </div>
+          <div className='artist-chip-row listing-mode-row' role='group' aria-label='How to publish'>
+            <button type='button' className={publish.listingMode === 'sale' ? 'selected' : ''} onClick={() => setPublish({ ...publish, listingMode: 'sale', feeConfirmed: false })}>Sell</button>
+            <button type='button' className={publish.listingMode === 'free' ? 'selected' : ''} onClick={() => setPublish({ ...publish, listingMode: 'free', feeConfirmed: false })}>Free</button>
+            {marketplace.policies.listenerRewardsEnabled && <button type='button' className={publish.listingMode === 'listener-reward' ? 'selected' : ''} onClick={() => setPublish({ ...publish, listingMode: 'listener-reward', feeConfirmed: false })}>Reward listeners</button>}
           </div>
           <div className='artist-chip-row'>
             {ARTISTS.map((artist) => (
@@ -271,17 +311,22 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
             <label className='field'>Song title<input placeholder='Song title' value={publish.title} onChange={(event) => setPublish({ ...publish, title: event.target.value })} required /></label>
             <label className='field'>Instrument<select value={publish.instrument} onChange={(event) => setPublish({ ...publish, instrument: event.target.value })}>{INSTRUMENTS.map((instrument) => <option key={instrument.id} value={instrument.id}>{instrument.label}</option>)}</select></label>
             <label className='field'>File type<select value={publish.format} onChange={(event) => setPublish({ ...publish, format: event.target.value })}>{Object.entries(FORMAT_DETAILS).map(([value, detail]) => <option key={value} value={value}>{detail.label}</option>)}</select></label>
-            <label className='field'>Price in Mcoins<input type='number' min='10' max='100000' step='10' value={publish.priceMcoins} onChange={(event) => setPublish({ ...publish, priceMcoins: event.target.value })} required /></label>
+            {publish.listingMode === 'sale' && <label className='field'>Price in Mcoins<input type='number' min={marketplace.policies.minimumMarketplacePriceMcoins || 0} max={marketplace.policies.maximumMarketplacePriceMcoins || undefined} step='0.01' value={publish.priceMcoins} onChange={(event) => setPublish({ ...publish, priceMcoins: event.target.value })} required /></label>}
+            {publish.listingMode === 'listener-reward' && <label className='field'>Pay each listener<input type='number' min='0.01' max={marketplace.policies.maximumListenerRewardMcoins || undefined} step='0.01' value={publish.listenerRewardMcoins} onChange={(event) => setPublish({ ...publish, listenerRewardMcoins: event.target.value })} required /><small>Mcoins leave your wallet once per account that claims the sheet.</small></label>}
             <label className='field'>Music sheet file<input type='file' accept='.json,.pdf,.mid,.midi,.musicxml,.xml' onChange={(event) => setPublish({ ...publish, file: event.target.files?.[0] || null })} required /></label>
           </div>
           <label className='field'>Description<textarea rows='3' placeholder='Describe the arrangement.' value={publish.description} onChange={(event) => setPublish({ ...publish, description: event.target.value })} /></label>
-          <div className='seller-earnings-preview'>
+          {publish.listingMode === 'sale' && <div className='seller-earnings-preview'>
             <div><span>Listing price</span><strong>{Number(publish.priceMcoins || 0).toLocaleString()} Mcoins</strong></div>
-            <div><span>Polymath fee (25%)</span><strong>−{feePreview.toLocaleString()} Mcoins</strong></div>
+            <div><span>Polymath fee ({marketplace.policies.marketplaceFeePercent}%)</span><strong>−{feePreview.toLocaleString()} Mcoins</strong></div>
             <div><span>You receive</span><strong>{sellerPreview.toLocaleString()} Mcoins</strong></div>
-          </div>
-          <label className='rights-check'><input type='checkbox' checked={publish.rightsConfirmed} onChange={(event) => setPublish({ ...publish, rightsConfirmed: event.target.checked })} required /><span>I own the rights to this file or have permission to sell it.</span></label>
-          <label className='rights-check'><input type='checkbox' checked={publish.feeConfirmed} onChange={(event) => setPublish({ ...publish, feeConfirmed: event.target.checked })} required /><span>I accept the 25% sale fee.</span></label>
+          </div>}
+          {publish.listingMode === 'listener-reward' && <div className='seller-earnings-preview listener-reward-preview'>
+            <div><span>Per successful claim</span><strong>−{Number(publish.listenerRewardMcoins || 0).toLocaleString()} Mcoins</strong></div>
+            <div><span>Total listing reward cap</span><strong>{marketplace.policies.maximumRewardOutflowPerListingMcoins > 0 ? `${marketplace.policies.maximumRewardOutflowPerListingMcoins.toLocaleString()} Mcoins` : 'Unlimited'}</strong></div>
+          </div>}
+          <label className='rights-check'><input type='checkbox' checked={publish.rightsConfirmed} onChange={(event) => setPublish({ ...publish, rightsConfirmed: event.target.checked })} required /><span>I own the rights to this file or have permission to publish it.</span></label>
+          {publish.listingMode === 'sale' && marketplace.policies.marketplaceFeePercent > 0 && <label className='rights-check'><input type='checkbox' checked={publish.feeConfirmed} onChange={(event) => setPublish({ ...publish, feeConfirmed: event.target.checked })} required /><span>I accept the {marketplace.policies.marketplaceFeePercent}% sale fee.</span></label>}
           <button className='primary' type='submit'>Publish</button>
         </form>
       )}
@@ -316,7 +361,7 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
             {composerProfile.listings.map((listing) => (
               <button key={listing.id} type='button' onClick={() => focusListing(listing.id)}>
                 <span><strong>{listing.title}</strong><small>{listing.artist} · {FORMAT_DETAILS[listing.format]?.label || listing.format}</small></span>
-                <b>{listing.priceMcoins.toLocaleString()} Mcoins</b>
+                <b>{listingOfferLabel(listing)}</b>
               </button>
             ))}
           </div>
@@ -350,17 +395,17 @@ export default function MarketplacePage({ user, setUser, onNavigate }) {
                 </button>
               </div>
               <footer className='listing-footer'>
-                <strong>{listing.priceMcoins.toLocaleString()} Mcoins</strong>
+                <strong>{listingOfferLabel(listing)}</strong>
                 <div className='listing-actions'>
                   {listing.purchased || listing.owned
                     ? <button className='primary' type='button' onClick={() => download(listing)}>Download</button>
-                    : <button className='primary' type='button' onClick={() => openCheckout(listing)}>Buy</button>}
+                    : <button className='primary' type='button' disabled={listing.listingMode === 'listener-reward' && !listing.rewardAvailable} onClick={() => openCheckout(listing)}>{listing.listingMode === 'listener-reward' ? (listing.rewardAvailable ? 'Claim reward' : 'Reward paused') : listing.listingMode === 'free' ? 'Get free' : 'Buy'}</button>}
                   <button className='ghost' type='button' onClick={() => toggleReviews(listing)}>Reviews</button>
                   {listing.owned && <button className='ghost' type='button' onClick={() => onNavigate('your-songs')}>Manage</button>}
                 </div>
               </footer>
 
-              {checkoutId === listing.id && (
+              {checkoutId === listing.id && listing.listingMode === 'sale' && (
                 <div className='listing-checkout'>
                   <input aria-label='Coupon code' value={promotionCode} maxLength='32' placeholder='Coupon (optional)' disabled={Boolean(friendId)} onChange={(event) => setPromotionCode(event.target.value.toUpperCase())} />
                   <input aria-label='Friend ID' value={friendId} maxLength='10' placeholder='Friend ID (optional)' disabled={Boolean(promotionCode)} onChange={(event) => setFriendId(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 10))} />

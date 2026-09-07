@@ -13,13 +13,14 @@ const NAVIGATION_GROUPS = Object.freeze(['primary', 'more']);
 
 const NAVIGATION_REGISTRY = Object.freeze([
   Object.freeze({ id: 'studio', path: '#studio', defaultLabel: 'Piano', defaultGroup: 'primary', defaultOrder: 10, access: 'public' }),
-  Object.freeze({ id: 'create-music', path: '#create-music', defaultLabel: 'Create Music', defaultGroup: 'primary', defaultOrder: 20, access: 'public' }),
-  Object.freeze({ id: 'guitar', path: '#guitar', defaultLabel: 'Guitar', defaultGroup: 'primary', defaultOrder: 30, access: 'public' }),
-  Object.freeze({ id: 'ensemble', path: '#ensemble', defaultLabel: 'Instruments', defaultGroup: 'primary', defaultOrder: 40, access: 'public' }),
-  Object.freeze({ id: 'published-songs', path: '#published-songs', defaultLabel: 'Composers', defaultGroup: 'more', defaultOrder: 50, access: 'public' }),
-  Object.freeze({ id: 'find-teacher', path: '#find-teacher', defaultLabel: 'Find Teacher', defaultGroup: 'more', defaultOrder: 60, access: 'public' }),
-  Object.freeze({ id: 'band', path: '#band', defaultLabel: 'Band', defaultGroup: 'more', defaultOrder: 70, access: 'public' }),
-  Object.freeze({ id: 'your-songs', path: '#your-songs', defaultLabel: 'Your Songs', defaultGroup: 'more', defaultOrder: 80, access: 'signed-in' }),
+  Object.freeze({ id: 'your-songs', path: '#your-songs', defaultLabel: 'My songs', defaultGroup: 'primary', defaultOrder: 20, access: 'signed-in' }),
+  Object.freeze({ id: 'create-music', path: '#create-music', defaultLabel: 'Create Music', defaultGroup: 'more', defaultOrder: 30, access: 'public' }),
+  Object.freeze({ id: 'guitar', path: '#guitar', defaultLabel: 'Guitar', defaultGroup: 'more', defaultOrder: 40, access: 'public' }),
+  Object.freeze({ id: 'ensemble', path: '#ensemble', defaultLabel: 'Other instruments', defaultGroup: 'more', defaultOrder: 50, access: 'public' }),
+  Object.freeze({ id: 'published-songs', path: '#published-songs', defaultLabel: 'Composers', defaultGroup: 'more', defaultOrder: 60, access: 'public' }),
+  Object.freeze({ id: 'find-teacher', path: '#find-teacher', defaultLabel: 'Find Teacher', defaultGroup: 'more', defaultOrder: 70, access: 'public' }),
+  Object.freeze({ id: 'band', path: '#band', defaultLabel: 'Band', defaultGroup: 'more', defaultOrder: 80, access: 'public' }),
+  Object.freeze({ id: 'community', path: '#community', defaultLabel: 'Community', defaultGroup: 'more', defaultOrder: 90, access: 'public' }),
 ]);
 
 const REGISTRY_BY_ID = new Map(NAVIGATION_REGISTRY.map((item) => [item.id, item]));

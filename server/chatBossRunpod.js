@@ -2,6 +2,8 @@
 
 const DEFAULT_MODEL = 'polymath-chat-boss';
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
+const EDGE_SAFE_TIMEOUT_MS = 45 * 1000;
+const CONTROL_REQUEST_TIMEOUT_MS = 20 * 1000;
 
 function clean(value) {
   return String(value || '').trim();
@@ -27,20 +29,27 @@ function createChatBossRunpodClient(options = {}) {
   const nativeBaseUrl = `https://api.runpod.ai/v2/${encodeURIComponent(endpointId)}`;
 
   async function requestJson(url, options = {}) {
-    const response = await requestFetch(url, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(options.headers || {}),
-      },
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const detail = body?.error?.message || body?.error || body?.message || response.statusText;
-      throw new Error(`RunPod Chat Boss request failed (${response.status}): ${detail}`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, CONTROL_REQUEST_TIMEOUT_MS));
+    try {
+      const response = await requestFetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(options.headers || {}),
+        },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = body?.error?.message || body?.error || body?.message || response.statusText;
+        throw new Error(`RunPod Chat Boss request failed (${response.status}): ${detail}`);
+      }
+      return body;
+    } finally {
+      clearTimeout(timer);
     }
-    return body;
   }
 
   async function chat(messages, parameters = {}) {
@@ -49,7 +58,9 @@ function createChatBossRunpodClient(options = {}) {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    // Synchronous callers must receive a JSON error before the 60-second ALB
+    // idle timeout. Long-running teacher replies use submit/status instead.
+    const timeout = setTimeout(() => controller.abort(), Math.min(timeoutMs, EDGE_SAFE_TIMEOUT_MS));
     try {
       const response = await requestFetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -60,9 +71,9 @@ function createChatBossRunpodClient(options = {}) {
         body: JSON.stringify({
           model,
           messages,
-          temperature: 0.7,
-          top_p: 0.8,
-          max_tokens: 1024,
+          temperature: 0.55,
+          top_p: 0.85,
+          max_tokens: 640,
           chat_template_kwargs: { enable_thinking: false },
           ...parameters,
         }),
@@ -72,7 +83,7 @@ function createChatBossRunpodClient(options = {}) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
         const detail = body?.error?.message || body?.error || body?.message || response.statusText;
-        throw new Error(`RunPod Chat Boss request failed (${response.status}): ${detail}`);
+        throw new Error(`RunPod ChatBoss request failed (${response.status}): ${detail}`);
       }
       return body;
     } finally {
@@ -88,14 +99,23 @@ function createChatBossRunpodClient(options = {}) {
       method: 'POST',
       body: JSON.stringify({
         input: {
-          messages,
-          sampling_params: {
+          // Use RunPod's OpenAI passthrough shape here. The legacy
+          // messages/sampling_params shorthand discards OpenAI-only fields
+          // such as chat_template_kwargs, which leaves Qwen thinking mode on.
+          openai_route: '/v1/chat/completions',
+          openai_input: {
+            model,
+            messages,
             temperature: 0.7,
             top_p: 0.8,
             max_tokens: 1024,
             ...samplingParams,
+            stream: false,
+            chat_template_kwargs: {
+              ...(samplingParams.chat_template_kwargs || {}),
+              enable_thinking: false,
+            },
           },
-          chat_template_kwargs: { enable_thinking: false },
         },
         policy: {
           executionTimeout: Math.min(timeoutMs, 15 * 60 * 1000),

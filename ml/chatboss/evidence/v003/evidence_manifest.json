@@ -1,0 +1,44 @@
+{
+  "schema": "polymath-chatboss-evidence-export-v1",
+  "version": "v003",
+  "exportedAt": "2026-09-04T08:45:42.093Z",
+  "sourceVolumeId": "ccppo4yp9l",
+  "files": [
+    {
+      "filename": "training_manifest.json",
+      "bytes": 1097,
+      "sha256": "6fdf1d29dcbe99fadfb6d2e72389d0bf5b5ce2389787f1fa022e094564d71fa6",
+      "sourceKey": "chatboss/candidates/v003/training_manifest.json"
+    },
+    {
+      "filename": "base.json",
+      "bytes": 31443,
+      "sha256": "1cf463d55e02fcdb46fcdf9e46aa5407795dee77eba82e27a1423574d3f3bc58",
+      "sourceKey": "chatboss/evals/v003/base.json"
+    },
+    {
+      "filename": "candidate.json",
+      "bytes": 22606,
+      "sha256": "cac49fff6c86927a037c03a37da96428dad05680abeecd7c1a2408fe90fa4c91",
+      "sourceKey": "chatboss/evals/v003/candidate.json"
+    },
+    {
+      "filename": "decision.json",
+      "bytes": 1771,
+      "sha256": "80b9eb08eece1fc42aefb5e07639d22e9a3c429a8741d5fce0c2a6f817356bd2",
+      "sourceKey": "chatboss/evals/v003/decision.json"
+    },
+    {
+      "filename": "status.json",
+      "bytes": 580,
+      "sha256": "f113712fa5d901d1bb6e97ec8c8e8fb77826a1078925c2e1614265fc19f3b8d5",
+      "sourceKey": "chatboss/runs/v003/status.json"
+    },
+    {
+      "filename": "token_boundary_preflight.json",
+      "bytes": 565,
+      "sha256": "3497e25be925ad06bac3242b9a462b6911e70403efda627149e160f375beb820",
+      "sourceKey": "chatboss/runs/v003/token-boundary-preflight.json"
+    }
+  ]
+}
