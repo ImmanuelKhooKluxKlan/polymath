@@ -89,16 +89,26 @@ function markdown(report) {
 
 async function main() {
   const args = parseArguments(process.argv.slice(2));
-  if (!args.incumbent || !args.candidate || !args.out) {
-    throw new Error('Usage: --incumbent phase1-result.json --candidate phase2-result.json --out comparison.json');
+  if (!args.out || (!args.comparison && (!args.incumbent || !args.candidate))) {
+    throw new Error('Usage: --comparison direct-checkpoint-comparison.json --out comparison.json, or --incumbent phase1-result.json --candidate phase2-result.json --out comparison.json');
   }
-  const incumbentRecord = JSON.parse(await fs.readFile(path.resolve(args.incumbent), 'utf8'));
-  const candidateRecord = JSON.parse(await fs.readFile(path.resolve(args.candidate), 'utf8'));
-  const models = {
-    original: snapshot('original', candidateRecord.baseline),
-    incumbent: snapshot(incumbentRecord.version || 'incumbent', incumbentRecord.candidate),
-    candidate: snapshot(candidateRecord.version || 'candidate', candidateRecord.candidate),
-  };
+  let models;
+  if (args.comparison) {
+    const record = JSON.parse(await fs.readFile(path.resolve(args.comparison), 'utf8'));
+    models = {
+      original: snapshot('comparison baseline', record.baseline),
+      incumbent: snapshot(args['incumbent-label'] || 'incumbent', record.baseline),
+      candidate: snapshot(args['candidate-label'] || 'candidate', record.candidate),
+    };
+  } else {
+    const incumbentRecord = JSON.parse(await fs.readFile(path.resolve(args.incumbent), 'utf8'));
+    const candidateRecord = JSON.parse(await fs.readFile(path.resolve(args.candidate), 'utf8'));
+    models = {
+      original: snapshot('original', candidateRecord.baseline),
+      incumbent: snapshot(incumbentRecord.version || 'incumbent', incumbentRecord.candidate),
+      candidate: snapshot(candidateRecord.version || 'candidate', candidateRecord.candidate),
+    };
+  }
   const c = models.candidate;
   const i = models.incumbent;
   const gates = [

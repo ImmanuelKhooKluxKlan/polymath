@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../services/api.js';
 import ModelLabPage from './ModelLabPage.jsx';
+import SubscriptionCatalogAdmin from '../components/SubscriptionCatalogAdmin.jsx';
+import SiteControlCenter from '../components/SiteControlCenter.jsx';
 
 const ADMIN_SECTIONS = [
-  ['overview', 'Overview', 'Health, revenue, and storage'],
-  ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests'],
-  ['devices', 'Phone site review', 'Preview, test, and review mobile pages'],
-  ['promotions', 'Discounts', 'Create and pause percentage codes'],
-  ['policies', 'Rules & policies', 'Signup and spending minimums'],
-  ['users', 'Account manager', 'Search, Mcoins, access, and secure resets'],
+  ['overview', 'Overview', 'Health, revenue, and storage', 'Start'],
+  ['site-builder', 'Site & navigation', 'Rename, arrange, preview, and publish sections', 'Website'],
+  ['devices', 'Device preview', 'Preview, test, and review responsive pages', 'Website'],
+  ['subscriptions', 'Subscriptions', 'Categories, prices, features, and access', 'Business'],
+  ['promotions', 'Discounts', 'Create and pause percentage codes', 'Business'],
+  ['users', 'Account manager', 'Search, Mcoins, access, and secure resets', 'Business'],
+  ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests', 'AI & operations'],
+  ['policies', 'Rules & policies', 'Signup and spending minimums', 'AI & operations'],
 ];
+
+const ADMIN_SECTION_GROUPS = ['Start', 'Website', 'Business', 'AI & operations'];
 
 const DEVICE_PRESETS = [
   ['small-phone', 'Small phone', 320, 568],
@@ -28,7 +34,7 @@ const DEVICE_PRESETS = [
 const PREVIEW_PAGES = [
   ['studio', 'Piano Studio'], ['guitar', 'Guitar Studio'], ['ensemble', 'Instrument Studio'],
   ['band', 'Band'], ['find-teacher', 'Find Teacher'], ['your-songs', 'Your Songs'], ['published-songs', 'Composers'],
-  ['payment', 'Payments'], ['account', 'Account'],
+  ['create-music', 'Create Music'], ['payment', 'Payments'], ['account', 'Account'],
 ];
 
 const PHONE_REVIEW_STORAGE_KEY = 'polymath-admin-phone-reviews-v1';
@@ -92,6 +98,7 @@ function promotionValueLabel(item) {
 
 export default function AdminDatabasePage({ user, onNavigate }) {
   const [activeSection, setActiveSection] = useState('overview');
+  const [adminSearch, setAdminSearch] = useState('');
   const [database, setDatabase] = useState({ rows: [], footer: {}, configuration: {} });
   const [promotions, setPromotions] = useState([]);
   const [policies, setPolicies] = useState(null);
@@ -156,6 +163,13 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     });
   }, [database.rows, userSearch, userSort]);
   const selectedAccount = database.rows.find((row) => row.userId === accountManager.userId) || null;
+  const matchingAdminSections = useMemo(() => {
+    const query = adminSearch.trim().toLowerCase();
+    if (!query) return ADMIN_SECTIONS;
+    return ADMIN_SECTIONS.filter(([, label, description, group]) => (
+      `${label} ${description} ${group}`.toLowerCase().includes(query)
+    ));
+  }, [adminSearch]);
 
   const preset = DEVICE_PRESETS.find((device) => device.id === deviceId) || DEVICE_PRESETS[1];
   const baseWidth = preset.id === 'custom' ? Number(customViewport.width) || 390 : preset.width;
@@ -346,19 +360,49 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     <section className='page-shell admin-console'>
       <header className='admin-console-heading'>
         <div>
-          <p className='eyebrow'>Protected administrator area</p>
-          <h1>Admin console</h1>
-          <p>One focused workspace at a time, with sensitive actions kept behind administrator authentication.</p>
+          <p className='eyebrow'>Polymath control center</p>
+          <h1>Website dashboard</h1>
+          <p>Manage the public site, customers, subscriptions, policies, and AI operations from one protected workspace.</p>
         </div>
-        <span className='boss-badge'>ADMIN</span>
+        <div className='admin-heading-actions'>
+          <span className='admin-live-status'><i aria-hidden='true' /> Website online</span>
+          <button className='ghost' type='button' onClick={() => window.open(`${window.location.origin}${window.location.pathname}#studio`, '_blank')}>Open website</button>
+          <span className='boss-badge'>ADMIN</span>
+        </div>
       </header>
-      <nav className='admin-section-nav' aria-label='Admin console sections'>
-        {ADMIN_SECTIONS.map(([id, label, description]) => (
-          <button key={id} type='button' className={activeSection === id ? 'active' : ''} onClick={() => setActiveSection(id)}>
-            <strong>{label}</strong><small>{description}</small>
-          </button>
-        ))}
-      </nav>
+
+      <div className='admin-control-layout'>
+        <aside className='admin-control-sidebar'>
+          <div className='admin-control-account'>
+            <span aria-hidden='true'>{String(user.name || user.email || 'A').charAt(0).toUpperCase()}</span>
+            <div><strong>{user.name || 'Administrator'}</strong><small>Full platform access</small></div>
+          </div>
+          <label className='admin-control-search'>
+            <span>Find a control</span>
+            <input type='search' value={adminSearch} onChange={(event) => setAdminSearch(event.target.value)} placeholder='Search tools' />
+          </label>
+          <nav className='admin-control-sidebar-nav' aria-label='Admin console sections'>
+            {ADMIN_SECTION_GROUPS.map((group) => {
+              const sections = matchingAdminSections.filter((item) => item[3] === group);
+              if (!sections.length) return null;
+              return (
+                <section key={group}>
+                  <h2>{group}</h2>
+                  {sections.map(([id, label, description]) => (
+                    <button key={id} type='button' className={activeSection === id ? 'active' : ''} aria-current={activeSection === id ? 'page' : undefined} onClick={() => setActiveSection(id)}>
+                      <span className='admin-tool-symbol' aria-hidden='true'>{label.charAt(0)}</span>
+                      <span><strong>{label}</strong><small>{description}</small></span>
+                    </button>
+                  ))}
+                </section>
+              );
+            })}
+            {!matchingAdminSections.length && <p className='admin-control-no-results'>No control matches “{adminSearch}”.</p>}
+          </nav>
+          <footer><span>Protected workspace</span><small>Routes and permissions stay locked</small></footer>
+        </aside>
+
+        <div className='admin-control-main'>
 
       {activeSection === 'overview' && (
         <section className='admin-workspace'>
@@ -487,6 +531,16 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           </div>
         </section>
       )}
+      {activeSection === 'site-builder' && (
+        <section className='admin-workspace'>
+          <SiteControlCenter />
+        </section>
+      )}
+      {activeSection === 'subscriptions' && (
+        <section className='admin-workspace'>
+          <SubscriptionCatalogAdmin />
+        </section>
+      )}
       {activeSection === 'policies' && policies && (
         <section className='admin-workspace'>
           <div className='admin-section-heading'>
@@ -590,6 +644,8 @@ export default function AdminDatabasePage({ user, onNavigate }) {
         </section>
       )}
       {status && <p className='form-status floating-status'>{status}</p>}
+        </div>
+      </div>
     </section>
   );
 }

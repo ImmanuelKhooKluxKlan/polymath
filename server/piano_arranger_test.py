@@ -1,10 +1,18 @@
+import json
 import unittest
+from pathlib import Path
 
 from piano_arranger import (
     MAX_ARRANGED_NOTES_PER_SECOND,
     PIANO_MAX_MIDI,
     PIANO_MIN_MIDI,
     arrange_payload,
+)
+
+
+LEARNED_PROFILE = json.loads(
+    (Path(__file__).parent / "models" / "piano-arranger" / "pianella-supervised-v006.json")
+    .read_text(encoding="utf-8")
 )
 
 
@@ -42,6 +50,82 @@ class PianoLegatoTests(unittest.TestCase):
 
 
 class PianoArrangerTests(unittest.TestCase):
+    def test_learned_profile_is_used_only_for_a_full_mix(self):
+        notes = []
+        for index in range(120):
+            onset = index * 0.12
+            notes.extend(
+                [
+                    note(36, onset, "drums", duration=0.05),
+                    note(43 + index % 5, onset, "electric_bass"),
+                    note(58 + index % 12, onset + 0.01, "clean_electric_guitar"),
+                ]
+            )
+            if index % 3 == 0:
+                notes.append(note(64 + index % 7, onset, "voice"))
+
+        result = arrange_payload(
+            {"title": "Learned route fixture", "notes": notes},
+            "full",
+            style_profile=LEARNED_PROFILE,
+        )
+
+        self.assertEqual(
+            result["pianoArrangement"]["learnedProfileId"],
+            "pianella-supervised-v006",
+        )
+        self.assertEqual(
+            result["pianoArrangement"]["routingContract"],
+            "instrument-aware-transcription-then-piano-only-arrangement",
+        )
+        self.assertTrue(result["vocalMelodyIncluded"])
+        self.assertTrue(
+            all(item["instrument"] == "acoustic_piano" for item in result["notes"])
+        )
+
+    def test_learned_instrumental_route_drops_voice_before_piano_rendering(self):
+        payload = {
+            "title": "Learned instrumental fixture",
+            "notes": [
+                note(60 + index % 5, index * 0.12, "voice")
+                if index % 2
+                else note(48 + index % 12, index * 0.12, "acoustic_guitar")
+                for index in range(100)
+            ],
+        }
+
+        result = arrange_payload(payload, "instrumental", style_profile=LEARNED_PROFILE)
+
+        self.assertFalse(result["vocalMelodyIncluded"])
+        self.assertTrue(
+            all(item.get("sourceInstrument") != "voice" for item in result["notes"])
+        )
+
+    def test_mostly_piano_source_is_preserved_instead_of_regenerated(self):
+        notes = [
+            note(48 + index % 24, index * 0.14, "acoustic_piano")
+            for index in range(80)
+        ]
+        notes.extend(
+            note(72 + index % 5, index * 0.56, "flutes")
+            for index in range(20)
+        )
+
+        result = arrange_payload(
+            {"title": "Mostly piano fixture", "notes": notes},
+            "full",
+            style_profile=LEARNED_PROFILE,
+        )
+
+        self.assertEqual(
+            result["pianoArrangement"]["learnedProfileBypassReason"],
+            "mostly-acoustic-piano-source-preserved",
+        )
+        self.assertEqual(
+            result["pianoArrangement"]["requestedLearnedProfileId"],
+            "pianella-supervised-v006",
+        )
+
     def test_preserves_clean_acoustic_piano_inside_88_key_range(self):
         notes = [
             note(48 + index % 24, index * 0.125, "acoustic_piano")

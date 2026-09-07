@@ -1,0 +1,59 @@
+.subscription-audience {
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+}
+
+.subscription-audience > button span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.35;
+}
+
+.custom-subscription-category {
+  display: grid;
+  gap: 24px;
+}
+
+.custom-subscription-heading {
+  max-width: 760px;
+}
+
+.custom-subscription-heading h2 {
+  margin: 4px 0 0;
+  font-size: clamp(1.35rem, 3vw, 2.1rem);
+  line-height: 1.2;
+}
+
+.custom-plan-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(310px, 100%), 1fr));
+}
+
+.subscription-plan-card.creator-plan {
+  min-height: 430px;
+  border-color: rgba(112, 91, 231, 0.34);
+  background:
+    radial-gradient(circle at 100% 0, rgba(193, 82, 184, 0.13), transparent 34%),
+    linear-gradient(155deg, rgba(92, 126, 230, 0.09), var(--panel) 48%);
+}
+
+.custom-plan-description {
+  margin: -10px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 760px) {
+  .subscription-audience {
+    display: flex;
+    margin-bottom: 23px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+  }
+
+  .subscription-audience > button {
+    flex: 0 0 min(82vw, 280px);
+    padding: 16px;
+    scroll-snap-align: start;
+  }
+}

@@ -449,7 +449,11 @@ def suppress_rapid_retriggers(
     return sorted(output, key=lambda note: (note["time"], note["midi"])), removed
 
 
-def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict[str, Any]:
+def arrange_payload(
+    payload: dict[str, Any],
+    mode: str = "instrumental",
+    style_profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     source_notes = [
         normalized
         for note in payload.get("notes", [])
@@ -459,6 +463,24 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
         raise ValueError("No notes inside the real 88-key piano range were available to arrange.")
 
     profile = source_profile(source_notes, payload.get("transcriptionCleanup"))
+    learned_profile_bypass_reason = None
+    if (
+        style_profile
+        and not profile["detectedAcousticPianoPerformance"]
+        and profile["acousticPianoRatio"] < 0.75
+    ):
+        # MuScriptor has already detected the instruments. The explicit Piano
+        # route now hands that factual score to a separate supervised arranger;
+        # Band never calls this stage. A genuine solo-piano performance remains
+        # on the preservation path below so we do not rewrite a pianist who is
+        # already playing the requested instrument.
+        from piano_arranger_adapter import arrange_with_profile
+
+        learned = arrange_with_profile(payload, mode, style_profile)
+        learned["pianoArrangement"]["sourceProfile"] = profile
+        return learned
+    if style_profile and not profile["detectedAcousticPianoPerformance"]:
+        learned_profile_bypass_reason = "mostly-acoustic-piano-source-preserved"
     percussion_removed = sum(
         1 for note in source_notes if note["instrument"] in PERCUSSION_INSTRUMENTS
     )
@@ -609,6 +631,11 @@ def arrange_payload(payload: dict[str, Any], mode: str = "instrumental") -> dict
         MAX_HARMONY_PITCH_CLASSES
     )
     output['pianoArrangement']['legatoExtendedNotes'] = legato_extended
+    if style_profile:
+        output['pianoArrangement']['requestedLearnedProfileId'] = style_profile.get('id')
+        output['pianoArrangement']['learnedProfileBypassReason'] = (
+            learned_profile_bypass_reason or 'genuine-solo-piano-preserved'
+        )
     return output
 
 
@@ -691,12 +718,19 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--mode", choices=("full", "instrumental"), default="instrumental")
+    parser.add_argument(
+        "--profile",
+        help="Optional learned piano-arranger JSON profile. Used only for a detected full mix.",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
     output_path = Path(args.output)
     payload = json.loads(input_path.read_text(encoding="utf-8"))
-    arranged = arrange_payload(payload, args.mode)
+    style_profile = None
+    if args.profile:
+        style_profile = json.loads(Path(args.profile).read_text(encoding="utf-8"))
+    arranged = arrange_payload(payload, args.mode, style_profile=style_profile)
     temporary_path = output_path.with_name(f"{output_path.name}.tmp")
     temporary_path.write_text(
         json.dumps(arranged, ensure_ascii=False, indent=2),

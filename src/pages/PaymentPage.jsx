@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
+import '../dynamicSubscriptions.css';
 
 const FALLBACK_PRODUCTS = [
   { id: 'polymath-chill-monthly', name: 'Chill', price: '7.99', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'chill', translations: 10 },
@@ -17,9 +18,14 @@ const FALLBACK_PRODUCTS = [
   { id: 'mcoins-300', name: '300 Mcoins', price: '300.00', currency: 'USD', kind: 'mcoins', mcoins: 300 },
 ];
 
+const FALLBACK_CATEGORIES = [
+  { id: 'individual', slug: 'individual', name: 'Individual', description: 'For one musician.', sortOrder: 10 },
+  { id: 'institution', slug: 'institution', name: 'Institution', description: 'For schools and organisations.', sortOrder: 20 },
+];
+
 const FEATURES = {
   chill: [
-    'Everything in the Regular studio',
+    'Everything in the Chilling studio',
     'Unlimited JSON and MIDI ready-to-play uploads',
     '10 shared PDF or audio translations every month',
     'Extra translations for 0.5 Mcoin each',
@@ -84,10 +90,48 @@ function InstitutionPlans({ products, billing, setBilling, user, busy, onChoose 
   );
 }
 
-export default function PaymentPage({ user, setUser, productId, paymentStatus, paymentToken, onNavigate }) {
+function CustomPlanCategory({ category, products, billing, setBilling, user, busy, onChoose }) {
+  const intervals = [...new Set(products.map((product) => product.interval))];
+  const visible = products.filter((product) => product.interval === billing);
+  const currentIds = new Set((user?.activeSubscriptions || []).map((item) => item.productId));
+  return (
+    <div className='custom-subscription-category' role='tabpanel'>
+      <header className='custom-subscription-heading'>
+        <div><p className='eyebrow'>{category.name}</p><h2>{category.description || 'Choose the access you need.'}</h2></div>
+      </header>
+      {intervals.length > 1 && (
+        <div className='billing-switch segmented-control' role='group' aria-label={`${category.name} billing period`}>
+          {['MONTH', 'YEAR'].filter((interval) => intervals.includes(interval)).map((interval) => (
+            <button type='button' key={interval} className={billing === interval ? 'active' : ''} onClick={() => setBilling(interval)}>{interval === 'YEAR' ? 'Yearly' : 'Monthly'}</button>
+          ))}
+        </div>
+      )}
+      <div className='subscription-plan-grid custom-plan-grid'>
+        {visible.map((product) => {
+          const current = currentIds.has(product.id);
+          return (
+            <article key={product.id} className='subscription-plan-card creator-plan'>
+              <header><div><p className='eyebrow'>{product.badge || 'Creator access'}</p><h2>{product.name}</h2></div></header>
+              {product.description && <p className='custom-plan-description'>{product.description}</p>}
+              <div className='subscription-price'><strong>${product.price}</strong><span>USD / {periodLabel(product)}</span></div>
+              <ul>{(product.features || []).map((feature) => <li key={feature}>{feature}</li>)}</ul>
+              <button className='primary full' type='button' disabled={busy || current || !product.checkoutConfigured} onClick={() => onChoose(product)}>
+                {current ? 'Current plan' : product.checkoutConfigured ? `Choose ${product.name}` : 'Checkout being prepared'}
+              </button>
+            </article>
+          );
+        })}
+        {!visible.length && <div className='empty-state'><strong>No {billing === 'YEAR' ? 'yearly' : 'monthly'} plan is published yet.</strong><span>An administrator can create and publish one from the subscription catalog.</span></div>}
+      </div>
+    </div>
+  );
+}
+
+export default function PaymentPage({ user, setUser, productId, paymentStatus, paymentToken, initialCategory, onNavigate }) {
   const initialProductId = productId || 'polymath-chill-monthly';
   const [products, setProducts] = useState(FALLBACK_PRODUCTS);
-  const [audience, setAudience] = useState('individual');
+  const [categories, setCategories] = useState(FALLBACK_CATEGORIES);
+  const [audience, setAudience] = useState(initialCategory || 'individual');
   const [billing, setBilling] = useState(initialProductId.includes('yearly') ? 'YEAR' : 'MONTH');
   const [selectedId, setSelectedId] = useState(initialProductId);
   const [walletOpen, setWalletOpen] = useState(initialProductId.startsWith('mcoins-'));
@@ -96,7 +140,7 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
   const confirmationStarted = useRef(false);
 
   const subscriptions = useMemo(
-    () => products.filter((product) => product.kind === 'subscription' && product.audience !== 'institution'),
+    () => products.filter((product) => product.kind === 'subscription' && ['chill', 'musician'].includes(product.tier)),
     [products],
   );
   const institutionSubscriptions = useMemo(
@@ -114,9 +158,26 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
 
   useEffect(() => {
     apiRequest('/api/catalog')
-      .then((data) => setProducts(data.products))
+      .then((data) => {
+        setProducts(data.products);
+        if (Array.isArray(data.categories) && data.categories.length) {
+          setCategories(data.categories);
+          const requested = initialCategory || 'individual';
+          if (!data.categories.some((item) => item.slug === requested)) setAudience('individual');
+        }
+      })
       .catch(() => {});
-  }, []);
+  }, [initialCategory]);
+
+  useEffect(() => {
+    const categoryProducts = products.filter((product) => product.categorySlug === audience && product.kind === 'subscription');
+    if (!categoryProducts.some((product) => product.interval === billing) && categoryProducts[0]?.interval) {
+      setBilling(categoryProducts[0].interval);
+    }
+    if (categoryProducts[0] && audience !== 'individual' && audience !== 'institution') {
+      setSelectedId(categoryProducts[0].id);
+    }
+  }, [audience, billing, products]);
 
   useEffect(() => {
     if (user?.subscriptionTier !== 'chill') return;
@@ -198,17 +259,15 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
       </div>
 
       <div className="subscription-audience" role="tablist" aria-label="Subscription category">
-        <button type="button" role="tab" aria-selected={audience === 'individual'} className={audience === 'individual' ? 'active' : ''} onClick={() => setAudience('individual')}>
-          <strong>Individual</strong>
-          <span>For one musician</span>
-        </button>
-        <button type="button" role="tab" aria-selected={audience === 'institution'} className={audience === 'institution' ? 'active' : ''} onClick={() => setAudience('institution')}>
-          <strong>Institution</strong>
-          <span>For schools and organisations</span>
-        </button>
+        {categories.map((category) => (
+          <button type="button" role="tab" key={category.id} aria-selected={audience === category.slug} className={audience === category.slug ? 'active' : ''} onClick={() => setAudience(category.slug)}>
+            <strong>{category.name}</strong>
+            <span>{category.description}</span>
+          </button>
+        ))}
       </div>
 
-      {audience === 'individual' ? (
+      {audience === 'individual' && (
         <div className="individual-subscriptions" role="tabpanel">
           <div className="billing-switch segmented-control" role="group" aria-label="Billing period">
             <button type="button" className={billing === 'MONTH' ? 'active' : ''} onClick={() => setBilling('MONTH')}>Monthly</button>
@@ -263,7 +322,8 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
             })}
           </div>
         </div>
-      ) : (
+      )}
+      {audience === 'institution' && (
         <div className='institution-subscriptions' role='tabpanel'>
           <InstitutionPlans
             products={institutionSubscriptions}
@@ -274,6 +334,17 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
             onChoose={(product) => { choosePlan(product); checkout(product); }}
           />
         </div>
+      )}
+      {audience !== 'individual' && audience !== 'institution' && (
+        <CustomPlanCategory
+          category={categories.find((item) => item.slug === audience) || { name: 'Subscription', description: '' }}
+          products={products.filter((product) => product.kind === 'subscription' && product.categorySlug === audience)}
+          billing={billing}
+          setBilling={setBilling}
+          user={user}
+          busy={busy}
+          onChoose={(product) => { choosePlan(product); checkout(product); }}
+        />
       )}
 
       <div className="subscription-economy-note">

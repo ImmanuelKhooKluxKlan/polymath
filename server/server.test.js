@@ -354,6 +354,15 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(catalog.data.products.find((item) => item.id === 'polymath-musician-yearly').price, '93.99');
   assert.equal(catalog.data.products.find((item) => item.id === 'mcoins-50').price, '50.00');
 
+  const publicSiteConfiguration = await api('/api/site-configuration');
+  assert.equal(publicSiteConfiguration.status, 200);
+  assert.equal(publicSiteConfiguration.data.configuration.brand.name, 'Polymath');
+  assert.equal(publicSiteConfiguration.data.configuration.navigation.find((item) => item.id === 'your-songs').access, 'signed-in');
+  assert.equal(Object.hasOwn(publicSiteConfiguration.data.configuration, 'updatedBy'), false);
+
+  const anonymousSiteEditor = await api('/api/admin/site-configuration');
+  assert.equal(anonymousSiteEditor.status, 401);
+
   const unauthenticatedTranscription = await api('/api/media-transcriptions', { method: 'POST' });
   assert.equal(unauthenticatedTranscription.status, 401);
 
@@ -388,6 +397,30 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   const adminToken = adminRegistration.data.token;
   const adminFriendId = adminRegistration.data.user.friend_id;
 
+  const siteEditor = await api('/api/admin/site-configuration', { token: adminToken });
+  assert.equal(siteEditor.status, 200);
+  const siteDraft = structuredClone(siteEditor.data.configuration);
+  siteDraft.navigation = siteDraft.navigation.map((item) => (
+    item.id === 'published-songs' ? { ...item, label: 'Sheet Creators' } : item
+  ));
+  const siteUpdate = await api('/api/admin/site-configuration', {
+    method: 'PUT',
+    token: adminToken,
+    body: siteDraft,
+  });
+  assert.equal(siteUpdate.status, 200);
+  assert.equal(siteUpdate.data.configuration.revision, siteDraft.revision + 1);
+  assert.equal(siteUpdate.data.history[0].actor.email, 'admin@example.test');
+  const publishedSiteConfiguration = await api('/api/site-configuration');
+  assert.equal(publishedSiteConfiguration.data.configuration.navigation.find((item) => item.id === 'published-songs').label, 'Sheet Creators');
+  const staleSiteUpdate = await api('/api/admin/site-configuration', {
+    method: 'PUT',
+    token: adminToken,
+    body: siteDraft,
+  });
+  assert.equal(staleSiteUpdate.status, 409);
+  assert.equal(staleSiteUpdate.data.code, 'SITE_CONFIGURATION_CONFLICT');
+
   const localUploadIntent = await api('/api/artifact-upload-intents', {
     method: 'POST',
     token: adminToken,
@@ -421,6 +454,9 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.match(userRegistration.data.user.friend_id, /^user_[a-f0-9]{5}$/);
   const userToken = userRegistration.data.token;
   const userId = userRegistration.data.user.user_id;
+
+  const customerSiteEditor = await api('/api/admin/site-configuration', { token: userToken });
+  assert.equal(customerSiteEditor.status, 403);
 
   const unauthorizedGrant = await api(`/api/admin/users/${userId}/mcoins`, {
     method: 'POST',

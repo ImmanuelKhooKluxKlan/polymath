@@ -1,18 +1,24 @@
-const PRIMARY_ITEMS = [
-  ['studio', 'Piano'],
-  ['guitar', 'Guitar'],
-  ['ensemble', 'Instruments'],
-  ['published-songs', 'Composers'],
-];
+import { normalizePublicSiteConfiguration } from '../config/siteConfiguration.js';
 
-export default function AppNav({ route, onNavigate, user }) {
-  const moreItems = [
-    ['find-teacher', 'Find Teacher'],
-    ['band', 'Band'],
-    ...(user ? [['your-songs', 'Your Songs']] : []),
+function brandInitials(brand) {
+  const parts = [brand.name, brand.suffix].filter(Boolean);
+  return parts.map((part) => String(part).trim().charAt(0)).join('').slice(0, 2).toUpperCase() || 'PM';
+}
+
+export default function AppNav({ route, onNavigate, user, siteConfiguration }) {
+  const configuration = normalizePublicSiteConfiguration(siteConfiguration);
+  const configuredItems = configuration.navigation
+    .filter((item) => item.visible && (item.access !== 'signed-in' || user));
+  const primaryItems = configuredItems.filter((item) => item.group === 'primary');
+  const configuredMoreItems = configuredItems.filter((item) => item.group === 'more');
+  const mobileOverflowItems = primaryItems.slice(2);
+  const systemItems = [
+    ...(user?.admin ? [['chat-boss', 'Chat Boss']] : []),
     ['account', user ? 'Account' : 'Sign in'],
   ];
-  const moreIsActive = moreItems.some(([value]) => route === value)
+  const moreIsActive = configuredMoreItems.some((item) => route === item.id)
+    || mobileOverflowItems.some((item) => route === item.id)
+    || systemItems.some(([value]) => route === value)
     || route === 'messages'
     || route === 'admin-database'
     || route === 'payment';
@@ -24,35 +30,48 @@ export default function AppNav({ route, onNavigate, user }) {
 
   return (
     <nav className='app-nav' aria-label='Main navigation'>
-      <button className='brand-button' type='button' onClick={() => onNavigate('studio')} aria-label='Open Polymath Musician piano studio'>
-        <span className='brand-mark'>PM</span>
+      <button className='brand-button' type='button' onClick={() => onNavigate('studio')} aria-label={`Open ${configuration.brand.name} ${configuration.brand.suffix} home`}>
+        <span className='brand-mark'>{brandInitials(configuration.brand)}</span>
         <span className='brand-copy'>
-          <strong>Polymath</strong>
-          <small>Musician</small>
+          <strong>{configuration.brand.name}</strong>
+          <small>{configuration.brand.suffix}</small>
         </span>
       </button>
       <div className='nav-links'>
-        {PRIMARY_ITEMS.map(([value, label]) => (
+        {primaryItems.map((item) => (
           <button
-            key={value}
+            key={item.id}
             type='button'
-            className={route === value ? 'active' : ''}
-            onClick={() => onNavigate(value)}
+            className={`nav-primary-item ${route === item.id ? 'active' : ''}`}
+            onClick={() => onNavigate(item.id)}
           >
-            {label}
+            {item.label}
           </button>
         ))}
         <details className='nav-more'>
           <summary className={moreIsActive ? 'active' : ''}>More</summary>
           <div className='nav-more-menu'>
-            <button
-              type='button'
-              className={`mobile-nav-only ${route === 'published-songs' ? 'active' : ''}`}
-              onClick={(event) => navigateFromMenu(event, 'published-songs')}
-            >
-              Composers
-            </button>
-            {moreItems.map(([value, label]) => (
+            {mobileOverflowItems.map((item) => (
+              <button
+                key={`mobile-${item.id}`}
+                type='button'
+                className={`nav-mobile-overflow-item ${route === item.id ? 'active' : ''}`}
+                onClick={(event) => navigateFromMenu(event, item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+            {configuredMoreItems.map((item) => (
+              <button
+                key={item.id}
+                type='button'
+                className={route === item.id ? 'active' : ''}
+                onClick={(event) => navigateFromMenu(event, item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+            {systemItems.map(([value, label]) => (
               <button
                 key={value}
                 type='button'

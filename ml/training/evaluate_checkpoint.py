@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 import json
+import argparse
 from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable
@@ -271,3 +272,38 @@ def compare_checkpoints(
 
 def save_comparison(result: dict[str, Any], destination: Path) -> None:
     destination.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Compare two MuScriptor checkpoints on one frozen manifest."
+    )
+    parser.add_argument("--base", type=Path, required=True)
+    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--validation-manifest", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    args = parser.parse_args()
+
+    def report(message: str) -> None:
+        print(message, flush=True)
+
+    result = compare_checkpoints(
+        args.base.resolve(),
+        args.candidate.resolve(),
+        args.validation_manifest.resolve(),
+        progress_callback=report,
+    )
+    destination = args.out.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    save_comparison(result, destination)
+    print(json.dumps({
+        "output": str(destination),
+        "clips": result["clips"],
+        "candidateMinusBaselineMicroF1": result[
+            "candidateMinusBaselineMicroF1"
+        ],
+    }, indent=2), flush=True)
+
+
+if __name__ == "__main__":
+    main()

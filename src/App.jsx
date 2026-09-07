@@ -7,6 +7,7 @@ import PianoKeyboard, { keyboardMap } from './components/PianoKeyboard.jsx';
 import SongUploader from './components/SongUploader.jsx';
 import TransportDock from './components/TransportDock.jsx';
 import LearnModePanel from './components/LearnModePanel.jsx';
+import VirtualTeacherAvatar from './components/VirtualTeacherAvatar.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import {
@@ -32,6 +33,10 @@ import {
 import { apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
 import { parseUploadedSongFile } from './utils/songParser.js';
 import { analyzeLearningSections } from './utils/learningSections.js';
+import {
+  DEFAULT_SITE_CONFIGURATION,
+  normalizePublicSiteConfiguration,
+} from './config/siteConfiguration.js';
 
 const AUDIO_LOOKAHEAD_SECONDS = 0.18;
 const AUDIO_SCHEDULER_INTERVAL_MS = 25;
@@ -46,7 +51,11 @@ const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
 const BandPage = lazy(() => import('./pages/BandPage.jsx'));
 const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
 const AdminDatabasePage = lazy(() => import('./pages/AdminDatabasePage.jsx'));
+const ChatBossPage = lazy(() => import('./pages/ChatBossPage.jsx'));
 const ModelLabPage = lazy(() => import('./pages/ModelLabPage.jsx'));
+const TeacherProjectionPage = lazy(() => import('./pages/TeacherProjectionPage.jsx'));
+const TeacherArPage = lazy(() => import('./pages/TeacherArPage.jsx'));
+const CreateMusicPage = lazy(() => import('./pages/CreateMusicPage.jsx'));
 
 function readRoute() {
   const redirectParams = new URLSearchParams(window.location.search);
@@ -90,6 +99,7 @@ function manualVoiceKey(note, interaction = {}) {
 export default function App() {
   const [route, setRoute] = useState(readRoute);
   const [user, setUser] = useState(null);
+  const [siteConfiguration, setSiteConfiguration] = useState(DEFAULT_SITE_CONFIGURATION);
   const [songs, setSongs] = useState(() => sampleSongs.map(normalizeSong));
   const [songTitle, setSongTitle] = useState(sampleSongs[0].title);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -206,6 +216,44 @@ export default function App() {
       .catch((error) => console.error(error));
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    function applyConfiguration(raw) {
+      if (!cancelled) setSiteConfiguration(normalizePublicSiteConfiguration(raw));
+    }
+    function receiveConfiguration(event) {
+      applyConfiguration(event.detail);
+    }
+    apiRequest('/api/site-configuration')
+      .then((data) => applyConfiguration(data.configuration))
+      .catch(() => {
+        // The immutable defaults keep navigation usable during a backend restart.
+      });
+    window.addEventListener('polymath-site-configuration-updated', receiveConfiguration);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('polymath-site-configuration-updated', receiveConfiguration);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (route.page !== 'studio' || route.params.get('created') !== '1') return;
+    try {
+      const raw = window.sessionStorage.getItem('polymath-created-arrangement-v1');
+      if (!raw) return;
+      const createdSong = normalizeSong(JSON.parse(raw));
+      setSongs((previous) => [
+        createdSong,
+        ...previous.filter((candidate) => candidate.title !== createdSong.title),
+      ]);
+      setSongTitle(createdSong.title);
+      setOpenMusicChooser(null);
+      window.sessionStorage.removeItem('polymath-created-arrangement-v1');
+    } catch (error) {
+      console.error('Created arrangement could not be opened:', error);
+    }
+  }, [route]);
 
   useEffect(() => {
     if (!getAuthToken()) return;
@@ -803,6 +851,22 @@ export default function App() {
     await startPlaybackAt(section.start);
   }
 
+  if (route.page === 'teacher-projection') {
+    return (
+      <Suspense fallback={<div className="projection-route-loading">Preparing teacher display…</div>}>
+        <TeacherProjectionPage params={route.params} />
+      </Suspense>
+    );
+  }
+
+  if (route.page === 'teacher-ar') {
+    return (
+      <Suspense fallback={<div className="projection-route-loading">Preparing AR studio…</div>}>
+        <TeacherArPage params={route.params} />
+      </Suspense>
+    );
+  }
+
   const paymentProductId = route.params.get('productId') || 'polymath-chill-monthly';
   const messageUserId = route.params.get('userId');
   const messageName = route.params.get('name') || 'Composer';
@@ -815,6 +879,7 @@ export default function App() {
       return <AccountPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
     if (route.page === 'guitar') return <GuitarPage user={user} setUser={setUser} onNavigate={navigate} />;
+    if (route.page === 'create-music') return <CreateMusicPage user={user} onNavigate={navigate} />;
     if (route.page === 'ensemble') return <EnsemblePage user={user} setUser={setUser} onNavigate={navigate} />;
     if (route.page === 'band') {
       if (!user?.admin && !user?.access?.band) {
@@ -833,6 +898,7 @@ export default function App() {
     if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} onNavigate={navigate} />;
     if (route.page === 'your-songs') return <YourSongsPage user={user} onNavigate={navigate} />;
     if (route.page === 'admin-database') return <AdminDatabasePage user={user} onNavigate={navigate} />;
+    if (route.page === 'chat-boss') return <ChatBossPage user={user} onNavigate={navigate} />;
     if (route.page === 'messages') return <MessagesPage user={user} initialUser={messageUserId ? { user_id: messageUserId, name: messageName } : null} context={route.params.get('context')} onNavigate={navigate} />;
     if (route.page === 'account') return (
       <AccountPage
@@ -851,6 +917,7 @@ export default function App() {
           productId={paymentProductId}
           paymentStatus={route.params.get('status')}
           paymentToken={route.params.get('token')}
+          initialCategory={route.params.get('category')}
           onNavigate={navigate}
         />
       );
@@ -876,6 +943,16 @@ export default function App() {
           preferredSeconds={preferredSectionSeconds}
           onPreferredSecondsChange={(value) => setPreferredSectionSeconds(Math.max(5, Math.min(60, value || 15)))}
         />
+
+        {teachingMode === 'learn' && (
+          <VirtualTeacherAvatar
+            isPlaying={isPlaying}
+            deviceClass={deviceClass}
+            performanceTier={performanceTier}
+            song={teachingSong}
+            currentTime={currentTime}
+          />
+        )}
 
         {teachingMode === 'learn' && (
           <section className="piano-hand-selector" aria-label="Choose piano hands to practise">
@@ -908,14 +985,6 @@ export default function App() {
         )}
 
         <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''}`}>
-          <div className='mobile-flow-guide mobile-source-guide'>
-            <span>1</span>
-            <div>
-              <strong>Choose what to play</strong>
-              <small>Play an available song or upload a music sheet, audio file, or video.</small>
-            </div>
-          </div>
-
           <ControlPanel
             song={song}
             songs={songs}
@@ -927,14 +996,6 @@ export default function App() {
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
           />
-
-          <div className='mobile-flow-guide mobile-player-guide'>
-            <span>2</span>
-            <div>
-              <strong>Play and learn</strong>
-              <small>Follow the falling notes, then use the keyboard and controls below.</small>
-            </div>
-          </div>
           <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
             <FallingNotes song={teachingSong} layout={pianoLayout} currentTime={currentTime} isPlaying={isPlaying} leadTime={leadTime} activeNotes={activeNotes} performanceTier={performanceTier} />
             <div className="piano-scroll-wrap">
@@ -1015,7 +1076,14 @@ export default function App() {
 
   return (
     <div className="app-root" data-performance-tier={performanceTier}>
-      {portraitDevice && !orientationPromptDismissed && (
+      {siteConfiguration.announcement.enabled && (
+        <aside className={`site-announcement site-announcement-${siteConfiguration.announcement.tone}`} role='status'>
+          {siteConfiguration.announcement.text}
+        </aside>
+      )}
+      {['studio', 'guitar', 'ensemble', 'band'].includes(route.page)
+        && portraitDevice
+        && !orientationPromptDismissed && (
         <aside className="orientation-recommendation" role="dialog" aria-label="Landscape orientation recommendation">
           <div className="orientation-phone-icon" aria-hidden="true"><span /></div>
           <div>
@@ -1032,7 +1100,7 @@ export default function App() {
         </aside>
       )}
       <div className="top-shell">
-        <AppNav route={route.page} onNavigate={navigate} user={user} />
+        <AppNav route={route.page} onNavigate={navigate} user={user} siteConfiguration={siteConfiguration} />
         <HeaderActions user={user} onNavigate={navigate} route={route.page} />
       </div>
       <main className="app-shell">

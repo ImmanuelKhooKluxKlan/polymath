@@ -17,6 +17,39 @@ const { createJobQueue } = require('./jobQueue');
 const { createModelLab } = require('./modelLab');
 const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
+const { createTeacherAssistant } = require('./teacherAssistant');
+const { createChatBossAssistant } = require('./chatBossAssistant');
+const { createTeacherProjectionStore } = require('./teacherProjection');
+const { createMusicCreationAssistant } = require('./musicCreationAssistant');
+const {
+  createProject: createMusicProject,
+  deleteProject: deleteMusicProject,
+  findProject: findMusicProject,
+  listProjects: listMusicProjects,
+  publicProject: publicMusicProject,
+  updateProject: updateMusicProject,
+} = require('./musicCreationProjects');
+const {
+  activeEntitlements,
+  applyCustomProductAccess,
+  createCategory: createSubscriptionCategory,
+  createPlan: createSubscriptionPlan,
+  ensureSubscriptionCatalog,
+  hasEntitlement,
+  listAdminCatalog,
+  listPublicCatalog,
+  resolveProduct,
+  updateCategory: updateSubscriptionCategory,
+  updatePlan: updateSubscriptionPlan,
+} = require('./subscriptionCatalog');
+const {
+  SiteConfigurationError,
+  adminSiteConfiguration,
+  defaultSiteConfiguration,
+  normalizeSiteConfiguration,
+  publicSiteConfiguration,
+  updateSiteConfiguration,
+} = require('./siteConfiguration');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -37,6 +70,20 @@ if (!IS_PRODUCTION) {
   CLIENT_ORIGINS.add('http://127.0.0.1:5174');
 }
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
+const TEACHER_ASSISTANT = createTeacherAssistant(process.env);
+const CHAT_BOSS_ASSISTANT = createChatBossAssistant(process.env);
+const MUSIC_CREATION_ASSISTANT = createMusicCreationAssistant(process.env);
+const TEACHER_PROJECTIONS = createTeacherProjectionStore({
+  databaseUrl: process.env.DATABASE_URL,
+  databaseHost: process.env.PGHOST,
+  databasePort: process.env.PGPORT,
+  databaseUser: process.env.PGUSER,
+  databasePassword: process.env.PGPASSWORD,
+  databaseName: process.env.PGDATABASE,
+});
+const TEACHER_REQUEST_WINDOWS = new Map();
+const CHAT_BOSS_REQUEST_WINDOWS = new Map();
+const MUSIC_CREATION_REQUEST_WINDOWS = new Map();
 const PROCESS_INSTANCE_ID = crypto.randomUUID();
 const JOB_CLAIM_MS = 7 * 60 * 60 * 1000;
 
@@ -125,6 +172,11 @@ const PIANO_ARRANGER_PYTHON = String(process.env.PIANO_ARRANGER_PYTHON || '').tr
   || MUSCRIPTOR_PYTHON;
 const PIANO_ARRANGER_WORKER = String(process.env.PIANO_ARRANGER_WORKER || '').trim()
   || path.join(__dirname, 'piano_arranger.py');
+// Learned arranger candidates are opt-in. A profile must pass unseen-song
+// validation before it becomes the production default.
+const PIANO_ARRANGER_PROFILE_PATH = String(
+  process.env.PIANO_ARRANGER_PROFILE_PATH || '',
+).trim();
 const MUSCRIPTOR_REMOTE_URL = String(process.env.MUSCRIPTOR_REMOTE_URL || '').trim().replace(/\/+$/, '');
 const MUSCRIPTOR_REMOTE_TOKEN = String(process.env.MUSCRIPTOR_REMOTE_TOKEN || '').trim();
 const MUSCRIPTOR_TIMEOUT_MS = Math.min(
@@ -408,6 +460,9 @@ function ensureStorage() {
       withdrawals: [],
       paymentOrders: [],
       subscriptions: [],
+      subscriptionCategories: [],
+      subscriptionPlans: [],
+      subscriptionCatalogEvents: [],
       webhookEvents: [],
       scoreTranslationJobs: [],
       mediaTranscriptionJobs: [],
@@ -422,6 +477,10 @@ function ensureStorage() {
       passwordResetEvents: [],
       authEvents: [],
       registrationVerifications: [],
+      musicCreationProjects: [],
+      musicGenerationJobs: [],
+      siteConfigurationEvents: [],
+      siteConfiguration: defaultSiteConfiguration(),
       settings: { ...DEFAULT_SITE_POLICIES },
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(seed, null, 2));
@@ -477,6 +536,9 @@ function normalizeDb(db) {
     'withdrawals',
     'paymentOrders',
     'subscriptions',
+    'subscriptionCategories',
+    'subscriptionPlans',
+    'subscriptionCatalogEvents',
     'webhookEvents',
     'scoreTranslationJobs',
     'mediaTranscriptionJobs',
@@ -491,10 +553,14 @@ function normalizeDb(db) {
     'passwordResetEvents',
     'authEvents',
     'registrationVerifications',
+    'musicCreationProjects',
+    'musicGenerationJobs',
+    'siteConfigurationEvents',
   ];
   arrays.forEach((key) => {
     if (!Array.isArray(normalized[key])) normalized[key] = [];
   });
+  ensureSubscriptionCatalog(normalized);
   normalized.sessions.forEach((session) => {
     if (!session.tokenHash && session.token) {
       session.tokenHash = hashSessionToken(session.token);
@@ -504,6 +570,9 @@ function normalizeDb(db) {
   normalized.users.forEach((user) => {
     user.mcoins = Number(user.mcoins || 0);
     user.withdrawableMcoins = Number(user.withdrawableMcoins || 0);
+    if (!user.subscriptionAccess || typeof user.subscriptionAccess !== 'object' || Array.isArray(user.subscriptionAccess)) {
+      user.subscriptionAccess = {};
+    }
     if (!user.proStatus) user.proStatus = user.pro ? 'ACTIVE' : 'INACTIVE';
     if (!Object.prototype.hasOwnProperty.call(user, 'paypalSubscriptionId')) {
       user.paypalSubscriptionId = null;
@@ -528,6 +597,7 @@ function normalizeDb(db) {
     normalized.settings.minimumWithdrawalMcoins = 20;
     normalized.settings.minimumWithdrawal20MigrationApplied = true;
   }
+  normalized.siteConfiguration = normalizeSiteConfiguration(normalized.siteConfiguration);
   return normalized;
 }
 
@@ -827,6 +897,17 @@ function hasMusicianAccess(user) {
   return isAdministrator(user) || activeSubscriptionTier(user) === 'musician';
 }
 
+function userEntitlements(user) {
+  const entitlements = new Set(activeEntitlements(user));
+  const tier = activeSubscriptionTier(user);
+  if (tier === 'chill' || tier === 'musician') entitlements.add('ready_sheets.unlimited');
+  if (tier === 'musician') {
+    entitlements.add('learn');
+    entitlements.add('band');
+  }
+  return [...entitlements];
+}
+
 function ensureReadySheetUsage(user, now = new Date()) {
   const period = currentTranslationPeriod(now);
   if (!user.readySheetUploadUsage || user.readySheetUploadUsage.period !== period) {
@@ -998,6 +1079,8 @@ function safeUser(user) {
   const subscriptionTier = activeSubscriptionTier(user);
   const administrator = isAdministrator(user);
   const administratorGrant = activeAdminSubscriptionGrant(user);
+  const entitlements = userEntitlements(user);
+  const entitlementSet = new Set(entitlements);
   return {
     user_id: user.id,
     friend_id: user.friendId || '',
@@ -1022,6 +1105,15 @@ function safeUser(user) {
       active: Boolean(administratorGrant),
     } : null,
     paypalSubscriptionId: user.paypalSubscriptionId || null,
+    activeSubscriptions: Object.values(user.subscriptionAccess || {})
+      .filter((item) => String(item?.status || '').toUpperCase() === 'ACTIVE')
+      .map((item) => ({
+        productId: item.productId,
+        name: item.name,
+        categorySlug: item.categorySlug,
+        interval: item.interval,
+        startedAt: item.startedAt,
+      })),
     luckyCodeApplied: Boolean(user.luckyCodeClaim),
     institution: user.institutionId ? {
       id: user.institutionId,
@@ -1038,9 +1130,15 @@ function safeUser(user) {
     admin: administrator,
     access: {
       regular: true,
-      learn: administrator || subscriptionTier === 'musician',
-      band: administrator || subscriptionTier === 'musician',
+      learn: administrator || entitlementSet.has('learn'),
+      band: administrator || entitlementSet.has('band'),
+      createMusic: administrator || entitlementSet.has('create_music.projects'),
+      createMusicAi: administrator || entitlementSet.has('create_music.ai_guidance'),
+      createMusicArrangements: administrator || entitlementSet.has('create_music.arrangements'),
+      createMusicExports: administrator || entitlementSet.has('create_music.exports'),
+      createMusicGuideVoice: administrator || entitlementSet.has('create_music.guide_voice'),
     },
+    entitlements: administrator ? ['administrator:*'] : entitlements,
     mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,
   };
@@ -1400,6 +1498,59 @@ function decodeYouTubeText(value = '') {
     .replace(/&gt;/g, '>')
     .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
     .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)));
+}
+
+function requireEntitlement(entitlement, message) {
+  return (req, res, next) => requireAuth(req, res, () => {
+    if (!isAdministrator(req.user) && !hasEntitlement(req.user, entitlement)) {
+      res.status(403).json({ error: message || 'This feature requires another subscription.' });
+      return;
+    }
+    next();
+  });
+}
+
+function teacherRequestAllowed(userId, action, intervalMs) {
+  const key = `${userId}:${action}`;
+  const now = Date.now();
+  const previous = TEACHER_REQUEST_WINDOWS.get(key) || 0;
+  if (now - previous < intervalMs) return false;
+  TEACHER_REQUEST_WINDOWS.set(key, now);
+  if (TEACHER_REQUEST_WINDOWS.size > 5000) {
+    const cutoff = now - (10 * 60 * 1000);
+    for (const [entryKey, timestamp] of TEACHER_REQUEST_WINDOWS) {
+      if (timestamp < cutoff) TEACHER_REQUEST_WINDOWS.delete(entryKey);
+    }
+  }
+  return true;
+}
+
+function chatBossRequestAllowed(userId, intervalMs = 1500) {
+  const now = Date.now();
+  const previous = CHAT_BOSS_REQUEST_WINDOWS.get(userId) || 0;
+  if (now - previous < intervalMs) return false;
+  CHAT_BOSS_REQUEST_WINDOWS.set(userId, now);
+  if (CHAT_BOSS_REQUEST_WINDOWS.size > 5000) {
+    const cutoff = now - (10 * 60 * 1000);
+    for (const [entryUserId, timestamp] of CHAT_BOSS_REQUEST_WINDOWS) {
+      if (timestamp < cutoff) CHAT_BOSS_REQUEST_WINDOWS.delete(entryUserId);
+    }
+  }
+  return true;
+}
+
+function musicCreationRequestAllowed(userId, intervalMs = 2500) {
+  const now = Date.now();
+  const previous = MUSIC_CREATION_REQUEST_WINDOWS.get(userId) || 0;
+  if (now - previous < intervalMs) return false;
+  MUSIC_CREATION_REQUEST_WINDOWS.set(userId, now);
+  if (MUSIC_CREATION_REQUEST_WINDOWS.size > 5000) {
+    const cutoff = now - (10 * 60 * 1000);
+    for (const [entryUserId, timestamp] of MUSIC_CREATION_REQUEST_WINDOWS) {
+      if (timestamp < cutoff) MUSIC_CREATION_REQUEST_WINDOWS.delete(entryUserId);
+    }
+  }
+  return true;
 }
 
 function marketplaceRanking(averageRating = 0, audienceCount = 0) {
@@ -2060,12 +2211,16 @@ async function processMediaTranscriptionJob(jobId) {
         stage: 'Building a playable 88-key acoustic-piano arrangement',
         progress: 97,
       });
-      await runChild(PIANO_ARRANGER_PYTHON, [
+      const pianoArrangerArguments = [
         PIANO_ARRANGER_WORKER,
         '--input', outputPath,
         '--output', arrangedPath,
         '--mode', job.playbackMode || 'instrumental',
-      ], {
+      ];
+      if (PIANO_ARRANGER_PROFILE_PATH && fs.existsSync(PIANO_ARRANGER_PROFILE_PATH)) {
+        pianoArrangerArguments.push('--profile', PIANO_ARRANGER_PROFILE_PATH);
+      }
+      await runChild(PIANO_ARRANGER_PYTHON, pianoArrangerArguments, {
         timeoutMs: 2 * 60 * 1000,
         timeoutMessage: 'The final piano arrangement took longer than two minutes.',
       });
@@ -2162,11 +2317,337 @@ app.get('/api/health', async (req, res) => res.json({
   queue: JOB_QUEUE.enabled ? 'sqs' : 'in-process',
   region: process.env.APP_REGION || 'local',
 }));
+app.get('/api/site-configuration', async (req, res) => {
+  const db = await readDb();
+  res.set('Cache-Control', 'no-store');
+  return res.json({ configuration: publicSiteConfiguration(db) });
+});
 app.get('/api/test', async (req, res) => res.json({
   message: 'Backend is working',
   environment: PAYPAL_ENV,
   scoreTranslation: localOmrAvailability(),
 }));
+
+app.get('/api/chat-boss/capabilities', requireAuth, requireAdmin, async (req, res) => {
+  res.json(CHAT_BOSS_ASSISTANT.capabilities());
+});
+
+app.post('/api/chat-boss/jobs', requireAuth, requireAdmin, async (req, res) => {
+  if (!chatBossRequestAllowed(req.user.id)) {
+    res.set('Retry-After', '2');
+    return res.status(429).json({ error: 'Give Chat Boss a moment before sending another message.' });
+  }
+  try {
+    return res.status(202).json(await CHAT_BOSS_ASSISTANT.submit(req.body?.messages));
+  } catch (error) {
+    const unavailable = error?.code === 'CHAT_BOSS_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_CHAT_BOSS_REQUEST';
+    console.error('Chat Boss job submission failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid ? error.message : 'Chat Boss could not start this reply. Try again.',
+    });
+  }
+});
+
+app.get('/api/chat-boss/jobs/:jobId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    return res.json(await CHAT_BOSS_ASSISTANT.status(req.params.jobId));
+  } catch (error) {
+    console.error('Chat Boss status check failed:', error);
+    return res.status(error?.code === 'CHAT_BOSS_UNAVAILABLE' ? 503 : 502).json({
+      error: error?.code === 'CHAT_BOSS_UNAVAILABLE'
+        ? error.message
+        : 'Chat Boss status could not be checked. Try again.',
+    });
+  }
+});
+
+app.post('/api/chat-boss/jobs/:jobId/cancel', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    return res.json(await CHAT_BOSS_ASSISTANT.cancel(req.params.jobId));
+  } catch (error) {
+    console.error('Chat Boss cancellation failed:', error);
+    return res.status(error?.code === 'CHAT_BOSS_UNAVAILABLE' ? 503 : 502).json({
+      error: error?.code === 'CHAT_BOSS_UNAVAILABLE'
+        ? error.message
+        : 'Chat Boss could not cancel that reply.',
+    });
+  }
+});
+
+app.get('/api/music-creation/capabilities', async (req, res) => {
+  res.json({
+    ...MUSIC_CREATION_ASSISTANT.capabilities(),
+    workflow: 'human-led-songwriting',
+    arranger: 'polymath-deterministic-arranger-v001',
+    originalCheckpointPolicy: 'read-only',
+  });
+});
+
+app.get(
+  '/api/music-creation/projects',
+  requireEntitlement('create_music.projects', 'Cloud song projects require a Create Music subscription.'),
+  async (req, res) => res.json({ projects: listMusicProjects(req.db, req.user.id) }),
+);
+
+app.get(
+  '/api/music-creation/projects/:projectId',
+  requireEntitlement('create_music.projects', 'Cloud song projects require a Create Music subscription.'),
+  async (req, res) => {
+    const project = findMusicProject(req.db, req.user.id, req.params.projectId);
+    if (!project) return res.status(404).json({ error: 'Music project not found.' });
+    return res.json({ project: publicMusicProject(project) });
+  },
+);
+
+app.post(
+  '/api/music-creation/projects',
+  requireEntitlement('create_music.projects', 'Cloud song projects require a Create Music subscription.'),
+  async (req, res) => {
+    try {
+      const project = createMusicProject(req.db, req.user.id, req.body?.project, req.body?.arrangement);
+      await writeDb(req.db);
+      return res.status(201).json({ project });
+    } catch (error) {
+      return res.status(error.status || 400).json({ error: error.message });
+    }
+  },
+);
+
+app.put(
+  '/api/music-creation/projects/:projectId',
+  requireEntitlement('create_music.projects', 'Cloud song projects require a Create Music subscription.'),
+  async (req, res) => {
+    try {
+      const expectedRevision = req.body?.expectedRevision ?? req.body?.project?.revision;
+      const project = updateMusicProject(
+        req.db,
+        req.user.id,
+        req.params.projectId,
+        req.body?.project,
+        req.body?.arrangement,
+        expectedRevision,
+      );
+      await writeDb(req.db);
+      return res.json({ project });
+    } catch (error) {
+      return res.status(error.status || 400).json({ error: error.message });
+    }
+  },
+);
+
+app.delete(
+  '/api/music-creation/projects/:projectId',
+  requireEntitlement('create_music.projects', 'Cloud song projects require a Create Music subscription.'),
+  async (req, res) => {
+    try {
+      const project = deleteMusicProject(req.db, req.user.id, req.params.projectId);
+      await writeDb(req.db);
+      return res.json({ project });
+    } catch (error) {
+      return res.status(error.status || 400).json({ error: error.message });
+    }
+  },
+);
+
+app.post(
+  '/api/music-creation/jobs',
+  requireEntitlement('create_music.ai_guidance', 'AI songwriting requires a Create Music subscription.'),
+  async (req, res) => {
+    const existingJob = req.db.musicGenerationJobs
+      .filter((item) => (
+        item.userId === req.user.id
+        && ['IN_QUEUE', 'IN_PROGRESS'].includes(String(item.status || '').toUpperCase())
+        && Date.now() - new Date(item.createdAt).getTime() < 30 * 60 * 1000
+      ))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+    if (existingJob) {
+      return res.status(202).json({
+        id: existingJob.id,
+        status: existingJob.status,
+        reused: true,
+      });
+    }
+    if (!musicCreationRequestAllowed(req.user.id)) {
+      res.set('Retry-After', '3');
+      return res.status(429).json({ error: 'Give the song architect a moment before starting another draft.' });
+    }
+    const kind = String(req.body?.kind || 'draft').trim().toLowerCase();
+    if (!['draft', 'revise'].includes(kind)) return res.status(400).json({ error: 'Choose draft or revise.' });
+    try {
+      const submitted = await MUSIC_CREATION_ASSISTANT.submit(kind, req.body?.brief);
+      const job = {
+        id: submitted.id,
+        providerJobId: submitted.id,
+        userId: req.user.id,
+        kind,
+        brief: submitted.brief,
+        promptVersion: submitted.promptVersion,
+        status: String(submitted.status || 'IN_QUEUE').toUpperCase(),
+        blueprint: null,
+        error: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      req.db.musicGenerationJobs.push(job);
+      req.db.musicGenerationJobs = req.db.musicGenerationJobs.slice(-5000);
+      await writeDb(req.db);
+      return res.status(202).json({ id: job.id, status: job.status });
+    } catch (error) {
+      const unavailable = error?.code === 'MUSIC_CREATION_UNAVAILABLE';
+      const invalid = error?.code === 'INVALID_MUSIC_CREATION_REQUEST';
+      console.error('Music creation job submission failed:', error);
+      return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+        error: unavailable || invalid ? error.message : 'The song architect could not start this draft. Try again.',
+      });
+    }
+  },
+);
+
+app.get(
+  '/api/music-creation/jobs/:jobId',
+  requireEntitlement('create_music.ai_guidance', 'AI songwriting requires a Create Music subscription.'),
+  async (req, res) => {
+    const job = req.db.musicGenerationJobs.find((item) => (
+      item.id === req.params.jobId && item.userId === req.user.id
+    ));
+    if (!job) return res.status(404).json({ error: 'Music creation job not found.' });
+    if (['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'].includes(job.status)) {
+      return res.json({
+        id: job.id,
+        status: job.status,
+        finished: true,
+        active: false,
+        blueprint: job.blueprint || null,
+        error: job.error || '',
+        delayTime: Number(job.delayTime || 0),
+        executionTime: Number(job.executionTime || 0),
+      });
+    }
+    try {
+      const status = await MUSIC_CREATION_ASSISTANT.status(job.providerJobId, job.brief);
+      const changed = job.status !== status.status
+        || Boolean(status.finished)
+        || Number(job.delayTime || 0) !== Number(status.delayTime || 0)
+        || Number(job.executionTime || 0) !== Number(status.executionTime || 0);
+      if (changed) {
+        Object.assign(job, {
+          status: status.status,
+          blueprint: status.blueprint || null,
+          error: status.error || '',
+          delayTime: status.delayTime,
+          executionTime: status.executionTime,
+          updatedAt: new Date().toISOString(),
+        });
+        await writeDb(req.db);
+      }
+      return res.json(status);
+    } catch (error) {
+      console.error('Music creation status check failed:', error);
+      return res.status(error?.code === 'MUSIC_CREATION_UNAVAILABLE' ? 503 : 502).json({
+        error: error?.code === 'MUSIC_CREATION_UNAVAILABLE'
+          ? error.message
+          : 'The song architect status could not be checked. Try again.',
+      });
+    }
+  },
+);
+
+app.post(
+  '/api/music-creation/jobs/:jobId/cancel',
+  requireEntitlement('create_music.ai_guidance', 'AI songwriting requires a Create Music subscription.'),
+  async (req, res) => {
+    const job = req.db.musicGenerationJobs.find((item) => (
+      item.id === req.params.jobId && item.userId === req.user.id
+    ));
+    if (!job) return res.status(404).json({ error: 'Music creation job not found.' });
+    try {
+      const result = await MUSIC_CREATION_ASSISTANT.cancel(job.providerJobId);
+      job.status = 'CANCELLED';
+      job.updatedAt = new Date().toISOString();
+      await writeDb(req.db);
+      return res.json({ id: job.id, status: job.status, result });
+    } catch (error) {
+      console.error('Music creation cancellation failed:', error);
+      return res.status(error?.code === 'MUSIC_CREATION_UNAVAILABLE' ? 503 : 502).json({
+        error: error?.code === 'MUSIC_CREATION_UNAVAILABLE'
+          ? error.message
+          : 'The song architect could not cancel that draft.',
+      });
+    }
+  },
+);
+
+app.get('/api/teacher/capabilities', requireMusician, async (req, res) => {
+  res.json(TEACHER_ASSISTANT.capabilities());
+});
+
+app.post('/api/teacher/chat', requireMusician, async (req, res) => {
+  if (!teacherRequestAllowed(req.user.id, 'chat', 1200)) {
+    res.set('Retry-After', '2');
+    return res.status(429).json({ error: 'Give the teacher a moment to finish the previous reply.' });
+  }
+  try {
+    return res.json(await TEACHER_ASSISTANT.chat({
+      messages: req.body?.messages,
+      lessonContext: req.body?.lessonContext,
+      observations: req.body?.observations,
+      scene: req.body?.scene,
+    }));
+  } catch (error) {
+    const unavailable = error?.code === 'TEACHER_CHAT_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_TEACHER_REQUEST';
+    console.error('Virtual teacher chat failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid ? error.message : 'The virtual teacher could not reply. Try again.',
+    });
+  }
+});
+
+app.post('/api/teacher/scene', requireMusician, async (req, res) => {
+  if (!teacherRequestAllowed(req.user.id, 'scene', 5000)) {
+    res.set('Retry-After', '5');
+    return res.status(429).json({ error: 'Wait five seconds before sharing another camera snapshot.' });
+  }
+  try {
+    return res.json(await TEACHER_ASSISTANT.analyzeScene({
+      imageDataUrl: req.body?.imageDataUrl,
+      prompt: req.body?.prompt,
+    }));
+  } catch (error) {
+    const unavailable = error?.code === 'TEACHER_VISION_UNAVAILABLE';
+    const invalid = error?.code === 'INVALID_TEACHER_IMAGE';
+    console.error('Virtual teacher scene analysis failed:', error);
+    return res.status(unavailable ? 503 : invalid ? 400 : 502).json({
+      error: unavailable || invalid ? error.message : 'The virtual teacher could not inspect that snapshot. Try again.',
+    });
+  }
+});
+
+app.post('/api/teacher/projection-sessions', requireMusician, async (req, res) => {
+  const session = await TEACHER_PROJECTIONS.create(req.user.id, req.body?.state);
+  return res.status(201).json(session);
+});
+
+app.put('/api/teacher/projection-sessions/:sessionId', requireMusician, async (req, res) => {
+  const state = await TEACHER_PROJECTIONS.update(req.user.id, req.params.sessionId, req.body?.state);
+  if (!state) return res.status(404).json({ error: 'Projection session was not found or has expired.' });
+  return res.json({ state });
+});
+
+app.get('/api/teacher/projection-sessions/:sessionId', async (req, res) => {
+  const token = req.get('x-projection-token') || '';
+  const projection = await TEACHER_PROJECTIONS.read(req.params.sessionId, token);
+  if (!projection) return res.status(404).json({ error: 'Projection session was not found or has expired.' });
+  res.set('Cache-Control', 'no-store');
+  return res.json(projection);
+});
+
+app.delete('/api/teacher/projection-sessions/:sessionId', requireMusician, async (req, res) => {
+  const closed = await TEACHER_PROJECTIONS.close(req.user.id, req.params.sessionId);
+  if (!closed) return res.status(404).json({ error: 'Projection session was not found or has expired.' });
+  return res.status(204).end();
+});
 
 app.get('/api/media-transcriptions/capabilities', async (req, res) => {
   res.json(muscriptorAvailability());
@@ -2175,8 +2656,9 @@ app.get('/api/media-transcriptions/capabilities', async (req, res) => {
 app.get('/api/catalog', async (req, res) => {
   const db = await readDb();
   const { updatedBy: _updatedBy, ...publicPolicies } = sitePolicies(db);
+  const catalog = listPublicCatalog(db, PRODUCTS);
   res.json({
-    products: Object.values(PRODUCTS).filter((product) => !product.legacy),
+    ...catalog,
     withdrawalFeeRate: WITHDRAWAL_FEE_RATE,
     withdrawalFeeLabel: '25% cash-out fee for every account',
     marketplaceFeeRate: MARKETPLACE_FEE_RATE,
@@ -3516,6 +3998,43 @@ app.delete('/api/admin/users/:userId/subscription', requireAuth, requireAdmin, a
   });
 });
 
+function siteConfigurationAdminResponse(db) {
+  const result = adminSiteConfiguration(db);
+  return {
+    ...result,
+    history: result.history.map((event) => {
+      const actor = db.users.find((candidate) => candidate.id === event.actorId);
+      return {
+        ...event,
+        actor: actor ? { name: actor.name, email: actor.email } : null,
+      };
+    }),
+  };
+}
+
+app.get('/api/admin/site-configuration', requireAuth, requireAdmin, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.json(siteConfigurationAdminResponse(req.db));
+});
+
+app.put('/api/admin/site-configuration', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = updateSiteConfiguration(req.db, req.body || {}, req.user.id);
+    if (result.event) await writeDb(req.db);
+    return res.json({
+      ...siteConfigurationAdminResponse(req.db),
+      message: result.event ? 'Website navigation and identity saved.' : 'No site changes to save.',
+    });
+  } catch (error) {
+    if (!(error instanceof SiteConfigurationError)) throw error;
+    return res.status(error.status).json({
+      error: error.message,
+      code: error.code,
+      ...(error.status === 409 ? { current: siteConfigurationAdminResponse(req.db) } : {}),
+    });
+  }
+});
+
 app.get('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   res.json({ policies: sitePolicies(req.db) });
 });
@@ -3547,6 +4066,62 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
   req.db.settings = next;
   await writeDb(req.db);
   res.json({ policies: sitePolicies(req.db), message: 'Rules and policies saved.' });
+});
+
+app.get('/api/admin/subscription-catalog', requireAuth, requireAdmin, async (req, res) => {
+  res.json(listAdminCatalog(req.db));
+});
+
+app.post('/api/admin/subscription-categories', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const category = createSubscriptionCategory(req.db, req.body || {}, req.user.id);
+    await writeDb(req.db);
+    return res.status(201).json({ category, message: `${category.name} category created.` });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/admin/subscription-categories/:categoryId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const category = updateSubscriptionCategory(req.db, req.params.categoryId, req.body || {}, req.user.id);
+    await writeDb(req.db);
+    return res.json({ category, message: `${category.name} category updated.` });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/subscription-plans', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const plan = createSubscriptionPlan(req.db, req.body || {}, req.user.id);
+    await writeDb(req.db);
+    return res.status(201).json({
+      plan: resolveProduct(req.db, PRODUCTS, plan.id),
+      message: `${plan.name} plan created${plan.status === 'published' ? ' and published' : ' as a draft'}.`,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/admin/subscription-plans/:planId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const plan = updateSubscriptionPlan(
+      req.db,
+      req.params.planId,
+      req.body || {},
+      req.user.id,
+      req.db.subscriptions,
+    );
+    await writeDb(req.db);
+    return res.json({
+      plan: resolveProduct(req.db, PRODUCTS, plan.id),
+      message: `${plan.name} is now ${plan.status}.`,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
 });
 
 app.get('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) => {
@@ -3762,6 +4337,7 @@ function subscriptionStatusGrantsPro(status) {
 
 function configuredSubscriptionPlanId(product, upgrade = false) {
   if (!product || product.kind !== 'subscription') return '';
+  if (product.paypalPlanId) return String(product.paypalPlanId).trim();
   if (upgrade && product.tier === 'musician') {
     const key = product.interval === 'YEAR'
       ? 'PAYPAL_CHILL_TO_MUSICIAN_YEARLY_PLAN_ID'
@@ -3813,7 +4389,22 @@ function applySubscriptionStatus(db, subscriptionId, status, fallbackUserId = ''
 
   if (user) {
     const active = subscriptionStatusGrantsPro(normalizedStatus);
-    const product = PRODUCTS[record?.productId] || PRODUCTS['polymath-pro'];
+    const product = resolveProduct(db, PRODUCTS, record?.productId)
+      || (record?.productId === 'polymath-pro' ? PRODUCTS['polymath-pro'] : null);
+    if (!product) {
+      record.entitlementError = 'Unknown subscription product; no access granted.';
+      return user;
+    }
+    if (product.tier === 'custom') {
+      applyCustomProductAccess(user, {
+        ...product,
+        entitlements: Array.isArray(record?.entitlementSnapshot)
+          ? record.entitlementSnapshot
+          : product.entitlements,
+      }, subscriptionId, normalizedStatus);
+      if (active && record && !record.activatedAt) record.activatedAt = new Date().toISOString();
+      return user;
+    }
     if (active) {
       const firstActivation = user.paypalSubscriptionId !== subscriptionId || !record?.activatedAt;
       user.paypalSubscriptionId = subscriptionId;
@@ -4043,23 +4634,31 @@ app.post('/api/paypal/capture-order', requireAuth, async (req, res) => {
 
 app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
   try {
-    const product = PRODUCTS[String(req.body.productId || 'polymath-musician-monthly')];
-    if (!product || product.kind !== 'subscription' || product.legacy) {
+    const product = resolveProduct(req.db, PRODUCTS, String(req.body.productId || 'polymath-musician-monthly'));
+    if (!product || product.kind !== 'subscription' || product.legacy || product.status === 'archived' || product.status === 'draft') {
       return res.status(404).json({ error: 'Subscription product not found.' });
     }
 
     const currentTier = activeSubscriptionTier(req.user);
     const currentInterval = String(req.user.subscriptionInterval || 'MONTH').toUpperCase();
     const institutionPurchase = Boolean(product.institutionTier);
-    const isUpgrade = !institutionPurchase && currentTier === 'chill' && product.tier === 'musician';
+    const corePurchase = ['chill', 'musician'].includes(product.tier);
+    const isUpgrade = corePurchase && !institutionPurchase && currentTier === 'chill' && product.tier === 'musician';
     if (institutionPurchase && req.user.institutionRole === 'owner' && req.user.institutionStatus === 'ACTIVE') {
       return res.status(409).json({ error: 'An institution plan is already active for this account.' });
     }
-    if (!institutionPurchase && currentTier === 'musician') {
+    if (corePurchase && !institutionPurchase && currentTier === 'musician') {
       return res.status(409).json({ error: 'Musician is already active for this account.' });
     }
-    if (!institutionPurchase && currentTier === 'chill' && !isUpgrade) {
+    if (corePurchase && !institutionPurchase && currentTier === 'chill' && !isUpgrade) {
       return res.status(409).json({ error: 'Chill is already active. Choose Musician to upgrade.' });
+    }
+    if (!corePurchase && req.db.subscriptions.some((item) => (
+      item.userId === req.user.id
+      && item.productId === product.id
+      && String(item.status || '').toUpperCase() === 'ACTIVE'
+    ))) {
+      return res.status(409).json({ error: `${product.name} is already active for this account.` });
     }
     if (isUpgrade && product.interval !== currentInterval) {
       return res.status(409).json({
@@ -4067,7 +4666,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       });
     }
     const upgradeFrom = isUpgrade
-      ? PRODUCTS[currentInterval === 'YEAR' ? 'polymath-chill-yearly' : 'polymath-chill-monthly']
+      ? resolveProduct(req.db, PRODUCTS, currentInterval === 'YEAR' ? 'polymath-chill-yearly' : 'polymath-chill-monthly')
       : null;
     const planId = configuredSubscriptionPlanId(product, isUpgrade);
     if (!planId) {
@@ -4146,9 +4745,11 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       isUpgrade,
       upgradeFromSubscriptionId: isUpgrade ? req.user.paypalSubscriptionId : null,
       upgradeFromProductId: upgradeFrom?.id || null,
+      productRevision: Number(product.revision || 1),
+      entitlementSnapshot: Array.isArray(product.entitlements) ? product.entitlements : [],
       createdAt: new Date().toISOString(),
     });
-    if (!isUpgrade) {
+    if (!isUpgrade && (corePurchase || institutionPurchase)) {
       req.user.paypalSubscriptionId = data.id;
       req.user.proStatus = data.status || 'APPROVAL_PENDING';
       req.user.pro = false;
@@ -4193,7 +4794,9 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
       return res.status(409).json({ error: 'PayPal subscription plan does not match the selected plan.' });
     }
 
-    const product = PRODUCTS[record.productId] || PRODUCTS['polymath-pro'];
+    const product = resolveProduct(req.db, PRODUCTS, record.productId)
+      || (record.productId === 'polymath-pro' ? PRODUCTS['polymath-pro'] : null);
+    if (!product) return res.status(409).json({ error: 'The subscription product no longer exists. No access was granted.' });
     const activating = subscriptionStatusGrantsPro(data.status);
     const firstActivation = activating && !record.activatedAt;
     if (activating) await cancelPreviousSubscriptionForUpgrade(req.db, record);

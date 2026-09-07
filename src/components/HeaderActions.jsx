@@ -1,5 +1,7 @@
 export default function HeaderActions({ user, onNavigate, route }) {
   const isLesson = ['studio', 'guitar', 'ensemble', 'band'].includes(route);
+  const creatorSubscription = user?.activeSubscriptions?.find((item) => item.categorySlug === 'create-music');
+  const hasPaidAccess = Boolean(user?.admin || user?.pro || creatorSubscription);
   const walletValue = user ? (user.unlimitedMcoins ? '∞' : user.mcoins.toLocaleString()) : 'Mcoins';
   const planLabel = user?.admin
     ? 'Admin'
@@ -7,11 +9,15 @@ export default function HeaderActions({ user, onNavigate, route }) {
       ? 'Musician'
       : user?.subscriptionTier === 'chill'
         ? 'Chill'
+        : creatorSubscription
+          ? creatorSubscription.name || 'Creator'
         : 'Upgrade';
   const planDetail = user?.admin
     ? 'Unlimited'
     : user?.pro
       ? (user.translationAllowance?.remaining ?? 20) + ' left'
+      : creatorSubscription
+        ? 'Create Music'
       : 'See plans';
 
   return (
@@ -28,8 +34,8 @@ export default function HeaderActions({ user, onNavigate, route }) {
       <button
         className='buy-pro-button compact-pro header-status-button'
         type='button'
-        onClick={() => user?.admin || user?.pro ? onNavigate('account') : onNavigate('payment', { productId: 'polymath-chill-monthly' })}
-        aria-label={user?.admin || user?.pro ? 'Open ' + planLabel + ' account' : 'See subscription plans'}
+        onClick={() => hasPaidAccess ? onNavigate('account') : onNavigate('payment', { productId: 'polymath-chill-monthly' })}
+        aria-label={hasPaidAccess ? 'Open ' + planLabel + ' account' : 'See subscription plans'}
       >
         <span>{planLabel}</span>
         <strong>{planDetail}</strong>

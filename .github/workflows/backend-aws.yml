@@ -82,14 +82,41 @@ jobs:
           ECS_SERVICE: ${{ matrix.service }}
           TASK_FAMILY: ${{ matrix.task_family }}
           RUNPOD_S3_REPLICAS: ${{ vars.RUNPOD_S3_REPLICAS }}
+          RUNPOD_CHAT_BOSS_ENDPOINT_ID: ${{ vars.RUNPOD_CHAT_BOSS_ENDPOINT_ID || 'lk3brapzdbx0ch' }}
+          RUNPOD_CHAT_BOSS_MODEL: ${{ vars.RUNPOD_CHAT_BOSS_MODEL || 'polymath-chat-boss' }}
+          RUNPOD_POLYMATH_CREATE_ENDPOINT_ID: ${{ vars.RUNPOD_POLYMATH_CREATE_ENDPOINT_ID || 's6e7vwntg6y3bg' }}
+          RUNPOD_POLYMATH_CREATE_MODEL: ${{ vars.RUNPOD_POLYMATH_CREATE_MODEL || 'polymath-create-deepseek-v4' }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY --query taskDefinition > current-task.json
-          jq --arg image $IMAGE --arg runpodReplicas "$RUNPOD_S3_REPLICAS" '
+          jq --arg image $IMAGE \
+             --arg runpodReplicas "$RUNPOD_S3_REPLICAS" \
+             --arg chatBossEndpoint "$RUNPOD_CHAT_BOSS_ENDPOINT_ID" \
+             --arg chatBossModel "$RUNPOD_CHAT_BOSS_MODEL" \
+             --arg createMusicEndpoint "$RUNPOD_POLYMATH_CREATE_ENDPOINT_ID" \
+             --arg createMusicModel "$RUNPOD_POLYMATH_CREATE_MODEL" '
             .containerDefinitions[0].image = $image
             | .containerDefinitions[0].environment = (
                 (.containerDefinitions[0].environment // [])
-                | map(select(.name != "RUNPOD_S3_REPLICAS"))
-                + [{ name: "RUNPOD_S3_REPLICAS", value: $runpodReplicas }]
+                | map(select(
+                    .name != "RUNPOD_S3_REPLICAS"
+                    and .name != "RUNPOD_CHAT_BOSS_ENDPOINT_ID"
+                    and .name != "RUNPOD_CHAT_BOSS_MODEL"
+                    and .name != "RUNPOD_CHAT_BOSS_TIMEOUT_MS"
+                    and .name != "RUNPOD_POLYMATH_CREATE_ENDPOINT_ID"
+                    and .name != "RUNPOD_POLYMATH_CREATE_MODEL"
+                    and .name != "RUNPOD_POLYMATH_CREATE_DISPLAY_MODEL"
+                    and .name != "RUNPOD_POLYMATH_CREATE_TIMEOUT_MS"
+                  ))
+                + [
+                    { name: "RUNPOD_S3_REPLICAS", value: $runpodReplicas },
+                    { name: "RUNPOD_CHAT_BOSS_ENDPOINT_ID", value: $chatBossEndpoint },
+                    { name: "RUNPOD_CHAT_BOSS_MODEL", value: $chatBossModel },
+                    { name: "RUNPOD_CHAT_BOSS_TIMEOUT_MS", value: "900000" },
+                    { name: "RUNPOD_POLYMATH_CREATE_ENDPOINT_ID", value: $createMusicEndpoint },
+                    { name: "RUNPOD_POLYMATH_CREATE_MODEL", value: $createMusicModel },
+                    { name: "RUNPOD_POLYMATH_CREATE_DISPLAY_MODEL", value: "DeepSeek V4 Q4 MXFP4 (read-only source)" },
+                    { name: "RUNPOD_POLYMATH_CREATE_TIMEOUT_MS", value: "1200000" }
+                  ]
               )
             | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)
           ' current-task.json > next-task.json
