@@ -11,6 +11,7 @@ import PianoTeacherStudio from './components/PianoTeacherStudio.jsx';
 import SupportAssistant from './components/SupportAssistant.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
+import { campaignPlaybackRange, prepareCampaignSong } from './engine/artistCampaign.js';
 import {
   capTierForDevice,
   calibrateDevice,
@@ -50,7 +51,11 @@ import {
   normalizeSong,
 } from './engine/scheduler.js';
 import { apiAssetUrl, apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
-import { installProductAnalytics, trackProductEvent } from './services/productAnalytics.js';
+import {
+  installProductAnalytics,
+  rememberCampaignAttribution,
+  trackProductEvent,
+} from './services/productAnalytics.js';
 import { parseUploadedSongFile } from './utils/songParser.js';
 import { analyzeLearningSections } from './utils/learningSections.js';
 
@@ -210,6 +215,9 @@ export default function App() {
   const [keyboardPreparationStage, setKeyboardPreparationStage] = useState('Tap once to prepare');
   const [performanceTier, setPerformanceTier] = useState(getInitialPerformanceTier);
   const [deviceClass, setDeviceClass] = useState(detectDeviceClass);
+  const [activeCampaign, setActiveCampaign] = useState(null);
+  const [campaignStatus, setCampaignStatus] = useState('');
+  const [campaignError, setCampaignError] = useState('');
 
   const nextEventIndex = useRef(0);
   const nextPedalIndex = useRef(0);
@@ -252,8 +260,10 @@ export default function App() {
   playbackSpeedRef.current = speed;
   songDurationRef.current = getSongDuration(song);
   const learningArrangement = useMemo(
-    () => teachingMode === 'learn' ? buildLearningArrangement(song.notes, learningLevel) : song.notes,
-    [song, teachingMode, learningLevel],
+    () => activeCampaign
+      ? song.notes
+      : teachingMode === 'learn' ? buildLearningArrangement(song.notes, learningLevel) : song.notes,
+    [activeCampaign, song, teachingMode, learningLevel],
   );
   const pianoLayout = useMemo(
     () => teachingMode === 'learn'
@@ -304,13 +314,14 @@ export default function App() {
     [song, learningArrangement, currentLearningLevel.partSeconds],
   );
   const activeLearningRange = useMemo(() => {
+    if (activeCampaign) return campaignPlaybackRange(song);
     if (practiceRange) return practiceRange;
     if (!currentLearningLevel.usesParts) {
       const duration = getSongDuration(song);
       return { id: 'full-song', name: 'Full song', start: 0, end: duration, duration };
     }
     return learningSections[selectedSectionIndex] || learningSections[0] || null;
-  }, [currentLearningLevel.usesParts, learningSections, selectedSectionIndex, song, practiceRange]);
+  }, [activeCampaign, currentLearningLevel.usesParts, learningSections, selectedSectionIndex, song, practiceRange]);
   const learningCoachPlan = useMemo(() => buildAdaptivePracticePlan({
     progress: learningProgress,
     songId: songLibraryId(song),
@@ -323,13 +334,16 @@ export default function App() {
     report: learningReport,
   }), [learningProgress, song, learningReport]);
   const sharedLearnRequest = route.page === 'studio' && route.params.get('try') === 'learn';
+  const campaignSlug = sharedLearnRequest ? String(route.params.get('campaign') || '').trim().toLowerCase() : '';
+  const campaignAdminPreview = Boolean(campaignSlug && route.params.get('adminPreview') === '1');
+  const campaignReferral = campaignSlug ? String(route.params.get('ref') || '').trim().toUpperCase() : '';
   const sharedSongId = sharedLearnRequest ? String(route.params.get('song') || '') : '';
   const sharedChallengeScoreValue = sharedLearnRequest ? String(route.params.get('score') || '').trim() : '';
   const sharedChallengeScore = sharedChallengeScoreValue && Number.isFinite(Number(sharedChallengeScoreValue))
     ? Math.max(0, Math.min(100, Math.round(Number(sharedChallengeScoreValue))))
     : null;
   const hasFullLearnAccess = Boolean(user?.admin || user?.access?.learn);
-  const freeLearnActive = teachingMode === 'learn' && !hasFullLearnAccess;
+  const freeLearnActive = teachingMode === 'learn' && !hasFullLearnAccess && !campaignSlug;
 
   useEffect(() => {
     const uninstall = installProductAnalytics();
@@ -370,6 +384,84 @@ export default function App() {
       setSongSelectionId(sharedSongId);
     }
   }, [sharedLearnRequest, sharedSongId, songs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!campaignSlug) {
+      setActiveCampaign(null);
+      setCampaignStatus('');
+      setCampaignError('');
+      setSongSelectionId((current) => current.startsWith('campaign:')
+        ? songLibraryId(sampleSongs[0])
+        : current);
+      return () => { cancelled = true; };
+    }
+
+    stopPlayback();
+    setTeachingMode('learn');
+    setLearningReport(null);
+    setCampaignError('');
+    setCampaignStatus('loading');
+    const metadataPath = campaignAdminPreview
+      ? `/api/admin/artist-campaigns/preview/${encodeURIComponent(campaignSlug)}`
+      : `/api/artist-campaigns/${encodeURIComponent(campaignSlug)}`;
+    apiRequest(metadataPath)
+      .then(async ({ campaign }) => {
+        if (cancelled) return;
+        setActiveCampaign(campaign);
+        const attribution = campaign.adminPreview
+          ? {}
+          : rememberCampaignAttribution(campaign, campaignReferral);
+        if (!campaign.adminPreview) {
+          trackProductEvent('campaign_viewed', {
+            campaignId: campaign.id,
+            campaignSlug: campaign.slug,
+            referralCode: attribution.referralCode || '',
+            qaScore: campaign.verification?.qaScore || 0,
+            referrerType: document.referrer ? 'referred' : 'direct',
+          });
+        }
+        const file = await fetchProtectedFile(
+          campaign.songUrl,
+          campaign.songFilename || `${campaign.slug}.json`,
+        );
+        const parsed = await parseUploadedSongFile(file);
+        const prepared = prepareCampaignSong(parsed, campaign);
+        if (cancelled) return;
+        const range = campaignPlaybackRange(prepared);
+        setSongs((previous) => [
+          prepared,
+          ...previous.filter((candidate) => songLibraryId(candidate) !== songLibraryId(prepared)),
+        ]);
+        setSongSelectionId(songLibraryId(prepared));
+        setLearningLevel('piano-king');
+        setPianoHandMode('both');
+        setSpeed(1);
+        setRepeatSection(false);
+        setSelectedSectionIndex(0);
+        setPracticeRange(range);
+        setCurrentTime(0);
+        setActivePracticePlan(null);
+        setCampaignStatus('ready');
+        if (!campaign.adminPreview) {
+          trackProductEvent('campaign_song_loaded', {
+            campaignId: campaign.id,
+            campaignSlug: campaign.slug,
+            referralCode: attribution.referralCode || '',
+            noteCount: prepared.notes.length,
+            durationSeconds: range.duration,
+            qaScore: campaign.verification?.qaScore || 0,
+          });
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setActiveCampaign(null);
+        setCampaignError(error.message || 'This challenge could not be loaded.');
+        setCampaignStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, [campaignSlug, campaignReferral, campaignAdminPreview]);
 
   useEffect(() => {
     if (!freeLearnActive) return;
@@ -499,7 +591,10 @@ export default function App() {
         if (cancelled || !featured.length) return;
         const normalized = featured.map(normalizeSong);
         setSongs((previous) => [...normalized, ...previous.filter((item) => !normalized.some((featuredSong) => featuredSong.title === item.title))]);
-        setSongSelectionId(songLibraryId(normalized[0]));
+        const currentQuery = String(window.location.hash || '').split('?')[1] || '';
+        if (!new URLSearchParams(currentQuery).get('campaign')) {
+          setSongSelectionId(songLibraryId(normalized[0]));
+        }
       })
       .catch((error) => console.error(error));
     return () => { cancelled = true; };
@@ -1108,6 +1203,13 @@ export default function App() {
     if (!prepareLearningRange(range)) return;
     practicePlaybackModeRef.current = 'listen';
     resetLearningCapture('idle');
+    if (activeCampaign?.id && !activeCampaign.adminPreview) {
+      trackProductEvent('campaign_example_started', {
+        campaignId: activeCampaign.id,
+        campaignSlug: activeCampaign.slug,
+        referralCode: activeCampaign.referralCode || '',
+      });
+    }
     await startPlaybackAt(range.start);
     focusMobilePlayer(true);
   }
@@ -1152,6 +1254,14 @@ export default function App() {
       hand: pianoHandMode,
       inputMode: midiInput.status === 'connected' ? 'midi' : 'screen-or-keyboard',
     });
+    if (activeCampaign?.id && !activeCampaign.adminPreview) {
+      trackProductEvent('campaign_attempt_started', {
+        campaignId: activeCampaign.id,
+        campaignSlug: activeCampaign.slug,
+        referralCode: activeCampaign.referralCode || '',
+        inputMode: midiInput.status === 'connected' ? 'midi' : 'screen-or-keyboard',
+      });
+    }
     focusMobilePlayer(true);
   }
 
@@ -1186,6 +1296,16 @@ export default function App() {
       noteCount: capture.notes.length,
       score: report.score,
     });
+    if (activeCampaign?.id && !activeCampaign.adminPreview) {
+      trackProductEvent('campaign_attempt_completed', {
+        campaignId: activeCampaign.id,
+        campaignSlug: activeCampaign.slug,
+        referralCode: activeCampaign.referralCode || '',
+        inputMode: capture.notes.some((note) => note.inputType === 'midi') ? 'midi' : 'screen-or-keyboard',
+        noteCount: capture.notes.length,
+        score: report.score,
+      });
+    }
     const learnerId = user?.user_id || 'guest';
     setLearningProgress((current) => {
       const next = recordLearningAttempt(current, capture.songId, report);
@@ -1649,13 +1769,22 @@ export default function App() {
       <section className={`studio-page ${teachingMode === 'learn' ? 'is-learning-journey' : ''}`}>
         <PianoLearnJourney
           mode={teachingMode}
-          locked={!hasFullLearnAccess}
+          locked={!activeCampaign && !hasFullLearnAccess}
           onUpgrade={() => {
             trackProductEvent('learning_upgrade_clicked', {
               freePreview: !hasFullLearnAccess,
               level: learningLevel,
               plan: 'musician',
             });
+            if (activeCampaign?.id && !activeCampaign.adminPreview) {
+              trackProductEvent('campaign_upgrade_clicked', {
+                campaignId: activeCampaign.id,
+                campaignSlug: activeCampaign.slug,
+                referralCode: activeCampaign.referralCode || '',
+                score: learningReport?.score ?? -1,
+                plan: 'musician',
+              });
+            }
             navigate('payment', { productId: 'polymath-musician-monthly' });
           }}
           onModeChange={(mode) => {
@@ -1703,10 +1832,17 @@ export default function App() {
           onOpenBand={() => navigate('band')}
           onFocusPlayer={() => focusMobilePlayer(true)}
           challengeScore={sharedChallengeScore}
+          campaign={activeCampaign}
+          campaignStatus={campaignSlug ? (campaignStatus || 'loading') : ''}
+          campaignError={campaignError}
+          onExitCampaign={() => navigate(
+            campaignAdminPreview ? 'admin-database' : 'studio',
+            campaignAdminPreview ? { section: 'growth' } : undefined,
+          )}
         />
 
-        <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''}`}>
-          <ControlPanel
+        <section className={`studio-grid ${openMusicChooser === 'upload' ? 'upload-open' : ''} ${campaignSlug ? 'is-campaign' : ''}`}>
+          {!campaignSlug && <ControlPanel
             song={song}
             songs={songs}
             onSongChange={handleSongChange}
@@ -1720,8 +1856,8 @@ export default function App() {
             onPersonalSongChange={loadPersonalPianoSong}
             loadingPersonalSongId={loadingPersonalSongId}
             personalSongStatus={personalSongStatus}
-          />
-          <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
+          />}
+          {(!campaignSlug || campaignStatus === 'ready') && <div ref={studioPlayerRef} className="visual-stack" tabIndex="-1">
             <PianoRoll
               song={teachingSong}
               layout={pianoLayout}
@@ -1748,7 +1884,7 @@ export default function App() {
               preparationStage={keyboardPreparationStage}
               deviceClass={deviceClass}
               onPrepare={prepareKeyboard}
-              teacherTargets={teachingMode === 'learn' ? teacherHandTargets : null}
+              teacherTargets={teachingMode === 'learn' && !campaignSlug ? teacherHandTargets : null}
             />
             <TransportDock
               song={song}
@@ -1790,7 +1926,7 @@ export default function App() {
                 </label>
               </div>
             </details>
-            {teachingMode === 'learn' && hasFullLearnAccess && (
+            {teachingMode === 'learn' && hasFullLearnAccess && !campaignSlug && (
               <PianoTeacherStudio
                 profiles={teacherProfiles}
                 teacherId={pianoTeacher.id}
@@ -1822,9 +1958,9 @@ export default function App() {
                 performanceTier={performanceTier}
               />
             )}
-          </div>
+          </div>}
 
-          <SongUploader
+          {!campaignSlug && <SongUploader
             onUpload={handleUpload}
             user={user}
             setUser={setUser}
@@ -1832,7 +1968,7 @@ export default function App() {
             expanded={openMusicChooser === 'upload'}
             onToggle={() => setOpenMusicChooser((current) => current === 'upload' ? null : 'upload')}
             onPersonalSongSaved={rememberPersonalSong}
-          />
+          />}
         </section>
       </section>
     );
@@ -1840,7 +1976,7 @@ export default function App() {
 
   return (
     <div className="app-root" data-performance-tier={performanceTier}>
-      {portraitDevice && !orientationPromptDismissed && (
+      {!campaignSlug && ['studio', 'guitar', 'ensemble'].includes(route.page) && portraitDevice && !orientationPromptDismissed && (
         <aside className="orientation-recommendation" role="dialog" aria-label="Landscape orientation recommendation">
           <div className="orientation-phone-icon" aria-hidden="true"><span /></div>
           <div>
@@ -1857,8 +1993,8 @@ export default function App() {
         </aside>
       )}
       <div className="top-shell">
-        <AppNav route={route.page} onNavigate={navigate} user={user} />
-        <HeaderActions user={user} onNavigate={navigate} route={route.page} />
+        <AppNav route={route.page} onNavigate={navigate} user={user} focusedCampaign={Boolean(campaignSlug)} />
+        {!campaignSlug && <HeaderActions user={user} onNavigate={navigate} route={route.page} />}
       </div>
       <main className="app-shell">
         <Suspense fallback={<div className="route-loading" role="status">Opening this section…</div>}>

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { buildLearningWin, shareLearningWin } from '../engine/learningWin.js';
 import { trackProductEvent } from '../services/productAnalytics.js';
 
-export default function LearningWinShare({ report, song, songKey, level, momentum }) {
+export default function LearningWinShare({ report, song, songKey, level, momentum, campaign = null }) {
   const [status, setStatus] = useState('idle');
   const win = useMemo(() => buildLearningWin({
     report,
@@ -11,7 +11,8 @@ export default function LearningWinShare({ report, song, songKey, level, momentu
     level,
     momentum,
     baseUrl: window.location.href,
-  }), [level, momentum, report, song, songKey]);
+    campaign,
+  }), [campaign, level, momentum, report, song, songKey]);
 
   async function share() {
     if (status === 'sharing') return;
@@ -24,6 +25,15 @@ export default function LearningWinShare({ report, song, songKey, level, momentu
         score: win.score,
         level: level?.id || level?.stage || '',
       });
+      if (campaign?.id && !campaign.adminPreview) {
+        trackProductEvent('campaign_shared', {
+          campaignId: campaign.id,
+          campaignSlug: campaign.slug,
+          referralCode: campaign.referralCode || '',
+          score: win.score,
+          outcome: result,
+        });
+      }
     }
   }
 

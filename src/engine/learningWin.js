@@ -1,3 +1,5 @@
+import { campaignShareUrl } from './artistCampaign.js';
+
 const DEFAULT_BASE_URL = 'https://polymathmusician67.com/';
 
 function clamp(value, minimum, maximum) {
@@ -48,6 +50,7 @@ export function buildLearningWin({
   level,
   momentum,
   baseUrl,
+  campaign,
 } = {}) {
   const score = safeScore(report?.score);
   const matchedCount = Math.max(0, Math.round(Number(report?.matchedCount) || 0));
@@ -56,7 +59,9 @@ export function buildLearningWin({
   const artist = safeText(song?.artist || song?.composer, 'Polymath arrangement', 70);
   const stage = safeText(level?.shortLabel || level?.label, 'Piano lesson', 50);
   const streakDays = Math.max(0, Math.round(Number(momentum?.streakDays) || 0));
-  const url = shareUrl(baseUrl, score, songKey);
+  const url = campaign?.slug
+    ? campaignShareUrl(baseUrl, campaign, score)
+    : shareUrl(baseUrl, score, songKey);
   const noteProof = expectedCount > 0 ? `${matchedCount}/${expectedCount} notes matched` : `${stage} complete`;
   const streakProof = streakDays > 1 ? ` · ${streakDays}-day streak` : '';
 

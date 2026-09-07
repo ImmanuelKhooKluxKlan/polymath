@@ -4,11 +4,14 @@ const ANONYMOUS_KEY = 'polymath-product-anonymous-v1';
 const SESSION_KEY = 'polymath-product-session-v1';
 const QUEUE_KEY = 'polymath-product-event-queue-v1';
 const DISABLED_KEY = 'polymath-product-analytics-disabled';
+const CAMPAIGN_ATTRIBUTION_KEY = 'polymath-campaign-attribution-v1';
+const CAMPAIGN_ATTRIBUTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SAFE_PROPERTIES = new Set([
   'audience', 'deviceClass', 'durationMs', 'durationSeconds', 'execution', 'feedback',
   'freePreview', 'hand', 'inputMode', 'instrument', 'interval', 'level', 'noteCount',
   'outcome', 'page', 'performanceTier', 'plan', 'playbackMode', 'productId', 'qualityScore',
   'refunded', 'restored', 'score', 'signedIn', 'sizeBucket', 'sourceKind', 'tier',
+  'campaignId', 'campaignSlug', 'referralCode', 'qaScore', 'referrerType',
 ]);
 const MAX_QUEUE = 100;
 let queue = [];
@@ -76,6 +79,52 @@ export function uploadSizeBucket(bytes) {
   if (size < 100 * 1024 * 1024) return '10-100MB';
   if (size < 500 * 1024 * 1024) return '100-500MB';
   return '500MB+';
+}
+
+function safeAttributionValue(value, pattern, maximum) {
+  const text = String(value || '').trim();
+  return pattern.test(text) ? text.slice(0, maximum) : '';
+}
+
+export function readCampaignAttribution(now = Date.now()) {
+  if (!browserAvailable()) return {};
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CAMPAIGN_ATTRIBUTION_KEY) || '{}');
+    if (!stored || Number(stored.expiresAt || 0) <= now) {
+      window.localStorage.removeItem(CAMPAIGN_ATTRIBUTION_KEY);
+      return {};
+    }
+    const campaignId = safeAttributionValue(stored.campaignId, /^[A-Za-z0-9_-]{8,100}$/, 100);
+    const campaignSlug = safeAttributionValue(stored.campaignSlug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 64);
+    const referralCode = safeAttributionValue(stored.referralCode, /^[A-Z0-9_-]{3,32}$/, 32);
+    return campaignId && campaignSlug ? { campaignId, campaignSlug, referralCode } : {};
+  } catch {
+    return {};
+  }
+}
+
+export function rememberCampaignAttribution(campaign, referralCode = '', now = Date.now()) {
+  if (!browserAvailable()) return {};
+  const existing = readCampaignAttribution(now);
+  if (existing.campaignId) return existing;
+  const campaignId = safeAttributionValue(campaign?.id, /^[A-Za-z0-9_-]{8,100}$/, 100);
+  const campaignSlug = safeAttributionValue(campaign?.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 64);
+  const requestedReferral = safeAttributionValue(referralCode, /^[A-Z0-9_-]{3,32}$/, 32);
+  const canonicalReferral = safeAttributionValue(campaign?.referralCode, /^[A-Z0-9_-]{3,32}$/, 32);
+  if (!campaignId || !campaignSlug) return {};
+  const attribution = {
+    campaignId,
+    campaignSlug,
+    referralCode: requestedReferral && requestedReferral !== canonicalReferral ? '' : canonicalReferral,
+    capturedAt: now,
+    expiresAt: now + CAMPAIGN_ATTRIBUTION_TTL_MS,
+  };
+  try {
+    window.localStorage.setItem(CAMPAIGN_ATTRIBUTION_KEY, JSON.stringify(attribution));
+  } catch {
+    // Attribution remains best-effort when storage is unavailable.
+  }
+  return { campaignId, campaignSlug, referralCode: attribution.referralCode };
 }
 
 function currentPath() {

@@ -1041,6 +1041,18 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(temporaryLogin.status, 200);
   assert.equal(temporaryLogin.data.user.mustChangePassword, true);
 
+  const changedPassword = await api('/api/auth/change-password', {
+    method: 'POST',
+    token: temporaryLogin.data.token,
+    body: { password: 'Customer replacement password 2026' },
+  });
+  assert.equal(changedPassword.status, 200);
+  assert.equal(changedPassword.data.user.mustChangePassword, false);
+
+  const retainedCurrentSession = await api('/api/auth/me', { token: temporaryLogin.data.token });
+  assert.equal(retainedCurrentSession.status, 200);
+  assert.equal(retainedCurrentSession.data.user.user_id, userId);
+
   const database = JSON.parse(fs.readFileSync(path.join(testDataDir, 'database.json'), 'utf8'));
   const customer = database.users.find((item) => item.id === userId);
   const policyCompliantUser = database.users.find((item) => item.email === 'adult@example.test');

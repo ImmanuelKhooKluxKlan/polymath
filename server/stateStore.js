@@ -311,7 +311,7 @@ class StateStore {
       );
     }
 
-    const [countsResult, dailyResult, returnResult, feedbackResult] = await Promise.all([
+    const [countsResult, dailyResult, returnResult, feedbackResult, campaignResult] = await Promise.all([
       this.pool.query(`
         SELECT
           event_name,
@@ -351,6 +351,26 @@ class StateStore {
           AND properties->>'feedback' IN ('accurate', 'needs-work')
         GROUP BY properties->>'feedback'
       `, [cutoff]),
+      this.pool.query(`
+        SELECT
+          properties->>'campaignId' AS campaign_id,
+          max(properties->>'campaignSlug') AS campaign_slug,
+          max(properties->>'referralCode') AS referral_code,
+          event_name,
+          count(*)::integer AS events,
+          count(DISTINCT coalesce(nullif(user_id, ''), nullif(anonymous_id, ''), session_id))::integer AS actors,
+          avg(CASE WHEN jsonb_typeof(properties->'score') = 'number' THEN (properties->>'score')::numeric END) AS average_score,
+          count(*) FILTER (WHERE jsonb_typeof(properties->'score') = 'number')::integer AS score_count,
+          sum(CASE
+            WHEN event_name = 'subscription_activated' AND jsonb_typeof(properties->'activationValueUsd') = 'number'
+              THEN greatest(0, (properties->>'activationValueUsd')::numeric)
+            ELSE 0
+          END) AS activation_value_usd
+        FROM polymath_product_events
+        WHERE occurred_at >= $1::timestamptz
+          AND nullif(properties->>'campaignId', '') IS NOT NULL
+        GROUP BY properties->>'campaignId', event_name
+      `, [cutoff]),
     ]);
     const counts = countsResult.rows.map((row) => ({
       eventName: row.event_name,
@@ -360,6 +380,17 @@ class StateStore {
       averageDurationSeconds: row.average_duration_seconds,
     }));
     const daily = dailyResult.rows.map((row) => ({ day: row.day, eventCount: Number(row.event_count || 0) }));
+    const campaignRows = campaignResult.rows.map((row) => ({
+      campaignId: row.campaign_id,
+      campaignSlug: row.campaign_slug,
+      referralCode: row.referral_code,
+      eventName: row.event_name,
+      events: row.events,
+      actors: row.actors,
+      averageScore: row.average_score,
+      scoreCount: row.score_count,
+      activationValueUsd: row.activation_value_usd,
+    }));
     return summaryFromCounts({
       counts,
       daily,
@@ -367,6 +398,7 @@ class StateStore {
       days: windowDays,
       signedActors: Number(returnResult.rows[0]?.signed_actors || 0),
       returningActors: Number(returnResult.rows[0]?.returning_actors || 0),
+      campaignRows,
     });
   }
 

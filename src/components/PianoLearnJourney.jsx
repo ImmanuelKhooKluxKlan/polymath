@@ -6,6 +6,7 @@ import {
 import { buildLearningMomentum } from '../engine/learningMomentum.js';
 import { formatLearningTime } from '../utils/learningSections.js';
 import LearningWinShare from './LearningWinShare.jsx';
+import ArtistChallengeExperience from './ArtistChallengeExperience.jsx';
 
 const JOURNEY_STEPS = [
   ['music', 'Music'],
@@ -137,6 +138,10 @@ export default function PianoLearnJourney({
   onOpenBand,
   onFocusPlayer,
   challengeScore = null,
+  campaign = null,
+  campaignStatus = '',
+  campaignError = '',
+  onExitCampaign,
 }) {
   const [step, setStep] = useState(0);
   const [freePreviewOpen, setFreePreviewOpen] = useState(false);
@@ -224,6 +229,30 @@ export default function PianoLearnJourney({
     }
     setStep(3);
     window.setTimeout(() => onFocusPlayer?.(), 100);
+  }
+
+  if (campaignStatus) {
+    return (
+      <ArtistChallengeExperience
+        campaign={campaign}
+        campaignStatus={campaignStatus}
+        campaignError={campaignError}
+        song={song}
+        activeRange={activeRange}
+        preparationStatus={preparationStatus}
+        preparationProgress={preparationProgress}
+        preparationStage={preparationStage}
+        onPrepare={onPrepare}
+        onListen={onListen}
+        onStartAttempt={onStartAttempt}
+        attemptStatus={attemptStatus}
+        report={report}
+        progress={progress}
+        challengeScore={challengeScore}
+        onUpgrade={onUpgrade}
+        onExplore={onExitCampaign}
+      />
+    );
   }
 
   return (

@@ -16,6 +16,15 @@ const { createDirectUploadService } = require('./directUpload');
 const { createJobQueue } = require('./jobQueue');
 const { createTaskPool } = require('./taskPool');
 const { PUBLIC_PRODUCT_EVENT_NAMES, sanitizeProductEventBatch } = require('./productAnalytics');
+const {
+  adminArtistCampaign,
+  buildCampaignExcerpt,
+  campaignAttribution,
+  campaignIsLive,
+  campaignPublishProblems,
+  normalizeCampaignInput,
+  publicArtistCampaign,
+} = require('./artistCampaigns');
 const { createModelLab } = require('./modelLab');
 const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
@@ -541,6 +550,7 @@ function ensureStorage() {
       webhookEvents: [],
       scoreTranslationJobs: [],
       mediaTranscriptionJobs: [],
+      artistCampaigns: [],
       bands: [],
       bandMemberships: [],
       bandMessages: [],
@@ -618,6 +628,7 @@ function normalizeDb(db) {
     'webhookEvents',
     'scoreTranslationJobs',
     'mediaTranscriptionJobs',
+    'artistCampaigns',
     'bands',
     'bandMemberships',
     'bandMessages',
@@ -2090,6 +2101,157 @@ function virtualTeacherImageContentType(bytes) {
       && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
   return '';
+}
+
+function activatedSubscriptionValue(record, product) {
+  if (!record || !product) return 0;
+  if (record.isUpgrade) {
+    const previous = PRODUCTS[record.upgradeFromProductId];
+    return Number(Math.max(0, Number(product.price || 0) - Number(previous?.price || 0)).toFixed(2));
+  }
+  return Number(Math.max(0, Number(record.checkoutPrice || product.price || 0)).toFixed(2));
+}
+
+function subscriptionAttributionProperties(record, product) {
+  if (!record?.campaignId) return {};
+  return {
+    campaignId: record.campaignId,
+    campaignSlug: record.campaignSlug || '',
+    referralCode: record.referralCode || '',
+    activationValueUsd: activatedSubscriptionValue(record, product),
+  };
+}
+
+function campaignSongContentType(format) {
+  return format === 'JSON' ? 'application/json' : 'audio/midi';
+}
+
+function uniqueCampaignSlug(campaigns, slug, ignoredId = '') {
+  return !campaigns.some((campaign) => campaign.id !== ignoredId && campaign.slug === slug);
+}
+
+function campaignUploadFiles(req) {
+  return {
+    song: req.files?.song?.[0] || null,
+    cover: req.files?.cover?.[0] || null,
+  };
+}
+
+async function persistCampaignFiles(campaignId, files, current = {}) {
+  let songAssetKey = '';
+  let coverAssetKey = '';
+  const changes = {};
+  const revision = `${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
+  try {
+    if (files.song?.buffer?.length) {
+      const songFilename = sanitizeFilename(files.song.originalname || 'challenge.json');
+      const songFormat = readySheetFormat(songFilename);
+      if (!songFormat) throw Object.assign(new Error('Use a ready-to-play JSON or MIDI challenge.'), { status: 400 });
+      validateMarketplaceAsset(songFormat, songFilename, files.song.buffer);
+      const metadata = readySheetMetadata(files.song.buffer, songFormat);
+      songAssetKey = artifactKey(
+        `artist-campaigns/${campaignId}`,
+        `${campaignId}-${revision}-challenge-${songFilename}`,
+      );
+      await ARTIFACT_STORE.putBuffer(songAssetKey, files.song.buffer, campaignSongContentType(songFormat));
+      Object.assign(changes, {
+        songAssetKey,
+        songFilename,
+        songFormat,
+        songSize: files.song.buffer.length,
+        songSha256: crypto.createHash('sha256').update(files.song.buffer).digest('hex'),
+        detectedTitle: metadata.title || '',
+        detectedArtist: metadata.artist || '',
+      });
+    }
+    if (files.cover?.buffer?.length) {
+      const coverContentType = virtualTeacherImageContentType(files.cover.buffer);
+      if (!coverContentType) {
+        throw Object.assign(new Error('The campaign cover is not a valid PNG, JPEG, or WebP image.'), { status: 400 });
+      }
+      const extension = coverContentType === 'image/png' ? 'png' : coverContentType === 'image/jpeg' ? 'jpg' : 'webp';
+      coverAssetKey = artifactKey(
+        `artist-campaigns/${campaignId}`,
+        `${campaignId}-${revision}-cover.${extension}`,
+      );
+      await ARTIFACT_STORE.putBuffer(coverAssetKey, files.cover.buffer, coverContentType);
+      Object.assign(changes, { coverAssetKey, coverContentType });
+    }
+    return changes;
+  } catch (error) {
+    await Promise.all([
+      songAssetKey && songAssetKey !== current.songAssetKey ? safeRemoveArtifact(songAssetKey) : null,
+      coverAssetKey && coverAssetKey !== current.coverAssetKey ? safeRemoveArtifact(coverAssetKey) : null,
+    ]);
+    throw error;
+  }
+}
+
+function campaignExcerptNeedsRefresh(current = {}, candidate = {}, files = {}) {
+  return Boolean(
+    !current.publicSongAssetKey
+    || files.songAssetKey
+    || current.songAssetKey !== candidate.songAssetKey
+    || current.previewStartSeconds !== candidate.previewStartSeconds
+    || current.previewDurationSeconds !== candidate.previewDurationSeconds
+    || current.artist !== candidate.artist
+    || current.title !== candidate.title
+    || current.slug !== candidate.slug
+  );
+}
+
+function enforceCampaignRevisionSafety(current = {}, candidate = {}, files = {}) {
+  const songChanged = Boolean(files.songAssetKey && files.songAssetKey !== current.songAssetKey);
+  const performanceChanged = songChanged
+    || current.previewStartSeconds !== candidate.previewStartSeconds
+    || current.previewDurationSeconds !== candidate.previewDurationSeconds;
+  const identityChanged = current.artist !== candidate.artist || current.title !== candidate.title;
+  const publicCreativeChanged = identityChanged
+    || current.slug !== candidate.slug
+    || current.hook !== candidate.hook
+    || current.description !== candidate.description
+    || current.artistUrl !== candidate.artistUrl
+    || current.challengeScore !== candidate.challengeScore
+    || Boolean(files.coverAssetKey && files.coverAssetKey !== current.coverAssetKey);
+
+  if (performanceChanged) {
+    candidate.humanVerified = false;
+    candidate.qaScore = 0;
+    candidate.verificationNotes = '';
+  }
+  if (performanceChanged || publicCreativeChanged) candidate.artistApproved = false;
+  if (songChanged || identityChanged) {
+    candidate.rightsConfirmed = false;
+    candidate.rightsHolder = '';
+    candidate.rightsBasis = '';
+  }
+  if (performanceChanged || publicCreativeChanged) candidate.status = 'draft';
+  return candidate;
+}
+
+async function persistCampaignExcerpt(campaign) {
+  if (!campaign.songAssetKey || !campaign.songFormat) return {};
+  const source = await ARTIFACT_STORE.getBuffer(campaign.songAssetKey);
+  const excerpt = buildCampaignExcerpt(source, campaign.songFormat, campaign);
+  const revision = `${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
+  const publicSongAssetKey = artifactKey(
+    `artist-campaigns/${campaign.id}`,
+    `${campaign.id}-${revision}-public.json`,
+  );
+  try {
+    await ARTIFACT_STORE.putBuffer(publicSongAssetKey, excerpt.buffer, 'application/json');
+    return {
+      publicSongAssetKey,
+      publicSongSize: excerpt.buffer.length,
+      publicSongSha256: crypto.createHash('sha256').update(excerpt.buffer).digest('hex'),
+      excerptNoteCount: excerpt.noteCount,
+      excerptDurationSeconds: excerpt.durationSeconds,
+      excerptGeneratedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    await safeRemoveArtifact(publicSongAssetKey);
+    throw error;
+  }
 }
 
 function inspectVirtualTeacherGlb(bytes) {
@@ -4002,6 +4164,32 @@ app.get('/api/media-transcriptions/capabilities', async (req, res) => {
   res.json(muscriptorAvailability());
 });
 
+const artistCampaignUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    files: 2,
+    fields: 24,
+    fileSize: MARKETPLACE_MAX_BYTES,
+  },
+  fileFilter(req, file, callback) {
+    const mimetype = String(file.mimetype || '').toLowerCase();
+    const extension = path.extname(String(file.originalname || '')).toLowerCase();
+    const isSong = file.fieldname === 'song' && ['.json', '.mid', '.midi'].includes(extension);
+    const isCover = file.fieldname === 'cover'
+      && ['.png', '.jpg', '.jpeg', '.webp'].includes(extension)
+      && ['image/png', 'image/jpeg', 'image/webp'].includes(mimetype);
+    if (isSong || isCover) {
+      callback(null, true);
+      return;
+    }
+    const error = new Error(file.fieldname === 'song'
+      ? 'Campaign challenges require a ready-to-play JSON or MIDI file.'
+      : 'Campaign covers must be PNG, JPEG, or WebP images.');
+    error.status = 400;
+    callback(error);
+  },
+});
+
 app.post('/api/product-events', async (req, res, next) => {
   try {
     // Production initializes the store before listening. Route tests import the
@@ -4033,10 +4221,271 @@ app.post('/api/product-events', async (req, res, next) => {
 app.get('/api/admin/product-analytics', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const days = Math.max(1, Math.min(180, Number(req.query.days) || 30));
-    return res.json(await STATE_STORE.productEventSummary(days));
+    const [summary, db] = await Promise.all([
+      STATE_STORE.productEventSummary(days),
+      readDb(),
+    ]);
+    const campaigns = new Map(db.artistCampaigns.map((campaign) => [campaign.id, campaign]));
+    summary.campaigns = (summary.campaigns || []).map((entry) => {
+      const campaign = campaigns.get(entry.campaignId) || {};
+      const affiliatePercent = Number(campaign.affiliatePercent || 0);
+      return {
+        ...entry,
+        title: campaign.title || entry.campaignSlug || 'Archived campaign',
+        artist: campaign.artist || '',
+        status: campaign.status || 'archived',
+        affiliatePercent,
+        estimatedCreatorCommissionUsd: Number(
+          (Number(entry.attributedActivationValueUsd || 0) * affiliatePercent / 100).toFixed(2),
+        ),
+      };
+    });
+    summary.commissionNotice = 'Creator commission is an estimate for reconciliation. Polymath does not issue automatic payouts.';
+    return res.json(summary);
   } catch (error) {
     return next(error);
   }
+});
+
+app.get('/api/artist-campaigns', async (req, res) => {
+  const db = await readDb();
+  const campaigns = db.artistCampaigns
+    .filter((campaign) => campaignIsLive(campaign))
+    .map((campaign) => publicArtistCampaign(campaign))
+    .sort((left, right) => String(right.launchesAt || '').localeCompare(String(left.launchesAt || '')));
+  res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+  return res.json({ campaigns });
+});
+
+app.get('/api/artist-campaigns/:slug', async (req, res) => {
+  const db = await readDb();
+  const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+  if (!campaign || !campaignIsLive(campaign)) return res.status(404).json({ error: 'This artist challenge is not live.' });
+  res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+  return res.json({ campaign: publicArtistCampaign(campaign) });
+});
+
+app.get('/api/artist-campaigns/:slug/song', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+    if (!campaign || !campaignIsLive(campaign) || !campaign.publicSongAssetKey) {
+      return res.status(404).json({ error: 'This artist challenge is not live.' });
+    }
+    const bytes = await ARTIFACT_STORE.getBuffer(campaign.publicSongAssetKey);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Content-Disposition', `inline; filename="${sanitizeFilename(`${campaign.slug}-challenge.json`)}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'The campaign song file is unavailable.' });
+    }
+    return next(error);
+  }
+});
+
+app.get('/api/artist-campaigns/:slug/cover', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+    if (!campaign || !campaignIsLive(campaign) || !campaign.coverAssetKey) {
+      return res.status(404).json({ error: 'Campaign cover not found.' });
+    }
+    const bytes = await ARTIFACT_STORE.getBuffer(campaign.coverAssetKey);
+    res.setHeader('Content-Type', campaign.coverContentType || 'image/webp');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Campaign cover not found.' });
+    }
+    return next(error);
+  }
+});
+
+app.get('/api/admin/artist-campaigns', requireAuth, requireAdmin, async (req, res) => {
+  const campaigns = req.db.artistCampaigns
+    .map((campaign) => adminArtistCampaign(campaign))
+    .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')));
+  return res.json({
+    campaigns,
+    publishGate: {
+      minimumQaScore: 80,
+      previewSeconds: { minimum: 10, maximum: 45 },
+      automaticCreatorPayouts: false,
+    },
+  });
+});
+
+app.get('/api/admin/artist-campaigns/preview/:slug', requireAuth, requireAdmin, async (req, res) => {
+  const campaign = req.db.artistCampaigns.find(
+    (candidate) => candidate.slug === String(req.params.slug || '').toLowerCase(),
+  );
+  if (!campaign) return res.status(404).json({ error: 'Campaign not found.' });
+  if (!campaign.publicSongAssetKey || Number(campaign.excerptNoteCount || 0) < 1) {
+    return res.status(409).json({ error: 'Generate a playable campaign excerpt before opening the private preview.' });
+  }
+  const preview = publicArtistCampaign(campaign);
+  preview.adminPreview = true;
+  preview.live = false;
+  preview.songUrl = `/api/admin/artist-campaigns/${encodeURIComponent(campaign.id)}/preview-song`;
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ campaign: preview });
+});
+
+app.get('/api/admin/artist-campaigns/:campaignId/preview-song', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const campaign = req.db.artistCampaigns.find((candidate) => candidate.id === req.params.campaignId);
+    if (!campaign || !campaign.publicSongAssetKey) return res.status(404).json({ error: 'Campaign preview not found.' });
+    const bytes = await ARTIFACT_STORE.getBuffer(campaign.publicSongAssetKey);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Length', bytes.length);
+    res.setHeader('Content-Disposition', `inline; filename="${sanitizeFilename(`${campaign.slug}-private-preview.json`)}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.send(bytes);
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || Number(error?.$metadata?.httpStatusCode) === 404) {
+      return res.status(404).json({ error: 'Campaign preview not found.' });
+    }
+    return next(error);
+  }
+});
+
+app.post(
+  '/api/admin/artist-campaigns',
+  requireAuth,
+  requireAdmin,
+  artistCampaignUpload.fields([{ name: 'song', maxCount: 1 }, { name: 'cover', maxCount: 1 }]),
+  async (req, res, next) => {
+    const campaignId = id('artist_campaign');
+    let files = {};
+    let excerpt = {};
+    try {
+      files = await persistCampaignFiles(campaignId, campaignUploadFiles(req));
+      const normalized = normalizeCampaignInput(req.body);
+      if (!uniqueCampaignSlug(req.db.artistCampaigns, normalized.slug)) {
+        throw Object.assign(new Error('That campaign URL slug is already in use.'), { status: 409 });
+      }
+      const now = new Date().toISOString();
+      const campaign = {
+        id: campaignId,
+        ...normalized,
+        ...files,
+        createdBy: req.user.id,
+        createdAt: now,
+        updatedAt: now,
+        publishedAt: normalized.status === 'published' ? now : null,
+      };
+      excerpt = await persistCampaignExcerpt(campaign);
+      Object.assign(campaign, excerpt);
+      const problems = campaignPublishProblems(campaign);
+      if (campaign.status === 'published' && problems.length) {
+        const error = Object.assign(new Error('Campaign cannot be published until every launch gate passes.'), {
+          status: 409,
+          publishProblems: problems,
+        });
+        throw error;
+      }
+      req.db.artistCampaigns.push(campaign);
+      await writeDb(req.db);
+      return res.status(201).json({ campaign: adminArtistCampaign(campaign) });
+    } catch (error) {
+      await Promise.all([
+        safeRemoveArtifact(files.songAssetKey),
+        safeRemoveArtifact(files.coverAssetKey),
+        safeRemoveArtifact(excerpt.publicSongAssetKey),
+      ]);
+      if (error.publishProblems) return res.status(error.status || 409).json({ error: error.message, publishProblems: error.publishProblems });
+      return next(error);
+    }
+  },
+);
+
+app.patch(
+  '/api/admin/artist-campaigns/:campaignId',
+  requireAuth,
+  requireAdmin,
+  artistCampaignUpload.fields([{ name: 'song', maxCount: 1 }, { name: 'cover', maxCount: 1 }]),
+  async (req, res, next) => {
+    const current = req.db.artistCampaigns.find((campaign) => campaign.id === req.params.campaignId);
+    if (!current) return res.status(404).json({ error: 'Campaign not found.' });
+    const oldSongAssetKey = current.songAssetKey || '';
+    const oldCoverAssetKey = current.coverAssetKey || '';
+    const oldPublicSongAssetKey = current.publicSongAssetKey || '';
+    let files = {};
+    let excerpt = {};
+    try {
+      files = await persistCampaignFiles(current.id, campaignUploadFiles(req), current);
+      const normalized = normalizeCampaignInput(req.body, current);
+      if (!uniqueCampaignSlug(req.db.artistCampaigns, normalized.slug, current.id)) {
+        throw Object.assign(new Error('That campaign URL slug is already in use.'), { status: 409 });
+      }
+      const candidate = {
+        ...current,
+        ...normalized,
+        ...files,
+        updatedAt: new Date().toISOString(),
+      };
+      enforceCampaignRevisionSafety(current, candidate, files);
+      if (campaignExcerptNeedsRefresh(current, candidate, files)) {
+        excerpt = await persistCampaignExcerpt(candidate);
+        Object.assign(candidate, excerpt);
+      }
+      const problems = campaignPublishProblems(candidate);
+      if (candidate.status === 'published' && problems.length) {
+        const error = Object.assign(new Error('Campaign cannot be published until every launch gate passes.'), {
+          status: 409,
+          publishProblems: problems,
+        });
+        throw error;
+      }
+      if (candidate.status === 'published' && current.status !== 'published') {
+        candidate.publishedAt = new Date().toISOString();
+      }
+      Object.assign(current, candidate);
+      await writeDb(req.db);
+      await Promise.all([
+        files.songAssetKey && oldSongAssetKey && oldSongAssetKey !== files.songAssetKey
+          ? safeRemoveArtifact(oldSongAssetKey)
+          : null,
+        files.coverAssetKey && oldCoverAssetKey && oldCoverAssetKey !== files.coverAssetKey
+          ? safeRemoveArtifact(oldCoverAssetKey)
+          : null,
+        excerpt.publicSongAssetKey && oldPublicSongAssetKey
+          && oldPublicSongAssetKey !== excerpt.publicSongAssetKey
+          ? safeRemoveArtifact(oldPublicSongAssetKey)
+          : null,
+      ]);
+      return res.json({ campaign: adminArtistCampaign(current) });
+    } catch (error) {
+      await Promise.all([
+        safeRemoveArtifact(files.songAssetKey),
+        safeRemoveArtifact(files.coverAssetKey),
+        safeRemoveArtifact(excerpt.publicSongAssetKey),
+      ]);
+      if (error.publishProblems) return res.status(error.status || 409).json({ error: error.message, publishProblems: error.publishProblems });
+      return next(error);
+    }
+  },
+);
+
+app.delete('/api/admin/artist-campaigns/:campaignId', requireAuth, requireAdmin, async (req, res) => {
+  const index = req.db.artistCampaigns.findIndex((campaign) => campaign.id === req.params.campaignId);
+  if (index < 0) return res.status(404).json({ error: 'Campaign not found.' });
+  const [campaign] = req.db.artistCampaigns.splice(index, 1);
+  await writeDb(req.db);
+  await Promise.all([
+    safeRemoveArtifact(campaign.songAssetKey),
+    safeRemoveArtifact(campaign.publicSongAssetKey),
+    safeRemoveArtifact(campaign.coverAssetKey),
+  ]);
+  return res.json({ deleted: true });
 });
 
 app.get('/api/catalog', async (req, res) => {
@@ -4409,7 +4858,12 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   req.user.passwordSalt = salt;
   req.user.mustChangePassword = false;
   const currentToken = bearerToken(req);
-  req.db.sessions = req.db.sessions.filter((session) => session.userId !== req.user.id || session.token === currentToken);
+  const currentTokenHash = hashSessionToken(currentToken);
+  req.db.sessions = req.db.sessions.filter((session) => (
+    session.userId !== req.user.id
+    || session.tokenHash === currentTokenHash
+    || session.token === currentToken
+  ));
   await writeDb(req.db);
   res.json({ user: safeUser(req.user) });
 });
@@ -6589,12 +7043,15 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       });
     }
     const pricing = subscriptionPriceForUser(product, req.user);
+    const attribution = campaignAttribution(req.db, req.body);
 
     const reusablePending = req.db.subscriptions.find((item) => (
       item.userId === req.user.id
       && item.productId === product.id
       && String(item.checkoutPrice || product.price) === pricing.price
       && String(item.luckyCode || '') === pricing.luckyCode
+      && String(item.campaignId || '') === String(attribution.campaignId || '')
+      && String(item.referralCode || '') === String(attribution.referralCode || '')
       && ['APPROVAL_PENDING', 'APPROVED', 'CREATED'].includes(String(item.status || '').toUpperCase())
       && item.approveUrl
       && Date.now() - new Date(item.createdAt).getTime() < 24 * 60 * 60 * 1000
@@ -6606,6 +7063,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
         interval: product.interval || '',
         audience: product.audience || 'individual',
         outcome: 'reused',
+        ...attribution,
       });
       return res.json({
         subscriptionId: reusablePending.subscriptionId,
@@ -6663,6 +7121,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       checkoutPrice: pricing.price,
       discountPercent: pricing.discountPercent,
       luckyCode: pricing.luckyCode,
+      ...attribution,
       isUpgrade,
       upgradeFromSubscriptionId: isUpgrade ? req.user.paypalSubscriptionId : null,
       upgradeFromProductId: upgradeFrom?.id || null,
@@ -6680,6 +7139,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       interval: product.interval || '',
       audience: product.audience || 'individual',
       outcome: 'created',
+      ...attribution,
     });
     res.status(201).json({
       subscriptionId: data.id,
@@ -6742,6 +7202,7 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
         interval: product.interval || '',
         audience: product.audience || 'individual',
         outcome: record.isUpgrade ? 'upgrade' : 'new',
+        ...subscriptionAttributionProperties(record, product),
       });
     }
 
@@ -6836,6 +7297,7 @@ app.post('/api/paypal/webhook', async (req, res) => {
         interval: product.interval || '',
         audience: product.audience || 'individual',
         outcome: activatedSubscription.isUpgrade ? 'upgrade' : 'new',
+        ...subscriptionAttributionProperties(activatedSubscription, product),
       });
     }
     res.json({ received: true });
@@ -8030,6 +8492,53 @@ app.post('/api/score-import', async (req, res) => {
 if (IS_PRODUCTION) {
   const frontendDir = path.resolve(__dirname, '..', 'dist');
 
+  app.get('/c/:slug', async (req, res, next) => {
+    try {
+      const db = await readDb();
+      const campaign = db.artistCampaigns.find((candidate) => candidate.slug === String(req.params.slug || '').toLowerCase());
+      if (!campaign || !campaignIsLive(campaign)) return next();
+      const publicCampaign = publicArtistCampaign(campaign);
+      const score = Number.isFinite(Number(req.query.score))
+        ? Math.max(0, Math.min(100, Math.round(Number(req.query.score))))
+        : null;
+      const requestedReferral = String(req.query.ref || '').trim().toUpperCase();
+      const referral = requestedReferral === campaign.referralCode ? campaign.referralCode : '';
+      const params = new URLSearchParams({ try: 'learn', campaign: campaign.slug });
+      if (score !== null) params.set('score', String(score));
+      if (referral) params.set('ref', referral);
+      const targetHash = `#studio?${params.toString()}`;
+      const canonicalBase = new URL(CLIENT_ORIGIN);
+      const canonical = new URL(publicCampaign.sharePath, canonicalBase).toString();
+      const cover = publicCampaign.coverUrl ? new URL(publicCampaign.coverUrl, canonicalBase).toString() : '';
+      const escapeHtml = (value) => String(value || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const pageTitle = `${campaign.title} by ${campaign.artist} | Polymath challenge`;
+      const description = campaign.hook || `Play a ${campaign.previewDurationSeconds}-second piano challenge and share your score.`;
+      const tags = [
+        `<meta name="description" content="${escapeHtml(description)}">`,
+        `<link rel="canonical" href="${escapeHtml(canonical)}">`,
+        '<meta property="og:type" content="website">',
+        `<meta property="og:title" content="${escapeHtml(pageTitle)}">`,
+        `<meta property="og:description" content="${escapeHtml(description)}">`,
+        `<meta property="og:url" content="${escapeHtml(canonical)}">`,
+        ...(cover ? [`<meta property="og:image" content="${escapeHtml(cover)}">`] : []),
+        '<meta name="twitter:card" content="summary_large_image">',
+        `<meta name="twitter:title" content="${escapeHtml(pageTitle)}">`,
+        `<meta name="twitter:description" content="${escapeHtml(description)}">`,
+        ...(cover ? [`<meta name="twitter:image" content="${escapeHtml(cover)}">`] : []),
+        `<script>history.replaceState(null,"",${JSON.stringify(`/${targetHash}`).replace(/</g, '\\u003c')});</script>`,
+      ].join('');
+      let html = fs.readFileSync(path.join(frontendDir, 'index.html'), 'utf8');
+      html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(pageTitle)}</title>`);
+      html = html.replace('</head>', `${tags}</head>`);
+      res.setHeader('Cache-Control', 'public, max-age=15, must-revalidate');
+      return res.type('html').send(html);
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   app.use('/samples', express.static(path.join(frontendDir, 'samples'), {
     etag: true,
     setHeaders(res, filename) {
@@ -8063,8 +8572,8 @@ if (IS_PRODUCTION) {
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     const message = error.code === 'LIMIT_FILE_SIZE'
-      ? 'The upload is too large. Images may be 8 MB and rigged GLB models may be 25 MB.'
-      : 'The character upload form was not accepted. Choose one image and try again.';
+      ? 'The upload is too large for this form.'
+      : 'The upload form was not accepted. Check the selected files and try again.';
     return res.status(400).json({ error: message, code: error.code });
   }
   if (error instanceof StateConflictError) {

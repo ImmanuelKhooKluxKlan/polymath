@@ -10,6 +10,13 @@ const PRODUCT_EVENT_NAMES = new Set([
   'learning_attempt_started',
   'learning_attempt_completed',
   'learning_win_shared',
+  'campaign_viewed',
+  'campaign_song_loaded',
+  'campaign_example_started',
+  'campaign_attempt_started',
+  'campaign_attempt_completed',
+  'campaign_shared',
+  'campaign_upgrade_clicked',
   'transcription_file_selected',
   'transcription_started',
   'transcription_restored',
@@ -35,6 +42,13 @@ const PUBLIC_PRODUCT_EVENT_NAMES = new Set([
   'learning_attempt_started',
   'learning_attempt_completed',
   'learning_win_shared',
+  'campaign_viewed',
+  'campaign_song_loaded',
+  'campaign_example_started',
+  'campaign_attempt_started',
+  'campaign_attempt_completed',
+  'campaign_shared',
+  'campaign_upgrade_clicked',
   'transcription_file_selected',
   'transcription_restored',
   'subscription_page_viewed',
@@ -46,6 +60,7 @@ const SAFE_PROPERTY_NAMES = new Set([
   'freePreview', 'hand', 'inputMode', 'instrument', 'interval', 'level', 'noteCount',
   'outcome', 'page', 'performanceTier', 'plan', 'playbackMode', 'productId', 'qualityScore',
   'refunded', 'restored', 'score', 'signedIn', 'sizeBucket', 'sourceKind', 'tier',
+  'activationValueUsd', 'campaignId', 'campaignSlug', 'referralCode', 'qaScore', 'referrerType',
 ]);
 
 function cleanIdentifier(value, maximum = 100) {
@@ -116,7 +131,78 @@ function percent(numerator, denominator) {
   return denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : null;
 }
 
-function summaryFromCounts({ counts = [], daily = [], feedback = [], days = 30, returningActors = 0, signedActors = 0 } = {}) {
+function campaignSummaryFromRows(rows = []) {
+  const stages = [
+    ['viewed', 'campaign_viewed'],
+    ['loaded', 'campaign_song_loaded'],
+    ['attempted', 'campaign_attempt_started'],
+    ['completed', 'campaign_attempt_completed'],
+    ['shared', 'campaign_shared'],
+    ['checkout', 'checkout_started'],
+    ['activated', 'subscription_activated'],
+  ];
+  const campaigns = new Map();
+  for (const row of rows) {
+    const campaignId = cleanText(row.campaignId, 100);
+    if (!campaignId) continue;
+    if (!campaigns.has(campaignId)) {
+      campaigns.set(campaignId, {
+        campaignId,
+        campaignSlug: cleanText(row.campaignSlug, 80),
+        referralCode: cleanText(row.referralCode, 32),
+        events: {},
+        scoreTotal: 0,
+        scoreCount: 0,
+        attributedActivationValueUsd: 0,
+      });
+    }
+    const campaign = campaigns.get(campaignId);
+    if (!campaign.campaignSlug && row.campaignSlug) campaign.campaignSlug = cleanText(row.campaignSlug, 80);
+    if (!campaign.referralCode && row.referralCode) campaign.referralCode = cleanText(row.referralCode, 32);
+    campaign.events[row.eventName] = {
+      events: Number(row.events || 0),
+      actors: Number(row.actors || 0),
+    };
+    if (row.eventName === 'campaign_attempt_completed'
+        && row.averageScore !== null && row.averageScore !== undefined) {
+      const sampleCount = Math.max(1, Number(row.scoreCount || row.events || 1));
+      campaign.scoreTotal += Number(row.averageScore) * sampleCount;
+      campaign.scoreCount += sampleCount;
+    }
+    campaign.attributedActivationValueUsd += Number(row.activationValueUsd || 0);
+  }
+  return [...campaigns.values()].map((campaign) => {
+    const stageRows = stages.map(([id, eventName], index, all) => {
+      const actors = campaign.events[eventName]?.actors || 0;
+      const viewed = campaign.events[all[0][1]]?.actors || 0;
+      const previous = index === 0 ? viewed : campaign.events[all[index - 1][1]]?.actors || 0;
+      return {
+        id,
+        actors,
+        fromViewPercent: percent(actors, viewed),
+        fromPreviousPercent: index === 0 ? 100 : percent(actors, previous),
+      };
+    });
+    return {
+      campaignId: campaign.campaignId,
+      campaignSlug: campaign.campaignSlug,
+      referralCode: campaign.referralCode,
+      stages: stageRows,
+      averageScore: campaign.scoreCount
+        ? Math.round((campaign.scoreTotal / campaign.scoreCount) * 10) / 10
+        : null,
+      attributedActivationValueUsd: Number(campaign.attributedActivationValueUsd.toFixed(2)),
+    };
+  }).sort((left, right) => (
+    (right.stages.find((stage) => stage.id === 'viewed')?.actors || 0)
+    - (left.stages.find((stage) => stage.id === 'viewed')?.actors || 0)
+  ));
+}
+
+function summaryFromCounts({
+  counts = [], daily = [], feedback = [], campaignRows = [], days = 30,
+  returningActors = 0, signedActors = 0,
+} = {}) {
   const byName = new Map(counts.map((entry) => [entry.eventName, {
     events: Number(entry.events || 0),
     actors: Number(entry.actors || 0),
@@ -176,6 +262,7 @@ function summaryFromCounts({ counts = [], daily = [], feedback = [], days = 30, 
       returningPercent: percent(returningActors, signedActors),
       definition: 'Signed-in people active on at least two separate UTC days in this window.',
     },
+    campaigns: campaignSummaryFromRows(campaignRows),
     privacy: 'No source audio, filenames, song titles, messages, IP addresses, email addresses, or phone numbers are stored in product events.',
   };
 }
@@ -188,6 +275,7 @@ function summarizeProductEvents(events = [], days = 30) {
   const dailyMap = new Map();
   const signedDays = new Map();
   const feedbackActors = new Map();
+  const campaignGroups = new Map();
   for (const event of events) {
     const actor = actorFor(event);
     if (!actor) continue;
@@ -213,6 +301,29 @@ function summarizeProductEvents(events = [], days = 30) {
       if (!feedbackActors.has(value)) feedbackActors.set(value, new Set());
       feedbackActors.get(value).add(actor);
     }
+    const campaignId = cleanText(event.properties?.campaignId, 100);
+    if (campaignId) {
+      const key = `${campaignId}\u0000${event.eventName}`;
+      if (!campaignGroups.has(key)) {
+        campaignGroups.set(key, {
+          campaignId,
+          campaignSlug: cleanText(event.properties?.campaignSlug, 80),
+          referralCode: cleanText(event.properties?.referralCode, 32),
+          eventName: event.eventName,
+          events: 0,
+          actors: new Set(),
+          scores: [],
+          activationValueUsd: 0,
+        });
+      }
+      const group = campaignGroups.get(key);
+      group.events += 1;
+      group.actors.add(actor);
+      if (Number.isFinite(event.properties?.score)) group.scores.push(event.properties.score);
+      if (event.eventName === 'subscription_activated' && Number.isFinite(event.properties?.activationValueUsd)) {
+        group.activationValueUsd += Math.max(0, event.properties.activationValueUsd);
+      }
+    }
   }
   const mean = (values = []) => values.length
     ? values.reduce((sum, value) => sum + value, 0) / values.length
@@ -228,6 +339,12 @@ function summarizeProductEvents(events = [], days = 30) {
     .map(([day, eventCount]) => ({ day, eventCount }));
   const returningActors = [...signedDays.values()].filter((seen) => seen.size >= 2).length;
   const feedback = [...feedbackActors].map(([value, actors]) => ({ feedback: value, actors: actors.size }));
+  const campaignRows = [...campaignGroups.values()].map((group) => ({
+    ...group,
+    actors: group.actors.size,
+    averageScore: mean(group.scores),
+    scoreCount: group.scores.length,
+  }));
   return summaryFromCounts({
     counts,
     daily,
@@ -235,6 +352,7 @@ function summarizeProductEvents(events = [], days = 30) {
     days,
     returningActors,
     signedActors: signedDays.size,
+    campaignRows,
   });
 }
 
@@ -242,6 +360,7 @@ module.exports = {
   PRODUCT_EVENT_NAMES,
   PUBLIC_PRODUCT_EVENT_NAMES,
   sanitizeProductEventBatch,
+  campaignSummaryFromRows,
   safeProperties,
   summarizeProductEvents,
   summaryFromCounts,

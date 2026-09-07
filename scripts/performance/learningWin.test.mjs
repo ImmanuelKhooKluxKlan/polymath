@@ -47,3 +47,21 @@ test('unsafe score and text values are bounded for a stable card', () => {
   assert.equal(win.expectedCount, 2);
   assert.equal(new URL(win.url).origin, 'https://polymathmusician67.com');
 });
+
+test('artist campaign wins share the canonical campaign path', () => {
+  const win = buildLearningWin({
+    report: { score: 91, matchedCount: 20, expectedCount: 21 },
+    song: { title: 'Midnight Practice', artist: 'Independent Artist' },
+    songKey: 'campaign:private-id',
+    campaign: {
+      slug: 'independent-artist-midnight',
+      referralCode: 'MIDNIGHT20',
+    },
+    baseUrl: 'https://polymathmusician67.com/#studio',
+  });
+  const url = new URL(win.url);
+  assert.equal(url.pathname, '/c/independent-artist-midnight');
+  assert.equal(url.searchParams.get('score'), '91');
+  assert.equal(url.searchParams.get('ref'), 'MIDNIGHT20');
+  assert.equal(win.url.includes('private-id'), false);
+});

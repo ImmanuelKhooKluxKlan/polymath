@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
-import { trackProductEvent } from '../services/productAnalytics.js';
+import { readCampaignAttribution, trackProductEvent } from '../services/productAnalytics.js';
 
 const FALLBACK_PRODUCTS = [
   { id: 'polymath-chill-monthly', name: 'Chill', price: '7.99', currency: 'USD', kind: 'subscription', interval: 'MONTH', tier: 'chill', translations: 10 },
@@ -188,7 +188,13 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
     try {
       const data = await apiRequest(
         product.kind === 'subscription' ? '/api/paypal/create-subscription' : '/api/paypal/create-order',
-        { method: 'POST', body: JSON.stringify({ productId: product.id }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            productId: product.id,
+            ...(product.kind === 'subscription' ? readCampaignAttribution() : {}),
+          }),
+        },
       );
       if (!data.approveUrl) throw new Error('PayPal did not return an approval link.');
       window.location.assign(data.approveUrl);

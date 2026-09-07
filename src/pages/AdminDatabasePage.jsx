@@ -4,6 +4,7 @@ import { TEACHER_PROFILES } from '../engine/teacherHands.js';
 import { normalizeTeacherImage } from '../utils/teacherImage.js';
 import { validateTeacherGlbFile } from '../utils/teacherModel.js';
 import ModelLabPage from './ModelLabPage.jsx';
+import { campaignShareUrl } from '../engine/artistCampaign.js';
 
 const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage'],
@@ -18,6 +19,12 @@ const ADMIN_SECTIONS = [
   ['policies', 'Rules & policies', 'Security, marketplace, rewards, fees, and outflow limits'],
   ['users', 'Account manager', 'Search, Mcoins, access, and secure resets'],
 ];
+
+function initialAdminSection() {
+  const query = String(window.location.hash || '').split('?')[1] || '';
+  const requested = new URLSearchParams(query).get('section') || '';
+  return ADMIN_SECTIONS.some(([id]) => id === requested) ? requested : 'overview';
+}
 
 const DEVICE_PRESETS = [
   ['small-phone', 'Small phone', 320, 568],
@@ -74,6 +81,31 @@ const EMPTY_CHARACTER = {
   pricePer30MinutesMcoins: '',
   active: true,
 };
+
+const EMPTY_CAMPAIGN = {
+  artist: '', title: '', slug: '', referralCode: '', hook: '', description: '', artistUrl: '',
+  previewStartSeconds: 0, previewDurationSeconds: 20, challengeScore: 0,
+  qaScore: 0, affiliatePercent: 20, rightsConfirmed: false, artistApproved: false,
+  humanVerified: false, rightsHolder: '', rightsBasis: '', verificationNotes: '',
+  launchesAt: '', endsAt: '',
+};
+
+function campaignDraftFromRecord(campaign) {
+  if (!campaign) return EMPTY_CAMPAIGN;
+  const localDateTime = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  return {
+    ...Object.fromEntries(Object.keys(EMPTY_CAMPAIGN).map((key) => [
+      key,
+      campaign[key] ?? EMPTY_CAMPAIGN[key],
+    ])),
+    launchesAt: localDateTime(campaign.launchesAt),
+    endsAt: localDateTime(campaign.endsAt),
+  };
+}
 
 function characterImageUrl(character) {
   if (character?.imagePath) return apiAssetUrl(character.imagePath);
@@ -132,7 +164,7 @@ function promotionValueLabel(item) {
 }
 
 export default function AdminDatabasePage({ user, onNavigate }) {
-  const [activeSection, setActiveSection] = useState('overview');
+  const [activeSection, setActiveSection] = useState(initialAdminSection);
   const [database, setDatabase] = useState({ rows: [], footer: {}, configuration: {} });
   const [promotions, setPromotions] = useState([]);
   const [withdrawals, setWithdrawals] = useState({ withdrawals: [], summary: {} });
@@ -164,15 +196,24 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [characterModel, setCharacterModel] = useState(null);
   const [characterBusy, setCharacterBusy] = useState(false);
   const [characterUploadVersion, setCharacterUploadVersion] = useState(0);
+  const [campaigns, setCampaigns] = useState([]);
+  const [campaignGate, setCampaignGate] = useState(null);
+  const [campaignDraft, setCampaignDraft] = useState(EMPTY_CAMPAIGN);
+  const [editingCampaignId, setEditingCampaignId] = useState('');
+  const [campaignSong, setCampaignSong] = useState(null);
+  const [campaignCover, setCampaignCover] = useState(null);
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const [campaignFormOpen, setCampaignFormOpen] = useState(false);
 
   async function loadConsole() {
-    const [usersData, policiesData, promotionsData, withdrawalsData, charactersData, communityData] = await Promise.all([
+    const [usersData, policiesData, promotionsData, withdrawalsData, charactersData, communityData, campaignsData] = await Promise.all([
       apiRequest('/api/admin/users'),
       apiRequest('/api/admin/policies'),
       apiRequest('/api/admin/promotions'),
       apiRequest('/api/admin/withdrawals'),
       apiRequest('/api/admin/virtual-teachers'),
       apiRequest('/api/admin/community/reports'),
+      apiRequest('/api/admin/artist-campaigns'),
     ]);
     setDatabase(usersData);
     setPolicies(policiesData.policies);
@@ -182,6 +223,14 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       ? charactersData.catalog
       : (Array.isArray(charactersData.characters) ? charactersData.characters : []));
     setCommunityReports(communityData);
+    setCampaigns(campaignsData.campaigns || []);
+    setCampaignGate(campaignsData.publishGate || null);
+  }
+
+  async function loadCampaigns() {
+    const data = await apiRequest('/api/admin/artist-campaigns');
+    setCampaigns(data.campaigns || []);
+    setCampaignGate(data.publishGate || null);
   }
 
   async function loadProductAnalytics(days = analyticsDays) {
@@ -248,6 +297,10 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     });
   }, [database.rows, userSearch, userSort]);
   const selectedAccount = database.rows.find((row) => row.userId === accountManager.userId) || null;
+  const campaignAnalyticsById = useMemo(
+    () => new Map((analytics?.campaigns || []).map((entry) => [entry.campaignId, entry])),
+    [analytics?.campaigns],
+  );
 
   const preset = DEVICE_PRESETS.find((device) => device.id === deviceId) || DEVICE_PRESETS[1];
   const baseWidth = preset.id === 'custom' ? Number(customViewport.width) || 390 : preset.width;
@@ -605,6 +658,132 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     }
   }
 
+  function resetCampaignForm() {
+    setEditingCampaignId('');
+    setCampaignDraft(EMPTY_CAMPAIGN);
+    setCampaignSong(null);
+    setCampaignCover(null);
+    setCampaignFormOpen(false);
+  }
+
+  function openNewCampaignForm() {
+    setEditingCampaignId('');
+    setCampaignDraft(EMPTY_CAMPAIGN);
+    setCampaignSong(null);
+    setCampaignCover(null);
+    setCampaignFormOpen(true);
+    window.setTimeout(() => document.getElementById('artist-campaign-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function editCampaign(campaign) {
+    setEditingCampaignId(campaign.id);
+    setCampaignDraft(campaignDraftFromRecord(campaign));
+    setCampaignSong(null);
+    setCampaignCover(null);
+    setCampaignFormOpen(true);
+    window.setTimeout(() => document.getElementById('artist-campaign-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function campaignPayload(statusOverride = 'draft') {
+    const form = new FormData();
+    Object.entries({ ...campaignDraft, status: statusOverride }).forEach(([key, value]) => {
+      if (key === 'launchesAt' || key === 'endsAt') {
+        form.append(key, value ? new Date(value).toISOString() : '');
+      } else {
+        form.append(key, typeof value === 'boolean' ? String(value) : String(value ?? ''));
+      }
+    });
+    if (campaignSong) form.append('song', campaignSong, campaignSong.name);
+    if (campaignCover) form.append('cover', campaignCover, campaignCover.name);
+    return form;
+  }
+
+  async function saveCampaign(event) {
+    event.preventDefault();
+    setCampaignBusy(true);
+    setStatus(editingCampaignId ? 'Saving campaign draft…' : 'Creating campaign draft…');
+    try {
+      const data = await apiRequest(
+        editingCampaignId
+          ? `/api/admin/artist-campaigns/${editingCampaignId}`
+          : '/api/admin/artist-campaigns',
+        {
+          method: editingCampaignId ? 'PATCH' : 'POST',
+          body: campaignPayload('draft'),
+        },
+      );
+      await loadCampaigns();
+      setStatus(`${data.campaign.title || 'Campaign'} saved as a private draft.`);
+      resetCampaignForm();
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCampaignBusy(false);
+    }
+  }
+
+  async function setCampaignStatus(campaign, nextStatus) {
+    const action = nextStatus === 'published' ? 'publish' : nextStatus === 'paused' ? 'pause' : 'archive';
+    if (!window.confirm(`${action[0].toUpperCase()}${action.slice(1)} ${campaign.title}?`)) return;
+    setCampaignBusy(true);
+    setStatus(`${action[0].toUpperCase()}${action.slice(1)}ing campaign…`);
+    try {
+      const form = new FormData();
+      form.append('status', nextStatus);
+      const data = await apiRequest(`/api/admin/artist-campaigns/${campaign.id}`, {
+        method: 'PATCH',
+        body: form,
+      });
+      await loadCampaigns();
+      setStatus(nextStatus === 'published'
+        ? `${data.campaign.title} is live.`
+        : `${data.campaign.title} is ${nextStatus}.`);
+    } catch (error) {
+      const blockers = error.details?.publishProblems;
+      setStatus(blockers?.length ? `Cannot publish: ${blockers.join(' ')}` : error.message);
+    } finally {
+      setCampaignBusy(false);
+    }
+  }
+
+  async function deleteCampaign(campaign) {
+    if (!window.confirm(`Permanently delete ${campaign.title || 'this campaign'} and its uploaded campaign files?`)) return;
+    setCampaignBusy(true);
+    try {
+      await apiRequest(`/api/admin/artist-campaigns/${campaign.id}`, { method: 'DELETE' });
+      await loadCampaigns();
+      if (editingCampaignId === campaign.id) resetCampaignForm();
+      setStatus('Campaign deleted.');
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setCampaignBusy(false);
+    }
+  }
+
+  async function copyCampaignLink(campaign) {
+    const url = campaignShareUrl(window.location.origin, campaign);
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus('Campaign link copied.');
+    } catch {
+      window.prompt('Copy this campaign link:', url);
+    }
+  }
+
+  function previewCampaign(campaign) {
+    const params = new URLSearchParams({
+      try: 'learn',
+      campaign: campaign.slug,
+      adminPreview: '1',
+    });
+    window.open(
+      `${window.location.origin}${window.location.pathname}#studio?${params.toString()}`,
+      '_blank',
+      'noopener,noreferrer',
+    );
+  }
+
   if (!user?.admin) {
     return (
       <section className='page-shell narrow-page'>
@@ -678,6 +857,144 @@ export default function AdminDatabasePage({ user, onNavigate }) {
               <button className='ghost' type='button' onClick={() => loadProductAnalytics()}>Refresh</button>
             </div>
           </header>
+
+          <section className='campaign-launchpad'>
+            <header className='campaign-launchpad-heading'>
+              <div>
+                <p className='eyebrow'>Artist-to-fan launch engine</p>
+                <h3>Playable campaigns</h3>
+                <p>Turn one rights-cleared song moment into a no-sign-in challenge, a shareable score, and a measurable subscription path.</p>
+              </div>
+              <button className='primary' type='button' onClick={openNewCampaignForm}>New campaign</button>
+            </header>
+
+            <div className='campaign-list'>
+              {campaigns.length === 0 && (
+                <div className='empty-state'>
+                  <strong>No campaign is public.</strong>
+                  <p>Create a private draft, verify it with a pianist, then publish only when every gate passes.</p>
+                </div>
+              )}
+              {campaigns.map((campaign) => {
+                const evidence = campaignAnalyticsById.get(campaign.id);
+                const views = evidence?.stages?.find((stage) => stage.id === 'viewed')?.actors || 0;
+                const attempts = evidence?.stages?.find((stage) => stage.id === 'attempted');
+                const activations = evidence?.stages?.find((stage) => stage.id === 'activated')?.actors || 0;
+                return (
+                  <article className={`campaign-card is-${campaign.status}`} key={campaign.id}>
+                    <header>
+                      <div>
+                        <span className='campaign-status'>{campaign.status}</span>
+                        <h4>{campaign.title || 'Untitled campaign'}</h4>
+                        <p>{campaign.artist || 'Artist not set'} · /c/{campaign.slug || 'not-set'}</p>
+                      </div>
+                      <strong className={campaign.publishProblems.length ? 'campaign-gate blocked' : 'campaign-gate ready'}>
+                        {campaign.publishProblems.length ? `${campaign.publishProblems.length} gate${campaign.publishProblems.length === 1 ? '' : 's'} open` : 'Launch-ready'}
+                      </strong>
+                    </header>
+                    <div className='campaign-metrics'>
+                      <span><small>QA</small><strong>{campaign.verification.qaScore}/100</strong></span>
+                      <span><small>Views</small><strong>{views.toLocaleString()}</strong></span>
+                      <span><small>Try rate</small><strong>{percentLabel(attempts?.fromViewPercent)}</strong></span>
+                      <span><small>Activated</small><strong>{activations.toLocaleString()}</strong></span>
+                      <span><small>Plan value</small><strong>${Number(evidence?.attributedActivationValueUsd || 0).toFixed(2)}</strong></span>
+                    </div>
+                    {campaign.publishProblems.length > 0 && (
+                      <details className='campaign-blockers'>
+                        <summary>See launch blockers</summary>
+                        <ul>{campaign.publishProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+                      </details>
+                    )}
+                    {evidence && (
+                      <details className='campaign-funnel-details'>
+                        <summary>Full campaign funnel</summary>
+                        <div>
+                          {evidence.stages.map((stage) => (
+                            <span key={stage.id}>
+                              <small>{stage.id}</small>
+                              <strong>{stage.actors.toLocaleString()}</strong>
+                              <em>{stage.id === 'viewed' ? 'start' : `${percentLabel(stage.fromPreviousPercent)} from prior`}</em>
+                            </span>
+                          ))}
+                        </div>
+                        <p>Average attempt: {evidence.averageScore ?? 'not measured'} · Estimated creator commission: ${Number(evidence.estimatedCreatorCommissionUsd || 0).toFixed(2)}</p>
+                      </details>
+                    )}
+                    <div className='campaign-card-actions'>
+                      <button className='ghost' type='button' disabled={campaignBusy || campaign.excerptNoteCount < 1} onClick={() => previewCampaign(campaign)}>Preview</button>
+                      <button className='ghost' type='button' disabled={campaignBusy} onClick={() => editCampaign(campaign)}>Edit draft</button>
+                      {campaign.status === 'published' ? (
+                        <>
+                          <button className='ghost' type='button' disabled={campaignBusy} onClick={() => copyCampaignLink(campaign)}>Copy link</button>
+                          <button className='ghost' type='button' disabled={campaignBusy} onClick={() => setCampaignStatus(campaign, 'paused')}>Pause</button>
+                        </>
+                      ) : (
+                        <button className='primary' type='button' disabled={campaignBusy || campaign.publishProblems.length > 0} onClick={() => setCampaignStatus(campaign, 'published')}>Publish</button>
+                      )}
+                      <button className='ghost' type='button' disabled={campaignBusy} onClick={() => setCampaignStatus(campaign, 'archived')}>Archive</button>
+                      <button className='danger' type='button' disabled={campaignBusy} onClick={() => deleteCampaign(campaign)}>Delete</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            {campaignFormOpen && (
+              <form id='artist-campaign-form' className='campaign-form' onSubmit={saveCampaign}>
+                <header>
+                  <div><p className='eyebrow'>Private until published</p><h4>{editingCampaignId ? 'Edit campaign draft' : 'Create campaign draft'}</h4></div>
+                  <button className='ghost' type='button' onClick={resetCampaignForm}>Close</button>
+                </header>
+                <div className='campaign-form-grid'>
+                  <label className='field'>Artist<input required maxLength='100' value={campaignDraft.artist} onChange={(event) => setCampaignDraft({ ...campaignDraft, artist: event.target.value })} /></label>
+                  <label className='field'>Song title<input required maxLength='140' value={campaignDraft.title} onChange={(event) => setCampaignDraft({ ...campaignDraft, title: event.target.value })} /></label>
+                  <label className='field'>Public URL slug<input placeholder='artist-song-challenge' maxLength='64' value={campaignDraft.slug} onChange={(event) => setCampaignDraft({ ...campaignDraft, slug: event.target.value })} /></label>
+                  <label className='field'>Creator referral code<input placeholder='ARTIST20' maxLength='32' value={campaignDraft.referralCode} onChange={(event) => setCampaignDraft({ ...campaignDraft, referralCode: event.target.value.toUpperCase() })} /></label>
+                  <label className='field'>Artist website<input type='url' placeholder='https://…' value={campaignDraft.artistUrl} onChange={(event) => setCampaignDraft({ ...campaignDraft, artistUrl: event.target.value })} /></label>
+                  <label className='field campaign-form-wide'>Challenge headline<input required maxLength='180' placeholder='Can you play the chorus?' value={campaignDraft.hook} onChange={(event) => setCampaignDraft({ ...campaignDraft, hook: event.target.value })} /></label>
+                  <label className='field campaign-form-wide'>Short description<textarea maxLength='500' rows='2' value={campaignDraft.description} onChange={(event) => setCampaignDraft({ ...campaignDraft, description: event.target.value })} /></label>
+                  <label className='field'>Ready-to-play challenge<input type='file' accept='.json,.mid,.midi,application/json,audio/midi' required={!editingCampaignId} onChange={(event) => setCampaignSong(event.target.files?.[0] || null)} /><small>{campaignSong?.name || (editingCampaignId ? 'Keep current file unless replaced.' : 'JSON or MIDI, maximum 8 MB.')}</small></label>
+                  <label className='field'>Cover image<input type='file' accept='image/png,image/jpeg,image/webp' onChange={(event) => setCampaignCover(event.target.files?.[0] || null)} /><small>{campaignCover?.name || 'Optional PNG, JPEG, or WebP.'}</small></label>
+                </div>
+
+                <details className='campaign-form-section' open>
+                  <summary>Quality and preview</summary>
+                  <div className='campaign-form-grid'>
+                    <label className='field'>Preview starts at (seconds)<input type='number' min='0' max='3600' step='0.1' value={campaignDraft.previewStartSeconds} onChange={(event) => setCampaignDraft({ ...campaignDraft, previewStartSeconds: event.target.value })} /></label>
+                    <label className='field'>Preview length (10–45 seconds)<input type='number' min='10' max='45' step='1' value={campaignDraft.previewDurationSeconds} onChange={(event) => setCampaignDraft({ ...campaignDraft, previewDurationSeconds: event.target.value })} /></label>
+                    <label className='field'>QA score (minimum 80)<input type='number' min='0' max='100' step='1' value={campaignDraft.qaScore} onChange={(event) => setCampaignDraft({ ...campaignDraft, qaScore: event.target.value })} /></label>
+                    <label className='field'>Artist challenge score<input type='number' min='0' max='100' step='1' value={campaignDraft.challengeScore} onChange={(event) => setCampaignDraft({ ...campaignDraft, challengeScore: event.target.value })} /></label>
+                    <label className='field'>Creator attribution estimate<input type='number' min='0' max='50' step='0.1' value={campaignDraft.affiliatePercent} onChange={(event) => setCampaignDraft({ ...campaignDraft, affiliatePercent: event.target.value })} /><small>Reporting only; no automatic payout.</small></label>
+                    <label className='field'>Human verification notes<textarea rows='2' maxLength='400' value={campaignDraft.verificationNotes} onChange={(event) => setCampaignDraft({ ...campaignDraft, verificationNotes: event.target.value })} /></label>
+                    <label className='campaign-check'><input type='checkbox' checked={campaignDraft.humanVerified} onChange={(event) => setCampaignDraft({ ...campaignDraft, humanVerified: event.target.checked })} /><span><strong>Human pianist verified</strong><small>Timing, pitches, holds, dynamics, and pedal were heard and checked.</small></span></label>
+                  </div>
+                </details>
+
+                <details className='campaign-form-section'>
+                  <summary>Rights and artist approval</summary>
+                  <div className='campaign-form-grid'>
+                    <label className='field'>Rights holder / approving artist<input maxLength='120' value={campaignDraft.rightsHolder} onChange={(event) => setCampaignDraft({ ...campaignDraft, rightsHolder: event.target.value })} /></label>
+                    <label className='field'>Permission or licence basis<input maxLength='240' placeholder='Written artist agreement dated…' value={campaignDraft.rightsBasis} onChange={(event) => setCampaignDraft({ ...campaignDraft, rightsBasis: event.target.value })} /></label>
+                    <label className='campaign-check'><input type='checkbox' checked={campaignDraft.rightsConfirmed} onChange={(event) => setCampaignDraft({ ...campaignDraft, rightsConfirmed: event.target.checked })} /><span><strong>Rights confirmed</strong><small>Polymath has permission to publish this playable excerpt.</small></span></label>
+                    <label className='campaign-check'><input type='checkbox' checked={campaignDraft.artistApproved} onChange={(event) => setCampaignDraft({ ...campaignDraft, artistApproved: event.target.checked })} /><span><strong>Artist approved</strong><small>The artist or authorised representative approved this campaign.</small></span></label>
+                  </div>
+                </details>
+
+                <details className='campaign-form-section'>
+                  <summary>Schedule</summary>
+                  <div className='campaign-form-grid'>
+                    <label className='field'>Launch time<input type='datetime-local' value={campaignDraft.launchesAt} onChange={(event) => setCampaignDraft({ ...campaignDraft, launchesAt: event.target.value })} /></label>
+                    <label className='field'>End time<input type='datetime-local' value={campaignDraft.endsAt} onChange={(event) => setCampaignDraft({ ...campaignDraft, endsAt: event.target.value })} /></label>
+                  </div>
+                </details>
+
+                <div className='campaign-form-actions'>
+                  <span>Gate: QA ≥ {campaignGate?.minimumQaScore || 80}; preview {campaignGate?.previewSeconds?.minimum || 10}–{campaignGate?.previewSeconds?.maximum || 45}s.</span>
+                  <button className='primary' type='submit' disabled={campaignBusy}>{campaignBusy ? 'Saving…' : 'Save private draft'}</button>
+                </div>
+              </form>
+            )}
+          </section>
 
           {analyticsStatus && <p className='form-status'>{analyticsStatus}</p>}
           {!analytics && !analyticsStatus && <div className='empty-state'><p>Growth evidence will appear as people use this release.</p></div>}

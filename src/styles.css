@@ -1524,8 +1524,28 @@ button { -webkit-tap-highlight-color: transparent; }
 @media (max-width: 700px) {
   .admin-console-heading,
   .admin-section-heading { align-items: stretch; flex-direction: column; }
-  .admin-section-nav { position: static; grid-template-columns: 1fr; }
-  .admin-section-nav button small { white-space: normal; }
+  .admin-console-heading .boss-badge { align-self: flex-start; width: auto; }
+  .admin-section-nav {
+    position: sticky;
+    top: 54px;
+    display: flex;
+    gap: 5px;
+    width: 100%;
+    padding: 5px;
+    overflow-x: auto;
+    border-radius: 15px;
+    scroll-padding-inline: 5px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .admin-section-nav::-webkit-scrollbar { display: none; }
+  .admin-section-nav button {
+    flex: 0 0 auto;
+    min-height: 42px;
+    padding: 9px 12px;
+    scroll-snap-align: start;
+  }
+  .admin-section-nav button small { display: none; }
   .admin-summary-grid,
   .admin-option-grid,
   .admin-form-grid,
@@ -9317,4 +9337,212 @@ details[open] > summary {
   .learn-hand-grid { grid-template-columns: minmax(0, 1fr); }
   .learn-teacher-verdict { grid-template-columns: minmax(0, 1fr); }
   .learn-teacher-verdict button { width: 100%; white-space: normal; }
+}
+/* Artist-to-fan campaign launch and challenge flow. */
+.studio-grid.is-campaign {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+.app-nav.is-campaign-nav { display: flex; width: auto; }
+.app-nav.is-campaign-nav .brand-button { width: auto; margin-right: 0; overflow: visible; }
+.app-nav.is-campaign-nav .brand-copy { display: grid; }
+
+.artist-challenge {
+  position: relative;
+  display: grid;
+  gap: 18px;
+  width: 100%;
+  max-width: 1180px;
+  box-sizing: border-box;
+  margin: 0 auto 18px;
+  padding: clamp(18px, 3vw, 32px);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--purple) 44%, var(--line));
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(255, 107, 214, .2), transparent 32%),
+    radial-gradient(circle at 8% 90%, rgba(88, 240, 255, .12), transparent 34%),
+    linear-gradient(145deg, rgba(29, 27, 74, .98), rgba(12, 15, 38, .98));
+  box-shadow: 0 24px 64px rgba(2, 4, 20, .3);
+}
+.artist-challenge *,
+.campaign-launchpad *,
+.campaign-form * { box-sizing: border-box; }
+
+.artist-challenge::after {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  content: '';
+  background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+.artist-challenge > * { position: relative; z-index: 1; min-width: 0; }
+.artist-challenge-hero { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: clamp(18px, 3vw, 34px); align-items: center; }
+.artist-challenge-cover {
+  display: grid;
+  width: 190px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 24px;
+  color: white;
+  background: linear-gradient(145deg, #7658ff, #e957c8);
+  box-shadow: 0 18px 42px rgba(8, 8, 34, .45);
+  font-size: 4.5rem;
+}
+.artist-challenge-cover img { width: 100%; height: 100%; object-fit: cover; }
+.artist-challenge-copy { display: grid; gap: 8px; }
+.artist-challenge-copy h1 { max-width: 860px; margin: 0; overflow-wrap: anywhere; font-size: clamp(1.8rem, 4vw, 3.7rem); line-height: 1.02; letter-spacing: -.045em; }
+.artist-challenge-copy p { max-width: 720px; margin: 0; color: var(--muted); line-height: 1.55; }
+.artist-challenge-copy .artist-challenge-song { color: #f4f1ff; font-size: clamp(.95rem, 2vw, 1.12rem); }
+.artist-challenge-copy > a { width: fit-content; color: #8feeff; font-weight: 750; text-decoration: none; }
+.artist-challenge-copy > a:hover { text-decoration: underline; }
+.artist-challenge-proof { display: flex; flex-wrap: wrap; gap: 7px; }
+.artist-challenge-proof span,
+.campaign-status,
+.campaign-gate {
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 9px;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(125, 230, 207, .28);
+  border-radius: 999px;
+  color: #9cf4df;
+  background: rgba(44, 139, 122, .12);
+  font-size: .68rem;
+  font-weight: 850;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+.artist-challenge-target { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 15px; border: 1px solid rgba(255,231,138,.26); border-radius: 16px; background: rgba(255,231,138,.07); }
+.artist-challenge-target span { color: var(--muted); font-size: .78rem; font-weight: 750; text-transform: uppercase; }
+.artist-challenge-target strong { color: var(--gold); font-size: 1.1rem; }
+.artist-challenge-action,
+.artist-challenge-result { display: grid; width: 100%; max-width: 100%; gap: 14px; padding: clamp(14px, 2vw, 22px); overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: rgba(8, 10, 29, .56); }
+.artist-challenge .learn-readiness { width: 100%; max-width: 100%; }
+.artist-challenge-action > small { color: var(--muted); text-align: center; }
+.artist-challenge-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.artist-challenge-buttons button { min-width: min(220px, 100%); }
+.artist-challenge-result { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+.artist-challenge-result-copy { min-width: 0; }
+.artist-challenge-result-copy h2,
+.artist-challenge-result-copy p { margin: 3px 0; overflow-wrap: anywhere; }
+.artist-challenge-result-copy p { color: var(--muted); }
+.artist-challenge-result .learn-win-share,
+.artist-challenge-result .artist-challenge-buttons { grid-column: 1 / -1; }
+.artist-challenge-exit { justify-self: center; border: 0; color: var(--muted); background: transparent; font-size: .8rem; text-decoration: underline; text-underline-offset: 3px; }
+.artist-challenge.is-loading,
+.artist-challenge.is-error { min-height: 260px; place-content: center; justify-items: center; text-align: center; }
+.artist-challenge.is-error h1,
+.artist-challenge.is-error p { max-width: 620px; margin: 0; }
+.campaign-loading-mark { display: flex; gap: 7px; }
+.campaign-loading-mark i { width: 9px; height: 9px; border-radius: 50%; background: var(--purple); animation: campaign-load 1s ease-in-out infinite alternate; }
+.campaign-loading-mark i:nth-child(2) { animation-delay: .15s; }
+.campaign-loading-mark i:nth-child(3) { animation-delay: .3s; }
+@keyframes campaign-load { to { opacity: .25; transform: translateY(-5px); } }
+
+.campaign-launchpad { display: grid; gap: 16px; padding: clamp(14px, 2.2vw, 22px); border: 1px solid color-mix(in srgb, var(--purple) 34%, var(--line)); border-radius: 20px; background: radial-gradient(circle at 100% 0%, rgba(166,107,255,.1), transparent 36%), var(--panel); }
+.campaign-launchpad-heading,
+.campaign-card > header,
+.campaign-form > header,
+.campaign-form-actions { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.campaign-launchpad-heading h3,
+.campaign-launchpad-heading p,
+.campaign-card h4,
+.campaign-card p,
+.campaign-form h4 { margin: 0; }
+.campaign-launchpad-heading > div { display: grid; gap: 4px; max-width: 720px; }
+.campaign-launchpad-heading > div > p:last-child,
+.campaign-card p { color: var(--muted); overflow-wrap: anywhere; line-height: 1.45; }
+.campaign-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.campaign-card { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--panel-strong) 92%, var(--purple) 3%); }
+.campaign-card.is-published { border-color: rgba(98,230,188,.4); }
+.campaign-card h4 { margin-top: 6px; overflow-wrap: anywhere; font-size: 1.05rem; }
+.campaign-card > header > div { min-width: 0; }
+.campaign-status { color: #cbc0ff; border-color: rgba(166,107,255,.3); background: rgba(166,107,255,.1); }
+.campaign-gate { flex: 0 0 auto; }
+.campaign-gate.blocked { color: #ffd18f; border-color: rgba(255,185,95,.3); background: rgba(255,185,95,.1); }
+.campaign-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.campaign-metrics > span { display: grid; gap: 3px; min-width: 0; padding: 8px; border-radius: 10px; background: rgba(255,255,255,.035); }
+.campaign-metrics small { color: var(--muted); font-size: .65rem; text-transform: uppercase; }
+.campaign-metrics strong { overflow-wrap: anywhere; font-size: .85rem; }
+.campaign-blockers { padding: 9px 11px; border-radius: 11px; background: rgba(255,185,95,.07); }
+.campaign-blockers summary { color: #ffd18f; cursor: pointer; font-size: .78rem; font-weight: 800; }
+.campaign-blockers ul { margin: 9px 0 0; padding-left: 18px; color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.campaign-funnel-details { padding: 9px 11px; border: 1px solid var(--line); border-radius: 11px; }
+.campaign-funnel-details summary { cursor: pointer; color: #dcd5ff; font-size: .78rem; font-weight: 800; }
+.campaign-funnel-details > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 9px; }
+.campaign-funnel-details > div > span { display: grid; min-width: 0; gap: 2px; padding: 7px; border-radius: 8px; background: rgba(255,255,255,.035); }
+.campaign-funnel-details small { color: var(--muted); overflow-wrap: anywhere; font-size: .62rem; text-transform: uppercase; }
+.campaign-funnel-details em { color: var(--muted); font-size: .61rem; font-style: normal; }
+.campaign-funnel-details p { margin: 8px 0 0; color: var(--muted); font-size: .7rem; }
+.campaign-card-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: auto; }
+.campaign-card-actions button { min-width: 0; padding: 8px 10px; font-size: .73rem; }
+.campaign-card-actions .danger { border-color: rgba(255,89,116,.35); color: #ffb5c2; background: rgba(157,23,52,.14); }
+.campaign-form { display: grid; gap: 14px; padding: clamp(14px, 2vw, 20px); border: 1px solid rgba(166,107,255,.34); border-radius: 17px; background: rgba(8,10,29,.48); }
+.campaign-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.campaign-form-wide { grid-column: 1 / -1; }
+.campaign-form .field { min-width: 0; }
+.campaign-form .field input,
+.campaign-form .field textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.campaign-form .field input[type='file'] { overflow: hidden; font-size: .74rem; }
+.campaign-form .field small { color: var(--muted); overflow-wrap: anywhere; }
+.campaign-form-section { border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.025); }
+.campaign-form-section > summary { padding: 12px 14px; cursor: pointer; font-weight: 800; }
+.campaign-form-section[open] > summary { border-bottom: 1px solid var(--line); }
+.campaign-form-section > .campaign-form-grid { padding: 14px; }
+.campaign-check { display: flex; gap: 10px; align-items: flex-start; min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.025); }
+.campaign-check input { flex: 0 0 auto; margin-top: 3px; }
+.campaign-check span { display: grid; gap: 3px; min-width: 0; }
+.campaign-check small { color: var(--muted); line-height: 1.4; }
+.campaign-form-actions { align-items: center; }
+.campaign-form-actions span { color: var(--muted); font-size: .74rem; }
+
+@media (max-width: 900px) {
+  .campaign-list { grid-template-columns: minmax(0, 1fr); }
+  .campaign-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 680px) {
+  .studio-page > .artist-challenge {
+    width: calc(100vw - 20px);
+    max-width: calc(100vw - 20px);
+    margin-inline: auto;
+  }
+  .artist-challenge { gap: 13px; padding: 15px; border-radius: 20px; }
+  .artist-challenge .learn-readiness { align-items: stretch; flex-direction: column; }
+  .artist-challenge .learn-readiness > button { width: 100%; max-width: 100%; }
+  .artist-challenge-hero { grid-template-columns: 88px minmax(0, 1fr); gap: 13px; align-items: start; }
+  .artist-challenge-cover { width: 88px; border-radius: 15px; font-size: 2.3rem; }
+  .artist-challenge-copy h1 { grid-column: 1 / -1; font-size: clamp(1.55rem, 8vw, 2.25rem); }
+  .artist-challenge-proof { grid-column: 1 / -1; }
+  .artist-challenge-copy { display: contents; }
+  .artist-challenge-copy > .eyebrow,
+  .artist-challenge-copy > .artist-challenge-song,
+  .artist-challenge-copy > p:not(.eyebrow),
+  .artist-challenge-copy > a { grid-column: 1 / -1; }
+  .artist-challenge-result { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; }
+  .artist-challenge-result .learn-score-ring,
+  .artist-challenge-result-copy,
+  .artist-challenge-result .learn-win-share,
+  .artist-challenge-result .artist-challenge-buttons { grid-column: 1; }
+  .artist-challenge-buttons { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .artist-challenge-buttons button { width: 100%; min-width: 0; }
+  .campaign-launchpad-heading,
+  .campaign-card > header,
+  .campaign-form > header,
+  .campaign-form-actions { align-items: stretch; flex-direction: column; }
+  .campaign-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .campaign-form-wide { grid-column: 1; }
+  .campaign-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .campaign-funnel-details > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .campaign-gate { flex: initial; }
 }

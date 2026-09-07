@@ -65,3 +65,39 @@ test('product summary reports activation, sharing, payment, and returning users'
   assert.equal(summary.returnSignal.returningActors, 1);
   assert.equal(summary.returnSignal.returningPercent, 100);
 });
+
+test('campaign summary measures the artist funnel and trusted activation value', () => {
+  const properties = {
+    campaignId: 'artist_campaign_12345678',
+    campaignSlug: 'independent-artist-midnight',
+    referralCode: 'MIDNIGHT20',
+  };
+  const base = {
+    anonymousId: 'anon_campaign_12345678',
+    sessionId: 'session_campaign_12345678',
+    path: 'studio',
+    release: 'test',
+  };
+  const events = [
+    ['campaign_viewed', {}],
+    ['campaign_song_loaded', {}],
+    ['campaign_attempt_started', {}],
+    ['campaign_attempt_completed', { score: 86 }],
+    ['campaign_shared', {}],
+    ['checkout_started', {}],
+    ['subscription_activated', { activationValueUsd: 14.99 }],
+  ].map(([eventName, extra], index) => ({
+    ...base,
+    eventId: `event_campaign_${index}_12345678`,
+    eventName,
+    userId: 'user_campaign_1',
+    occurredAt: `2026-09-07T10:0${index}:00Z`,
+    properties: { ...properties, ...extra },
+  }));
+  const [campaign] = summarizeProductEvents(events, 30).campaigns;
+  assert.equal(campaign.campaignId, properties.campaignId);
+  assert.equal(campaign.stages.find((stage) => stage.id === 'activated').actors, 1);
+  assert.equal(campaign.stages.find((stage) => stage.id === 'attempted').fromViewPercent, 100);
+  assert.equal(campaign.averageScore, 86);
+  assert.equal(campaign.attributedActivationValueUsd, 14.99);
+});

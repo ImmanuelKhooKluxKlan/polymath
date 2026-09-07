@@ -1,4 +1,4 @@
-export default function AppNav({ route, onNavigate, user }) {
+export default function AppNav({ route, onNavigate, user, focusedCampaign = false }) {
   const primaryItems = [
     ['studio', 'Piano'],
     ...(user ? [['your-songs', 'My songs']] : []),
@@ -24,7 +24,7 @@ export default function AppNav({ route, onNavigate, user }) {
   }
 
   return (
-    <nav className='app-nav' aria-label='Main navigation'>
+    <nav className={`app-nav ${focusedCampaign ? 'is-campaign-nav' : ''}`} aria-label='Main navigation'>
       <button className='brand-button' type='button' onClick={() => onNavigate('studio')} aria-label='Open Polymath Musician piano studio'>
         <span className='brand-mark'>PM</span>
         <span className='brand-copy'>
@@ -32,7 +32,7 @@ export default function AppNav({ route, onNavigate, user }) {
           <small>Musician</small>
         </span>
       </button>
-      <div className='nav-links'>
+      {!focusedCampaign && <div className='nav-links'>
         {primaryItems.map(([value, label]) => (
           <button
             key={value}
@@ -58,7 +58,7 @@ export default function AppNav({ route, onNavigate, user }) {
             ))}
           </div>
         </details>
-      </div>
+      </div>}
     </nav>
   );
 }
