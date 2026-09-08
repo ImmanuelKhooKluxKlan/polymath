@@ -102,6 +102,13 @@ jobs:
              --arg clientOrigins "$CLIENT_ORIGINS" \
              --arg appRelease "$APP_RELEASE" '
             .containerDefinitions[0].image = $image
+            | .containerDefinitions[0].healthCheck = {
+                command: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:3000/api/health/state || exit 1"],
+                interval: 30,
+                timeout: 5,
+                retries: 3,
+                startPeriod: 60
+              }
             | .containerDefinitions[0].environment = (
                 (.containerDefinitions[0].environment // [])
                 | map(select(.name != "RUNPOD_S3_REPLICAS"

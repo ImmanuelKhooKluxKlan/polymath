@@ -1,16 +1,18 @@
+const { SecretsManagerClient } = require('@aws-sdk/client-secrets-manager');
 const {
-  GetSecretValueCommand,
-  SecretsManagerClient,
-} = require('@aws-sdk/client-secrets-manager');
+  databaseCredentials,
+  parseSecret,
+  readSecret,
+} = require('./awsSecrets');
 
-function parseSecret(response) {
-  const text = response.SecretString || Buffer.from(response.SecretBinary || '', 'base64').toString('utf8');
-  const parsed = JSON.parse(text || '{}');
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('AWS runtime secret must contain a JSON object.');
-  }
-  return parsed;
-}
+const MANAGED_DATABASE_ENVIRONMENT_KEYS = new Set([
+  'DATABASE_URL',
+  'PGDATABASE',
+  'PGHOST',
+  'PGPASSWORD',
+  'PGPORT',
+  'PGUSER',
+]);
 
 function applyMissingEnvironment(values, target = process.env) {
   for (const [key, value] of Object.entries(values)) {
@@ -20,23 +22,36 @@ function applyMissingEnvironment(values, target = process.env) {
   return target;
 }
 
-async function readSecret(client, secretId) {
-  if (!secretId) return {};
-  return parseSecret(await client.send(new GetSecretValueCommand({ SecretId: secretId })));
+function withoutManagedDatabaseEnvironment(values = {}) {
+  return Object.fromEntries(
+    Object.entries(values).filter(([key]) => !MANAGED_DATABASE_ENVIRONMENT_KEYS.has(key)),
+  );
+}
+
+function applyManagedDatabaseCredentials(secret, target = process.env) {
+  const credentials = databaseCredentials(secret);
+  // DATABASE_URL embeds a password and takes precedence over separate PG fields.
+  // In AWS, the RDS-managed secret must be the only credential source.
+  delete target.DATABASE_URL;
+  target.PGUSER = credentials.username;
+  target.PGPASSWORD = credentials.password;
+  return target;
 }
 
 async function loadAwsEnvironment() {
   const client = new SecretsManagerClient({
     region: process.env.AWS_SECRET_REGION || process.env.AWS_REGION || 'us-east-2',
   });
+  const databaseSecretId = process.env.AWS_RDS_SECRET_ARN;
   const runtime = await readSecret(client, process.env.AWS_RUNTIME_SECRET_ARN);
-  applyMissingEnvironment(runtime);
+  applyMissingEnvironment(
+    databaseSecretId ? withoutManagedDatabaseEnvironment(runtime) : runtime,
+  );
 
-  const database = await readSecret(client, process.env.AWS_RDS_SECRET_ARN);
-  applyMissingEnvironment({
-    PGUSER: database.username,
-    PGPASSWORD: database.password,
-  });
+  if (databaseSecretId) {
+    const database = await readSecret(client, databaseSecretId);
+    applyManagedDatabaseCredentials(database);
+  }
 }
 
 async function start() {
@@ -53,4 +68,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { applyMissingEnvironment, loadAwsEnvironment, parseSecret, readSecret, start };
+module.exports = {
+  applyManagedDatabaseCredentials,
+  applyMissingEnvironment,
+  loadAwsEnvironment,
+  parseSecret,
+  readSecret,
+  start,
+  withoutManagedDatabaseEnvironment,
+};

@@ -20,7 +20,7 @@ resource "aws_lb_target_group" "ohio" {
 
   health_check {
     enabled             = true
-    path                = "/api/health"
+    path                = "/api/health/state"
     protocol            = "HTTP"
     matcher             = "200"
     interval            = 20
@@ -84,7 +84,7 @@ resource "aws_lb_target_group" "singapore" {
 
   health_check {
     enabled             = true
-    path                = "/api/health"
+    path                = "/api/health/state"
     protocol            = "HTTP"
     matcher             = "200"
     interval            = 20

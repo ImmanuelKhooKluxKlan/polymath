@@ -38,7 +38,9 @@ function createTeacherProjectionStore(options = {}) {
           host: databaseHost,
           port: Math.max(1, Number(options.databasePort || 5432)),
           user: String(options.databaseUser || '').trim(),
-          password: String(options.databasePassword || ''),
+          password: typeof options.databasePasswordProvider === 'function'
+            ? options.databasePasswordProvider
+            : String(options.databasePassword || ''),
           database: String(options.databaseName || 'polymath').trim(),
         }
       : null;

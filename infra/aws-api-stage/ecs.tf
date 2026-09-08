@@ -80,6 +80,13 @@ resource "aws_ecs_task_definition" "ohio" {
       protocol      = "tcp"
       appProtocol   = "http"
     }]
+    healthCheck = {
+      command     = ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:3000/api/health/state || exit 1"]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 60
+    }
     environment = concat(local.common_environment, [
       { name = "APP_REGION", value = "us-east-2" },
     ])
@@ -133,6 +140,13 @@ resource "aws_ecs_task_definition" "singapore" {
       protocol      = "tcp"
       appProtocol   = "http"
     }]
+    healthCheck = {
+      command     = ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:3000/api/health/state || exit 1"]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 60
+    }
     environment = concat(local.common_environment, [
       { name = "APP_REGION", value = "ap-southeast-1" },
     ])

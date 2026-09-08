@@ -96,6 +96,7 @@ const {
   trimRoomMessages,
 } = require('./communityChat');
 const { createChatBossAssistant } = require('./chatBossAssistant');
+const { createAwsRdsPasswordProvider } = require('./awsSecrets');
 const {
   learningAttemptsForUser,
   sanitizeLearningAttempt,
@@ -110,6 +111,11 @@ const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
 const CLIENT_ORIGINS = buildClientOrigins(process.env);
+const DATABASE_PASSWORD_PROVIDER = createAwsRdsPasswordProvider({
+  secretId: process.env.AWS_RDS_SECRET_ARN,
+  region: process.env.AWS_SECRET_REGION || process.env.AWS_REGION || 'us-east-2',
+  expectedUsername: process.env.PGUSER,
+});
 const REGISTRATION_OTP = createRegistrationOtpService(process.env);
 const TEACHER_ASSISTANT = createTeacherAssistant(process.env);
 const CHAT_BOSS_ASSISTANT = createChatBossAssistant(process.env);
@@ -120,6 +126,7 @@ const TEACHER_PROJECTIONS = createTeacherProjectionStore({
   databasePort: process.env.PGPORT,
   databaseUser: process.env.PGUSER,
   databasePassword: process.env.PGPASSWORD,
+  databasePasswordProvider: DATABASE_PASSWORD_PROVIDER,
   databaseName: process.env.PGDATABASE,
 });
 const TEACHER_REQUEST_WINDOWS = new Map();
@@ -205,6 +212,7 @@ const STATE_STORE = createStateStore({
   databasePort: process.env.PGPORT,
   databaseUser: process.env.PGUSER,
   databasePassword: process.env.PGPASSWORD,
+  databasePasswordProvider: DATABASE_PASSWORD_PROVIDER,
   databaseName: process.env.PGDATABASE,
   filePath: DB_PATH,
   stateKey: process.env.DATABASE_STATE_KEY || 'primary',
@@ -3336,7 +3344,9 @@ app.get('/api/site-configuration', async (req, res) => {
 
 app.get('/api/health/state', async (req, res) => {
   try {
-    await readDb();
+    ensureStorage();
+    const seed = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+    await STATE_STORE.health(seed);
     return res.json({
       ok: true,
       storage: STATE_STORE.provider,

@@ -101,6 +101,7 @@ class StateStore {
     databasePort,
     databaseUser,
     databasePassword,
+    databasePasswordProvider,
     databaseName,
     filePath,
     stateKey = 'primary',
@@ -114,7 +115,9 @@ class StateStore {
             host: this.databaseHost,
             port: Math.max(1, Number(databasePort || 5432)),
             user: String(databaseUser || '').trim(),
-            password: String(databasePassword || ''),
+            password: typeof databasePasswordProvider === 'function'
+              ? databasePasswordProvider
+              : String(databasePassword || ''),
             database: String(databaseName || 'polymath').trim(),
           }
         : null;
@@ -205,6 +208,21 @@ class StateStore {
     );
     if (result.rowCount !== 1) throw new Error('PostgreSQL state row is missing.');
     return attachMetadata(result.rows[0].document, result.rows[0].revision);
+  }
+
+  async health(seedDocument) {
+    await this.initialize(seedDocument);
+    if (!this.pool) {
+      JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+      return true;
+    }
+
+    const result = await this.pool.query(
+      'SELECT 1 AS ready FROM polymath_state WHERE state_key = $1',
+      [this.stateKey],
+    );
+    if (result.rowCount !== 1) throw new Error('PostgreSQL state row is missing.');
+    return true;
   }
 
   async write(document) {

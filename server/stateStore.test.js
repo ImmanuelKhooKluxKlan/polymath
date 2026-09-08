@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const { StateConflictError, createStateStore, mergeDocuments } = require('./stateStore');
 
@@ -12,6 +15,21 @@ test('separate PostgreSQL environment fields select the PostgreSQL provider', ()
     filePath: 'unused.json',
   });
   assert.equal(store.provider, 'postgresql');
+});
+
+test('PostgreSQL connections can resolve a rotated password dynamically', () => {
+  const passwordProvider = async () => 'current-password';
+  const store = createStateStore({
+    databaseHost: 'database.internal',
+    databasePort: 5432,
+    databaseUser: 'polymath',
+    databasePassword: 'stale-password',
+    databasePasswordProvider: passwordProvider,
+    databaseName: 'polymath',
+    filePath: 'unused.json',
+  });
+
+  assert.equal(store.databaseConfig.password, passwordProvider);
 });
 
 test('three-way merge preserves independent records from regional writers', () => {
@@ -74,4 +92,14 @@ test('local state store keeps product events outside the main state document', a
   const summary = await store.productEventSummary(7);
   assert.equal(summary.stages[0].actors, 1);
   assert.equal(summary.windowDays, 7);
+});
+
+test('local state health validates the state file without changing it', async (t) => {
+  const filePath = path.join(os.tmpdir(), `polymath-health-${process.pid}-${Date.now()}.json`);
+  fs.writeFileSync(filePath, JSON.stringify({ users: [] }));
+  t.after(() => fs.rmSync(filePath, { force: true }));
+  const store = createStateStore({ filePath });
+
+  assert.equal(await store.health({ users: [] }), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(filePath, 'utf8')), { users: [] });
 });
