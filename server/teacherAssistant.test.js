@@ -54,19 +54,28 @@ test('validates camera image data and normalizes scene JSON', () => {
   });
 });
 
-test('uses an OpenAI-compatible vision endpoint only for explicit snapshots', async () => {
+test('uses OpenAI vision only for explicit snapshots', async () => {
   let request;
   const assistant = createTeacherAssistant({
-    TEACHER_VISION_BASE_URL: 'https://vision.example/v1',
-    TEACHER_VISION_API_KEY: 'test-key',
-    TEACHER_VISION_MODEL: 'test-vlm',
+    OPENAI_API_KEY: 'sk-test-key',
+    OPENAI_VISION_MODEL: 'gpt-test-vision',
   }, {
     async fetch(url, options) {
       request = { url, ...options };
       return {
         ok: true,
         async json() {
-          return { choices: [{ message: { content: '{"summary":"A toy","objects":[{"name":"toy","attributes":"red","confidence":0.8}],"pianoVisible":false,"uncertainty":""}' } }] };
+          return {
+            id: 'resp_vision_12345678',
+            status: 'completed',
+            output: [{
+              type: 'message',
+              content: [{
+                type: 'output_text',
+                text: '{"summary":"A toy","objects":[{"name":"toy","attributes":"red","confidence":0.8}],"pianoVisible":false,"uncertainty":""}',
+              }],
+            }],
+          };
         },
       };
     },
@@ -76,7 +85,9 @@ test('uses an OpenAI-compatible vision endpoint only for explicit snapshots', as
     prompt: 'What did I buy?',
   });
   assert.equal(scene.objects[0].name, 'toy');
-  assert.equal(request.url, 'https://vision.example/v1/chat/completions');
+  assert.equal(request.url, 'https://api.openai.com/v1/responses');
   const body = JSON.parse(request.body);
-  assert.equal(body.messages[0].content[1].type, 'image_url');
+  assert.equal(body.model, 'gpt-test-vision');
+  assert.equal(body.input[0].content[1].type, 'input_image');
+  assert.equal(body.text.format.type, 'json_schema');
 });

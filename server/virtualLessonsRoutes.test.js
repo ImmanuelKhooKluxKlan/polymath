@@ -12,12 +12,12 @@ process.env.ADMIN_EMAILS = 'admin@example.test';
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 process.env.MUSCRIPTOR_ENABLED = 'false';
-process.env.RUNPOD_CHAT_BOSS_ENDPOINT_ID = 'test-chat-endpoint';
-process.env.RUNPOD_API_KEY = 'test-runpod-key';
+process.env.OPENAI_API_KEY = 'sk-test-openai-key';
+process.env.OPENAI_CHAT_MODEL = 'gpt-test-teacher';
 
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = (url, options) => {
-  if (String(url).startsWith('https://api.runpod.ai/')) {
+  if (String(url).startsWith('https://api.openai.com/v1/responses')) {
     return Promise.resolve(new Response(JSON.stringify({ error: 'simulated teacher outage' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },

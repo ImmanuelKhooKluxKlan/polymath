@@ -1,6 +1,10 @@
 'use strict';
 
-const { createChatBossRunpodClient } = require('./chatBossRunpod');
+const {
+  DEFAULT_CHAT_MODEL,
+  createOpenAiResponsesClient,
+  extractOutputText,
+} = require('./openAiResponses');
 
 const MAX_MESSAGES = 16;
 const MAX_MESSAGE_CHARS = 2000;
@@ -16,12 +20,7 @@ function boundedText(value, max = MAX_MESSAGE_CHARS) {
 }
 
 function extractAssistantText(body) {
-  const content = body?.choices?.[0]?.message?.content;
-  if (typeof content === 'string') return content.trim();
-  if (Array.isArray(content)) {
-    return content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join('').trim();
-  }
-  return '';
+  return extractOutputText(body);
 }
 
 function sanitizeMessages(messages) {
@@ -85,29 +84,34 @@ function parseSceneJson(text) {
 
 function createTeacherAssistant(env = process.env, options = {}) {
   const chatConfigured = Boolean(
-    options.chatClient || (clean(env.RUNPOD_CHAT_BOSS_ENDPOINT_ID) && clean(env.RUNPOD_API_KEY)),
+    options.chatClient || clean(env.OPENAI_API_KEY),
   );
   let chatClient = options.chatClient || null;
   if (chatConfigured && !chatClient) {
-    chatClient = createChatBossRunpodClient({
-      endpointId: env.RUNPOD_CHAT_BOSS_ENDPOINT_ID,
-      apiKey: env.RUNPOD_API_KEY,
-      model: env.RUNPOD_CHAT_BOSS_MODEL,
-      timeoutMs: env.RUNPOD_CHAT_BOSS_TIMEOUT_MS,
+    chatClient = createOpenAiResponsesClient({
+      apiKey: env.OPENAI_API_KEY,
+      baseUrl: env.OPENAI_BASE_URL,
+      organization: env.OPENAI_ORGANIZATION,
+      project: env.OPENAI_PROJECT,
+      model: env.OPENAI_CHAT_MODEL || DEFAULT_CHAT_MODEL,
+      reasoningEffort: env.OPENAI_CHAT_REASONING_EFFORT || 'low',
+      timeoutMs: env.OPENAI_TIMEOUT_MS,
       fetch: options.fetch,
     });
   }
 
-  const visionEndpointId = clean(env.RUNPOD_TEACHER_VISION_ENDPOINT_ID);
-  const visionBaseUrl = clean(env.TEACHER_VISION_BASE_URL)
-    || (visionEndpointId
-      ? `https://api.runpod.ai/v2/${encodeURIComponent(visionEndpointId)}/openai/v1`
-      : '');
-  const visionApiKey = clean(env.TEACHER_VISION_API_KEY || env.RUNPOD_API_KEY);
-  const visionModel = clean(env.TEACHER_VISION_MODEL);
-  const visionConfigured = Boolean(options.visionClient || (visionBaseUrl && visionApiKey && visionModel));
-  const requestFetch = options.fetch || globalThis.fetch;
-  const visionTimeoutMs = Math.max(1000, Number(env.TEACHER_VISION_TIMEOUT_MS) || DEFAULT_VISION_TIMEOUT_MS);
+  const visionModel = clean(env.OPENAI_VISION_MODEL || env.OPENAI_CHAT_MODEL || DEFAULT_CHAT_MODEL);
+  const visionConfigured = Boolean(options.visionClient || clean(env.OPENAI_API_KEY));
+  const visionAiClient = options.visionClient || (!visionConfigured ? null : createOpenAiResponsesClient({
+    apiKey: env.OPENAI_API_KEY,
+    baseUrl: env.OPENAI_BASE_URL,
+    organization: env.OPENAI_ORGANIZATION,
+    project: env.OPENAI_PROJECT,
+    model: visionModel,
+    reasoningEffort: env.OPENAI_VISION_REASONING_EFFORT || 'low',
+    timeoutMs: env.OPENAI_VISION_TIMEOUT_MS || DEFAULT_VISION_TIMEOUT_MS,
+    fetch: options.fetch,
+  }));
 
   function capabilities() {
     return {
@@ -151,10 +155,15 @@ function createTeacherAssistant(env = process.env, options = {}) {
     const result = await chatClient.chat([
       { role: 'system', content: system },
       ...history,
-    ], { temperature: 0.55, top_p: 0.85, max_tokens: 420 });
+    ], {
+      reasoning_effort: clean(env.OPENAI_CHAT_REASONING_EFFORT) || 'low',
+      max_output_tokens: 600,
+      prompt_cache_key: 'polymath-teacher-chat-v1',
+      metadata: { workload: 'teacher-chat' },
+    });
     const reply = extractAssistantText(result);
     if (!reply) throw new Error('The teacher model returned an empty reply.');
-    return { reply, provider: 'polymath-chat-boss' };
+    return { reply, provider: 'openai-responses' };
   }
 
   async function analyzeScene({ imageDataUrl, prompt }) {
@@ -167,47 +176,57 @@ function createTeacherAssistant(env = process.env, options = {}) {
     if (options.visionClient) {
       return options.visionClient({ imageDataUrl: image, prompt: boundedText(prompt, 500) });
     }
-    if (typeof requestFetch !== 'function') throw new Error('A fetch implementation is required.');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), visionTimeoutMs);
-    try {
-      const response = await requestFetch(`${visionBaseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${visionApiKey}`,
-          'Content-Type': 'application/json',
+    const body = await visionAiClient.chat([{
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: [
+            'Describe only clearly visible objects in this learner-shared camera snapshot.',
+            'Do not identify a person, infer sensitive traits, or guess obscured details.',
+            boundedText(prompt, 500),
+          ].filter(Boolean).join('\n'),
         },
-        body: JSON.stringify({
-          model: visionModel,
-          temperature: 0.1,
-          max_tokens: 500,
-          messages: [{
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: [
-                  'Describe only clearly visible objects in this learner-shared camera snapshot.',
-                  'Do not identify a person, infer sensitive traits, or guess obscured details.',
-                  'Return strict JSON: {"summary":string,"objects":[{"name":string,"attributes":string,"confidence":0..1}],"pianoVisible":boolean,"uncertainty":string}.',
-                  boundedText(prompt, 500),
-                ].filter(Boolean).join('\n'),
+        { type: 'input_image', image_url: image, detail: 'low' },
+      ],
+    }], {
+      reasoning_effort: clean(env.OPENAI_VISION_REASONING_EFFORT) || 'low',
+      max_output_tokens: 700,
+      prompt_cache_key: 'polymath-teacher-scene-v1',
+      metadata: { workload: 'teacher-scene' },
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'polymath_teacher_scene',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['summary', 'objects', 'pianoVisible', 'uncertainty'],
+            properties: {
+              summary: { type: 'string', maxLength: 800 },
+              objects: {
+                type: 'array',
+                maxItems: 12,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['name', 'attributes', 'confidence'],
+                  properties: {
+                    name: { type: 'string', maxLength: 100 },
+                    attributes: { type: 'string', maxLength: 240 },
+                    confidence: { type: 'number', minimum: 0, maximum: 1 },
+                  },
+                },
               },
-              { type: 'image_url', image_url: { url: image } },
-            ],
-          }],
-        }),
-        signal: controller.signal,
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const detail = body?.error?.message || body?.message || response.statusText;
-        throw new Error(`Teacher vision request failed (${response.status}): ${detail}`);
-      }
-      return parseSceneJson(extractAssistantText(body));
-    } finally {
-      clearTimeout(timeout);
-    }
+              pianoVisible: { type: 'boolean' },
+              uncertainty: { type: 'string', maxLength: 400 },
+            },
+          },
+        },
+      },
+    });
+    return parseSceneJson(extractAssistantText(body));
   }
 
   return Object.freeze({ capabilities, chat, analyzeScene });

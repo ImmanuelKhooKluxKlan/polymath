@@ -11,8 +11,8 @@ process.env.POLYMATH_DATA_DIR = testDataDir;
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 process.env.MUSCRIPTOR_ENABLED = 'false';
-process.env.RUNPOD_CHAT_BOSS_ENDPOINT_ID = 'queued-teacher-endpoint';
-process.env.RUNPOD_API_KEY = 'queued-teacher-test-key';
+process.env.OPENAI_API_KEY = 'sk-queued-teacher-test-key';
+process.env.OPENAI_CHAT_MODEL = 'gpt-test-teacher';
 
 const nativeFetch = globalThis.fetch;
 let statusChecks = 0;
@@ -20,29 +20,32 @@ let submittedPayload = null;
 
 globalThis.fetch = async (url, options = {}) => {
   const target = String(url);
-  if (!target.startsWith('https://api.runpod.ai/')) return nativeFetch(url, options);
-  if (target.endsWith('/run')) {
+  if (!target.startsWith('https://api.openai.com/v1/responses')) return nativeFetch(url, options);
+  if (target.endsWith('/responses') && options.method === 'POST') {
     submittedPayload = JSON.parse(options.body);
-    return new Response(JSON.stringify({ id: 'teacher_job_12345678', status: 'IN_QUEUE' }), {
+    return new Response(JSON.stringify({ id: 'resp_teacher_12345678', status: 'queued' }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (target.includes('/status/teacher_job_12345678')) {
+  if (target.endsWith('/responses/resp_teacher_12345678')) {
     statusChecks += 1;
     const body = statusChecks === 1
-      ? { id: 'teacher_job_12345678', status: 'IN_PROGRESS' }
+      ? { id: 'resp_teacher_12345678', status: 'in_progress' }
       : {
-        id: 'teacher_job_12345678',
-        status: 'COMPLETED',
-        output: { text: ['Start slowly with five relaxed C-major scales.'] },
+        id: 'resp_teacher_12345678',
+        status: 'completed',
+        output: [{
+          type: 'message',
+          content: [{ type: 'output_text', text: 'Start slowly with five relaxed C-major scales.' }],
+        }],
       };
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  return new Response(JSON.stringify({ id: 'teacher_job_12345678', status: 'CANCELLED' }), {
+  return new Response(JSON.stringify({ id: 'resp_teacher_12345678', status: 'cancelled' }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -50,7 +53,7 @@ globalThis.fetch = async (url, options = {}) => {
 
 const { app, readDb, writeDb } = require('./server');
 
-test('virtual teacher survives a long GPU cold start through a persistent queued reply', async (context) => {
+test('virtual teacher survives a slow model response through a persistent queued reply', async (context) => {
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
   });
@@ -116,14 +119,13 @@ test('virtual teacher survives a long GPU cold start through a persistent queued
   assert.match(submitted.data.requestId, /^teacher_reply_/);
   assert.equal(submitted.data.session.pendingReply.id, submitted.data.requestId);
   assert.equal(submitted.data.session.remainingSeconds <= 1800, true);
-  assert.equal(submittedPayload.input.openai_route, '/v1/chat/completions');
-  assert.equal(submittedPayload.input.openai_input.messages[0].role, 'system');
-  assert.match(submittedPayload.input.openai_input.messages[0].content, /live paid session/i);
-  assert.equal(submittedPayload.input.openai_input.max_tokens, 220);
-  assert.deepEqual(
-    submittedPayload.input.openai_input.chat_template_kwargs,
-    { enable_thinking: false },
-  );
+  assert.equal(submittedPayload.model, 'gpt-test-teacher');
+  assert.equal(submittedPayload.background, true);
+  assert.equal(submittedPayload.store, true);
+  assert.match(submittedPayload.instructions, /live paid session/i);
+  assert.equal(submittedPayload.input.at(-1).role, 'user');
+  assert.equal(submittedPayload.max_output_tokens, 640);
+  assert.equal(submittedPayload.reasoning.effort, 'low');
 
   const checking = await api(
     `/api/virtual-lessons/${started.data.session.id}/replies/${submitted.data.requestId}`,

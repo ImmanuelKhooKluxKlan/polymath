@@ -123,7 +123,7 @@ test('builds distinct open music and adult companion modes without gender assump
   assert.match(companion, /Never assume the learner's gender or orientation/i);
 });
 
-test('uses lower randomness for teaching and expressive settings for opted-in companion chat', async () => {
+test('uses bounded output and low reasoning for both teacher conversation modes', async () => {
   const calls = [];
   const assistant = createPolymathAssistant({}, {
     chatClient: {
@@ -144,10 +144,10 @@ test('uses lower randomness for teaching and expressive settings for opted-in co
     conversationMode: 'adult-companion',
     conversationPreferences: { companionStyle: 'playful' },
   });
-  assert.equal(calls[0].parameters.temperature, 0.7);
-  assert.equal(calls[1].parameters.temperature, 0.75);
-  assert.equal(calls[1].parameters.max_tokens, 220);
-  assert.equal(calls[1].parameters.top_k, 20);
+  assert.equal(calls[0].parameters.max_output_tokens, 640);
+  assert.equal(calls[0].parameters.reasoning_effort, 'low');
+  assert.equal(calls[1].parameters.max_output_tokens, 640);
+  assert.equal(calls[1].parameters.reasoning_effort, 'low');
   assert.match(calls[0].messages[0].content, /E2-A2-D3-G3-B3-E4/);
   assert.match(calls[1].messages[0].content, /sweetheart.*usually once/i);
   assert.match(calls[1].messages[0].content, /Never output a thinking process/i);

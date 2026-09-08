@@ -25,7 +25,7 @@ test('textFromOutput reads the native vLLM result shape', () => {
 test('assistant submits original chat history without a fine-tuning prompt', async () => {
   let submitted;
   const client = {
-    model: 'Qwen/Qwen3.5-35B-A3B',
+    model: 'gpt-5.6-terra',
     async submit(messages, sampling) {
       submitted = { messages, sampling };
       return { id: 'job-12345678', status: 'IN_QUEUE' };
@@ -35,21 +35,23 @@ test('assistant submits original chat history without a fine-tuning prompt', asy
   const result = await assistant.submit([{ role: 'user', content: 'Who are you?' }]);
   assert.equal(result.id, 'job-12345678');
   assert.deepEqual(submitted.messages, [{ role: 'user', content: 'Who are you?' }]);
-  assert.equal(submitted.sampling.max_tokens, 1024);
+  assert.equal(submitted.sampling.max_output_tokens, 1200);
+  assert.equal(submitted.sampling.reasoning_effort, 'low');
   assert.equal(assistant.capabilities().fineTuned, false);
+  assert.equal(assistant.capabilities().provider, 'OpenAI Responses API');
 });
 
-test('assistant returns a completed reply without exposing raw RunPod data', async () => {
+test('assistant returns a completed reply without exposing raw provider data', async () => {
   const assistant = createChatBossAssistant({}, {
     client: {
-      model: 'Qwen/Qwen3.5-35B-A3B',
+      model: 'gpt-5.6-terra',
       async status() {
         return {
           id: 'job-12345678',
           status: 'COMPLETED',
           delayTime: 25,
           executionTime: 50,
-          output: { text: ['Direct Qwen reply'] },
+          output: { text: ['Direct OpenAI reply'] },
           workerId: 'private-worker-id',
         };
       },
@@ -60,7 +62,7 @@ test('assistant returns a completed reply without exposing raw RunPod data', asy
     status: 'COMPLETED',
     active: false,
     finished: true,
-    reply: 'Direct Qwen reply',
+    reply: 'Direct OpenAI reply',
     error: '',
     delayTime: 25,
     executionTime: 50,

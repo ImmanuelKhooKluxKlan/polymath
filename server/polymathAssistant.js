@@ -1,6 +1,9 @@
 'use strict';
 
-const { createChatBossRunpodClient } = require('./chatBossRunpod');
+const {
+  DEFAULT_CHAT_MODEL,
+  createOpenAiResponsesClient,
+} = require('./openAiResponses');
 const { stripHiddenReasoning } = require('./assistantOutput');
 const { retrieveMusicKnowledge } = require('./musicKnowledge');
 const { normalizeConversationMode, sanitizeConversationPreferences } = require('./virtualLessons');
@@ -439,20 +442,24 @@ function teacherSystemPrompt({ teacher, evidence, conversationMode, conversation
 function createPolymathAssistant(env = process.env, options = {}) {
   const configured = Boolean(
     options.chatClient
-    || (clean(env.RUNPOD_CHAT_BOSS_ENDPOINT_ID) && clean(env.RUNPOD_API_KEY)),
+    || clean(env.OPENAI_API_KEY),
   );
-  const chatClient = options.chatClient || (configured ? createChatBossRunpodClient({
-    endpointId: env.RUNPOD_CHAT_BOSS_ENDPOINT_ID,
-    apiKey: env.RUNPOD_API_KEY,
-    model: env.RUNPOD_CHAT_BOSS_MODEL,
-    timeoutMs: env.RUNPOD_CHAT_BOSS_TIMEOUT_MS,
+  const chatClient = options.chatClient || (configured ? createOpenAiResponsesClient({
+    apiKey: env.OPENAI_API_KEY,
+    baseUrl: env.OPENAI_BASE_URL,
+    organization: env.OPENAI_ORGANIZATION,
+    project: env.OPENAI_PROJECT,
+    model: env.OPENAI_CHAT_MODEL || DEFAULT_CHAT_MODEL,
+    reasoningEffort: env.OPENAI_CHAT_REASONING_EFFORT || 'low',
+    timeoutMs: env.OPENAI_TIMEOUT_MS,
     fetch: options.fetch,
   }) : null);
 
   function capabilities() {
     return {
       available: configured,
-      provider: configured ? 'polymath-chatboss' : null,
+      provider: configured ? 'openai-responses' : null,
+      model: configured ? (clean(env.OPENAI_CHAT_MODEL) || chatClient?.model || DEFAULT_CHAT_MODEL) : null,
       replyTransport: configured ? 'queued' : null,
       roles: ['customer-service', 'music-teacher', 'adult-companion'],
       conversationModes: ['music-coach', 'adult-companion'],
@@ -553,12 +560,10 @@ function createPolymathAssistant(env = process.env, options = {}) {
         ...history,
       ],
       parameters: {
-        temperature: teacherMode === 'adult-companion' ? 0.75 : 0.7,
-        top_p: teacherMode === 'adult-companion' ? 0.9 : 0.8,
-        top_k: 20,
-        presence_penalty: teacherMode === 'adult-companion' ? 0.8 : 0.35,
-        repetition_penalty: 1.06,
-        max_tokens: 220,
+        reasoning_effort: clean(env.OPENAI_CHAT_REASONING_EFFORT) || 'low',
+        max_output_tokens: 640,
+        prompt_cache_key: 'polymath-virtual-teacher-v1',
+        metadata: { workload: 'virtual-teacher', mode: teacherMode },
       },
       context: {
         userText,
@@ -603,7 +608,7 @@ function createPolymathAssistant(env = process.env, options = {}) {
     }
     return {
       reply,
-      provider: 'polymath-chatboss',
+      provider: 'openai-responses',
       role: teacherMode === 'adult-companion' ? 'adult-companion' : 'music-teacher',
     };
   }
@@ -623,7 +628,7 @@ function createPolymathAssistant(env = process.env, options = {}) {
     }
     const submitted = await chatClient.submit(request.messages, request.parameters);
     const jobId = clean(submitted?.id);
-    if (!jobId) throw new Error('RunPod accepted the teacher reply without returning a job ID.');
+    if (!jobId) throw new Error('OpenAI accepted the teacher reply without returning a response ID.');
     return {
       completed: false,
       jobId,
@@ -765,12 +770,13 @@ function createPolymathAssistant(env = process.env, options = {}) {
       { role: 'system', content: system },
       ...history,
     ], {
-      temperature: isTeacher ? (teacherMode === 'adult-companion' ? 0.68 : 0.42) : 0.3,
-      top_p: isTeacher ? (teacherMode === 'adult-companion' ? 0.9 : 0.8) : 0.75,
-      max_tokens: isTeacher ? 640 : 360,
+      reasoning_effort: clean(env.OPENAI_CHAT_REASONING_EFFORT) || 'low',
+      max_output_tokens: isTeacher ? 800 : 500,
+      prompt_cache_key: isTeacher ? 'polymath-virtual-teacher-v1' : 'polymath-support-v1',
+      metadata: { workload: isTeacher ? 'virtual-teacher' : 'customer-support' },
     });
     const reply = extractAssistantText(body);
-    if (!reply) throw new Error('ChatBoss returned an empty reply.');
+    if (!reply) throw new Error('OpenAI returned an empty reply.');
     if (isTeacher && teacherMode === 'adult-companion' && companionReplyCrossesBoundary(reply)) {
       return {
         reply: companionBoundaryReply(),
@@ -793,7 +799,7 @@ function createPolymathAssistant(env = process.env, options = {}) {
     }
     return {
       reply,
-      provider: 'polymath-chatboss',
+      provider: 'openai-responses',
       role: isTeacher
         ? (teacherMode === 'adult-companion' ? 'adult-companion' : 'music-teacher')
         : 'customer-service',

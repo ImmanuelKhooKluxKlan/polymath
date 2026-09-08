@@ -1,9 +1,56 @@
 'use strict';
 
-const { createChatBossRunpodClient } = require('./chatBossRunpod');
+const {
+  DEFAULT_MUSIC_MODEL,
+  createOpenAiResponsesClient,
+} = require('./openAiResponses');
 
-const PROMPT_VERSION = 'polymath-song-architect-v001';
+const PROMPT_VERSION = 'polymath-song-architect-v002-openai';
 const FINISHED_STATUSES = new Set(['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED']);
+const LYRIC_SECTIONS = ['verse-1', 'pre-chorus', 'chorus', 'verse-2', 'bridge', 'final-chorus'];
+const stringArray = (maximumItems, maximumLength) => ({
+  type: 'array',
+  items: { type: 'string', maxLength: maximumLength },
+  maxItems: maximumItems,
+});
+const SONG_BLUEPRINT_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'title', 'summary', 'genre', 'mood', 'energy', 'bpm', 'key', 'timeSignature',
+    'referenceTraits', 'chordDegrees', 'structure', 'lyrics', 'vocalCoach',
+  ],
+  properties: {
+    title: { type: 'string', maxLength: 120 },
+    summary: { type: 'string', maxLength: 300 },
+    genre: { type: 'string', maxLength: 80 },
+    mood: { type: 'string', maxLength: 80 },
+    energy: { type: 'string', enum: ['low', 'medium', 'high'] },
+    bpm: { type: 'integer', minimum: 40, maximum: 220 },
+    key: { type: 'string', maxLength: 20 },
+    timeSignature: { type: 'string', enum: ['3/4', '4/4', '6/8'] },
+    referenceTraits: stringArray(8, 120),
+    chordDegrees: stringArray(12, 12),
+    structure: stringArray(16, 40),
+    lyrics: {
+      type: 'object',
+      additionalProperties: false,
+      required: LYRIC_SECTIONS,
+      properties: Object.fromEntries(LYRIC_SECTIONS.map((section) => [section, stringArray(12, 90)])),
+    },
+    vocalCoach: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['comfortableRange', 'delivery', 'breathing', 'practiceSteps'],
+      properties: {
+        comfortableRange: { type: 'string', maxLength: 30 },
+        delivery: stringArray(8, 180),
+        breathing: stringArray(8, 180),
+        practiceSteps: stringArray(10, 180),
+      },
+    },
+  },
+});
 
 function clean(value, maximum = 4000) {
   return String(value || '').trim().slice(0, maximum);
@@ -46,38 +93,11 @@ function systemPrompt(kind) {
     'Your job is to help a human create and perform an original song. The human remains the lead artist.',
     'A reference artist or song is only a source of high-level properties such as tempo range, groove, form, texture, energy, and vocal difficulty.',
     'Never copy, closely paraphrase, or continue protected lyrics. Never reproduce a recognizable melody, hook, voice, or signature passage.',
-    'Return one strict JSON object only. Do not add markdown, analysis, preambles, or text outside JSON.',
+    'Return only the song blueprint required by the provided structured-output schema.',
     'Use singable lines, deliberate repetition, natural stresses, and a clear emotional progression.',
     'Keep every lyric line under 90 characters and every coaching instruction practical.',
     `Task: ${kind === 'revise' ? 'revise the supplied original draft while preserving unchanged strengths' : 'create an original song blueprint and lyric draft'}.`,
-    'Required JSON schema:',
-    JSON.stringify({
-      title: 'Original song title',
-      summary: 'One-sentence artistic direction',
-      genre: 'genre',
-      mood: 'mood',
-      energy: 'low|medium|high',
-      bpm: 100,
-      key: 'C major',
-      timeSignature: '4/4',
-      referenceTraits: ['high-level trait only'],
-      chordDegrees: ['I', 'V', 'vi', 'IV'],
-      structure: ['intro', 'verse-1', 'pre-chorus', 'chorus', 'verse-2', 'chorus', 'bridge', 'final-chorus', 'outro'],
-      lyrics: {
-        'verse-1': ['line one', 'line two', 'line three', 'line four'],
-        'pre-chorus': ['line one', 'line two'],
-        chorus: ['line one', 'line two', 'line three', 'line four'],
-        'verse-2': ['line one', 'line two', 'line three', 'line four'],
-        bridge: ['line one', 'line two', 'line three', 'line four'],
-        'final-chorus': ['line one', 'line two', 'line three', 'line four'],
-      },
-      vocalCoach: {
-        comfortableRange: 'C3-G4',
-        delivery: ['short performance direction'],
-        breathing: ['where or how to breathe'],
-        practiceSteps: ['specific rehearsal step'],
-      },
-    }),
+    'Include all lyric sections even when a section contains no lines. Keep chord degrees in Roman-numeral form.',
   ].join('\n');
 }
 
@@ -162,30 +182,32 @@ function sanitizeBlueprint(value, fallbackBrief = {}) {
 }
 
 function createMusicCreationAssistant(env = process.env, options = {}) {
-  const endpointId = clean(env.RUNPOD_POLYMATH_CREATE_ENDPOINT_ID, 160);
-  const configured = Boolean(options.client || (endpointId && clean(env.RUNPOD_API_KEY, 1000)));
-  const client = options.client || (configured ? createChatBossRunpodClient({
-    endpointId,
-    apiKey: env.RUNPOD_API_KEY,
-    model: env.RUNPOD_POLYMATH_CREATE_MODEL || 'polymath-create-deepseek-v4',
-    timeoutMs: env.RUNPOD_POLYMATH_CREATE_TIMEOUT_MS || 20 * 60 * 1000,
+  const configured = Boolean(options.client || clean(env.OPENAI_API_KEY, 1000));
+  const client = options.client || (configured ? createOpenAiResponsesClient({
+    apiKey: env.OPENAI_API_KEY,
+    baseUrl: env.OPENAI_BASE_URL,
+    organization: env.OPENAI_ORGANIZATION,
+    project: env.OPENAI_PROJECT,
+    model: env.OPENAI_MUSIC_MODEL || DEFAULT_MUSIC_MODEL,
+    reasoningEffort: env.OPENAI_MUSIC_REASONING_EFFORT || 'medium',
+    timeoutMs: env.OPENAI_TIMEOUT_MS,
     fetch: options.fetch,
   }) : null);
 
   function capabilities() {
     return {
       configured,
-      provider: configured ? 'RunPod Serverless' : 'Local song architect',
-      model: clean(env.RUNPOD_POLYMATH_CREATE_DISPLAY_MODEL, 120) || 'DeepSeek V4 (private inference source)',
-      servedModel: clean(env.RUNPOD_POLYMATH_CREATE_MODEL, 120) || 'polymath-create-deepseek-v4',
+      provider: configured ? 'OpenAI Responses API' : 'Local song architect',
+      model: clean(env.OPENAI_MUSIC_MODEL, 120) || client?.model || DEFAULT_MUSIC_MODEL,
+      servedModel: clean(env.OPENAI_MUSIC_MODEL, 120) || client?.model || DEFAULT_MUSIC_MODEL,
       promptVersion: PROMPT_VERSION,
-      originalCheckpointPolicy: 'read-only',
+      modelPolicy: 'managed-api-no-project-weights',
     };
   }
 
   async function submit(kind, input) {
     if (!client) {
-      const error = new Error('The Polymath music assistant is not connected to its RunPod endpoint yet.');
+      const error = new Error('The Polymath music assistant is not connected to OpenAI yet.');
       error.code = 'MUSIC_CREATION_UNAVAILABLE';
       throw error;
     }
@@ -199,16 +221,25 @@ function createMusicCreationAssistant(env = process.env, options = {}) {
       { role: 'system', content: systemPrompt(kind) },
       { role: 'user', content: userPrompt(brief) },
     ], {
-      temperature: kind === 'revise' ? 0.65 : 0.82,
-      top_p: 0.9,
-      max_tokens: 3600,
+      reasoning_effort: clean(env.OPENAI_MUSIC_REASONING_EFFORT, 20) || 'medium',
+      max_output_tokens: 5200,
+      prompt_cache_key: `polymath-song-architect-${PROMPT_VERSION}`,
+      metadata: { workload: 'create-music', prompt_version: PROMPT_VERSION, task: kind },
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'polymath_song_blueprint',
+          strict: true,
+          schema: SONG_BLUEPRINT_SCHEMA,
+        },
+      },
     });
     return { ...result, brief, promptVersion: PROMPT_VERSION };
   }
 
   async function status(jobId, fallbackBrief = {}) {
     if (!client) {
-      const error = new Error('The Polymath music assistant is not connected to its RunPod endpoint yet.');
+      const error = new Error('The Polymath music assistant is not connected to OpenAI yet.');
       error.code = 'MUSIC_CREATION_UNAVAILABLE';
       throw error;
     }
@@ -223,7 +254,7 @@ function createMusicCreationAssistant(env = process.env, options = {}) {
         error = `The draft finished, but its structure was invalid: ${parseError.message}`;
       }
     } else if (['FAILED', 'TIMED_OUT'].includes(jobStatus)) {
-      error = clean(body?.error || body?.output?.error, 600) || 'RunPod could not complete this music draft.';
+      error = clean(body?.error || body?.output?.error, 600) || 'OpenAI could not complete this music draft.';
     }
     return {
       id: clean(body?.id || jobId, 160),
@@ -239,7 +270,7 @@ function createMusicCreationAssistant(env = process.env, options = {}) {
 
   async function cancel(jobId) {
     if (!client) {
-      const error = new Error('The Polymath music assistant is not connected to its RunPod endpoint yet.');
+      const error = new Error('The Polymath music assistant is not connected to OpenAI yet.');
       error.code = 'MUSIC_CREATION_UNAVAILABLE';
       throw error;
     }
@@ -251,6 +282,7 @@ function createMusicCreationAssistant(env = process.env, options = {}) {
 
 module.exports = {
   PROMPT_VERSION,
+  SONG_BLUEPRINT_SCHEMA,
   createMusicCreationAssistant,
   extractJson,
   sanitizeBlueprint,

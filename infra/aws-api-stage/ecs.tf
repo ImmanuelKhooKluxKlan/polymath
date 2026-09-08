@@ -20,6 +20,12 @@ locals {
     { name = "ARTIFACT_S3_FORCE_PATH_STYLE", value = "false" },
     { name = "AWS_SECRET_REGION", value = "us-east-2" },
     { name = "TEACHER_TTS_ENABLED", value = "true" },
+    { name = "OPENAI_CHAT_MODEL", value = "gpt-5.6-terra" },
+    { name = "OPENAI_MUSIC_MODEL", value = "gpt-6-astra" },
+    { name = "OPENAI_VISION_MODEL", value = "gpt-5.6-terra" },
+    { name = "OPENAI_CHAT_REASONING_EFFORT", value = "low" },
+    { name = "OPENAI_MUSIC_REASONING_EFFORT", value = "medium" },
+    { name = "OPENAI_VISION_REASONING_EFFORT", value = "low" },
     { name = "AWS_RUNTIME_SECRET_ARN", value = data.aws_secretsmanager_secret.runtime.arn },
     { name = "AWS_RDS_SECRET_ARN", value = aws_db_instance.primary.master_user_secret[0].secret_arn },
   ]

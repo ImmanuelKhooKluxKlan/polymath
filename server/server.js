@@ -3755,7 +3755,7 @@ function queuedTeacherPayload(session) {
     status: pending.status,
     message: pending.status === 'IN_PROGRESS'
       ? `${session.teacher?.name || 'Your teacher'} is preparing the reply...`
-      : `Waking ${session.teacher?.name || 'your teacher'}'s private GPU...`,
+      : `Starting ${session.teacher?.name || 'your teacher'}'s secure lesson reply...`,
     session: publicVirtualLesson(session),
   };
 }
@@ -4333,7 +4333,7 @@ app.get('/api/music-creation/capabilities', async (req, res) => {
     ...MUSIC_CREATION_ASSISTANT.capabilities(),
     workflow: 'human-led-songwriting',
     arranger: 'polymath-deterministic-arranger-v001',
-    originalCheckpointPolicy: 'read-only',
+    modelPolicy: 'managed-api-no-project-weights',
   });
 });
 

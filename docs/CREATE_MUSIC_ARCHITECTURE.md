@@ -11,10 +11,7 @@ Browser: Idea -> Sound choices -> Editable lyrics
                     |
                     | authenticated, entitled AI request
                     v
-AWS Node API -> RunPod Serverless -> DeepSeek V4 (read-only inference)
-                    |
-                    v
-          strict validated song blueprint
+AWS Node API -> OpenAI Responses API -> validated song blueprint
                     |
                     v
 Browser deterministic arranger
@@ -24,26 +21,33 @@ Browser deterministic arranger
   -> MIDI, JSON, and lyric exports
 ```
 
-DeepSeek decides language and high-level musical direction. It does **not** emit an unchecked MIDI file. The deterministic arranger converts its validated JSON blueprint into bounded note events, timing, dynamics, sections, lyric cues, and pedal events. This separation keeps output playable even if a language-model response is imperfect.
+OpenAI proposes language and high-level musical direction. It does **not** emit an unchecked MIDI file. The server requires a strict JSON Schema response, validates and bounds every field, and then gives that blueprint to Polymath's deterministic arranger. The arranger converts it into note events, timing, dynamics, sections, lyric cues, and pedal events. This separation keeps output playable even when a language-model suggestion is imperfect.
 
-## Checkpoint isolation
+## Model isolation
 
-- `RUNPOD_POLYMATH_CREATE_*` is a separate application namespace.
-- The existing DeepSeek V4 checkpoint is used for inference only.
-- No endpoint in this feature writes weights, adapters, or configuration to the source volume.
-- The code reports `originalCheckpointPolicy: read-only` so this rule is visible in diagnostics.
+- Polymath calls OpenAI through the server-side Responses API.
+- The default high-quality music model is set by `OPENAI_MUSIC_MODEL`.
+- Polymath has no access to OpenAI's underlying model weights and cannot overwrite them.
+- The owner's personal DeepSeek checkpoint, RunPod endpoint, and network volume are outside this feature and are not read, called, trained, or modified.
+- MuScriptor transcription remains a separate RunPod workload.
 
-If Create Music is fine-tuned later, first create a separate paid network volume and a versioned path such as:
+## Durable jobs
+
+Song drafts use OpenAI background responses. The browser receives a response ID immediately and polls the Polymath API. The Polymath API checks OpenAI by that ID. This means a browser refresh or a slower model response does not require one long HTTP connection.
 
 ```text
-/runpod-volume/models/polymath-create/
-  parent-manifest.json
-  adapters/v001/
-  merged/v001/
-  serving/v001-q4/
-```
+POST /api/music-creation/jobs
+  -> POST /v1/responses with background=true
+  -> save response ID and bounded brief
 
-Train a LoRA adapter against a pinned BF16/FP16 parent checkpoint, evaluate it on held-out songwriting briefs, then quantize the approved merged artifact for a **new** serving endpoint. Never train against or overwrite the personal DeepSeek volume. The current Q4 MXFP4 file is a serving artifact, not the preferred training source.
+GET /api/music-creation/jobs/:id
+  -> GET /v1/responses/:response_id
+  -> queued | in_progress | completed | failed
+  -> validate blueprint before returning it
+
+POST /api/music-creation/jobs/:id/cancel
+  -> POST /v1/responses/:response_id/cancel
+```
 
 ## Access and billing
 
@@ -66,19 +70,33 @@ Paid plans require their matching PayPal plan ID before publication. Once a plan
 - Every project query is scoped to the authenticated user ID.
 - Optimistic revisions reject stale-tab overwrites with HTTP 409.
 - AI jobs are owned by one user and cannot be polled or cancelled by another.
-- The API stores the bounded brief and validated blueprint, not model secrets.
+- The API stores the bounded brief and validated blueprint, not API keys.
+- Synchronous support requests use `store=false`.
+- Background music and teacher jobs must remain retrievable while active and are referenced only by their opaque response IDs.
 
 ## Environment variables
 
 ```dotenv
-RUNPOD_POLYMATH_CREATE_ENDPOINT_ID=
-RUNPOD_POLYMATH_CREATE_MODEL=polymath-create-deepseek-v4
-RUNPOD_POLYMATH_CREATE_DISPLAY_MODEL=DeepSeek V4 (read-only source)
-RUNPOD_POLYMATH_CREATE_TIMEOUT_MS=1200000
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_ORGANIZATION=
+OPENAI_PROJECT=
+OPENAI_CHAT_MODEL=gpt-5.6-terra
+OPENAI_MUSIC_MODEL=gpt-6-astra
+OPENAI_VISION_MODEL=gpt-5.6-terra
+OPENAI_CHAT_REASONING_EFFORT=low
+OPENAI_MUSIC_REASONING_EFFORT=medium
+OPENAI_VISION_REASONING_EFFORT=low
+OPENAI_TIMEOUT_MS=50000
+OPENAI_VISION_TIMEOUT_MS=120000
 ```
 
-`RUNPOD_API_KEY` remains server-side. Never put it in Vite variables, browser code, Git, or a downloaded project.
+`OPENAI_API_KEY` remains server-side in AWS Secrets Manager. Never put it in a `VITE_` variable, browser code, Git, screenshots, or downloaded projects.
 
-## Current performance observation
+## Cost controls
 
-The 2026-09-07 live contract test waited about 424.8 seconds for the scaled-to-zero worker, then completed inference in about 17.5 seconds and returned a valid blueprint. The long first response is therefore a cold-start/capacity issue. Manual arranging and rehearsal do not depend on that worker and remain available while it is cold.
+- Chat/support uses the configurable balanced model and low reasoning effort.
+- Create Music uses the configurable flagship model and medium reasoning effort because blueprint quality matters more there.
+- Inputs, history lengths, output tokens, and generated arrays are bounded in code.
+- Requests run only when a user invokes an AI feature; there is no always-on OpenAI worker charge.
+- Admins can switch model IDs through GitHub environment variables without editing application code.

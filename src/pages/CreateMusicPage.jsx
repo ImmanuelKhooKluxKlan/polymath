@@ -347,7 +347,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
       try {
         const data = await apiRequest(`/api/music-creation/jobs/${encodeURIComponent(activeJobId)}`);
         if (cancelled) return;
-        setAiStatus(data.status === 'IN_QUEUE' ? 'Waiting for a GPU worker…' : data.status === 'IN_PROGRESS' ? 'Writing and arranging your draft…' : '');
+        setAiStatus(data.status === 'IN_QUEUE' ? 'Your song draft is queued…' : data.status === 'IN_PROGRESS' ? 'Writing and arranging your draft…' : '');
         if (data.status === 'COMPLETED' && data.blueprint) {
           setProject((current) => {
             const next = applySongBlueprint(current, data.blueprint);

@@ -42,13 +42,13 @@ test('song architect submits a bounded, original-song request and parses its blu
   });
   assert.equal(submitted.id, 'job_create_12345');
   assert.match(submittedMessages[0].content, /Never copy/);
-  assert.match(submittedMessages[0].content, /strict JSON object/);
+  assert.match(submittedMessages[0].content, /structured-output schema/);
 
   const completed = await assistant.status(submitted.id, submitted.brief);
   assert.equal(completed.finished, true);
   assert.equal(completed.blueprint.title, 'After the rain');
   assert.deepEqual(completed.blueprint.chordDegrees, ['I', 'V', 'vi', 'IV']);
-  assert.equal(assistant.capabilities().originalCheckpointPolicy, 'read-only');
+  assert.equal(assistant.capabilities().modelPolicy, 'managed-api-no-project-weights');
 });
 
 test('song architect rejects empty requests and malformed blueprints', async () => {

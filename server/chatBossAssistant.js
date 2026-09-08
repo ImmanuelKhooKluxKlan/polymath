@@ -1,6 +1,9 @@
 'use strict';
 
-const { createChatBossRunpodClient } = require('./chatBossRunpod');
+const {
+  DEFAULT_CHAT_MODEL,
+  createOpenAiResponsesClient,
+} = require('./openAiResponses');
 
 const MAX_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 6000;
@@ -47,22 +50,24 @@ function createInvalidRequest(message) {
 }
 
 function createChatBossAssistant(env = process.env, options = {}) {
-  const endpointId = clean(env.RUNPOD_CHAT_BOSS_ENDPOINT_ID);
-  const configured = Boolean(options.client || (endpointId && clean(env.RUNPOD_API_KEY)));
-  const client = options.client || (configured ? createChatBossRunpodClient({
-    endpointId,
-    apiKey: env.RUNPOD_API_KEY,
-    model: env.RUNPOD_CHAT_BOSS_MODEL,
-    timeoutMs: env.RUNPOD_CHAT_BOSS_TIMEOUT_MS,
+  const configured = Boolean(options.client || clean(env.OPENAI_API_KEY));
+  const client = options.client || (configured ? createOpenAiResponsesClient({
+    apiKey: env.OPENAI_API_KEY,
+    baseUrl: env.OPENAI_BASE_URL,
+    organization: env.OPENAI_ORGANIZATION,
+    project: env.OPENAI_PROJECT,
+    model: env.OPENAI_CHAT_MODEL || DEFAULT_CHAT_MODEL,
+    reasoningEffort: env.OPENAI_CHAT_REASONING_EFFORT || 'low',
+    timeoutMs: env.OPENAI_TIMEOUT_MS,
     fetch: options.fetch,
   }) : null);
 
   function capabilities() {
     return {
       configured,
-      provider: 'RunPod Serverless',
-      model: clean(env.RUNPOD_CHAT_BOSS_DISPLAY_MODEL) || 'Qwen/Qwen3.5-35B-A3B',
-      servedModel: clean(env.RUNPOD_CHAT_BOSS_MODEL) || client?.model || 'polymath-chat-boss',
+      provider: 'OpenAI Responses API',
+      model: clean(env.OPENAI_CHAT_MODEL) || client?.model || DEFAULT_CHAT_MODEL,
+      servedModel: clean(env.OPENAI_CHAT_MODEL) || client?.model || DEFAULT_CHAT_MODEL,
       fineTuned: false,
       historyStorage: 'browser',
     };
@@ -70,7 +75,7 @@ function createChatBossAssistant(env = process.env, options = {}) {
 
   async function submit(messages) {
     if (!client) {
-      const error = new Error('Chat Boss is not connected to RunPod yet.');
+      const error = new Error('Chat Boss is not connected to OpenAI yet.');
       error.code = 'CHAT_BOSS_UNAVAILABLE';
       throw error;
     }
@@ -79,15 +84,16 @@ function createChatBossAssistant(env = process.env, options = {}) {
       throw createInvalidRequest('Send a user message to Chat Boss.');
     }
     return client.submit(safeMessages, {
-      temperature: 0.7,
-      top_p: 0.8,
-      max_tokens: 1024,
+      reasoning_effort: clean(env.OPENAI_CHAT_REASONING_EFFORT) || 'low',
+      max_output_tokens: 1200,
+      prompt_cache_key: 'polymath-chat-boss-v1',
+      metadata: { workload: 'chat-boss' },
     });
   }
 
   async function status(jobId) {
     if (!client) {
-      const error = new Error('Chat Boss is not connected to RunPod yet.');
+      const error = new Error('Chat Boss is not connected to OpenAI yet.');
       error.code = 'CHAT_BOSS_UNAVAILABLE';
       throw error;
     }
@@ -100,7 +106,7 @@ function createChatBossAssistant(env = process.env, options = {}) {
       finished: FINISHED_STATUSES.has(jobStatus),
       reply: jobStatus === 'COMPLETED' ? textFromOutput(body?.output) : '',
       error: jobStatus === 'FAILED' || jobStatus === 'TIMED_OUT'
-        ? clean(body?.error || body?.output?.error) || 'RunPod could not complete this reply.'
+        ? clean(body?.error || body?.output?.error) || 'OpenAI could not complete this reply.'
         : '',
       delayTime: Number(body?.delayTime) || 0,
       executionTime: Number(body?.executionTime) || 0,
@@ -109,7 +115,7 @@ function createChatBossAssistant(env = process.env, options = {}) {
 
   async function cancel(jobId) {
     if (!client) {
-      const error = new Error('Chat Boss is not connected to RunPod yet.');
+      const error = new Error('Chat Boss is not connected to OpenAI yet.');
       error.code = 'CHAT_BOSS_UNAVAILABLE';
       throw error;
     }

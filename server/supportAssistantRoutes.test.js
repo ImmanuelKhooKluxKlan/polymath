@@ -12,13 +12,13 @@ process.env.ADMIN_EMAILS = 'admin@example.test';
 process.env.NODE_ENV = 'test';
 process.env.REGISTRATION_OTP_TEST_CODE = '123456';
 process.env.MUSCRIPTOR_ENABLED = 'false';
-process.env.RUNPOD_CHAT_BOSS_ENDPOINT_ID = 'test-chat-endpoint';
-process.env.RUNPOD_API_KEY = 'test-runpod-key';
+process.env.OPENAI_API_KEY = 'sk-test-openai-key';
+process.env.OPENAI_CHAT_MODEL = 'gpt-test-support';
 process.env.SUPPORT_REQUEST_INTERVAL_MS = '0';
 
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = (url, options) => {
-  if (String(url).startsWith('https://api.runpod.ai/')) {
+  if (String(url).startsWith('https://api.openai.com/v1/responses')) {
     if (String(options?.body || '').includes('force-outage')) {
       return Promise.resolve(new Response(JSON.stringify({ error: 'simulated outage' }), {
         status: 503,
@@ -26,7 +26,12 @@ globalThis.fetch = (url, options) => {
       }));
     }
     return Promise.resolve(new Response(JSON.stringify({
-      choices: [{ message: { content: 'Here is a concise support answer.' } }],
+      id: 'resp_support_12345678',
+      status: 'completed',
+      output: [{
+        type: 'message',
+        content: [{ type: 'output_text', text: 'Here is a concise support answer.' }],
+      }],
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },

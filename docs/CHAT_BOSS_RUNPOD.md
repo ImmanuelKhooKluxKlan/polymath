@@ -1,4 +1,6 @@
-# Polymath Chat Boss on RunPod
+# Archived: former Polymath Chat Boss on RunPod
+
+> Historical deployment record only. Polymath no longer calls this endpoint. Chat Boss, support, virtual-teacher conversation, and Create Music now use the OpenAI Responses API. Personal RunPod models are outside the Polymath project and must not be changed by application deployments.
 
 This deployment is intentionally separate from the existing MuScriptor endpoints.
 

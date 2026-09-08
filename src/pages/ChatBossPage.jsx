@@ -32,8 +32,8 @@ function wait(ms, signal) {
 }
 
 function statusCopy(status) {
-  if (status === 'IN_PROGRESS') return 'Qwen is writing your reply…';
-  if (status === 'IN_QUEUE') return 'Waking the RunPod GPU… first reply can take a few minutes.';
+  if (status === 'IN_PROGRESS') return 'OpenAI is writing your reply…';
+  if (status === 'IN_QUEUE') return 'Your secure OpenAI reply is queued…';
   return 'Preparing Chat Boss…';
 }
 
@@ -84,7 +84,7 @@ export default function ChatBossPage({ user, onNavigate }) {
           consecutiveErrors = 0;
           setRunStatus(job.status);
           if (job.status === 'COMPLETED') {
-            const reply = String(job.reply || '').trim() || 'Qwen completed the job but returned no text.';
+            const reply = String(job.reply || '').trim() || 'OpenAI completed the response but returned no text.';
             setMessages((current) => {
               const next = [...current, { role: 'assistant', content: reply, createdAt: new Date().toISOString() }];
               saveHistory(next);
@@ -96,7 +96,7 @@ export default function ChatBossPage({ user, onNavigate }) {
             return;
           }
           if (['FAILED', 'TIMED_OUT', 'CANCELLED'].includes(job.status)) {
-            setError(job.error || `RunPod ended the job with status ${job.status}.`);
+            setError(job.error || `OpenAI ended the response with status ${job.status}.`);
             window.localStorage.removeItem(ACTIVE_JOB_KEY);
             setJobId('');
             setRunStatus('');
@@ -107,7 +107,7 @@ export default function ChatBossPage({ user, onNavigate }) {
           if (requestError.name === 'AbortError') return;
           consecutiveErrors += 1;
           if (consecutiveErrors >= 5) {
-            setError(`${requestError.message} Your RunPod job is still saved; reload to try checking it again.`);
+            setError(`${requestError.message} Your OpenAI response is still saved; reload to check it again.`);
             return;
           }
           await wait(3500, controller.signal);
@@ -120,7 +120,7 @@ export default function ChatBossPage({ user, onNavigate }) {
   }, [jobId, user?.admin]);
 
   const modelLabel = useMemo(
-    () => capabilities?.model || 'Qwen/Qwen3.5-35B-A3B',
+    () => capabilities?.model || 'OpenAI',
     [capabilities?.model],
   );
 
@@ -191,7 +191,7 @@ export default function ChatBossPage({ user, onNavigate }) {
       <section className="chat-boss-gate">
         <span className="chat-boss-kicker">Private AI</span>
         <h1>Chat Boss</h1>
-        <p>Sign in with your Polymath administrator account to use your private RunPod model.</p>
+        <p>Sign in with your Polymath administrator account to use the private AI workspace.</p>
         <button type="button" className="primary" onClick={() => onNavigate('account', { next: 'chat-boss' })}>
           Sign in
         </button>
@@ -204,7 +204,7 @@ export default function ChatBossPage({ user, onNavigate }) {
       <section className="chat-boss-gate">
         <span className="chat-boss-kicker">Owner only</span>
         <h1>Chat Boss is private</h1>
-        <p>This account cannot start paid GPU jobs.</p>
+        <p>This account cannot start administrator AI requests.</p>
         <button type="button" onClick={() => onNavigate('studio')}>Return to studio</button>
       </section>
     );
@@ -214,9 +214,9 @@ export default function ChatBossPage({ user, onNavigate }) {
     <section className="chat-boss-page">
       <header className="chat-boss-header">
         <div>
-          <span className="chat-boss-kicker">Your private RunPod chat</span>
+          <span className="chat-boss-kicker">Your private OpenAI workspace</span>
           <h1>Chat Boss</h1>
-          <p>{modelLabel} · original weights · no fine-tuned adapter</p>
+          <p>{modelLabel} · OpenAI Responses API</p>
         </div>
         <div className="chat-boss-header-actions">
           <button type="button" onClick={exportChat} disabled={!messages.length}>Export</button>
@@ -228,10 +228,10 @@ export default function ChatBossPage({ user, onNavigate }) {
         <i className={capabilities?.configured ? 'is-ready' : ''} aria-hidden="true" />
         <span>
           {loadingCapabilities
-            ? 'Checking RunPod…'
+            ? 'Checking OpenAI…'
             : capabilities?.configured
-              ? 'Connected · scales to zero when idle'
-              : 'RunPod connection is not configured'}
+              ? 'Connected · requests run only when you send them'
+              : 'OpenAI connection is not configured'}
         </span>
         <small>History is saved only in this browser.</small>
       </div>
@@ -239,9 +239,9 @@ export default function ChatBossPage({ user, onNavigate }) {
       <div className="chat-boss-transcript" ref={transcriptRef} aria-live="polite">
         {!messages.length && (
           <div className="chat-boss-empty">
-            <span>QB</span>
-            <h2>Talk directly to Qwen</h2>
-            <p>The first reply may be slow while a Serverless GPU wakes. Following replies should be faster.</p>
+            <span>AI</span>
+            <h2>Talk to Chat Boss</h2>
+            <p>Use this private workspace for planning, writing, and technical questions.</p>
           </div>
         )}
         {messages.map((message, index) => (
