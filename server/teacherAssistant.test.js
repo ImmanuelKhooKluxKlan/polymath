@@ -18,6 +18,10 @@ test('reports unavailable remote capabilities without pretending they work', () 
     localKeyboardVision: true,
     generalSceneVision: false,
     scenePrivacy: 'Snapshots are sent only when the learner presses Look. They are not retained by Polymath.',
+    promptVersions: {
+      conversation: 'polymath-teacher-v002',
+      vision: 'polymath-teacher-scene-v002',
+    },
   });
 });
 
@@ -88,6 +92,8 @@ test('uses OpenAI vision only for explicit snapshots', async () => {
   assert.equal(request.url, 'https://api.openai.com/v1/responses');
   const body = JSON.parse(request.body);
   assert.equal(body.model, 'gpt-test-vision');
+  assert.match(body.instructions, /Polymath Teacher Vision/);
   assert.equal(body.input[0].content[1].type, 'input_image');
+  assert.equal(body.metadata.prompt_version, 'polymath-teacher-scene-v002');
   assert.equal(body.text.format.type, 'json_schema');
 });

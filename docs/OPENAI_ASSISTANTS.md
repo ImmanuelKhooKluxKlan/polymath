@@ -1,13 +1,19 @@
 # OpenAI assistants in Polymath
 
-Polymath uses the OpenAI Responses API for four application workloads:
+Polymath uses the OpenAI Responses API for six separately ruled application workloads:
 
 1. Administrator Chat Boss
 2. Signed-in customer support
-3. Paid virtual-teacher conversation and explicit camera snapshots
-4. Create Music song-blueprint generation
+3. Paid virtual-teacher music coaching
+4. Opted-in adult companion conversation
+5. Explicit, single-snapshot teacher vision
+6. Create Music song-blueprint generation
 
 All calls originate in the Node server. The browser never receives the OpenAI API key.
+
+The complete role, authority, context, and versioning map is in
+[`AI_BOT_RULEBOOK.md`](./AI_BOT_RULEBOOK.md). Runtime contracts live in
+`server/assistantBehavior.js`.
 
 ## Why two model tiers
 

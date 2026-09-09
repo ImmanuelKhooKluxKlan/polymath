@@ -17,8 +17,10 @@ process.env.OPENAI_CHAT_MODEL = 'gpt-test-support';
 process.env.SUPPORT_REQUEST_INTERVAL_MS = '0';
 
 const nativeFetch = globalThis.fetch;
+const openAiRequests = [];
 globalThis.fetch = (url, options) => {
   if (String(url).startsWith('https://api.openai.com/v1/responses')) {
+    openAiRequests.push(JSON.parse(String(options?.body || '{}')));
     if (String(options?.body || '').includes('force-outage')) {
       return Promise.resolve(new Response(JSON.stringify({ error: 'simulated outage' }), {
         status: 503,
@@ -119,6 +121,14 @@ test('Help requires sign-in, allows seven daily questions, then returns admin he
     });
     assert.equal(answer.status, 200);
     assert.equal(answer.data.support.remainingQuestions, 6 - index);
+    if (index === 0) {
+      const request = openAiRequests.at(-1);
+      assert.match(request.instructions, /SERVER-SUPPLIED TRUSTED SUPPORT CONTEXT/);
+      assert.match(request.instructions, /help@polymath\.test/);
+      assert.match(request.instructions, /polymath-chill-monthly/);
+      assert.match(request.instructions, /"mcoinsPerUsd":1/);
+      assert.equal(request.metadata.prompt_version, 'polymath-support-v002');
+    }
   }
 
   const exhausted = await api('/api/assistant/support', {

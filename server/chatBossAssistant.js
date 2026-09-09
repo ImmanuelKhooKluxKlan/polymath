@@ -4,7 +4,11 @@ const {
   DEFAULT_CHAT_MODEL,
   createOpenAiResponsesClient,
 } = require('./openAiResponses');
-const { SYSTEMS } = require('./assistantBehavior');
+const {
+  OWNER_CONTEXT,
+  PROMPT_VERSIONS,
+  SYSTEMS,
+} = require('./assistantBehavior');
 
 const MAX_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 6000;
@@ -71,6 +75,8 @@ function createChatBossAssistant(env = process.env, options = {}) {
       servedModel: clean(env.OPENAI_CHAT_MODEL) || client?.model || DEFAULT_CHAT_MODEL,
       fineTuned: false,
       historyStorage: 'browser',
+      promptVersion: PROMPT_VERSIONS.chatboss,
+      contextPolicy: 'server-owned-design-context-no-live-system-access',
     };
   }
 
@@ -85,13 +91,20 @@ function createChatBossAssistant(env = process.env, options = {}) {
       throw createInvalidRequest('Send a user message to Chat Boss.');
     }
     return client.submit([
-      { role: 'system', content: SYSTEMS.chatboss },
+      {
+        role: 'system',
+        content: [
+          SYSTEMS.chatboss,
+          'Known Polymath design context (not live health evidence):',
+          OWNER_CONTEXT,
+        ].join('\n'),
+      },
       ...safeMessages,
     ], {
       reasoning_effort: clean(env.OPENAI_CHAT_REASONING_EFFORT) || 'low',
       max_output_tokens: 1200,
-      prompt_cache_key: 'polymath-chat-boss-v1',
-      metadata: { workload: 'chat-boss' },
+      prompt_cache_key: PROMPT_VERSIONS.chatboss,
+      metadata: { workload: 'chat-boss', prompt_version: PROMPT_VERSIONS.chatboss },
     });
   }
 

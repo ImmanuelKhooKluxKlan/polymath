@@ -36,11 +36,15 @@ test('assistant submits a server-owned behavior contract before chat history', a
   assert.equal(result.id, 'job-12345678');
   assert.equal(submitted.messages[0].role, 'system');
   assert.match(submitted.messages[0].content, /Polymath Chat Boss/);
+  assert.match(submitted.messages[0].content, /React\/Vite/);
+  assert.match(submitted.messages[0].content, /not live health evidence/i);
   assert.deepEqual(submitted.messages.slice(1), [{ role: 'user', content: 'Who are you?' }]);
   assert.equal(submitted.sampling.max_output_tokens, 1200);
   assert.equal(submitted.sampling.reasoning_effort, 'low');
   assert.equal(assistant.capabilities().fineTuned, false);
   assert.equal(assistant.capabilities().provider, 'OpenAI Responses API');
+  assert.equal(assistant.capabilities().promptVersion, 'polymath-chat-boss-v002');
+  assert.equal(submitted.sampling.metadata.prompt_version, 'polymath-chat-boss-v002');
 });
 
 test('assistant returns a completed reply without exposing raw provider data', async () => {

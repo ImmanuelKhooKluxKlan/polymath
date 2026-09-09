@@ -85,7 +85,14 @@ test('keeps support and teacher instructions separated and grounded', async () =
       },
     },
   });
-  await assistant.supportChat({ messages: [{ role: 'user', content: 'How do uploads work?' }], accountContext: { tier: 'chill' } });
+  await assistant.supportChat({
+    messages: [{ role: 'user', content: 'How do uploads work?' }],
+    accountContext: { tier: 'chill', apiKey: 'must-not-reach-model' },
+    productContext: {
+      subscriptions: [{ name: 'Chill', price: '7.99', currency: 'USD', interval: 'MONTH' }],
+      support: { contact: { email: 'help@example.test' } },
+    },
+  });
   await assistant.teacherChat({
     messages: [{ role: 'user', content: 'Explain a C major scale.' }],
     accountContext: { studentName: 'Maya', sessionMemory: { goal: 'smooth rhythm' } },
@@ -94,6 +101,10 @@ test('keeps support and teacher instructions separated and grounded', async () =
   });
   assert.match(requests[0][0].content, /Never claim you changed/);
   assert.doesNotMatch(requests[0][0].content, /measuredPractice only/);
+  assert.match(requests[0][0].content, /"price":"7.99"/);
+  assert.match(requests[0][0].content, /help@example\.test/);
+  assert.doesNotMatch(requests[0][0].content, /must-not-reach-model/);
+  assert.equal(requests[0][1].role, 'user');
   assert.match(requests[1][0].content, /measuredPractice only/);
   assert.match(requests[1][0].content, /C4/);
   assert.match(requests[1][0].content, /Maya/);

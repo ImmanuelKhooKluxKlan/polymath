@@ -3469,6 +3469,7 @@ app.post('/api/assistant/support', requireAuth, async (req, res) => {
   try {
     if (reservation.reserved) await writeDb(req.db);
     const safe = safeUser(req.user);
+    const publicCatalog = listPublicCatalog(req.db, PRODUCTS);
     const answer = await POLYMATH_ASSISTANT.supportChat({
       messages: req.body?.messages,
       accountContext: {
@@ -3476,6 +3477,42 @@ app.post('/api/assistant/support', requireAuth, async (req, res) => {
         admin: safe.admin,
         translationAllowance: safe.translationAllowance,
         readySheetAllowance: safe.readySheetAllowance,
+      },
+      productContext: {
+        support: {
+          allowance: supportQuestionAllowance(req.user, { unlimited }),
+          contact: supportContact,
+        },
+        economy: {
+          mcoinsPerUsd: MCOINS_PER_USD,
+          translationMcoinCosts: {
+            subscriber: SUBSCRIBER_TRANSLATION_MCOIN_COST,
+            free: FREE_TRANSLATION_MCOIN_COST,
+          },
+        },
+        subscriptions: publicCatalog.products
+          .filter((product) => product.kind === 'subscription')
+          .slice(0, 40)
+          .map((product) => ({
+            id: product.id,
+            name: product.name,
+            price: product.price,
+            currency: product.currency,
+            interval: product.interval,
+            category: product.categoryName,
+            features: product.features,
+          })),
+        publicRules: {
+          marketplaceFeePercent: policies.marketplaceFeePercent,
+          teacherMarketplaceFeePercent: policies.teacherMarketplaceFeePercent,
+          withdrawalFeePercent: policies.withdrawalFeePercent,
+          minimumWithdrawalMcoins: policies.minimumWithdrawalMcoins,
+          maximumWithdrawalMcoins: policies.maximumWithdrawalMcoins,
+          virtualLessonPricePer30MinutesMcoins: policies.virtualLessonPricePer30MinutesMcoins,
+          policyNotice: policies.policyNotice,
+          termsUrl: policies.termsUrl,
+          privacyUrl: policies.privacyUrl,
+        },
       },
     });
     return res.json({
