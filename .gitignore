@@ -8,6 +8,7 @@ server/data/uploads/
 server/data/model-lab/
 .vscode/
 .local-dev/
+server/fine-tuning/generated/
 .DS_Store
 __pycache__/
 *.py[cod]

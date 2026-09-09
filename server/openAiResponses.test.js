@@ -6,6 +6,7 @@ const {
   createOpenAiResponsesClient,
   extractOutputText,
   normalizeResponse,
+  modelAcceptsReasoning,
   prepareInput,
 } = require('./openAiResponses');
 
@@ -103,6 +104,9 @@ test('Responses helpers parse multimodal input and normalize incomplete response
   }]);
   assert.equal(prepared.input[0].content[1].type, 'input_image');
   assert.equal(extractOutputText({ output_text: 'Shortcut text' }), 'Shortcut text');
+  assert.equal(modelAcceptsReasoning('gpt-5.6-terra'), true);
+  assert.equal(modelAcceptsReasoning('gpt-4.1-mini-2025-04-14'), false);
+  assert.equal(modelAcceptsReasoning('ft:gpt-4.1-mini-2025-04-14:org:polymath'), false);
   assert.deepEqual(normalizeResponse({
     id: 'resp_incomplete_12345678',
     status: 'incomplete',

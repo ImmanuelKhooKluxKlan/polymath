@@ -17,6 +17,34 @@ All calls originate in the Node server. The browser never receives the OpenAI AP
 
 Every model name is configuration, not hard-wired product logic. Change the environment variable, deploy a new task revision, run evaluations, and roll back if quality drops.
 
+## Fine-tuning boundary
+
+The flagship GPT-6 Astra and GPT-5.6 models are not fine-tunable. The optional supervised candidate therefore uses `gpt-4.1-mini-2025-04-14`, which is non-reasoning and supports supervised fine-tuning. `server/openAiResponses.js` detects GPT-4.1 and omits the unsupported `reasoning` field automatically.
+
+OpenAI's current documentation says the fine-tuning platform is winding down and is unavailable to new fine-tuning users. A training job can run only if this OpenAI project already has access. The production models remain the prompt-engineered OpenAI models unless a candidate exists and passes the holdout gate.
+
+The optimization order is deliberate:
+
+1. Establish deterministic evals first.
+2. Keep training and validation prompts separate.
+3. Validate JSONL, roles, uniqueness, and secret scanning locally.
+4. Upload only the reviewed training and validation files.
+5. Start an SFT job with automatic hyperparameters.
+6. Compare the returned `ft:` model against the current baseline.
+7. Promote only at 90% or better and only when it beats the baseline.
+
+Local commands:
+
+```powershell
+cd C:\Users\admin\polymath_repo\server
+npm run openai:finetune:validate
+npm run openai:finetune:submit
+node fine-tuning\cli.js status ftjob-REPLACE_ME
+npm run openai:eval -- gpt-5.6-terra ft:gpt-4.1-mini-2025-04-14:REPLACE_ME
+```
+
+Fine-tuning run records and complete eval replies remain under `.local-dev/openai-fine-tuning`, which Git ignores. Generated upload files are also ignored. The source examples are versioned so every behavioral change can be reviewed.
+
 ## Request styles
 
 Support and the older teacher endpoint are synchronous and use `store=false`. Chat Boss, Create Music, and paid virtual-teacher replies use background Responses jobs so they survive slow replies and page reloads.

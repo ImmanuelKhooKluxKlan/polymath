@@ -23,6 +23,13 @@ function normalizeReasoningEffort(value, fallback = 'low') {
     : fallback;
 }
 
+function modelAcceptsReasoning(model) {
+  const id = clean(model, 220).toLowerCase();
+  // GPT-4.1 is a non-reasoning family. Fine-tuned IDs retain the base-model
+  // name after the `ft:` prefix, so they must omit the reasoning field too.
+  return !/^(?:ft:)?gpt-4\.1(?:-|$)/.test(id);
+}
+
 function normalizeContent(content, role) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return clean(content, 20000);
@@ -211,9 +218,6 @@ function createOpenAiResponsesClient(options = {}) {
       input: prepared.input,
       background,
       store: background,
-      reasoning: {
-        effort: normalizeReasoningEffort(requestedEffort, defaultReasoningEffort),
-      },
       max_output_tokens: positiveInteger(
         parameters.max_output_tokens || parameters.max_tokens,
         800,
@@ -221,6 +225,11 @@ function createOpenAiResponsesClient(options = {}) {
         100000,
       ),
     };
+    if (modelAcceptsReasoning(model)) {
+      payload.reasoning = {
+        effort: normalizeReasoningEffort(requestedEffort, defaultReasoningEffort),
+      };
+    }
     if (prepared.instructions) payload.instructions = prepared.instructions;
     if (parameters.text && typeof parameters.text === 'object') payload.text = parameters.text;
     if (parameters.metadata && typeof parameters.metadata === 'object') payload.metadata = parameters.metadata;
@@ -288,5 +297,6 @@ module.exports = {
   extractOutputText,
   normalizeResponse,
   normalizedStatus,
+  modelAcceptsReasoning,
   prepareInput,
 };
