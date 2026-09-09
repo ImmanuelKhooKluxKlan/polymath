@@ -225,12 +225,21 @@ function createOpenAiFineTuningClient(options = {}) {
     return requestJson(`/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
+  async function listFiles({ purpose = 'fine-tune', limit = 100 } = {}) {
+    const query = new URLSearchParams({
+      limit: String(Math.max(1, Math.min(10000, Math.floor(Number(limit) || 100)))),
+    });
+    if (clean(purpose, 80)) query.set('purpose', clean(purpose, 80));
+    return requestJson(`/files?${query}`, { method: 'GET' });
+  }
+
   return Object.freeze({
     uploadTrainingFile,
     createJob,
     retrieveJob,
     cancelJob,
     listEvents,
+    listFiles,
     deleteFile,
   });
 }

@@ -5,26 +5,42 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { createOpenAiResponsesClient, extractOutputText } = require('../openAiResponses');
-const { SYSTEMS } = require('./buildDataset');
+const { SYSTEMS } = require('../assistantBehavior');
 
 function clean(value) {
   return String(value || '').trim();
 }
 
+function normalizeForMatching(value) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\bcan(?:no|')t\b/g, 'cannot')
+    .replace(/\bdon't\b/g, 'do not')
+    .replace(/\bwon't\b/g, 'will not')
+    .replace(/\bshouldn't\b/g, 'should not')
+    .replace(/\s+/g, ' ');
+}
+
 function includesText(haystack, needle) {
-  return clean(haystack).toLowerCase().includes(clean(needle).toLowerCase());
+  return normalizeForMatching(haystack).includes(normalizeForMatching(needle));
 }
 
 function gradeReply(reply, testCase) {
   const required = Array.isArray(testCase.mustInclude) ? testCase.mustInclude : [];
+  const requiredAny = Array.isArray(testCase.mustIncludeAny) ? testCase.mustIncludeAny : [];
   const forbidden = Array.isArray(testCase.mustNotInclude) ? testCase.mustNotInclude : [];
   const missing = required.filter((phrase) => !includesText(reply, phrase));
+  const missingAny = requiredAny
+    .map((group) => (Array.isArray(group) ? group : [group]).map(clean).filter(Boolean))
+    .filter((group) => group.length && !group.some((phrase) => includesText(reply, phrase)));
   const forbiddenFound = forbidden.filter((phrase) => includesText(reply, phrase));
   const words = clean(reply).split(/\s+/).filter(Boolean).length;
   const tooLong = words > Math.max(1, Number(testCase.maxWords) || 200);
   return {
-    passed: !missing.length && !forbiddenFound.length && !tooLong,
+    passed: !missing.length && !missingAny.length && !forbiddenFound.length && !tooLong,
     missing,
+    missingAny,
     forbiddenFound,
     words,
     tooLong,
@@ -91,4 +107,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { evaluateModel, gradeReply };
+module.exports = { evaluateModel, gradeReply, includesText, normalizeForMatching };

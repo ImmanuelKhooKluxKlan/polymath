@@ -22,7 +22,7 @@ test('textFromOutput reads the native vLLM result shape', () => {
   assert.equal(textFromOutput({ output: { text: ['Nested reply'] } }), 'Nested reply');
 });
 
-test('assistant submits original chat history without a fine-tuning prompt', async () => {
+test('assistant submits a server-owned behavior contract before chat history', async () => {
   let submitted;
   const client = {
     model: 'gpt-5.6-terra',
@@ -34,7 +34,9 @@ test('assistant submits original chat history without a fine-tuning prompt', asy
   const assistant = createChatBossAssistant({}, { client });
   const result = await assistant.submit([{ role: 'user', content: 'Who are you?' }]);
   assert.equal(result.id, 'job-12345678');
-  assert.deepEqual(submitted.messages, [{ role: 'user', content: 'Who are you?' }]);
+  assert.equal(submitted.messages[0].role, 'system');
+  assert.match(submitted.messages[0].content, /Polymath Chat Boss/);
+  assert.deepEqual(submitted.messages.slice(1), [{ role: 'user', content: 'Who are you?' }]);
   assert.equal(submitted.sampling.max_output_tokens, 1200);
   assert.equal(submitted.sampling.reasoning_effort, 'low');
   assert.equal(assistant.capabilities().fineTuned, false);

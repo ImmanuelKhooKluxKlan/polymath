@@ -72,11 +72,28 @@ async function submit() {
     const recordPath = writeRun(job.id, record);
     return { recordPath, ...record };
   } catch (error) {
-    if (trainingFile?.id && !validationFile?.id) {
-      await api.deleteFile(trainingFile.id).catch(() => {});
-    }
+    await Promise.allSettled(
+      [trainingFile?.id, validationFile?.id].filter(Boolean).map((fileId) => api.deleteFile(fileId)),
+    );
     throw error;
   }
+}
+
+async function cleanup() {
+  const api = client();
+  const listed = await api.listFiles({ purpose: 'fine-tune', limit: 100 });
+  const ownedNames = new Set([
+    'polymath-assistant-train.jsonl',
+    'polymath-assistant-validation.jsonl',
+  ]);
+  const matches = (Array.isArray(listed?.data) ? listed.data : [])
+    .filter((file) => ownedNames.has(String(file?.filename || '').trim()) && file?.id);
+  const deleted = [];
+  for (const file of matches) {
+    await api.deleteFile(file.id);
+    deleted.push({ id: file.id, filename: file.filename });
+  }
+  return { deletedCount: deleted.length, deleted };
 }
 
 async function status(jobId) {
@@ -105,8 +122,10 @@ async function main() {
   } else if (command === 'cancel') {
     if (!jobId) throw new Error('Usage: node fine-tuning/cli.js cancel <ftjob-id>');
     result = await cancel(jobId);
+  } else if (command === 'cleanup') {
+    result = await cleanup();
   } else {
-    throw new Error('Commands: validate, submit, status <ftjob-id>, cancel <ftjob-id>.');
+    throw new Error('Commands: validate, submit, status <ftjob-id>, cancel <ftjob-id>, cleanup.');
   }
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
@@ -118,4 +137,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { cancel, safeJob, status, submit, writeRun };
+module.exports = { cancel, cleanup, safeJob, status, submit, writeRun };

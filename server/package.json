@@ -16,6 +16,7 @@
     "state:verify-postgres": "node migrateStateToPostgres.js --verify-only",
     "openai:finetune:validate": "node fine-tuning/cli.js validate",
     "openai:finetune:submit": "node fine-tuning/cli.js submit",
+    "openai:finetune:cleanup": "node fine-tuning/cli.js cleanup",
     "openai:eval": "node fine-tuning/evaluateAssistant.js"
   },
   "dependencies": {

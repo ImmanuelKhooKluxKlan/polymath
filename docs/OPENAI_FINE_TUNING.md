@@ -8,7 +8,7 @@ The candidate is for Chat Boss, support, and virtual-teacher text. Create Music 
 
 ## Dataset
 
-The reviewed source is:
+The curated source is:
 
 ```text
 server/fine-tuning/polymath-assistant.examples.json
@@ -55,6 +55,14 @@ Submit a paid training job after `OPENAI_API_KEY` is configured and project acce
 npm run openai:finetune:submit
 ```
 
+If a submission is rejected after files were uploaded, the CLI now removes both
+temporary files automatically. To remove Polymath-named fine-tuning uploads from
+an earlier interrupted attempt:
+
+```powershell
+npm run openai:finetune:cleanup
+```
+
 The command prints a non-secret job ID and writes a run record. Check it later:
 
 ```powershell
@@ -88,4 +96,18 @@ Rollback:
 
 ## Access limitation
 
-As of 2026-09-09, official OpenAI documentation says fine-tuning is winding down and is not accessible to new users. If this project lacks access, keep the eval suite and use the flagship model with stronger prompts, deterministic tools, and retrieval. Do not claim that a fine-tune occurred when the API did not create a job.
+As of 2026-09-09, official OpenAI documentation says organizations without prior
+fine-tuning history cannot create training jobs. Polymath's project was tested on
+that date and OpenAI returned HTTP 403 before creating a job. No OpenAI weights
+were changed.
+
+Polymath therefore uses the supported fallback: the versioned server-owned
+behavior contract in `server/assistantBehavior.js`, deterministic application
+tools, retrieval, and holdout evaluation. After correcting false-negative rubric
+rules, the untuned baseline was 9/12 (75%). The behavior-tuned GPT-5.6 Terra
+configuration then passed three independent runs, 36/36 checks (100%). These are
+small contract tests, not a claim of universal model accuracy. Keep collecting
+real, consented, de-identified failures and expand the holdout set before making
+broad quality claims.
+
+Do not claim that weight fine-tuning occurred when the API did not create a job.

@@ -4,6 +4,7 @@ const {
   DEFAULT_CHAT_MODEL,
   createOpenAiResponsesClient,
 } = require('./openAiResponses');
+const { SYSTEMS } = require('./assistantBehavior');
 const { stripHiddenReasoning } = require('./assistantOutput');
 const { retrieveMusicKnowledge } = require('./musicKnowledge');
 const { normalizeConversationMode, sanitizeConversationPreferences } = require('./virtualLessons');
@@ -414,6 +415,7 @@ function teacherSystemPrompt({ teacher, evidence, conversationMode, conversation
   ];
 
   return [
+    mode === 'adult-companion' ? SYSTEMS.companion : SYSTEMS.teacher,
     'You are a Polymath virtual music teacher speaking inside a live paid session.',
     `Selected character: ${JSON.stringify(safeContext(teacher, 1400))}. Stay recognisably in that persona across the conversation.`,
     teacherSpokenPersona(teacher, mode),
@@ -755,6 +757,7 @@ function createPolymathAssistant(env = process.env, options = {}) {
       conversationMode: teacherMode,
       conversationPreferences,
     }) : [
+      SYSTEMS.support,
       'You are Polymath Support for the Polymath Musician web application.',
       'Answer clearly, briefly, and in dyslexia-friendly language: one idea per paragraph and short steps.',
       'You may explain Piano, Guitar, Instruments, Learn, Band, Composers, subscriptions, Mcoins, uploads, and account verification.',

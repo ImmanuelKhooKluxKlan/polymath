@@ -91,9 +91,28 @@ test('fine-tuning client uploads JSONL and submits a supervised job without expo
   assert.equal(JSON.stringify(job).includes('test-never-log'), false);
 });
 
+test('fine-tuning client lists and deletes only validated file IDs', async () => {
+  const requests = [];
+  const client = createOpenAiFineTuningClient({
+    apiKey: 'test-never-log',
+    async fetch(url, options) {
+      requests.push({ url, options });
+      if (options.method === 'DELETE') return response({ id: 'file-polymath123', deleted: true });
+      return response({ data: [{ id: 'file-polymath123', filename: 'polymath-assistant-train.jsonl' }] });
+    },
+  });
+  const files = await client.listFiles({ purpose: 'fine-tune', limit: 25 });
+  assert.equal(files.data[0].id, 'file-polymath123');
+  assert.match(requests[0].url, /purpose=fine-tune/);
+  assert.match(requests[0].url, /limit=25/);
+  assert.equal((await client.deleteFile('file-polymath123')).deleted, true);
+  await assert.rejects(() => client.deleteFile('../secret'), /Invalid OpenAI file ID/);
+});
+
 test('deterministic eval grader enforces required facts, forbidden claims, and length', () => {
   const rubric = {
     mustInclude: ['C4', '500 ms'],
+    mustIncludeAny: [['slowly', 'use a metronome']],
     mustNotInclude: ['I heard'],
     maxWords: 20,
   };
@@ -101,5 +120,15 @@ test('deterministic eval grader enforces required facts, forbidden claims, and l
   const failed = gradeReply('I heard C4 end early.', rubric);
   assert.equal(failed.passed, false);
   assert.deepEqual(failed.missing, ['500 ms']);
+  assert.deepEqual(failed.missingAny, [['slowly', 'use a metronome']]);
   assert.deepEqual(failed.forbiddenFound, ['I heard']);
+});
+
+test('deterministic eval grader normalizes common contractions and supports safe negation', () => {
+  const result = gradeReply("I can't verify that, so don't paste your password.", {
+    mustInclude: ['cannot', 'do not', 'password'],
+    mustNotInclude: ['yes, paste your password'],
+    maxWords: 30,
+  });
+  assert.equal(result.passed, true);
 });

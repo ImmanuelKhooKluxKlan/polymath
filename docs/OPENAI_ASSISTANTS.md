@@ -23,6 +23,12 @@ The flagship GPT-6 Astra and GPT-5.6 models are not fine-tunable. The optional s
 
 OpenAI's current documentation says the fine-tuning platform is winding down and is unavailable to new fine-tuning users. A training job can run only if this OpenAI project already has access. The production models remain the prompt-engineered OpenAI models unless a candidate exists and passes the holdout gate.
 
+Polymath's project returned HTTP 403 when tested on 2026-09-09, so no OpenAI
+weight update occurred. The current production candidate instead shares a
+versioned behavior contract across Chat Boss, support, and teacher workloads and
+must pass repeated holdout evaluations. This is behavior/prompt tuning, not model
+weight fine-tuning.
+
 The optimization order is deliberate:
 
 1. Establish deterministic evals first.

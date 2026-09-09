@@ -4,6 +4,7 @@ const {
   DEFAULT_CHAT_MODEL,
   createOpenAiResponsesClient,
 } = require('./openAiResponses');
+const { SYSTEMS } = require('./assistantBehavior');
 
 const MAX_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 6000;
@@ -83,7 +84,10 @@ function createChatBossAssistant(env = process.env, options = {}) {
     if (!safeMessages.length || safeMessages.at(-1)?.role !== 'user') {
       throw createInvalidRequest('Send a user message to Chat Boss.');
     }
-    return client.submit(safeMessages, {
+    return client.submit([
+      { role: 'system', content: SYSTEMS.chatboss },
+      ...safeMessages,
+    ], {
       reasoning_effort: clean(env.OPENAI_CHAT_REASONING_EFFORT) || 'low',
       max_output_tokens: 1200,
       prompt_cache_key: 'polymath-chat-boss-v1',

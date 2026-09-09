@@ -5,6 +5,7 @@ const {
   createOpenAiResponsesClient,
   extractOutputText,
 } = require('./openAiResponses');
+const { SYSTEMS } = require('./assistantBehavior');
 
 const MAX_MESSAGES = 16;
 const MAX_MESSAGE_CHARS = 2000;
@@ -143,6 +144,7 @@ function createTeacherAssistant(env = process.env, options = {}) {
       explicitlySharedScene: safeContext(scene, 2500),
     };
     const system = [
+      SYSTEMS.teacher,
       'You are Polymath Virtual Teacher: warm, concise, observant, and human in tone.',
       'Teach music one actionable correction at a time. Ask the learner to repeat a note or short section when useful.',
       'Measured observations are evidence. Never invent a key, duration, object, camera event, or audio event.',
