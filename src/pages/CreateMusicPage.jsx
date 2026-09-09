@@ -30,6 +30,18 @@ function activeJobStorageKey(userId) {
   return `${ACTIVE_JOB_KEY}:${String(userId || 'guest')}`;
 }
 
+function validActiveJobId(value) {
+  return /^resp_[A-Za-z0-9_-]{8,210}$/.test(String(value || '').trim());
+}
+
+function restoreActiveJobId(userId) {
+  const storageKey = activeJobStorageKey(userId);
+  const stored = window.localStorage.getItem(storageKey) || '';
+  if (validActiveJobId(stored)) return stored;
+  if (stored) window.localStorage.removeItem(storageKey);
+  return '';
+}
+
 function loadDraft() {
   try {
     const saved = JSON.parse(window.localStorage.getItem(DRAFT_STORAGE_KEY) || 'null');
@@ -334,19 +346,19 @@ export default function CreateMusicPage({ user, onNavigate }) {
   }, [hasCreatorAccess, user?.user_id]);
 
   useEffect(() => {
-    setActiveJobId(user?.user_id
-      ? window.localStorage.getItem(activeJobStorageKey(user.user_id)) || ''
-      : '');
+    setActiveJobId(user?.user_id ? restoreActiveJobId(user.user_id) : '');
   }, [user?.user_id]);
 
   useEffect(() => {
     if (!activeJobId || !user) return undefined;
     let cancelled = false;
     let timeout;
+    let consecutiveFailures = 0;
     const poll = async () => {
       try {
         const data = await apiRequest(`/api/music-creation/jobs/${encodeURIComponent(activeJobId)}`);
         if (cancelled) return;
+        consecutiveFailures = 0;
         setAiStatus(data.status === 'IN_QUEUE' ? 'Your song draft is queued…' : data.status === 'IN_PROGRESS' ? 'Writing and arranging your draft…' : '');
         if (data.status === 'COMPLETED' && data.blueprint) {
           setProject((current) => {
@@ -370,9 +382,13 @@ export default function CreateMusicPage({ user, onNavigate }) {
       } catch (requestError) {
         if (!cancelled) {
           setError(requestError.message);
-          if ([401, 403, 404].includes(requestError.status)) {
+          consecutiveFailures += 1;
+          if ([401, 403, 404].includes(requestError.status) || consecutiveFailures >= 6) {
             setActiveJobId('');
             window.localStorage.removeItem(activeJobStorageKey(user.user_id));
+            if (![401, 403, 404].includes(requestError.status)) {
+              setError('That draft could not be recovered. Your song idea is safe—press Draft lyrics with AI to retry.');
+            }
           } else {
             timeout = window.setTimeout(poll, 3000);
           }

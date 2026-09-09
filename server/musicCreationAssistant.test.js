@@ -2,7 +2,17 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createMusicCreationAssistant, sanitizeBlueprint } = require('./musicCreationAssistant');
+const {
+  createMusicCreationAssistant,
+  isOpenAiResponseId,
+  sanitizeBlueprint,
+} = require('./musicCreationAssistant');
+
+test('recognizes current OpenAI response IDs and rejects legacy job IDs', () => {
+  assert.equal(isOpenAiResponseId('resp_12345678'), true);
+  assert.equal(isOpenAiResponseId('job_legacy_runpod_123'), false);
+  assert.equal(isOpenAiResponseId(''), false);
+});
 
 test('song architect submits a bounded, original-song request and parses its blueprint', async () => {
   let submittedMessages;

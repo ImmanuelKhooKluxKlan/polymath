@@ -57,6 +57,10 @@ function clean(value, maximum = 4000) {
   return String(value || '').trim().slice(0, maximum);
 }
 
+function isOpenAiResponseId(value) {
+  return /^resp_[A-Za-z0-9_-]{8,210}$/.test(clean(value, 220));
+}
+
 function clampNumber(value, minimum, maximum, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback;
@@ -281,6 +285,7 @@ module.exports = {
   SONG_BLUEPRINT_SCHEMA,
   createMusicCreationAssistant,
   extractJson,
+  isOpenAiResponseId,
   sanitizeBlueprint,
   sanitizeBrief,
 };

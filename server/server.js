@@ -30,7 +30,7 @@ const { createRunpodServerlessClient } = require('./runpodServerless');
 const { localOmrAvailability, runLocalOmr } = require('./localOmr');
 const { createTeacherAssistant } = require('./teacherAssistant');
 const { createTeacherProjectionStore } = require('./teacherProjection');
-const { createMusicCreationAssistant } = require('./musicCreationAssistant');
+const { createMusicCreationAssistant, isOpenAiResponseId } = require('./musicCreationAssistant');
 const {
   createProject: createMusicProject,
   deleteProject: deleteMusicProject,
@@ -4444,12 +4444,21 @@ app.post(
   '/api/music-creation/jobs',
   requireEntitlement('create_music.ai_guidance', 'AI songwriting requires a Create Music subscription.'),
   async (req, res) => {
-    const existingJob = req.db.musicGenerationJobs
+    const recentActiveJobs = req.db.musicGenerationJobs
       .filter((item) => (
         item.userId === req.user.id
         && ['IN_QUEUE', 'IN_PROGRESS'].includes(String(item.status || '').toUpperCase())
         && Date.now() - new Date(item.createdAt).getTime() < 30 * 60 * 1000
-      ))
+      ));
+    const retiredJobs = recentActiveJobs.filter((item) => !isOpenAiResponseId(item.providerJobId));
+    retiredJobs.forEach((item) => Object.assign(item, {
+      status: 'FAILED',
+      error: 'This draft used an older AI connection. Start a fresh AI draft.',
+      updatedAt: new Date().toISOString(),
+    }));
+    if (retiredJobs.length) await writeDb(req.db);
+    const existingJob = recentActiveJobs
+      .filter((item) => isOpenAiResponseId(item.providerJobId))
       .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
     if (existingJob) {
       return res.status(202).json({
@@ -4514,6 +4523,24 @@ app.get(
         executionTime: Number(job.executionTime || 0),
       });
     }
+    if (!isOpenAiResponseId(job.providerJobId)) {
+      Object.assign(job, {
+        status: 'FAILED',
+        error: 'This saved draft used an older AI connection. Press Draft lyrics with AI to start a fresh draft.',
+        updatedAt: new Date().toISOString(),
+      });
+      await writeDb(req.db);
+      return res.json({
+        id: job.id,
+        status: job.status,
+        finished: true,
+        active: false,
+        blueprint: null,
+        error: job.error,
+        delayTime: Number(job.delayTime || 0),
+        executionTime: Number(job.executionTime || 0),
+      });
+    }
     try {
       const status = await MUSIC_CREATION_ASSISTANT.status(job.providerJobId, job.brief);
       const changed = job.status !== status.status
@@ -4551,6 +4578,13 @@ app.post(
       item.id === req.params.jobId && item.userId === req.user.id
     ));
     if (!job) return res.status(404).json({ error: 'Music creation job not found.' });
+    if (!isOpenAiResponseId(job.providerJobId)) {
+      job.status = 'CANCELLED';
+      job.error = 'Older AI draft cleared.';
+      job.updatedAt = new Date().toISOString();
+      await writeDb(req.db);
+      return res.json({ id: job.id, status: job.status, result: null });
+    }
     try {
       const result = await MUSIC_CREATION_ASSISTANT.cancel(job.providerJobId);
       job.status = 'CANCELLED';
