@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
+import { userFacingError } from '../utils/userFacingError.js';
+import TaskProgress from '../components/TaskProgress.jsx';
 
 const HISTORY_KEY = 'polymath_chat_boss_history_v1';
 const ACTIVE_JOB_KEY = 'polymath_chat_boss_active_job_v1';
@@ -31,12 +33,6 @@ function wait(ms, signal) {
   });
 }
 
-function statusCopy(status) {
-  if (status === 'IN_PROGRESS') return 'OpenAI is writing your reply…';
-  if (status === 'IN_QUEUE') return 'Your secure OpenAI reply is queued…';
-  return 'Preparing Chat Boss…';
-}
-
 export default function ChatBossPage({ user, onNavigate }) {
   const [messages, setMessages] = useState(readSavedHistory);
   const [draft, setDraft] = useState('');
@@ -62,7 +58,7 @@ export default function ChatBossPage({ user, onNavigate }) {
         if (!cancelled) setCapabilities(data);
       })
       .catch((requestError) => {
-        if (!cancelled) setError(requestError.message);
+        if (!cancelled) setError(userFacingError(requestError, 'This workspace is temporarily unavailable.'));
       })
       .finally(() => {
         if (!cancelled) setLoadingCapabilities(false);
@@ -84,7 +80,7 @@ export default function ChatBossPage({ user, onNavigate }) {
           consecutiveErrors = 0;
           setRunStatus(job.status);
           if (job.status === 'COMPLETED') {
-            const reply = String(job.reply || '').trim() || 'OpenAI completed the response but returned no text.';
+            const reply = String(job.reply || '').trim() || 'That reply arrived empty. Please try again.';
             setMessages((current) => {
               const next = [...current, { role: 'assistant', content: reply, createdAt: new Date().toISOString() }];
               saveHistory(next);
@@ -96,7 +92,7 @@ export default function ChatBossPage({ user, onNavigate }) {
             return;
           }
           if (['FAILED', 'TIMED_OUT', 'CANCELLED'].includes(job.status)) {
-            setError(job.error || `OpenAI ended the response with status ${job.status}.`);
+            setError(userFacingError(job.error, 'That reply could not be completed. Please try again.'));
             window.localStorage.removeItem(ACTIVE_JOB_KEY);
             setJobId('');
             setRunStatus('');
@@ -107,7 +103,7 @@ export default function ChatBossPage({ user, onNavigate }) {
           if (requestError.name === 'AbortError') return;
           consecutiveErrors += 1;
           if (consecutiveErrors >= 5) {
-            setError(`${requestError.message} Your OpenAI response is still saved; reload to check it again.`);
+            setError('The connection was interrupted. Your request is still safe; reload to check it again.');
             return;
           }
           await wait(3500, controller.signal);
@@ -118,11 +114,6 @@ export default function ChatBossPage({ user, onNavigate }) {
     poll();
     return () => controller.abort();
   }, [jobId, user?.admin]);
-
-  const modelLabel = useMemo(
-    () => capabilities?.model || 'OpenAI',
-    [capabilities?.model],
-  );
 
   async function sendMessage(event) {
     event.preventDefault();
@@ -146,7 +137,7 @@ export default function ChatBossPage({ user, onNavigate }) {
       setJobId(job.id);
       setRunStatus(job.status || 'IN_QUEUE');
     } catch (requestError) {
-      setError(requestError.message);
+      setError(userFacingError(requestError, 'That reply could not be completed. Please try again.'));
       setRunStatus('');
     } finally {
       setSubmitting(false);
@@ -159,7 +150,7 @@ export default function ChatBossPage({ user, onNavigate }) {
     try {
       await apiRequest(`/api/chat-boss/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
     } catch (requestError) {
-      setError(requestError.message);
+      setError(userFacingError(requestError, 'The reply could not be stopped. Please try again.'));
       return;
     }
     window.localStorage.removeItem(ACTIVE_JOB_KEY);
@@ -214,9 +205,9 @@ export default function ChatBossPage({ user, onNavigate }) {
     <section className="chat-boss-page">
       <header className="chat-boss-header">
         <div>
-          <span className="chat-boss-kicker">Your private OpenAI workspace</span>
+          <span className="chat-boss-kicker">Your private workspace</span>
           <h1>Chat Boss</h1>
-          <p>{modelLabel} · OpenAI Responses API</p>
+          <p>Private planning, writing, and technical help.</p>
         </div>
         <div className="chat-boss-header-actions">
           <button type="button" onClick={exportChat} disabled={!messages.length}>Export</button>
@@ -224,17 +215,15 @@ export default function ChatBossPage({ user, onNavigate }) {
         </div>
       </header>
 
-      <div className="chat-boss-connection" role="status">
-        <i className={capabilities?.configured ? 'is-ready' : ''} aria-hidden="true" />
-        <span>
-          {loadingCapabilities
-            ? 'Checking OpenAI…'
-            : capabilities?.configured
-              ? 'Connected · requests run only when you send them'
-              : 'OpenAI connection is not configured'}
-        </span>
-        <small>History is saved only in this browser.</small>
-      </div>
+      {loadingCapabilities ? (
+        <TaskProgress compact label="Opening your workspace…" ariaLabel="Workspace loading progress" />
+      ) : (
+        <div className="chat-boss-connection" role="status">
+          <i className={capabilities?.configured ? 'is-ready' : ''} aria-hidden="true" />
+          <span>{capabilities?.configured ? 'Ready' : 'Temporarily unavailable'}</span>
+          <small>History is saved only in this browser.</small>
+        </div>
+      )}
 
       <div className="chat-boss-transcript" ref={transcriptRef} aria-live="polite">
         {!messages.length && (
@@ -253,7 +242,7 @@ export default function ChatBossPage({ user, onNavigate }) {
         {busy && (
           <article className="chat-boss-message is-assistant is-pending">
             <strong>Chat Boss</strong>
-            <p><span className="chat-boss-thinking" aria-hidden="true"><i /><i /><i /></span>{statusCopy(runStatus)}</p>
+            <TaskProgress compact label="Preparing your reply…" ariaLabel="Reply progress" />
           </article>
         )}
       </div>
@@ -282,7 +271,7 @@ export default function ChatBossPage({ user, onNavigate }) {
             <button type="button" className="chat-boss-stop" onClick={stopReply}>Stop</button>
           ) : (
             <button type="submit" className="primary" disabled={!draft.trim() || busy || capabilities?.configured === false}>
-              {submitting ? 'Starting…' : 'Send'}
+              {submitting ? 'Please wait…' : 'Send'}
             </button>
           )}
         </div>

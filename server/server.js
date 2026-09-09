@@ -31,6 +31,7 @@ const { localOmrAvailability, runLocalOmr } = require('./localOmr');
 const { createTeacherAssistant } = require('./teacherAssistant');
 const { createTeacherProjectionStore } = require('./teacherProjection');
 const { createMusicCreationAssistant, isOpenAiResponseId } = require('./musicCreationAssistant');
+const { describeMusicCreationProgress } = require('./musicCreationProgress');
 const {
   createProject: createMusicProject,
   deleteProject: deleteMusicProject,
@@ -4454,6 +4455,7 @@ app.post(
     retiredJobs.forEach((item) => Object.assign(item, {
       status: 'FAILED',
       error: 'This draft used an older AI connection. Start a fresh AI draft.',
+      completedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
     if (retiredJobs.length) await writeDb(req.db);
@@ -4465,6 +4467,7 @@ app.post(
         id: existingJob.id,
         status: existingJob.status,
         reused: true,
+        progress: describeMusicCreationProgress(existingJob, req.db.musicGenerationJobs),
       });
     }
     if (!musicCreationRequestAllowed(req.user.id)) {
@@ -4491,7 +4494,11 @@ app.post(
       req.db.musicGenerationJobs.push(job);
       req.db.musicGenerationJobs = req.db.musicGenerationJobs.slice(-5000);
       await writeDb(req.db);
-      return res.status(202).json({ id: job.id, status: job.status });
+      return res.status(202).json({
+        id: job.id,
+        status: job.status,
+        progress: describeMusicCreationProgress(job, req.db.musicGenerationJobs),
+      });
     } catch (error) {
       const unavailable = error?.code === 'MUSIC_CREATION_UNAVAILABLE';
       const invalid = error?.code === 'INVALID_MUSIC_CREATION_REQUEST';
@@ -4511,7 +4518,11 @@ app.get(
       item.id === req.params.jobId && item.userId === req.user.id
     ));
     if (!job) return res.status(404).json({ error: 'Music creation job not found.' });
-    if (['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'].includes(job.status)) {
+    const recoverableParserFailure = job.status === 'FAILED'
+      && !job.blueprint
+      && isOpenAiResponseId(job.providerJobId)
+      && /draft finished, but its structure was invalid:.*no JSON blueprint/i.test(String(job.error || ''));
+    if (['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'].includes(job.status) && !recoverableParserFailure) {
       return res.json({
         id: job.id,
         status: job.status,
@@ -4521,12 +4532,14 @@ app.get(
         error: job.error || '',
         delayTime: Number(job.delayTime || 0),
         executionTime: Number(job.executionTime || 0),
+        progress: describeMusicCreationProgress(job, req.db.musicGenerationJobs),
       });
     }
     if (!isOpenAiResponseId(job.providerJobId)) {
       Object.assign(job, {
         status: 'FAILED',
         error: 'This saved draft used an older AI connection. Press Draft lyrics with AI to start a fresh draft.',
+        completedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
       await writeDb(req.db);
@@ -4539,14 +4552,20 @@ app.get(
         error: job.error,
         delayTime: Number(job.delayTime || 0),
         executionTime: Number(job.executionTime || 0),
+        progress: describeMusicCreationProgress(job, req.db.musicGenerationJobs),
       });
     }
     try {
       const status = await MUSIC_CREATION_ASSISTANT.status(job.providerJobId, job.brief);
+      const lifecycle = {};
+      const lifecycleTimestamp = new Date().toISOString();
+      if (status.status === 'IN_PROGRESS' && !job.startedAt) lifecycle.startedAt = lifecycleTimestamp;
+      if (status.finished && !job.completedAt) lifecycle.completedAt = lifecycleTimestamp;
       const changed = job.status !== status.status
         || Boolean(status.finished)
         || Number(job.delayTime || 0) !== Number(status.delayTime || 0)
-        || Number(job.executionTime || 0) !== Number(status.executionTime || 0);
+        || Number(job.executionTime || 0) !== Number(status.executionTime || 0)
+        || Object.keys(lifecycle).length > 0;
       if (changed) {
         Object.assign(job, {
           status: status.status,
@@ -4554,11 +4573,15 @@ app.get(
           error: status.error || '',
           delayTime: status.delayTime,
           executionTime: status.executionTime,
+          ...lifecycle,
           updatedAt: new Date().toISOString(),
         });
         await writeDb(req.db);
       }
-      return res.json(status);
+      return res.json({
+        ...status,
+        progress: describeMusicCreationProgress(job, req.db.musicGenerationJobs),
+      });
     } catch (error) {
       console.error('Music creation status check failed:', error);
       return res.status(error?.code === 'MUSIC_CREATION_UNAVAILABLE' ? 503 : 502).json({
@@ -4581,6 +4604,7 @@ app.post(
     if (!isOpenAiResponseId(job.providerJobId)) {
       job.status = 'CANCELLED';
       job.error = 'Older AI draft cleared.';
+      job.completedAt = new Date().toISOString();
       job.updatedAt = new Date().toISOString();
       await writeDb(req.db);
       return res.json({ id: job.id, status: job.status, result: null });
@@ -4588,6 +4612,7 @@ app.post(
     try {
       const result = await MUSIC_CREATION_ASSISTANT.cancel(job.providerJobId);
       job.status = 'CANCELLED';
+      job.completedAt = new Date().toISOString();
       job.updatedAt = new Date().toISOString();
       await writeDb(req.db);
       return res.json({ id: job.id, status: job.status, result });

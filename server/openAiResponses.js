@@ -88,28 +88,47 @@ function prepareInput(messages) {
   return { instructions: instructions.join('\n\n'), input };
 }
 
-function extractOutputText(body) {
+function extractOutputText(body, seen = new Set()) {
   if (typeof body === 'string') return body.trim();
-  if (Array.isArray(body)) return body.map(extractOutputText).filter(Boolean).join('').trim();
-  if (!body || typeof body !== 'object') return '';
-  if (typeof body.output_text === 'string') return body.output_text.trim();
-  if (typeof body.text === 'string') return body.text.trim();
-  if (Array.isArray(body.text)) return body.text.map((part) => String(part || '')).join('').trim();
-  if (Array.isArray(body.output)) {
-    const pieces = [];
-    for (const item of body.output) {
-      if (item?.type === 'message' && Array.isArray(item.content)) {
-        for (const part of item.content) {
-          if (part?.type === 'output_text' && typeof part.text === 'string') pieces.push(part.text);
-          if (part?.type === 'refusal' && typeof part.refusal === 'string') pieces.push(part.refusal);
-        }
-      }
-    }
-    if (pieces.length) return pieces.join('').trim();
+  if (Array.isArray(body)) {
+    return body.map((part) => extractOutputText(part, seen)).filter(Boolean).join('').trim();
   }
-  if (body.output !== undefined) return extractOutputText(body.output);
-  const chatCompletionText = body?.choices?.[0]?.message?.content;
-  if (typeof chatCompletionText === 'string') return chatCompletionText.trim();
+  if (!body || typeof body !== 'object' || seen.has(body)) return '';
+  seen.add(body);
+
+  // The raw Responses API uses output[].content[].text. The SDK convenience
+  // property and our normalized response use output_text and text respectively.
+  // Keep all three shapes readable so a transport wrapper cannot erase a valid
+  // structured response merely by nesting it one level differently.
+  for (const key of ['output_text', 'text', 'content', 'output']) {
+    if (body[key] === undefined) continue;
+    const value = extractOutputText(body[key], seen);
+    if (value) return value;
+  }
+
+  const chatCompletionContent = body?.choices?.[0]?.message?.content;
+  if (chatCompletionContent !== undefined) {
+    return extractOutputText(chatCompletionContent, seen);
+  }
+  return '';
+}
+
+function extractRefusal(body, seen = new Set()) {
+  if (Array.isArray(body)) {
+    for (const part of body) {
+      const refusal = extractRefusal(part, seen);
+      if (refusal) return refusal;
+    }
+    return '';
+  }
+  if (!body || typeof body !== 'object' || seen.has(body)) return '';
+  seen.add(body);
+  if (typeof body.refusal === 'string') return clean(body.refusal, 600);
+  for (const key of ['output', 'content', 'message', 'choices']) {
+    if (body[key] === undefined) continue;
+    const refusal = extractRefusal(body[key], seen);
+    if (refusal) return refusal;
+  }
   return '';
 }
 
@@ -135,13 +154,15 @@ function providerError(body) {
 }
 
 function normalizeResponse(body) {
-  const status = normalizedStatus(body?.status);
+  let status = normalizedStatus(body?.status);
   const text = extractOutputText(body);
+  const refusal = extractRefusal(body);
+  if (status === 'COMPLETED' && refusal) status = 'FAILED';
   return {
     id: clean(body?.id, 220),
     status,
     output: { text: text ? [text] : [] },
-    error: ['FAILED', 'CANCELLED'].includes(status) ? providerError(body) : '',
+    error: ['FAILED', 'CANCELLED'].includes(status) ? refusal || providerError(body) : '',
     usage: body?.usage && typeof body.usage === 'object' ? {
       inputTokens: Number(body.usage.input_tokens) || 0,
       outputTokens: Number(body.usage.output_tokens) || 0,
@@ -294,6 +315,7 @@ module.exports = {
   DEFAULT_CHAT_MODEL,
   DEFAULT_MUSIC_MODEL,
   createOpenAiResponsesClient,
+  extractRefusal,
   extractOutputText,
   normalizeResponse,
   normalizedStatus,

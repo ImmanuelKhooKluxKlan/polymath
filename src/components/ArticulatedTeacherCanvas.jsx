@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import TaskProgress from './TaskProgress.jsx';
 
 export default function ArticulatedTeacherCanvas({ teacher, poseId, motionKey, position, depth, performanceTier = 'balanced' }) {
   const containerRef = useRef(null);
@@ -74,7 +75,9 @@ export default function ArticulatedTeacherCanvas({ teacher, poseId, motionKey, p
       {renderState.mode === 'fallback' && (
         <img className="articulated-teacher-fallback" src={teacher.image} alt={`${teacher.name}, virtual piano teacher`} draggable="false" />
       )}
-      <span className="articulated-teacher-status" role="status" aria-live="polite">{activeJoint ? `Moving ${activeJoint}` : renderState.message}</span>
+      {renderState.mode === 'loading'
+        ? <TaskProgress compact label="Preparing your teacher…" ariaLabel="Teacher loading progress" />
+        : activeJoint && <span className="articulated-teacher-status" role="status" aria-live="polite">Moving {activeJoint}</span>}
     </div>
   );
 }

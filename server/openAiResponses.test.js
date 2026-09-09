@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   createOpenAiResponsesClient,
+  extractRefusal,
   extractOutputText,
   normalizeResponse,
   modelAcceptsReasoning,
@@ -104,6 +105,15 @@ test('Responses helpers parse multimodal input and normalize incomplete response
   }]);
   assert.equal(prepared.input[0].content[1].type, 'input_image');
   assert.equal(extractOutputText({ output_text: 'Shortcut text' }), 'Shortcut text');
+  assert.equal(extractOutputText({
+    text: [{ type: 'output_text', text: '{"title":"Nested"}' }],
+  }), '{"title":"Nested"}');
+  assert.equal(extractOutputText({
+    output: { text: ['{"title":"Normalized"}'] },
+  }), '{"title":"Normalized"}');
+  assert.equal(extractRefusal({
+    output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'Cannot help.' }] }],
+  }), 'Cannot help.');
   assert.equal(modelAcceptsReasoning('gpt-5.6-terra'), true);
   assert.equal(modelAcceptsReasoning('gpt-4.1-mini-2025-04-14'), false);
   assert.equal(modelAcceptsReasoning('ft:gpt-4.1-mini-2025-04-14:org:polymath'), false);
@@ -118,4 +128,18 @@ test('Responses helpers parse multimodal input and normalize incomplete response
     error: 'max_output_tokens',
     usage: null,
   });
+});
+
+test('Responses client turns a completed refusal into a failed result', () => {
+  const normalized = normalizeResponse({
+    id: 'resp_refusal_12345678',
+    status: 'completed',
+    output: [{
+      type: 'message',
+      content: [{ type: 'refusal', refusal: 'I cannot create that content.' }],
+    }],
+  });
+  assert.equal(normalized.status, 'FAILED');
+  assert.equal(normalized.error, 'I cannot create that content.');
+  assert.deepEqual(normalized.output.text, []);
 });

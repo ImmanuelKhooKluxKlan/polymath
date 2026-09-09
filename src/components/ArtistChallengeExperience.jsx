@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { buildLearningMomentum } from '../engine/learningMomentum.js';
 import { apiAssetUrl } from '../services/api.js';
 import LearningWinShare from './LearningWinShare.jsx';
+import TaskProgress from './TaskProgress.jsx';
 
 function resultHeadline(score) {
   if (score >= 90) return 'Stage-ready';
@@ -36,9 +37,7 @@ export default function ArtistChallengeExperience({
   if (campaignStatus === 'loading') {
     return (
       <section className="artist-challenge is-loading" aria-live="polite">
-        <div className="campaign-loading-mark" aria-hidden="true"><i /><i /><i /></div>
-        <strong>Preparing the artist challenge…</strong>
-        <span>Loading the verified playable notes.</span>
+        <TaskProgress label="Opening the artist challenge…" ariaLabel="Artist challenge loading progress" />
       </section>
     );
   }
@@ -92,7 +91,11 @@ export default function ArtistChallengeExperience({
             <i aria-hidden="true" />
             <div>
               <span>{preparationStatus === 'ready' ? 'Piano ready' : 'One tap to prepare'}</span>
-              <strong>{preparationStatus === 'ready' ? 'Play when the falling notes touch the keys' : preparationStage}</strong>
+              <strong>{preparationStatus === 'ready'
+                ? 'Play when the falling notes touch the keys'
+                : ['calibrating', 'loading'].includes(preparationStatus)
+                  ? 'Preparing your piano…'
+                  : preparationStage}</strong>
               {['calibrating', 'loading'].includes(preparationStatus) && (
                 <progress max="100" value={preparationProgress} aria-label="Piano preparation progress" />
               )}

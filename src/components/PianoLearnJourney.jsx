@@ -322,7 +322,11 @@ export default function PianoLearnJourney({
                   <i aria-hidden="true" />
                   <div>
                     <span>{preparationStatus === 'ready' ? 'Piano ready' : 'Prepare this device'}</span>
-                    <strong>{preparationStatus === 'ready' ? 'Your free attempt is ready' : preparationStage}</strong>
+                    <strong>{preparationStatus === 'ready'
+                      ? 'Your free attempt is ready'
+                      : ['calibrating', 'loading'].includes(preparationStatus)
+                        ? 'Preparing your piano…'
+                        : preparationStage}</strong>
                     {['calibrating', 'loading'].includes(preparationStatus) && <progress max="100" value={preparationProgress} aria-label="Keyboard preparation progress" />}
                   </div>
                   {preparationStatus !== 'ready' && !['calibrating', 'loading'].includes(preparationStatus) && <button type="button" className="primary" onClick={onPrepare}>Prepare piano</button>}
@@ -547,7 +551,11 @@ export default function PianoLearnJourney({
                   <i aria-hidden="true" />
                   <div>
                     <span>{preparationStatus === 'ready' ? 'Instrument ready' : 'Prepare this device'}</span>
-                    <strong>{preparationStatus === 'ready' ? `${currentLevel.label} · ${rangeLabel(activeRange)}` : preparationStage}</strong>
+                    <strong>{preparationStatus === 'ready'
+                      ? `${currentLevel.label} · ${rangeLabel(activeRange)}`
+                      : ['calibrating', 'loading'].includes(preparationStatus)
+                        ? 'Preparing your piano…'
+                        : preparationStage}</strong>
                     {['calibrating', 'loading'].includes(preparationStatus) && <progress max="100" value={preparationProgress} aria-label="Keyboard preparation progress" />}
                   </div>
                   {preparationStatus !== 'ready' && !['calibrating', 'loading'].includes(preparationStatus) && <button type="button" className="primary" onClick={onPrepare}>Prepare piano</button>}

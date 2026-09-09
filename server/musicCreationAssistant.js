@@ -114,20 +114,83 @@ function textFromOutput(output) {
   if (typeof output === 'string') return output.trim();
   if (Array.isArray(output)) return output.map(textFromOutput).filter(Boolean).join('').trim();
   if (!output || typeof output !== 'object') return '';
-  if (typeof output.text === 'string') return output.text.trim();
+  for (const key of ['output_text', 'text', 'content', 'output']) {
+    if (output[key] === undefined) continue;
+    const value = textFromOutput(output[key]);
+    if (value) return value;
+  }
   if (typeof output?.choices?.[0]?.message?.content === 'string') return output.choices[0].message.content.trim();
-  if (output.output !== undefined) return textFromOutput(output.output);
   return '';
 }
 
-function extractJson(text) {
-  const raw = clean(text, 100000)
+function structuredFromOutput(output) {
+  if (Array.isArray(output)) {
+    for (const part of output) {
+      const value = structuredFromOutput(part);
+      if (value) return value;
+    }
+    return null;
+  }
+  if (!output || typeof output !== 'object') return null;
+  for (const key of ['output_parsed', 'parsed', 'json']) {
+    const candidate = output[key];
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return candidate;
+  }
+  for (const key of ['content', 'output', 'text']) {
+    if (output[key] === undefined) continue;
+    const value = structuredFromOutput(output[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function firstJsonObject(raw) {
+  for (let start = raw.indexOf('{'); start >= 0; start = raw.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < raw.length; index += 1) {
+      const character = raw[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(raw.slice(start, index + 1));
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function extractJson(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  const raw = clean(value, 100000)
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '');
-  const first = raw.indexOf('{');
-  const last = raw.lastIndexOf('}');
-  if (first < 0 || last <= first) throw new Error('The music assistant returned no JSON blueprint.');
-  return JSON.parse(raw.slice(first, last + 1));
+  if (!raw) throw new Error('The response contained no blueprint data.');
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // Some compatible gateways wrap JSON in a short explanation or a fence.
+    // Scan balanced objects without treating braces inside lyric strings as structure.
+  }
+  const parsed = firstJsonObject(raw);
+  if (parsed) return parsed;
+  throw new Error('The response contained no readable JSON blueprint.');
 }
 
 function sanitizeStringArray(value, maximumItems, maximumChars) {
@@ -244,14 +307,20 @@ function createMusicCreationAssistant(env = process.env, options = {}) {
       throw error;
     }
     const body = await client.status(jobId);
-    const jobStatus = clean(body?.status, 30).toUpperCase() || 'UNKNOWN';
+    let jobStatus = clean(body?.status, 30).toUpperCase() || 'UNKNOWN';
     let blueprint = null;
     let error = '';
     if (jobStatus === 'COMPLETED') {
       try {
-        blueprint = sanitizeBlueprint(extractJson(textFromOutput(body?.output)), fallbackBrief);
+        const structured = structuredFromOutput(body?.output);
+        blueprint = sanitizeBlueprint(structured || extractJson(textFromOutput(body?.output)), fallbackBrief);
       } catch (parseError) {
-        error = `The draft finished, but its structure was invalid: ${parseError.message}`;
+        console.error('Music creation blueprint parsing failed:', {
+          responseId: clean(body?.id || jobId, 160),
+          reason: clean(parseError?.message, 240),
+        });
+        jobStatus = 'FAILED';
+        error = 'We could not assemble that draft correctly. Please retry.';
       }
     } else if (['FAILED', 'TIMED_OUT'].includes(jobStatus)) {
       error = clean(body?.error || body?.output?.error, 600) || 'OpenAI could not complete this music draft.';

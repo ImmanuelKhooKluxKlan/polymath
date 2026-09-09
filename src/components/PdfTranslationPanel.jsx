@@ -7,6 +7,8 @@ import {
   uploadProtectedArtifact,
 } from '../services/api.js';
 import { instrumentLabel } from '../data/instruments.js';
+import { userFacingError } from '../utils/userFacingError.js';
+import TaskProgress from './TaskProgress.jsx';
 
 const POLL_INTERVAL_MS = 10000;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
@@ -23,7 +25,14 @@ function statusLabel(job) {
   if (!job) return 'Ready to translate';
   if (job.status === 'completed') return 'Ready to download';
   if (job.status === 'failed') return 'Translation failed';
-  return job.stage || 'Translating music sheet';
+  return 'Creating your playable sheet';
+}
+
+function progressDetail(job) {
+  const remaining = Number(job?.estimatedRemainingSeconds);
+  return Number.isFinite(remaining) && remaining > 0
+    ? `About ${formatRemaining(remaining)} remaining · You may leave this page`
+    : 'You may leave this page while we finish.';
 }
 
 async function verifyPdfFile(file) {
@@ -45,6 +54,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
   const [job, setJob] = useState(null);
   const [status, setStatus] = useState('Upload a readable instrumental PDF music sheet.');
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const pollTimer = useRef(null);
 
   const allowance = user?.translationAllowance || null;
@@ -80,13 +90,13 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
         return;
       }
       if (data.job.status === 'failed') {
-        setStatus(data.job.error || 'Translation failed. Your payment or monthly attempt has been restored.');
+        setStatus('We couldn’t translate this sheet. Your payment or monthly attempt has been restored.');
         clearPolling();
         return;
       }
       pollTimer.current = window.setTimeout(() => refreshJob(jobId), POLL_INTERVAL_MS);
-    } catch (error) {
-      setStatus(error.message);
+    } catch {
+      setStatus('');
       pollTimer.current = window.setTimeout(() => refreshJob(jobId), POLL_INTERVAL_MS);
     }
   }
@@ -123,10 +133,11 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
     if (!file || busy) return;
 
     setBusy(true);
-    setStatus('Validating and securely creating your translation job…');
+    setUploadProgress(null);
+    setStatus('');
     try {
       const directUpload = await uploadProtectedArtifact(file, 'score-translation', {
-        onProgress: (percent) => setStatus(`Uploading securely… ${percent}%`),
+        onProgress: setUploadProgress,
       });
       const contentBase64 = directUpload ? '' : await fileToBase64(file);
       const data = await apiRequest('/api/score-translations', {
@@ -141,11 +152,13 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       });
       setJob(data.job);
       setUser(data.user);
-      setStatus('Local music reading started. The initial estimate is approximately 5 minutes.');
+      setStatus('');
+      setUploadProgress(null);
       clearPolling();
       pollTimer.current = window.setTimeout(() => refreshJob(data.job.id), POLL_INTERVAL_MS);
     } catch (error) {
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'We couldn’t start this translation. Please try again.'));
+      setUploadProgress(null);
     } finally {
       setBusy(false);
     }
@@ -159,7 +172,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
         `${file?.name?.replace(/\.pdf$/i, '') || 'ready-to-play-sheet'}.json`,
       );
     } catch (error) {
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'The finished sheet could not be downloaded. Please try again.'));
     }
   }
 
@@ -185,7 +198,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       }
       setStatus('Loaded into the piano studio and ready to play.');
     } catch (error) {
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'The finished sheet could not be opened. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -283,25 +296,37 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
         </div>
       )}
 
+      {busy && !job && (
+        <TaskProgress
+          compact
+          label='Uploading your music sheet…'
+          progress={uploadProgress}
+          detail='Keep this page open until the upload finishes.'
+          ariaLabel='Music sheet upload progress'
+        />
+      )}
+
       {job && (
         <div className={`translation-job ${job.status}`}>
-          <div className="job-status-row">
-            <div>
-              <span>{statusLabel(job)}</span>
-              <strong>{job.filename}</strong>
+          {job.status === 'processing' ? (
+            <TaskProgress
+              label='Creating your playable sheet…'
+              progress={progress}
+              detail={progressDetail(job)}
+              ariaLabel='Music sheet translation progress'
+            />
+          ) : (
+            <div className="job-status-row">
+              <div>
+                <span>{statusLabel(job)}</span>
+                <strong>{job.filename}</strong>
+              </div>
+              <span className="job-state-badge">{job.status === 'completed' ? 'Ready' : 'Stopped'}</span>
             </div>
-            <span className="job-state-badge">{job.status}</span>
-          </div>
-          <div className="job-progress-track" aria-label={`Translation progress ${progress}%`}>
-            <span style={{ width: `${progress}%` }} />
-          </div>
-          <div className="job-metrics">
-            <span>Estimated time remaining</span>
-            <strong>{job.status === 'processing' ? formatRemaining(job.estimatedRemainingSeconds) : job.status === 'completed' ? 'Ready' : 'Stopped'}</strong>
-          </div>
+          )}
           {job.status === 'completed' && (
             <div className="job-metrics">
-              <span>{job.engine || 'Polymath Local OMR'}</span>
+              <span>Notation confidence</span>
               <strong>{Math.round(Number(job.confidence || 0) * 100)}% notation confidence</strong>
             </div>
           )}
@@ -326,17 +351,17 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
             </details>
           )}
           {Number(job.estimateExtensionCount || 0) > 0 && job.status === 'processing' && (
-            <p className="estimate-note">Processing is taking longer than expected. The estimate has been extended by {Number(job.estimateExtensionCount) * 5} minutes.</p>
+            <p className="estimate-note">This is taking longer than the first estimate. The updated time appears above.</p>
           )}
           <p className="muted job-payment-line">
             Payment method: {job.paymentMethod === 'admin' ? 'unlimited administrator access' : job.paymentMethod === 'mcoins' ? `${job.costMcoins} Mcoins` : 'monthly translation allowance'}.
           </p>
           {job.status === 'completed' && <button className="primary full" type="button" onClick={downloadResult}>Download Ready-to-Play Sheet</button>}
-          {job.status === 'failed' && <p className="form-status">{job.error || 'The translation could not be completed. Your payment or allowance was restored.'}</p>}
+          {job.status === 'failed' && <p className="form-status">The translation could not be completed. Your payment or allowance was restored.</p>}
         </div>
       )}
 
-      <p className="form-status">{status}</p>
+      {status && !busy && job?.status !== 'processing' && <p className="form-status">{status}</p>}
       <p className="translation-footnote">The estimate begins at about 5 minutes. Large or scanned scores can extend in five-minute blocks until the job completes or fails.</p>
     </div>
   );

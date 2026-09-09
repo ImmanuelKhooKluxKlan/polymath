@@ -14,6 +14,8 @@ import { ensembleAudio } from '../engine/ensembleEngine.js';
 import { guitarAudio } from '../engine/guitarEngine.js';
 import { apiRequest } from '../services/api.js';
 import { downloadSongJson, downloadSongMidi } from '../utils/exporters.js';
+import { userFacingError } from '../utils/userFacingError.js';
+import TaskProgress from '../components/TaskProgress.jsx';
 import '../createMusic.css';
 
 const STEPS = [
@@ -25,6 +27,13 @@ const STEPS = [
 ];
 const DRAFT_STORAGE_KEY = 'polymath-create-music-draft-v1';
 const ACTIVE_JOB_KEY = 'polymath-create-music-job-v1';
+const INITIAL_AI_PROGRESS = Object.freeze({
+  percent: 5,
+  elapsedSeconds: 0,
+  remainingLowSeconds: 35,
+  remainingHighSeconds: 90,
+  overEstimate: false,
+});
 
 function activeJobStorageKey(userId) {
   return `${ACTIVE_JOB_KEY}:${String(userId || 'guest')}`;
@@ -72,6 +81,21 @@ function formatTime(seconds) {
   const safe = Math.max(0, Number(seconds) || 0);
   const minutes = Math.floor(safe / 60);
   return `${minutes}:${String(Math.floor(safe % 60)).padStart(2, '0')}`;
+}
+
+function aiProgressTimeLabel(progress) {
+  const elapsed = Math.max(0, Math.floor(Number(progress?.elapsedSeconds) || 0));
+  const low = Math.max(0, Math.ceil(Number(progress?.remainingLowSeconds) || 0));
+  const high = Math.max(0, Math.ceil(Number(progress?.remainingHighSeconds) || 0));
+  if (progress?.overEstimate) return `Taking longer than usual · ${elapsed}s elapsed · still working`;
+  if (!high) return `Finishing now · ${elapsed}s elapsed`;
+  if (!low) return `Up to about ${high}s left · ${elapsed}s elapsed`;
+  if (low === high) return `About ${high}s left · ${elapsed}s elapsed`;
+  return `About ${low}–${high}s left · ${elapsed}s elapsed`;
+}
+
+function userFacingDraftError(error) {
+  return userFacingError(error, 'We couldn’t create that draft. Your song idea is safe—try again.');
 }
 
 function firstEventAtOrAfter(events, time) {
@@ -312,6 +336,9 @@ export default function CreateMusicPage({ user, onNavigate }) {
   const [lyricsText, setLyricsText] = useState(() => lyricsAsText(loadDraft()));
   const [capabilities, setCapabilities] = useState(null);
   const [activeJobId, setActiveJobId] = useState('');
+  const [aiSubmitting, setAiSubmitting] = useState(false);
+  const [aiProgress, setAiProgress] = useState(null);
+  const [aiRetryAvailable, setAiRetryAvailable] = useState(false);
   const [aiStatus, setAiStatus] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -324,6 +351,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
   const hasArrangementAccess = Boolean(user?.admin || user?.access?.createMusicArrangements);
   const hasGuideVoiceAccess = Boolean(user?.admin || user?.access?.createMusicGuideVoice);
   const canExport = Boolean(user?.admin || user?.access?.createMusicExports);
+  const aiBusy = aiSubmitting || Boolean(activeJobId);
 
   useEffect(() => {
     window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(project));
@@ -332,7 +360,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
   useEffect(() => {
     apiRequest('/api/music-creation/capabilities')
       .then(setCapabilities)
-      .catch(() => setCapabilities({ configured: false, provider: 'Local song architect' }));
+      .catch(() => setCapabilities({ configured: false }));
   }, []);
 
   useEffect(() => {
@@ -346,7 +374,9 @@ export default function CreateMusicPage({ user, onNavigate }) {
   }, [hasCreatorAccess, user?.user_id]);
 
   useEffect(() => {
-    setActiveJobId(user?.user_id ? restoreActiveJobId(user.user_id) : '');
+    const restoredJobId = user?.user_id ? restoreActiveJobId(user.user_id) : '';
+    setActiveJobId(restoredJobId);
+    setAiProgress(restoredJobId ? INITIAL_AI_PROGRESS : null);
   }, [user?.user_id]);
 
   useEffect(() => {
@@ -359,7 +389,8 @@ export default function CreateMusicPage({ user, onNavigate }) {
         const data = await apiRequest(`/api/music-creation/jobs/${encodeURIComponent(activeJobId)}`);
         if (cancelled) return;
         consecutiveFailures = 0;
-        setAiStatus(data.status === 'IN_QUEUE' ? 'Your song draft is queued…' : data.status === 'IN_PROGRESS' ? 'Writing and arranging your draft…' : '');
+        setAiProgress(data.progress || INITIAL_AI_PROGRESS);
+        setAiStatus('Creating your song…');
         if (data.status === 'COMPLETED' && data.blueprint) {
           setProject((current) => {
             const next = applySongBlueprint(current, data.blueprint);
@@ -369,27 +400,35 @@ export default function CreateMusicPage({ user, onNavigate }) {
           setStep(2);
           setActiveJobId('');
           window.localStorage.removeItem(activeJobStorageKey(user.user_id));
+          setAiProgress(null);
+          setAiRetryAvailable(false);
           setAiStatus('Draft ready. Every lyric remains editable.');
           return;
         }
         if (data.finished) {
-          setError(data.error || 'The AI draft did not finish correctly. Your manual draft is still safe.');
+          setError(userFacingDraftError(data.error));
+          setAiRetryAvailable(true);
           setActiveJobId('');
+          setAiProgress(null);
+          setAiStatus('');
           window.localStorage.removeItem(activeJobStorageKey(user.user_id));
           return;
         }
         timeout = window.setTimeout(poll, 1800);
       } catch (requestError) {
         if (!cancelled) {
-          setError(requestError.message);
           consecutiveFailures += 1;
           if ([401, 403, 404].includes(requestError.status) || consecutiveFailures >= 6) {
             setActiveJobId('');
+            setAiProgress(null);
+            setAiStatus('');
+            setAiRetryAvailable(true);
             window.localStorage.removeItem(activeJobStorageKey(user.user_id));
-            if (![401, 403, 404].includes(requestError.status)) {
-              setError('That draft could not be recovered. Your song idea is safe—press Draft lyrics with AI to retry.');
-            }
+            setError([401, 403].includes(requestError.status)
+              ? userFacingDraftError(requestError)
+              : 'We couldn’t finish that draft. Your song idea is safe—press Retry draft to try again.');
           } else {
+            setAiStatus('Creating your song…');
             timeout = window.setTimeout(poll, 3000);
           }
         }
@@ -435,8 +474,12 @@ export default function CreateMusicPage({ user, onNavigate }) {
       openCreatorPlans();
       return;
     }
+    if (aiBusy) return;
     setError('');
-    setAiStatus('Starting your private music assistant…');
+    setAiRetryAvailable(false);
+    setAiSubmitting(true);
+    setAiProgress(INITIAL_AI_PROGRESS);
+    setAiStatus('Creating your song…');
     try {
       const data = await apiRequest('/api/music-creation/jobs', {
         method: 'POST',
@@ -451,10 +494,15 @@ export default function CreateMusicPage({ user, onNavigate }) {
         }),
       });
       setActiveJobId(data.id);
+      setAiProgress(data.progress || INITIAL_AI_PROGRESS);
       window.localStorage.setItem(activeJobStorageKey(user.user_id), data.id);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(userFacingDraftError(requestError));
+      setAiRetryAvailable(true);
+      setAiProgress(null);
       setAiStatus('');
+    } finally {
+      setAiSubmitting(false);
     }
   }
 
@@ -462,6 +510,8 @@ export default function CreateMusicPage({ user, onNavigate }) {
     if (!activeJobId) return;
     try { await apiRequest(`/api/music-creation/jobs/${encodeURIComponent(activeJobId)}/cancel`, { method: 'POST' }); } catch { /* best effort */ }
     setActiveJobId('');
+    setAiProgress(null);
+    setAiRetryAvailable(false);
     window.localStorage.removeItem(activeJobStorageKey(user?.user_id));
     setAiStatus('Draft stopped. Your work is still here.');
   }
@@ -482,6 +532,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
     }
     setSaving(true);
     setError('');
+    setAiRetryAvailable(false);
     try {
       const data = await apiRequest(project.id
         ? `/api/music-creation/projects/${encodeURIComponent(project.id)}`
@@ -503,6 +554,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
   async function openCloudProject(projectId) {
     setSaving(true);
     setError('');
+    setAiRetryAvailable(false);
     try {
       const data = await apiRequest(`/api/music-creation/projects/${encodeURIComponent(projectId)}`);
       setProject(data.project);
@@ -541,7 +593,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
         </div>
         <div className='create-music-hero-actions'>
           <span className={capabilities?.configured ? 'creation-ai-state ready' : 'creation-ai-state'}>
-            {capabilities?.configured ? 'AI architect connected' : 'Manual studio ready'}
+            {capabilities?.configured ? 'Song tools ready' : 'Manual studio ready'}
           </span>
           <button type='button' className='ghost' onClick={resetProject}>New song</button>
         </div>
@@ -628,7 +680,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
           </fieldset>
           <div className='creation-button-row'>
             <button type='button' className='ghost' onClick={() => setStep(0)}>Back</button>
-            <button type='button' className='primary' disabled={Boolean(activeJobId)} onClick={() => askAi('draft')}>
+            <button type='button' className='primary' disabled={aiBusy} onClick={() => askAi('draft')}>
               {hasAiAccess ? 'Draft lyrics with AI' : 'Unlock AI songwriter'}
             </button>
             <button type='button' className='ghost' onClick={() => setStep(2)}>Write lyrics myself</button>
@@ -647,7 +699,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
           <label className='field'>What should AI change? <input value={project.revisionRequest || ''} placeholder='Example: make the chorus simpler and more hopeful' onChange={(event) => setProject({ ...project, revisionRequest: event.target.value })} /></label>
           <div className='creation-button-row'>
             <button type='button' className='ghost' onClick={() => setStep(1)}>Back</button>
-            <button type='button' className='ghost' disabled={Boolean(activeJobId)} onClick={() => askAi('revise')}>Ask AI to revise</button>
+            <button type='button' className='ghost' disabled={aiBusy} onClick={() => askAi('revise')}>Ask AI to revise</button>
             <button type='button' className='primary' onClick={() => {
               if (!hasArrangementAccess) {
                 openCreatorPlans();
@@ -744,9 +796,23 @@ export default function CreateMusicPage({ user, onNavigate }) {
         <button type='button' className='ghost' onClick={() => downloadText(lyricsText, safeFilename(project.title, 'txt'))}>Download lyrics</button>
       </footer>
 
-      {activeJobId && <div className='creation-job-status' role='status'><span className='creation-pulse' />{aiStatus || 'Creating your draft…'}<button type='button' onClick={cancelAi}>Stop</button></div>}
-      {!activeJobId && aiStatus && <p className='form-status creation-status'>{aiStatus}</p>}
-      {error && <p className='creation-error' role='alert'>{error}</p>}
+      {aiBusy && (
+        <TaskProgress
+          className='creation-job-status'
+          label='Creating your song…'
+          progress={Math.max(5, Math.min(94, Number(aiProgress?.percent) || 5))}
+          detail={aiProgressTimeLabel(aiProgress || INITIAL_AI_PROGRESS)}
+          onCancel={activeJobId ? cancelAi : undefined}
+          ariaLabel='Song creation progress'
+        />
+      )}
+      {!aiBusy && aiStatus && <p className='form-status creation-status'>{aiStatus}</p>}
+      {error && (
+        <div className='creation-error' role='alert'>
+          <span>{error}</span>
+          {aiRetryAvailable && <button type='button' onClick={() => askAi(step === 2 ? 'revise' : 'draft')}>Retry draft</button>}
+        </div>
+      )}
     </section>
   );
 }

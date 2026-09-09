@@ -20,6 +20,39 @@ let openAiCalls = 0;
 globalThis.fetch = (url, options) => {
   if (String(url).startsWith('https://api.openai.com/v1/responses')) {
     openAiCalls += 1;
+    if (String(options?.method || 'GET').toUpperCase() === 'GET') {
+      const responseId = String(url).split('/').pop();
+      return Promise.resolve(new Response(JSON.stringify({
+        id: responseId,
+        status: 'completed',
+        output: [{
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{
+            type: 'output_text',
+            text: JSON.stringify({
+              title: 'A hopeful beginning',
+              summary: 'An original hopeful pop song.',
+              genre: 'Pop',
+              mood: 'Hopeful',
+              energy: 'medium',
+              bpm: 100,
+              key: 'C major',
+              timeSignature: '4/4',
+              referenceTraits: ['steady pulse'],
+              chordDegrees: ['I', 'V', 'vi', 'IV'],
+              structure: ['verse-1', 'chorus'],
+              lyrics: { 'verse-1': ['Morning finds me'], chorus: ['I begin again'] },
+              vocalCoach: { comfortableRange: 'C3-G4', delivery: ['Sing gently.'] },
+            }),
+          }],
+        }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }
     return Promise.resolve(new Response(JSON.stringify({
       id: 'resp_freshdraft1234',
       status: 'queued',
@@ -95,6 +128,16 @@ test('legacy music jobs end cleanly and never keep AI drafting locked', async (c
 
   const nextDb = await readDb();
   nextDb.musicGenerationJobs.push({
+    id: 'resp_parsebug12345',
+    providerJobId: 'resp_parsebug12345',
+    userId,
+    status: 'FAILED',
+    blueprint: null,
+    error: 'The draft finished, but its structure was invalid: The music assistant returned no JSON blueprint.',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  nextDb.musicGenerationJobs.push({
     id: 'job_legacy_recent_draft',
     providerJobId: 'legacy_provider_job',
     userId,
@@ -104,6 +147,14 @@ test('legacy music jobs end cleanly and never keep AI drafting locked', async (c
   });
   await writeDb(nextDb);
 
+  const reparsed = await api('/api/music-creation/jobs/resp_parsebug12345', {
+    token: registration.data.token,
+  });
+  assert.equal(reparsed.status, 200);
+  assert.equal(reparsed.data.status, 'COMPLETED');
+  assert.equal(reparsed.data.blueprint.title, 'A hopeful beginning');
+  assert.equal(openAiCalls, 1);
+
   const started = await api('/api/music-creation/jobs', {
     method: 'POST',
     token: registration.data.token,
@@ -112,7 +163,17 @@ test('legacy music jobs end cleanly and never keep AI drafting locked', async (c
   assert.equal(started.status, 202);
   assert.equal(started.data.id, 'resp_freshdraft1234');
   assert.equal(started.data.reused, undefined);
-  assert.equal(openAiCalls, 1);
+  assert.ok(started.data.progress.percent >= 5);
+  assert.equal(openAiCalls, 2);
+
+  const completed = await api(`/api/music-creation/jobs/${started.data.id}`, {
+    token: registration.data.token,
+  });
+  assert.equal(completed.status, 200);
+  assert.equal(completed.data.status, 'COMPLETED');
+  assert.equal(completed.data.blueprint.title, 'A hopeful beginning');
+  assert.equal(completed.data.progress.percent, 100);
+  assert.equal(openAiCalls, 3);
 
   const finalDb = await readDb();
   assert.equal(
@@ -120,4 +181,3 @@ test('legacy music jobs end cleanly and never keep AI drafting locked', async (c
     'FAILED',
   );
 });
-

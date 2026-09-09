@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   createMusicCreationAssistant,
+  extractJson,
   isOpenAiResponseId,
   sanitizeBlueprint,
 } = require('./musicCreationAssistant');
@@ -25,7 +26,8 @@ test('song architect submits a bounded, original-song request and parses its blu
       return {
         id: 'job_create_12345',
         status: 'COMPLETED',
-        output: JSON.stringify({
+        // This is the normalized shape returned by openAiResponses.status().
+        output: { text: [JSON.stringify({
           title: 'After the rain',
           summary: 'A hopeful piano-pop song.',
           genre: 'Pop',
@@ -39,7 +41,7 @@ test('song architect submits a bounded, original-song request and parses its blu
           structure: ['verse-1', 'chorus'],
           lyrics: { 'verse-1': ['Streetlights wake'], chorus: ['I begin again'] },
           vocalCoach: { comfortableRange: 'D3-A4', delivery: ['Start conversationally.'] },
-        }),
+        })] },
       };
     },
     async cancel(jobId) { return { id: jobId, status: 'CANCELLED' }; },
@@ -70,4 +72,50 @@ test('song architect rejects empty requests and malformed blueprints', async () 
   });
   await assert.rejects(() => assistant.submit('draft', {}), { code: 'INVALID_MUSIC_CREATION_REQUEST' });
   assert.throws(() => sanitizeBlueprint({ lyrics: {} }), /no usable lyric sections/);
+});
+
+test('song architect reports a malformed completed response as failed', async () => {
+  const assistant = createMusicCreationAssistant({}, {
+    client: {
+      async status() {
+        return { id: 'resp_invalid1234', status: 'COMPLETED', output: { text: ['not json'] } };
+      },
+    },
+  });
+  const completed = await assistant.status('resp_invalid1234', { idea: 'A test song' });
+  assert.equal(completed.status, 'FAILED');
+  assert.equal(completed.finished, true);
+  assert.equal(completed.blueprint, null);
+  assert.equal(completed.error, 'We could not assemble that draft correctly. Please retry.');
+});
+
+test('song architect extracts fenced and wrapped JSON without confusing lyric braces', () => {
+  assert.deepEqual(extractJson('```json\n{"title":"Fenced"}\n```'), { title: 'Fenced' });
+  assert.deepEqual(
+    extractJson('Draft note {not JSON}. Blueprint: {"title":"A {bright} day","lyrics":{}} done.'),
+    { title: 'A {bright} day', lyrics: {} },
+  );
+});
+
+test('song architect accepts an already parsed structured response', async () => {
+  const assistant = createMusicCreationAssistant({}, {
+    client: {
+      async status() {
+        return {
+          id: 'resp_parsed_12345678',
+          status: 'COMPLETED',
+          output: {
+            parsed: {
+              title: 'Parsed safely',
+              lyrics: { chorus: ['Here we go'] },
+              vocalCoach: {},
+            },
+          },
+        };
+      },
+    },
+  });
+  const completed = await assistant.status('resp_parsed_12345678');
+  assert.equal(completed.status, 'COMPLETED');
+  assert.equal(completed.blueprint.title, 'Parsed safely');
 });

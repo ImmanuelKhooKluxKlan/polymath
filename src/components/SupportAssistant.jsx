@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiRequest } from '../services/api.js';
+import { userFacingError } from '../utils/userFacingError.js';
+import TaskProgress from './TaskProgress.jsx';
 
 const DEFAULT_SUPPORT = Object.freeze({
   unlimited: false,
@@ -44,7 +46,7 @@ export default function SupportAssistant({ user }) {
         if (!cancelled && data.support) setSupport(data.support);
       })
       .catch((error) => {
-        if (!cancelled) setStatus(error.message);
+        if (!cancelled) setStatus(userFacingError(error, 'Help is temporarily unavailable. Please try again.'));
       });
     return () => { cancelled = true; };
   }, [user?.user_id, open]);
@@ -79,7 +81,7 @@ export default function SupportAssistant({ user }) {
     setMessages(next);
     setDraft('');
     setWaiting(true);
-    setStatus('Polymath Support may need a moment to wake up.');
+    setStatus('');
     try {
       const data = await apiRequest('/api/assistant/support', {
         method: 'POST',
@@ -90,7 +92,7 @@ export default function SupportAssistant({ user }) {
       setStatus('');
     } catch (error) {
       if (error.details?.support) setSupport(error.details.support);
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'Your question could not be sent. Please try again.'));
     } finally {
       setWaiting(false);
     }
@@ -108,7 +110,7 @@ export default function SupportAssistant({ user }) {
           <div className="support-message-stream" aria-live="polite">
             {!messages.length && <p className="support-welcome">Hi {user.name?.split(' ')[0] || 'there'}. What can I help you with?</p>}
             {messages.map((message, index) => <p key={`${message.role}-${index}`} className={`support-message is-${message.role}`}>{message.content}</p>)}
-            {waiting && <p className="support-thinking"><i /><i /><i /></p>}
+            {waiting && <TaskProgress compact label="Preparing your answer…" ariaLabel="Support answer progress" />}
           </div>
           {exhausted ? (
             <div className="support-limit-card" role="status">
@@ -127,7 +129,7 @@ export default function SupportAssistant({ user }) {
               <button type="submit" className="primary" disabled={waiting || !draft.trim()}>Send</button>
             </form>
           )}
-          {status && <p className="support-status">{status}</p>}
+          {status && !waiting && <p className="support-status">{status}</p>}
           <small className="support-privacy">Never share passwords, OTPs, private keys, or card details.</small>
         </section>
       )}

@@ -6,6 +6,7 @@ import {
 } from '../services/api.js';
 import PdfTranslationPanel from './PdfTranslationPanel.jsx';
 import MediaTranscriptionPanel from './MediaTranscriptionPanel.jsx';
+import TaskProgress from './TaskProgress.jsx';
 
 const GUEST_READY_UPLOAD_KEY = 'polymath_guest_ready_upload_month_v2';
 const GUEST_READY_UPLOAD_LIMIT = 2;
@@ -63,7 +64,7 @@ export default function MusicUploadPanel({
     if (!file) return;
     setMode('ready');
     setBusy(true);
-    setStatus(`Reading ${file.name}…`);
+    setStatus('');
     try {
       const prepared = await onReadyFile(file, { commit: false });
       let payment;
@@ -200,7 +201,9 @@ export default function MusicUploadPanel({
           onPersonalSongSaved={onPersonalSongSaved}
         />
       ) : (
-        status && <p className="form-status">{status}</p>
+        busy
+          ? <TaskProgress compact label="Preparing your song…" ariaLabel="Song preparation progress" />
+          : status && <p className="form-status">{status}</p>
       )}
     </div>
   );

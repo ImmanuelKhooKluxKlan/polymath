@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../services/api.js';
+import { userFacingError } from '../utils/userFacingError.js';
+import TaskProgress from './TaskProgress.jsx';
 
 const INITIAL_MESSAGE = {
   role: 'assistant',
@@ -42,7 +44,7 @@ export default function TeacherConversationPanel({
         if (!cancelled) setCapabilities(result);
       })
       .catch((requestError) => {
-        if (!cancelled) setError(requestError.message);
+        if (!cancelled) setError(userFacingError(requestError, 'Teacher conversation is temporarily unavailable.'));
       });
     return () => { cancelled = true; };
   }, []);
@@ -123,7 +125,7 @@ export default function TeacherConversationPanel({
     try {
       await requestReply(nextMessages);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(userFacingError(requestError, 'Your teacher could not answer. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -147,7 +149,7 @@ export default function TeacherConversationPanel({
       setLastScene(scene);
       await requestReply([...messages.slice(-14), userMessage], scene);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(userFacingError(requestError, 'Your teacher could not view that snapshot. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -208,13 +210,13 @@ export default function TeacherConversationPanel({
             <p>{message.content}</p>
           </div>
         ))}
-        {busy && <div className="teacher-chat-thinking">Teacher is thinking…</div>}
+        {busy && <TaskProgress compact label="Preparing your teacher’s reply…" ariaLabel="Teacher reply progress" />}
         <span ref={messageEndRef} />
       </div>
 
       {error && <p className="teacher-chat-error" role="alert">{error}</p>}
       {!conversationAvailable && (
-        <p className="teacher-chat-notice">Conversation needs the Chat Boss endpoint. Measured piano corrections still work locally.</p>
+        <p className="teacher-chat-notice">Conversation is temporarily unavailable. Measured piano corrections still work.</p>
       )}
 
       <form
@@ -239,7 +241,7 @@ export default function TeacherConversationPanel({
           className="ghost"
           onClick={shareScene}
           disabled={busy || !sceneAvailable}
-          title={sceneAvailable ? 'Share one camera snapshot with the teacher' : 'Connect a vision-language model to enable general object recognition'}
+          title={sceneAvailable ? 'Share one camera snapshot with the teacher' : 'Object recognition is not available yet'}
         >
           Look
         </button>
@@ -248,8 +250,8 @@ export default function TeacherConversationPanel({
 
       <p className="teacher-chat-privacy">
         {sceneAvailable
-          ? 'Look sends one snapshot only when pressed. Chat stays in this browser session. Browser speech input may use your browser provider.'
-          : 'Keyboard vision is local. General object vision is awaiting a separate vision-model connection. Browser speech input may use your browser provider.'}
+          ? 'Look shares one snapshot only when pressed. Chat stays in this browser session.'
+          : 'Keyboard vision stays on this device. Object recognition is not available yet.'}
       </p>
     </section>
   );

@@ -11,7 +11,9 @@ import {
   speechAnimationFrame,
   spokenTokenLength,
 } from '../engine/teacherSpeechAnimation.js';
+import { userFacingError } from '../utils/userFacingError.js';
 import PianoTeacherPerformanceStage from './PianoTeacherPerformanceStage.jsx';
+import TaskProgress from './TaskProgress.jsx';
 
 const DEFAULT_CATALOG = {
   rateMcoinsPerHour: 10,
@@ -290,7 +292,7 @@ export default function VirtualLessonPanel({
         }
       })
       .catch((error) => {
-        if (!cancelled) setStatus(error.message);
+        if (!cancelled) setStatus(userFacingError(error, 'Private lessons could not be opened. Please try again.'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -317,7 +319,7 @@ export default function VirtualLessonPanel({
           consecutiveConnectionErrors = 0;
           if (data.session) setSession(data.session);
           if (data.pending) {
-            setStatus(data.message || 'Your teacher is preparing the reply...');
+            setStatus('Preparing your teacher’s reply…');
             await waitForTeacher(data.status === 'IN_PROGRESS' ? 1800 : 2600, controller.signal);
             continue;
           }
@@ -334,16 +336,14 @@ export default function VirtualLessonPanel({
           if (error.details?.session) setSession(error.details.session);
           if (error.details?.retryable || error.code === 'NETWORK_INTERRUPTED') {
             consecutiveConnectionErrors += 1;
-            setStatus(consecutiveConnectionErrors > 1
-              ? 'Connection interrupted. Your teacher job is safe; reconnecting automatically...'
-              : 'Your teacher is reconnecting...');
+            setStatus('Preparing your teacher’s reply…');
             await waitForTeacher(Math.min(8000, 2500 + consecutiveConnectionErrors * 750), controller.signal);
             continue;
           }
           const restored = Number(error.details?.recoveredSeconds || 0);
           setStatus(restored > 0
-            ? `${error.message} Your lesson clock was restored.`
-            : error.message);
+            ? `${userFacingError(error, 'Your teacher could not answer. Please try again.')} Your lesson clock was restored.`
+            : userFacingError(error, 'Your teacher could not answer. Please try again.'));
           if (!stopped) setWaiting(false);
           return;
         }
@@ -611,7 +611,7 @@ export default function VirtualLessonPanel({
     const requestKey = `${targetSessionId}:${speechKind || messageId}`;
     const controller = new window.AbortController();
     naturalSpeechAbortRef.current = controller;
-    setSpeechStatus(`Preparing ${sessionTeacher.name}'s natural voice...`);
+    setSpeechStatus('Preparing teacher voice…');
 
     try {
       let audioUrl = naturalAudioCacheRef.current.get(requestKey);
@@ -679,7 +679,7 @@ export default function VirtualLessonPanel({
       }
       voiceUnlockedRef.current = false;
       setVoiceUnlocked(false);
-      setSpeechStatus(error.message || 'The natural teacher voice could not load.');
+      setSpeechStatus(userFacingError(error, 'The teacher voice could not load.'));
       return false;
     }
   }
@@ -749,7 +749,7 @@ export default function VirtualLessonPanel({
     if (voiceOutputRef.current && !voiceUnlockedRef.current) unlockTeacherVoice();
     setWaiting(true);
     setDurationMinutes(selectedQuote.durationMinutes);
-    setStatus('Securing your private lesson...');
+    setStatus('');
     if (!checkoutRef.current) checkoutRef.current = requestId();
     try {
       const data = await apiRequest('/api/virtual-lessons', {
@@ -789,7 +789,7 @@ export default function VirtualLessonPanel({
       );
     } catch (error) {
       if (error.details?.session) setSession(error.details.session);
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'The private lesson could not start. Please try again.'));
     } finally {
       setWaiting(false);
     }
@@ -811,7 +811,7 @@ export default function VirtualLessonPanel({
       setSession(data.session);
       if (data.pending) {
         replyQueued = true;
-        setStatus(data.message || 'Your teacher is preparing the reply...');
+        setStatus('Preparing your teacher’s reply…');
         return;
       }
       if (data.action) onDemonstrate?.(data.action);
@@ -823,8 +823,8 @@ export default function VirtualLessonPanel({
       if (error.details?.session) setSession(error.details.session);
       const restored = Number(error.details?.recoveredSeconds || 0);
       setStatus(restored > 0
-        ? `${error.message} ${restored} seconds were restored to your lesson.`
-        : error.message);
+        ? `${userFacingError(error, 'Your teacher could not answer. Please try again.')} ${restored} seconds were restored to your lesson.`
+        : userFacingError(error, 'Your teacher could not answer. Please try again.'));
     } finally {
       if (!replyQueued) setWaiting(false);
     }
@@ -900,7 +900,7 @@ export default function VirtualLessonPanel({
       cancelTeacherSpeech();
       recognitionRef.current?.abort();
     } catch (error) {
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'The lesson could not be ended. Please try again.'));
     } finally {
       setWaiting(false);
     }
@@ -916,7 +916,7 @@ export default function VirtualLessonPanel({
     );
   }
 
-  if (loading) return <div className="virtual-lesson-loading" role="status">Checking your private lesson...</div>;
+  if (loading) return <div className="virtual-lesson-loading"><TaskProgress label="Opening your private lesson…" ariaLabel="Private lesson loading progress" /></div>;
 
   if (!session || session.status !== 'active') {
     return (
@@ -1042,14 +1042,15 @@ export default function VirtualLessonPanel({
             <small>{user.unlimitedMcoins ? 'No Mcoins charged.' : `${selectedQuote?.priceMcoins || 0} Mcoins from your wallet.`} Memory clears when time ends.</small>
           </span>
           <button type="button" className="primary" disabled={waiting || !assistantAvailable || !selectedQuote} onClick={startLesson}>
-            {waiting ? 'Starting...' : 'Start private session'}
+            {waiting ? 'Please wait…' : 'Start private session'}
           </button>
         </div>
-        {!assistantAvailable && <p className="teacher-chat-status">Virtual lessons are not configured on this server. Nothing can be charged.</p>}
+        {waiting && <TaskProgress compact label="Opening your private lesson…" ariaLabel="Private lesson progress" />}
+        {!assistantAvailable && <p className="teacher-chat-status">Virtual lessons are temporarily unavailable. Nothing can be charged.</p>}
         {!user.unlimitedMcoins && Number(user.mcoins || 0) < Number(selectedQuote?.priceMcoins || 0) && (
           <button type="button" className="virtual-lesson-wallet-link" onClick={() => onNavigate?.('payment', { productId: 'mcoins-50' })}>Add Mcoins to wallet</button>
         )}
-        {status && <p className="teacher-chat-status" role="status">{status}</p>}
+        {status && !waiting && <p className="teacher-chat-status" role="status">{status}</p>}
       </div>
     );
   }
@@ -1131,7 +1132,9 @@ export default function VirtualLessonPanel({
       {!speechSupported && <p className="virtual-lesson-browser-note">Spoken replies are unavailable in this browser. Text chat still works.</p>}
       {speechSupported && !voiceUnlocked && <p className="virtual-lesson-browser-note">Tap Enable teacher voice once. Phones require this tap before they allow spoken replies.</p>}
       {!recognitionSupported && <p className="virtual-lesson-browser-note">Voice input is unavailable in this browser. You can still type to your teacher.</p>}
-      {speechStatus && <p className="virtual-lesson-browser-note" role="status">{speechStatus}</p>}
+      {speechStatus === 'Preparing teacher voice…'
+        ? <TaskProgress compact label="Preparing teacher voice…" ariaLabel="Teacher voice progress" />
+        : speechStatus && <p className="virtual-lesson-browser-note" role="status">{speechStatus}</p>}
 
       <div className="teacher-chat-messages virtual-lesson-messages" aria-live="polite">
         {!messages.length && (
@@ -1145,7 +1148,7 @@ export default function VirtualLessonPanel({
         {messages.map((message) => (
           <p key={message.id} className={`teacher-message teacher-message-${message.role === 'assistant' ? 'teacher' : 'student'}`}>{message.text}</p>
         ))}
-        {waiting && <p className="teacher-message teacher-message-thinking" aria-label="Teacher is thinking"><i /><i /><i /></p>}
+        {waiting && <TaskProgress compact label="Preparing your teacher’s reply…" ariaLabel="Teacher reply progress" />}
       </div>
 
       <div className="virtual-lesson-prompts" aria-label="Quick lesson requests">
@@ -1173,7 +1176,7 @@ export default function VirtualLessonPanel({
         performanceTier={performanceTier}
         speechCue={speechCue}
       />
-      {status && <p className="teacher-chat-status" role="status">{status}</p>}
+      {status && !waiting && <p className="teacher-chat-status" role="status">{status}</p>}
       <footer className="virtual-lesson-footer">
         <small>Microphone starts only when tapped. Browser speech recognition may use your browser's speech service. Polymath does not save raw microphone audio.</small>
         <button type="button" onClick={endLesson} disabled={waiting}>End lesson</button>

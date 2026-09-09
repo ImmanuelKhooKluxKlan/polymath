@@ -144,7 +144,6 @@ export default function PianoKeyboard({
   showKeyNotes = true,
   preparationStatus = 'locked',
   preparationProgress = 0,
-  preparationStage = 'Tap once to prepare',
   performanceTier = 'full',
   deviceClass = 'desktop',
   onPrepare,
@@ -206,7 +205,7 @@ export default function PianoKeyboard({
         <div className="piano-preparation" aria-live="polite">
           {isPreparing ? (
             <>
-              <strong>{preparationStage}</strong>
+              <strong>Preparing your piano…</strong>
               <progress max="100" value={preparationProgress} aria-label="Piano preparation progress" />
               <small>{preparationProgress}% · Keep this page open.</small>
             </>

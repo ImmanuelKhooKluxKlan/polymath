@@ -144,7 +144,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
         }),
       });
       setUser(data.user);
-      setStatus(`Cash-out queued. Fee: ${data.withdrawal.feeMcoins} Mcoins. Net payout: ${data.withdrawal.netMcoins} Mcoins.`);
+      setStatus(`Cash-out requested. Fee: ${data.withdrawal.feeMcoins} Mcoins. Net payout: ${data.withdrawal.netMcoins} Mcoins.`);
       setWithdraw({ amountMcoins: '', payoutEmail: '' });
     } catch (error) {
       setStatus(error.message);

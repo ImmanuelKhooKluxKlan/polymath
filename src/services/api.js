@@ -3,6 +3,12 @@ const API_BASE = VITE_ENV.VITE_API_BASE_URL
   || (VITE_ENV.PROD ? '' : 'http://localhost:3000');
 const TOKEN_KEY = 'polymath_musician_auth_token';
 const LEGACY_TOKEN_KEY = 'polymath_muscian_auth_token';
+export const GLOBAL_TASK_ACTIVITY_EVENT = 'polymath:global-task-activity';
+
+function announceGlobalTask(delta) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  window.dispatchEvent(new window.CustomEvent(GLOBAL_TASK_ACTIVITY_EVENT, { detail: { delta } }));
+}
 
 function retryDelay(ms, signal) {
   return new Promise((resolve, reject) => {
@@ -67,21 +73,27 @@ export async function apiRequest(path, options = {}) {
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const { networkRetries, ...fetchOptions } = options;
+  const { networkRetries, globalProgress = true, ...fetchOptions } = options;
   const method = String(fetchOptions.method || 'GET').toUpperCase();
   const retries = Number.isFinite(Number(networkRetries))
     ? Math.max(0, Math.min(4, Number(networkRetries)))
     : (method === 'GET' || method === 'HEAD' ? 2 : 0);
-  const response = await resilientFetch(`${API_BASE}${path}`, { ...fetchOptions, headers }, retries);
-  const contentType = response.headers.get('content-type') || '';
-  const data = contentType.includes('application/json') ? await response.json() : await response.text();
-  if (!response.ok) {
-    const error = new Error(typeof data === 'object' && data?.error ? data.error : `Request failed (${response.status})`);
-    error.status = response.status;
-    error.details = data;
-    throw error;
+  const showGlobalProgress = globalProgress !== false && !['GET', 'HEAD'].includes(method);
+  if (showGlobalProgress) announceGlobalTask(1);
+  try {
+    const response = await resilientFetch(`${API_BASE}${path}`, { ...fetchOptions, headers }, retries);
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : await response.text();
+    if (!response.ok) {
+      const error = new Error(typeof data === 'object' && data?.error ? data.error : `Request failed (${response.status})`);
+      error.status = response.status;
+      error.details = data;
+      throw error;
+    }
+    return data;
+  } finally {
+    if (showGlobalProgress) announceGlobalTask(-1);
   }
-  return data;
 }
 
 export async function fetchProtectedBlob(path, options = {}) {

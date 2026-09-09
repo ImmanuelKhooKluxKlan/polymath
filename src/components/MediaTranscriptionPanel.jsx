@@ -6,6 +6,8 @@ import {
   uploadProtectedArtifact,
 } from '../services/api.js';
 import { trackProductEvent, uploadSizeBucket } from '../services/productAnalytics.js';
+import { userFacingError } from '../utils/userFacingError.js';
+import TaskProgress from './TaskProgress.jsx';
 
 const MEDIA_ACCEPT = 'audio/*,video/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.mp4,.mov,.webm,.mkv,.avi';
 const ACTIVE_JOB_KEY_PREFIX = 'polymath-active-media-transcription-v1:';
@@ -40,8 +42,12 @@ function elapsedLabel(startedAt, now = Date.now()) {
   return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s elapsed`;
 }
 
-function polymathLabel(value) {
-  return String(value || '').replace(/MuScriptor/gi, 'Polymath');
+function progressDetail(job, clock, restored) {
+  return [
+    restored ? 'Still working' : '',
+    elapsedLabel(job?.startedAt, clock),
+    'You may leave this page',
+  ].filter(Boolean).join(' · ');
 }
 
 export default function MediaTranscriptionPanel({
@@ -59,6 +65,7 @@ export default function MediaTranscriptionPanel({
   const [job, setJob] = useState(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [restoredJob, setRestoredJob] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
@@ -108,7 +115,7 @@ export default function MediaTranscriptionPanel({
         setRestoredJob(true);
         autoOpenJobId.current = active.id;
         rememberActiveJob(user?.user_id, active.id);
-        setStatus('Reconnected to your transcription. It kept working safely on the server.');
+        setStatus('');
         trackProductEvent('transcription_restored', {
           instrument: active.instrument || instrument || 'band',
           playbackMode: active.playbackMode || playbackMode,
@@ -116,8 +123,8 @@ export default function MediaTranscriptionPanel({
         });
         schedulePoll(active.id, 250);
       })
-      .catch((error) => {
-        if (!cancelled) setStatus(error.message);
+      .catch(() => {
+        if (!cancelled) setStatus('Audio translation could not be opened. Try again.');
       });
 
     const resumePolling = () => {
@@ -160,7 +167,7 @@ export default function MediaTranscriptionPanel({
       }
       if (data.job.status === 'failed') {
         const refund = data.job.refunded ? ' Your translation was refunded.' : '';
-        setStatus(`${polymathLabel(data.job.error) || 'Polymath could not transcribe this recording.'}${refund}`);
+        setStatus(`We couldn’t create a playable song from this recording.${refund}`);
         clearPolling();
         autoOpenJobId.current = '';
         rememberActiveJob(user?.user_id, '');
@@ -171,7 +178,7 @@ export default function MediaTranscriptionPanel({
       if (!mounted.current || currentUserId.current !== requestUserId) return;
       pollFailures.current += 1;
       const retrySeconds = Math.min(30, 4 * (2 ** Math.min(3, pollFailures.current)));
-      setStatus(`The status connection paused, but your server job is safe. Reconnecting in ${retrySeconds} seconds…`);
+      setStatus('');
       schedulePoll(jobId, retrySeconds * 1000);
     }
   }
@@ -200,10 +207,11 @@ export default function MediaTranscriptionPanel({
     }
     if (!file || busy || !rightsConfirmed) return;
     setBusy(true);
-    setStatus('Uploading securely…');
+    setUploadProgress(null);
+    setStatus('');
     try {
       const directUpload = await uploadProtectedArtifact(file, 'media-transcription', {
-        onProgress: (percent) => setStatus(`Uploading securely… ${percent}%`),
+        onProgress: setUploadProgress,
       });
       let data;
       if (directUpload) {
@@ -235,14 +243,16 @@ export default function MediaTranscriptionPanel({
       if (data.user && setUser) setUser(data.user);
       setJob(data.job);
       setRestoredJob(false);
-      setStatus('Polymath is preparing your recording.');
+      setStatus('');
+      setUploadProgress(null);
       autoOpenJobId.current = data.job.id;
       rememberActiveJob(user?.user_id, data.job.id);
       pollFailures.current = 0;
       clearPolling();
       schedulePoll(data.job.id, 1500);
     } catch (error) {
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'We couldn’t start this translation. Please try again.'));
+      setUploadProgress(null);
       if (error.details?.capability) setCapability(error.details.capability);
     } finally {
       setBusy(false);
@@ -269,7 +279,7 @@ export default function MediaTranscriptionPanel({
       setJob(data.job);
       setStatus('Thank you. This review goes directly into Polymath quality tracking.');
     } catch (error) {
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'Your review could not be saved. Please try again.'));
     } finally {
       setFeedbackBusy(false);
     }
@@ -298,7 +308,7 @@ export default function MediaTranscriptionPanel({
       }
       setStatus('Loaded into the studio and ready to play.');
     } catch (error) {
-      setStatus(error.message);
+      setStatus(userFacingError(error, 'The finished song could not be opened. Please try again.'));
     } finally {
       setBusy(false);
     }
@@ -319,15 +329,15 @@ export default function MediaTranscriptionPanel({
     <div className="media-transcription-panel">
       {capability && !capability.enabled && (
         <div className="quota-warning">
-          <strong>Polymath transcription is not enabled on this server.</strong>
-          <span>{polymathLabel(capability.reason)}</span>
+          <strong>Audio translation is temporarily unavailable.</strong>
+          <span>Please try again later.</span>
         </div>
       )}
 
       {capability?.enabled && capability.adminOnly && !user.admin && (
         <div className={'quota-warning'}>
-          <strong>Polymath model testing is restricted.</strong>
-          <span>Administrator access is required during the trial-and-error testing phase.</span>
+          <strong>Audio translation is in private preview.</strong>
+          <span>Please check back when public access opens.</span>
         </div>
       )}
 
@@ -408,7 +418,7 @@ export default function MediaTranscriptionPanel({
           disabled={!file || !rightsConfirmed || busy || transcriptionUnavailable || insufficientMcoins}
         >
           {busy
-            ? 'Uploading…'
+            ? 'Please wait…'
             : paymentMethod === 'allowance'
               ? 'Use 1 included translation'
               : paymentMethod === 'admin'
@@ -417,21 +427,34 @@ export default function MediaTranscriptionPanel({
         </button>
       )}
 
+      {busy && !job && (
+        <TaskProgress
+          compact
+          label='Uploading your recording…'
+          progress={uploadProgress}
+          detail='Keep this page open until the upload finishes.'
+          ariaLabel='Recording upload progress'
+        />
+      )}
+
       {job && (
         <div className={`media-transcription-job ${job.status}`}>
-          <div className="job-status-row">
-            <div>
-              <span>{polymathLabel(job.stage)}</span>
-              <strong>{job.title}</strong>
-              {job.status === 'processing' && (
-                <small>{restoredJob ? 'Restored safely · ' : ''}{elapsedLabel(job.startedAt, clock)} · you may leave this page</small>
-              )}
+          {job.status === 'processing' ? (
+            <TaskProgress
+              label='Creating your playable song…'
+              progress={Number.isFinite(Number(job.progress)) ? Number(job.progress) : null}
+              detail={progressDetail(job, clock, restoredJob)}
+              ariaLabel='Song translation progress'
+            />
+          ) : (
+            <div className="job-status-row">
+              <div>
+                <span>{job.status === 'completed' ? 'Ready to play' : 'Could not finish'}</span>
+                <strong>{job.title}</strong>
+              </div>
+              <span className="job-state-badge">{job.status === 'completed' ? 'Ready' : 'Stopped'}</span>
             </div>
-            <span className="job-state-badge">{job.progress}%</span>
-          </div>
-          <div className="job-progress-track" aria-label={`Transcription progress ${job.progress}%`}>
-            <span style={{ width: `${job.progress}%` }} />
-          </div>
+          )}
           {job.status === 'completed' && (
             <>
               <div className="media-result-actions">
@@ -480,9 +503,9 @@ export default function MediaTranscriptionPanel({
         </div>
       )}
 
-      {status && <p className="form-status">{status}</p>}
+      {status && !busy && job?.status !== 'processing' && <p className="form-status">{status}</p>}
       <small className="muscriptor-license-note">
-        Foundation-model licence: CC BY-NC 4.0, non-commercial use only. Large models may take much longer on a CPU-only server.
+        Foundation-model licence: CC BY-NC 4.0, non-commercial use only.
       </small>
     </div>
   );

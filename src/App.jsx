@@ -9,6 +9,8 @@ import TransportDock from './components/TransportDock.jsx';
 import PianoLearnJourney from './components/PianoLearnJourney.jsx';
 import PianoTeacherStudio from './components/PianoTeacherStudio.jsx';
 import SupportAssistant from './components/SupportAssistant.jsx';
+import GlobalTaskProgress from './components/GlobalTaskProgress.jsx';
+import TaskProgress from './components/TaskProgress.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import { campaignPlaybackRange, prepareCampaignSong } from './engine/artistCampaign.js';
@@ -2040,6 +2042,7 @@ export default function App() {
 
   return (
     <div className="app-root" data-performance-tier={performanceTier}>
+      <GlobalTaskProgress />
       {siteConfiguration.announcement.enabled && (
         <aside className={`site-announcement site-announcement-${siteConfiguration.announcement.tone}`} role='status'>
           {siteConfiguration.announcement.text}
@@ -2066,7 +2069,7 @@ export default function App() {
         {!campaignSlug && <HeaderActions user={user} onNavigate={navigate} route={route.page} />}
       </div>
       <main className="app-shell">
-        <Suspense fallback={<div className="route-loading" role="status">Opening this section…</div>}>
+        <Suspense fallback={<div className="route-loading"><TaskProgress compact label="Opening this section…" ariaLabel="Section loading progress" /></div>}>
           {content}
         </Suspense>
       </main>
