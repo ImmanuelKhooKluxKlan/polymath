@@ -147,6 +147,17 @@ test('legacy music jobs end cleanly and never keep AI drafting locked', async (c
   });
   await writeDb(nextDb);
 
+  const recoveryStarted = await api('/api/music-creation/jobs', {
+    method: 'POST',
+    token: registration.data.token,
+    body: { kind: 'draft', brief: { idea: 'This should reuse the finished response.' } },
+  });
+  assert.equal(recoveryStarted.status, 202);
+  assert.equal(recoveryStarted.data.id, 'resp_parsebug12345');
+  assert.equal(recoveryStarted.data.reused, true);
+  assert.equal(recoveryStarted.data.recovering, true);
+  assert.equal(openAiCalls, 0);
+
   const reparsed = await api('/api/music-creation/jobs/resp_parsebug12345', {
     token: registration.data.token,
   });

@@ -1860,6 +1860,13 @@ function musicCreationRequestAllowed(userId, intervalMs = 2500) {
   return true;
 }
 
+function isRecoverableMusicBlueprintJob(job) {
+  return job?.status === 'FAILED'
+    && !job.blueprint
+    && isOpenAiResponseId(job.providerJobId)
+    && /draft finished, but its structure was invalid:.*no JSON blueprint/i.test(String(job.error || ''));
+}
+
 function marketplaceRanking(averageRating = 0, audienceCount = 0) {
   const rating = Math.min(5, Math.max(0, Number(averageRating) || 0));
   const audience = Math.max(0, Number(audienceCount) || 0);
@@ -4470,6 +4477,22 @@ app.post(
         progress: describeMusicCreationProgress(existingJob, req.db.musicGenerationJobs),
       });
     }
+    const recoverableJob = req.db.musicGenerationJobs
+      .filter((item) => (
+        item.userId === req.user.id
+        && isRecoverableMusicBlueprintJob(item)
+        && Date.now() - new Date(item.createdAt).getTime() < 24 * 60 * 60 * 1000
+      ))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+    if (recoverableJob) {
+      return res.status(202).json({
+        id: recoverableJob.id,
+        status: 'IN_PROGRESS',
+        reused: true,
+        recovering: true,
+        progress: describeMusicCreationProgress({ ...recoverableJob, status: 'IN_PROGRESS' }, req.db.musicGenerationJobs),
+      });
+    }
     if (!musicCreationRequestAllowed(req.user.id)) {
       res.set('Retry-After', '3');
       return res.status(429).json({ error: 'Give the song architect a moment before starting another draft.' });
@@ -4518,10 +4541,7 @@ app.get(
       item.id === req.params.jobId && item.userId === req.user.id
     ));
     if (!job) return res.status(404).json({ error: 'Music creation job not found.' });
-    const recoverableParserFailure = job.status === 'FAILED'
-      && !job.blueprint
-      && isOpenAiResponseId(job.providerJobId)
-      && /draft finished, but its structure was invalid:.*no JSON blueprint/i.test(String(job.error || ''));
+    const recoverableParserFailure = isRecoverableMusicBlueprintJob(job);
     if (['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELLED'].includes(job.status) && !recoverableParserFailure) {
       return res.json({
         id: job.id,
