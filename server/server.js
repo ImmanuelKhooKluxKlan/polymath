@@ -3172,7 +3172,7 @@ async function processMediaTranscriptionJob(jobId) {
     }
 
     await updateMediaTranscriptionJob(jobId, {
-      stage: 'Cleaning rapid repeats and shaping the piano arrangement',
+      stage: 'Cleaning rapid repeats and shaping the selected instrument',
       progress: 94,
     });
     const rawResult = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
@@ -3182,7 +3182,12 @@ async function processMediaTranscriptionJob(jobId) {
       preparedPath,
     });
     result.playbackMode = job.playbackMode || 'instrumental';
-    result.vocalMelodyIncluded = job.playbackMode === 'full';
+    result.vocalMelodyIncluded = result.playbackMode === 'full' && (
+      result.vocalMelodyIncluded === true
+      || result.notes.some((note) => (
+        String(note?.sourceInstrument || note?.instrument || '').toLowerCase() === 'voice'
+      ))
+    );
     result.selectedInstrument = job.instrument;
     result.arrangementProfile = job.instrument === 'piano'
       ? 'piano-reduction-with-midi-phrasing-v3'

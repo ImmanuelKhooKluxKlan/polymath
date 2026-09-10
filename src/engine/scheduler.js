@@ -1,6 +1,7 @@
 import {
   GRAND_END_MIDI,
   GRAND_START_MIDI,
+  foldMidiIntoPianellaRange,
 } from './grandPianoLayout.js';
 
 import {
@@ -739,6 +740,7 @@ export function getActivePerformanceEvents(
 export function normalizeSong(
   song
 ) {
+  const compactPianoRange = song?.performance?.preserveFullGrandRange !== true;
   const hasExactDurationFields =
     Array.isArray(song?.notes) &&
     song.notes.some((note) => (
@@ -822,13 +824,10 @@ export function normalizeSong(
         }
 
         /*
-         * No octave folding.
-         * No collision pushing.
-         * No fake range remapping.
-         *
-         * If the JSON contains a note outside the
-         * real 88-key piano range, drop it instead
-         * of converting it into the wrong note.
+         * Reject impossible values outside a real 88-key piano first. The
+         * compact player then preserves pitch class while folding only A0-A1
+         * and C7-C8 outliers into its visible A1-C7 row. An explicitly marked
+         * full-grand score can opt out.
          */
         if (
           parsedNote.midi <
@@ -839,8 +838,9 @@ export function normalizeSong(
           return null;
         }
 
-        const midi =
-          parsedNote.midi;
+        const midi = compactPianoRange
+          ? foldMidiIntoPianellaRange(parsedNote.midi)
+          : parsedNote.midi;
 
         const normalizedNote =
           midiToNote(midi);
@@ -944,6 +944,15 @@ export function normalizeSong(
             note.original_note ||
             note.originalNote ||
             note.note,
+
+          originalMidi:
+            parsedNote.midi,
+
+          octaveShiftSemitones:
+            midi - parsedNote.midi,
+
+          wasOctaveFolded:
+            midi !== parsedNote.midi,
 
           measure:
             note.measure,
@@ -1144,6 +1153,10 @@ export function normalizeSong(
       song.percussionEvents,
 
     pedals,
+    pianoRangeNormalization: {
+      mode: compactPianoRange ? 'pianella-compact-a1-c7' : 'full-grand-a0-c8',
+      shiftedNotes: parsed.filter((note) => note.wasOctaveFolded).length,
+    },
     notes: parsed,
   };
 }

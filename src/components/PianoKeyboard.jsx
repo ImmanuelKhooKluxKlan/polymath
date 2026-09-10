@@ -164,10 +164,10 @@ export default function PianoKeyboard({
       ? 'Tablet'
       : 'Computer';
   const liteWarning = performanceTier === 'lite';
-  const layoutLabel = layout.mode === 'learn-grand-single'
+  const layoutLabel = ['learn-grand-single', 'grand-single'].includes(layout.mode)
     ? 'Single-row A0-C8 guided grand piano'
     : layout.parentMode === 'two-storey-grand' || layout.isTwoStorey
-      ? 'Two-storey A0-C8 grand piano'
+      ? 'Two-storey grand piano'
       : 'Polymath Musician A1-C7 row';
   return (
     <section

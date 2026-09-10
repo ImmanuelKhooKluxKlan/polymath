@@ -7,9 +7,17 @@ MuScriptor model weights remain subject to their CC BY-NC 4.0 license.
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from muscriptor import TranscriptionModel
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from serverless.muscriptor.beat_grid import apply_onset_delay, normalize_beat_grid  # noqa: E402
 
 
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -41,6 +49,7 @@ def main() -> None:
     starts = {}
     notes = []
     progress = {"completed": 0, "total": 0}
+    beat_grid = None
 
     for event in model.transcribe(args.input, instruments=instruments):
         if hasattr(event, "start_time") and hasattr(event, "pitch"):
@@ -78,6 +87,16 @@ def main() -> None:
             "source": f"muscriptor-{args.model}",
         })
 
+    emit({"type": "stage", "stage": "Detecting tempo and piano phrasing"})
+    try:
+        detected_grid = model.detect_beat_grid_for(args.input, "best-effort")
+        if detected_grid is not None:
+            detected_grid = detected_grid.with_onset_delay([note["time"] for note in notes])
+            beat_grid = normalize_beat_grid(detected_grid)
+    except Exception as error:
+        emit({"type": "warning", "message": f"Tempo detection fell back to 120 BPM: {error}"})
+
+    onset_delay = apply_onset_delay(notes, beat_grid)
     notes.sort(key=lambda note: (note["time"], note["midi"], note["instrument"]))
     if not notes:
         raise RuntimeError("Polymath could not detect playable notes in this recording.")
@@ -86,7 +105,12 @@ def main() -> None:
         "title": args.title.strip() or "Uploaded recording",
         "composer": "Polymath transcription",
         "instrument": args.instrument,
-        "bpm": 120,
+        "bpm": float((beat_grid or {}).get("bpm") or 120),
+        "timeSignature": {
+            "numerator": int((beat_grid or {}).get("beatsPerBar") or 4),
+            "denominator": 4,
+        },
+        "beatGrid": beat_grid,
         "notes": notes,
         "instrumentGroups": sorted({note["instrument"] for note in notes}),
         "sourceType": "muscriptor-audio-transcription",
@@ -94,6 +118,10 @@ def main() -> None:
         "transcriptionProvider": f"Polymath {args.model.title()}",
         "modelLicense": "CC-BY-NC-4.0",
         "progress": progress,
+        "diagnostics": {
+            "onsetDelayAppliedSeconds": onset_delay,
+            "tempoSource": "muscriptor-beat-grid" if beat_grid else "fallback-120-bpm",
+        },
     }
     Path(args.output).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     emit({"type": "complete", "notes": len(notes), "instrumentGroups": payload["instrumentGroups"]})

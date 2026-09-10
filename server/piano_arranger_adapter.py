@@ -14,6 +14,7 @@ small JSON profile produced by ``ml/training/train_piano_arranger_adapter.py``.
 from __future__ import annotations
 
 import bisect
+import itertools
 import math
 from collections import Counter, defaultdict
 from typing import Any, Iterable
@@ -72,6 +73,27 @@ FEATURE_NAMES = (
     "guitar_mid",
     "extreme_low",
     "extreme_high",
+)
+
+# Duration needs different evidence from note selection.  In particular, a
+# source separator may report every event with a similarly short duration even
+# though the pianist should hold a chord until its next change.  These features
+# expose the spacing between musical events so the supervised adapter can learn
+# held notes without changing MuScriptor's instrument detector.
+DURATION_FEATURE_NAMES = FEATURE_NAMES + (
+    "role_melody",
+    "role_bass",
+    "role_harmony",
+    "has_next_same_pitch",
+    "next_same_pitch_gap_log",
+    "next_role_onset_gap_log",
+    "next_any_onset_gap_log",
+    "same_pitch_gap_over_045",
+    "same_pitch_gap_over_090",
+    "same_pitch_gap_over_180",
+    "role_gap_over_045",
+    "role_gap_over_090",
+    "role_gap_over_180",
 )
 
 
@@ -209,6 +231,72 @@ def raw_feature_rows(notes: list[dict[str, Any]]) -> list[list[float]]:
     return rows
 
 
+def _next_distinct_onset(onsets: list[float], time: float, minimum_gap: float = 0.04) -> float:
+    index = bisect.bisect_right(onsets, time + minimum_gap)
+    if index >= len(onsets):
+        return 6.0
+    return clamp(onsets[index] - time, MIN_NOTE_SECONDS, 6.0)
+
+
+def duration_feature_rows(notes: list[dict[str, Any]]) -> list[list[float]]:
+    """Return context features used by the learned key-hold model."""
+    if not notes:
+        return []
+    raw_rows = raw_feature_rows(notes)
+    all_onsets = sorted({float(note["time"]) for note in notes})
+    role_onsets: dict[str, list[float]] = defaultdict(list)
+    for role in ("melody", "bass", "harmony"):
+        role_onsets[role] = sorted(
+            {float(note["time"]) for note in notes if arrangement_role(note) == role}
+        )
+
+    pitch_onsets: dict[int, list[float]] = defaultdict(list)
+    for pitch in {int(note["midi"]) for note in notes}:
+        pitch_onsets[pitch] = sorted(
+            {float(note["time"]) for note in notes if int(note["midi"]) == pitch}
+        )
+    next_same_pitch: list[float | None] = []
+    for note in notes:
+        time = float(note["time"])
+        onsets = pitch_onsets[int(note["midi"])]
+        following_index = bisect.bisect_right(onsets, time + 0.04)
+        next_same_pitch.append(
+            clamp(onsets[following_index] - time, MIN_NOTE_SECONDS, 6.0)
+            if following_index < len(onsets)
+            else None
+        )
+
+    rows: list[list[float]] = []
+    log_scale = math.log(7.0)
+    for index, (note, raw_row) in enumerate(zip(notes, raw_rows)):
+        role = arrangement_role(note)
+        same_pitch_gap = next_same_pitch[index]
+        # A missing later occurrence is represented by the six-second cap, but
+        # the explicit flag lets the model distinguish it from a real long gap.
+        effective_same_pitch_gap = same_pitch_gap if same_pitch_gap is not None else 6.0
+        role_gap = _next_distinct_onset(role_onsets[role], float(note["time"]))
+        any_gap = _next_distinct_onset(all_onsets, float(note["time"]))
+        rows.append(
+            raw_row
+            + [
+                1.0 if role == "melody" else 0.0,
+                1.0 if role == "bass" else 0.0,
+                1.0 if role == "harmony" else 0.0,
+                1.0 if same_pitch_gap is not None else 0.0,
+                math.log1p(effective_same_pitch_gap) / log_scale,
+                math.log1p(role_gap) / log_scale,
+                math.log1p(any_gap) / log_scale,
+                1.0 if effective_same_pitch_gap >= 0.45 else 0.0,
+                1.0 if effective_same_pitch_gap >= 0.90 else 0.0,
+                1.0 if effective_same_pitch_gap >= 1.80 else 0.0,
+                1.0 if role_gap >= 0.45 else 0.0,
+                1.0 if role_gap >= 0.90 else 0.0,
+                1.0 if role_gap >= 1.80 else 0.0,
+            ]
+        )
+    return rows
+
+
 def selection_scores(notes: list[dict[str, Any]], profile: dict[str, Any]) -> list[float]:
     model = profile.get("selectionModel") or {}
     weights = [float(value) for value in model.get("weights", [])]
@@ -229,6 +317,32 @@ def selection_scores(notes: list[dict[str, Any]], profile: dict[str, Any]) -> li
     return probabilities
 
 
+def duration_predictions(
+    notes: list[dict[str, Any]], profile: dict[str, Any]
+) -> list[float | None]:
+    """Predict written key-hold durations, preserving old-profile compatibility."""
+    model = profile.get("durationModel") or {}
+    if not model:
+        return [None] * len(notes)
+    weights = [float(value) for value in model.get("weights", [])]
+    means = [float(value) for value in model.get("means", [])]
+    scales = [max(1e-9, float(value)) for value in model.get("scales", [])]
+    if len(weights) != len(DURATION_FEATURE_NAMES):
+        raise ValueError("Piano arranger profile has incompatible duration weights.")
+    if len(means) != len(weights) or len(scales) != len(weights):
+        raise ValueError("Piano arranger profile has incompatible duration feature scaling.")
+    minimum = clamp(float(model.get("minimumSeconds", MIN_NOTE_SECONDS)), MIN_NOTE_SECONDS, MAX_NOTE_SECONDS)
+    maximum = clamp(float(model.get("maximumSeconds", 4.0)), minimum, MAX_NOTE_SECONDS)
+    predictions: list[float | None] = []
+    for row in duration_feature_rows(notes):
+        predicted_log = sum(
+            weight * ((value - mean) / scale)
+            for weight, value, mean, scale in zip(weights, row, means, scales)
+        )
+        predictions.append(clamp(math.expm1(clamp(predicted_log, 0.0, math.log1p(MAX_NOTE_SECONDS))), minimum, maximum))
+    return predictions
+
+
 def map_octave_to_range(midi: int, minimum: int, maximum: int) -> int:
     value = int(round(midi))
     while value < minimum:
@@ -247,7 +361,12 @@ def _role_config(profile: dict[str, Any], role: str) -> dict[str, Any]:
     return {**defaults[role], **((profile.get("roles") or {}).get(role) or {})}
 
 
-def _render_note(source: dict[str, Any], probability: float, profile: dict[str, Any]) -> dict[str, Any]:
+def _render_note(
+    source: dict[str, Any],
+    probability: float,
+    profile: dict[str, Any],
+    predicted_duration: float | None = None,
+) -> dict[str, Any]:
     role = arrangement_role(source)
     config = _role_config(profile, role)
     octave_shift = int(round(float(config.get("octaveShift", 0)) / 12.0)) * 12
@@ -263,12 +382,27 @@ def _render_note(source: dict[str, Any], probability: float, profile: dict[str, 
         0.0,
         1.0,
     )
-    duration = clamp(
+    fallback_duration = clamp(
         scaled_duration * source_duration_weight
         + median_duration * (1.0 - source_duration_weight),
         MIN_NOTE_SECONDS,
         MAX_NOTE_SECONDS,
     )
+    if predicted_duration is None:
+        duration = fallback_duration
+    else:
+        learned_weight = clamp(
+            float(profile.get("durationModel", {}).get("predictionWeight", 0.82)),
+            0.0,
+            1.0,
+        )
+        # Blend in log-duration space so a long predicted hold is not flattened
+        # by the separator's often-uniform short source duration.
+        duration = math.expm1(
+            math.log1p(predicted_duration) * learned_weight
+            + math.log1p(fallback_duration) * (1.0 - learned_weight)
+        )
+        duration = clamp(duration, MIN_NOTE_SECONDS, MAX_NOTE_SECONDS)
     learned_velocity = float(config["velocity"])
     velocity = clamp(learned_velocity * 0.72 + float(source["velocity"]) * 0.28, 0.05, 1.0)
     return {
@@ -283,6 +417,120 @@ def _render_note(source: dict[str, Any], probability: float, profile: dict[str, 
         "duration": round_number(duration),
         "velocity": round_number(velocity, 3),
     }
+
+
+def _voice_lead_harmony(
+    notes: list[dict[str, Any]],
+    profile: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int]:
+    """Place chord tones in a compact, stable acoustic-piano register.
+
+    Full-band transcription frequently identifies the correct pitch classes in
+    several octaves.  Playing those literal octaves produces harsh jumps.  A
+    pianist normally chooses one compact inversion and moves as little as
+    possible from the preceding chord, so we do that only for accompaniment;
+    the detected vocal/top melody remains untouched.
+    """
+    harmony = sorted(
+        (dict(note) for note in notes if note.get("arrangementRole") == "harmony"),
+        key=lambda item: (item["time"], item["midi"]),
+    )
+    untouched = [dict(note) for note in notes if note.get("arrangementRole") != "harmony"]
+    if not harmony:
+        return notes, 0
+
+    groups: list[list[dict[str, Any]]] = []
+    for note in harmony:
+        if not groups or note["time"] - groups[-1][0]["time"] > 0.04:
+            groups.append([note])
+        else:
+            groups[-1].append(note)
+
+    config = _role_config(profile, "harmony")
+    minimum = int(config["minimumMidi"])
+    maximum = int(config["maximumMidi"])
+    preferred_center = float(config.get("preferredCenterMidi", 60.0))
+    previous_voicing: list[int] = []
+    voiced: list[dict[str, Any]] = []
+    changed = 0
+    for group in groups:
+        by_pitch_class: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for note in group:
+            by_pitch_class[int(note["midi"]) % 12].append(note)
+        representatives = [
+            max(
+                candidates,
+                key=lambda item: (
+                    float(item.get("selectionProbability", 0.0)),
+                    float(item.get("velocity", 0.0)),
+                    float(item.get("duration", 0.0)),
+                ),
+            )
+            for candidates in by_pitch_class.values()
+        ]
+        representatives.sort(key=lambda item: int(item["midi"]))
+        if len(representatives) > 5:
+            representatives = sorted(
+                representatives,
+                key=lambda item: float(item.get("selectionProbability", 0.0)),
+                reverse=True,
+            )[:5]
+            representatives.sort(key=lambda item: int(item["midi"]))
+
+        candidate_sets = [
+            [midi for midi in range(minimum, maximum + 1) if midi % 12 == int(note["midi"]) % 12]
+            for note in representatives
+        ]
+        if not representatives or any(not candidates for candidates in candidate_sets):
+            voiced.extend(group)
+            continue
+
+        def voicing_cost(values: tuple[int, ...]) -> float:
+            ordered = sorted(values)
+            span = ordered[-1] - ordered[0] if len(ordered) > 1 else 0
+            center = sum(ordered) / len(ordered)
+            source_distance = sum(
+                abs(value - int(note["midi"]))
+                for value, note in zip(values, representatives)
+            )
+            close_intervals = sum(
+                max(0, 3 - (right - left))
+                for left, right in zip(ordered, ordered[1:])
+            )
+            previous_distance = 0.0
+            if previous_voicing:
+                previous_distance = sum(
+                    min(abs(value - previous) for previous in previous_voicing)
+                    for value in ordered
+                )
+            return (
+                abs(center - preferred_center)
+                + max(0, span - 16) * 1.8
+                + close_intervals * 1.2
+                + source_distance * 0.08
+                + previous_distance * 0.18
+            )
+
+        choices = [values for values in itertools.product(*candidate_sets) if len(set(values)) == len(values)]
+        if not choices:
+            voiced.extend(group)
+            continue
+        best = min(choices, key=voicing_cost)
+        mapped_by_pitch_class = {
+            int(note["midi"]) % 12: midi
+            for note, midi in zip(representatives, best)
+        }
+        previous_voicing = sorted(mapped_by_pitch_class.values())
+        for note in group:
+            original_midi = int(note["midi"])
+            midi = mapped_by_pitch_class.get(original_midi % 12, original_midi)
+            if midi != original_midi:
+                changed += 1
+            note["midi"] = midi
+            note["note"] = midi_to_note(midi)
+            note["hand"] = "left" if midi < 60 else "right"
+            voiced.append(note)
+    return sorted(untouched + voiced, key=lambda item: (item["time"], item["midi"])), changed
 
 
 def _group_indices_by_window(notes: list[dict[str, Any]], seconds: float) -> list[list[int]]:
@@ -505,9 +753,26 @@ def arrange_with_profile(
     if not source_notes:
         raise ValueError("No non-percussive notes were available for the piano arranger.")
     scores = selection_scores(source_notes, profile)
+    predicted_durations = duration_predictions(source_notes, profile)
+    duration_by_source_index = {
+        note["sourceIndex"]: prediction
+        for note, prediction in zip(source_notes, predicted_durations)
+    }
     selected = _pick_window_notes(source_notes, scores, profile, mode)
-    rendered = [_render_note(note, probability, profile) for note, probability in selected]
-    expanded, generated_notes = _expand_sparse_windows(rendered, profile)
+    rendered = [
+        _render_note(
+            note,
+            probability,
+            profile,
+            duration_by_source_index.get(note["sourceIndex"]),
+        )
+        for note, probability in selected
+    ]
+    if profile.get("decoder", {}).get("compactHarmonyVoicing", False):
+        voiced, revoiced_harmony_notes = _voice_lead_harmony(rendered, profile)
+    else:
+        voiced, revoiced_harmony_notes = rendered, 0
+    expanded, generated_notes = _expand_sparse_windows(voiced, profile)
     limited, cleanup = _collapse_and_limit(expanded, profile)
     arranged, legato_extended = _shape_legato(limited, profile)
     if not arranged:
@@ -552,6 +817,7 @@ def arrange_with_profile(
         "roleCounts": dict(sorted(role_counts.items())),
         "vocalMelodyNotes": vocal_melody_notes,
         "generatedAccompanimentNotes": generated_notes,
+        "compactlyRevoicedHarmonyNotes": revoiced_harmony_notes,
         "legatoExtendedNotes": legato_extended,
         **cleanup,
         "routingContract": "instrument-aware-transcription-then-piano-only-arrangement",
@@ -565,9 +831,12 @@ def arrange_with_profile(
 
 
 __all__ = [
+    "DURATION_FEATURE_NAMES",
     "FEATURE_NAMES",
     "arrangement_role",
     "arrange_with_profile",
+    "duration_feature_rows",
+    "duration_predictions",
     "instrument_family",
     "normalize_source_notes",
     "raw_feature_rows",

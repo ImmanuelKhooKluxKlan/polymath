@@ -15,6 +15,8 @@ import runpod
 from huggingface_hub import hf_hub_download
 from muscriptor import TranscriptionModel
 
+from beat_grid import apply_onset_delay, normalize_beat_grid
+
 
 MODEL_NAME = os.environ.get('MUSCRIPTOR_MODEL', 'large').strip().lower()
 MODEL_WEIGHTS_PATH = os.environ.get('MUSCRIPTOR_WEIGHTS_PATH', '').strip()
@@ -375,6 +377,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
     starts: dict[int, Any] = {}
     notes: list[dict[str, Any]] = []
     progress = {'completed': 0, 'total': 0}
+    beat_grid = None
 
     model_source, source_key, model_provider, model_source_id = resolve_inference_source(
         job_input.get('checkpoint_version')
@@ -419,6 +422,19 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
             'source': model_source_id,
         })
 
+    # The streaming API returns note/progress events only. Tempo detection is a
+    # separate MuScriptor operation; run it once, then measure the model's own
+    # onset delay against that grid exactly as MuScriptor's MIDI exporter does.
+    runpod.serverless.progress_update(job, 'Detecting tempo and piano phrasing')
+    try:
+        detected_grid = model.detect_beat_grid_for(str(audio_path), 'best-effort')
+        if detected_grid is not None:
+            detected_grid = detected_grid.with_onset_delay([note['time'] for note in notes])
+            beat_grid = normalize_beat_grid(detected_grid)
+    except Exception as error:
+        print(f'Polymath tempo detection fell back to 120 BPM: {error}', flush=True)
+
+    onset_delay = apply_onset_delay(notes, beat_grid)
     notes.sort(key=lambda note: (note['time'], note['midi'], note['instrument']))
     if not notes:
         raise RuntimeError('Polymath could not detect playable notes in this recording')
@@ -427,7 +443,12 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
         'title': str(job_input.get('title') or 'Uploaded recording')[:120],
         'composer': 'Polymath transcription',
         'instrument': str(job_input.get('instrument') or 'band'),
-        'bpm': 120,
+        'bpm': float((beat_grid or {}).get('bpm') or 120),
+        'timeSignature': {
+            'numerator': int((beat_grid or {}).get('beatsPerBar') or 4),
+            'denominator': 4,
+        },
+        'beatGrid': beat_grid,
         'notes': notes,
         'instrumentGroups': sorted({note['instrument'] for note in notes}),
         'sourceType': 'muscriptor-audio-transcription',
@@ -436,6 +457,10 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
         'checkpointVersion': str(job_input.get('checkpoint_version') or 'original'),
         'modelLicense': 'CC-BY-NC-4.0',
         'progress': progress,
+        'diagnostics': {
+            'onsetDelayAppliedSeconds': onset_delay,
+            'tempoSource': 'muscriptor-beat-grid' if beat_grid else 'fallback-120-bpm',
+        },
     }
 
 

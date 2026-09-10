@@ -31,8 +31,10 @@ if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
 from piano_arranger_adapter import (  # noqa: E402
+    DURATION_FEATURE_NAMES,
     FEATURE_NAMES,
     arrangement_role,
+    duration_feature_rows,
     normalize_source_notes,
     raw_feature_rows,
 )
@@ -44,7 +46,7 @@ DEFAULT_SEED = 0x504F4C59
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
@@ -243,6 +245,80 @@ def train_logistic_model(
     return weights, means, scales, history
 
 
+def duration_regression_metrics(
+    targets: np.ndarray,
+    predictions: np.ndarray,
+    weights: np.ndarray,
+) -> dict[str, float]:
+    if not len(targets):
+        return {
+            "meanAbsoluteErrorSeconds": 0.0,
+            "weightedRootMeanSquaredErrorSeconds": 0.0,
+            "within100ms": 0.0,
+            "within250ms": 0.0,
+        }
+    normalized_weights = weights / max(1e-9, float(weights.sum()))
+    absolute = np.abs(predictions - targets)
+    squared = np.square(predictions - targets)
+    return {
+        "meanAbsoluteErrorSeconds": round(float(np.sum(absolute * normalized_weights)), 6),
+        "weightedRootMeanSquaredErrorSeconds": round(
+            float(math.sqrt(np.sum(squared * normalized_weights))), 6
+        ),
+        "within100ms": round(float(np.sum(normalized_weights[absolute <= 0.10])), 6),
+        "within250ms": round(float(np.sum(normalized_weights[absolute <= 0.25])), 6),
+    }
+
+
+def train_duration_model(
+    features: np.ndarray,
+    target_seconds: np.ndarray,
+    sample_weights: np.ndarray,
+    training_mask: np.ndarray,
+    *,
+    ridge: float = 0.012,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    """Fit a compact weighted ridge model to log key-hold duration."""
+    means = features[training_mask].mean(axis=0)
+    scales = features[training_mask].std(axis=0)
+    means[0] = 0.0
+    scales[0] = 1.0
+    scales[scales < 1e-8] = 1.0
+    standardized = (features - means) / scales
+    x_train = standardized[training_mask]
+    y_train = np.log1p(target_seconds[training_mask])
+    w_train = sample_weights[training_mask]
+    weight_total = max(1e-9, float(w_train.sum()))
+    weighted_x = x_train * w_train[:, None]
+    gram = (x_train.T @ weighted_x) / weight_total
+    regularizer = np.eye(features.shape[1], dtype=np.float64) * ridge
+    regularizer[0, 0] = 0.0
+    right_hand_side = (x_train.T @ (w_train * y_train)) / weight_total
+    try:
+        learned_weights = np.linalg.solve(gram + regularizer, right_hand_side)
+    except np.linalg.LinAlgError:
+        learned_weights = np.linalg.pinv(gram + regularizer) @ right_hand_side
+    predicted_seconds = np.expm1(
+        np.clip(standardized @ learned_weights, 0.0, math.log1p(6.0))
+    )
+    predicted_seconds = np.clip(predicted_seconds, 0.05, 4.0)
+    validation_mask = ~training_mask
+    diagnostics = {
+        "ridge": ridge,
+        "training": duration_regression_metrics(
+            target_seconds[training_mask],
+            predicted_seconds[training_mask],
+            sample_weights[training_mask],
+        ),
+        "heldOutBlocks": duration_regression_metrics(
+            target_seconds[validation_mask],
+            predicted_seconds[validation_mask],
+            sample_weights[validation_mask],
+        ),
+    }
+    return learned_weights, means, scales, predicted_seconds, diagnostics
+
+
 def choose_threshold(labels: np.ndarray, probabilities: np.ndarray, weights: np.ndarray) -> tuple[float, dict[str, float]]:
     best_threshold = 0.5
     best_metrics: dict[str, float] | None = None
@@ -366,6 +442,9 @@ def build_style_profile(
         if midi_values:
             minimum = int(round(weighted_quantile(midi_values, midi_weights, 0.04)))
             maximum = int(round(weighted_quantile(midi_values, midi_weights, 0.96)))
+            preferred_center = weighted_quantile(midi_values, midi_weights, 0.5)
+        else:
+            preferred_center = (minimum + maximum) / 2.0
         duration_values = matched_role_values[role]["targetDuration"] or role_values[role]["duration"]
         duration_value_weights = (
             matched_role_weights[role]["targetDuration"]
@@ -390,6 +469,7 @@ def build_style_profile(
         roles[role] = {
             "minimumMidi": int(clamp(minimum, 21, 108)),
             "maximumMidi": int(clamp(maximum, 21, 108)),
+            "preferredCenterMidi": round(float(clamp(preferred_center, 21, 108)), 3),
             "octaveShift": int(octave_shift),
             "medianDuration": round(float(clamp(duration, 0.05, 3.0)), 4),
             "durationScale": round(float(duration_scale), 4),
@@ -430,6 +510,10 @@ def main() -> None:
     parser.add_argument("--report", required=True)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--iterations", type=int, default=1200)
+    parser.add_argument("--profile-id", default="")
+    parser.add_argument("--duration-prediction-weight", type=float, default=0.22)
+    parser.add_argument("--density-multiplier", type=float, default=1.50)
+    parser.add_argument("--expand-sparse-harmony", action="store_true")
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest).resolve()
@@ -443,6 +527,11 @@ def main() -> None:
     all_weights: list[float] = []
     all_training: list[bool] = []
     all_pair_ids: list[str] = []
+    duration_features: list[list[float]] = []
+    duration_targets: list[float] = []
+    duration_weights: list[float] = []
+    duration_training: list[bool] = []
+    duration_pair_ids: list[str] = []
     match_maps: dict[str, dict[int, dict[str, Any]]] = {}
     pair_reports: list[dict[str, Any]] = []
 
@@ -452,6 +541,7 @@ def main() -> None:
         source_payload = load_json(Path(pair["source"]))
         source_notes = normalize_source_notes(source_payload.get("notes", []))
         features = raw_feature_rows(source_notes)
+        duration_rows = duration_feature_rows(source_notes)
         alignment = load_json(Path(pair["alignmentReport"]))
         matches = alignment_match_map(alignment)
         training_ranges = alignment_training_ranges(alignment)
@@ -459,8 +549,9 @@ def main() -> None:
         positive_count = 0
         exact_positive_count = 0
         validation_count = 0
+        duration_count = 0
         ignored_count = 0
-        for note, row in zip(source_notes, features):
+        for note, row, duration_row in zip(source_notes, features, duration_rows):
             if not note_is_in_training_range(note, training_ranges):
                 ignored_count += 1
                 continue
@@ -477,6 +568,21 @@ def main() -> None:
             all_weights.append(evidence_weight)
             all_training.append(is_training)
             all_pair_ids.append(pair_id)
+            if positive:
+                try:
+                    target_duration = clamp(
+                        float(match["reference"].get("duration", note["duration"])),
+                        0.05,
+                        6.0,
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    target_duration = float(note["duration"])
+                duration_features.append(duration_row)
+                duration_targets.append(target_duration)
+                duration_weights.append(pair_weight * (1.0 if exact else 0.65))
+                duration_training.append(is_training)
+                duration_pair_ids.append(pair_id)
+                duration_count += 1
             positive_count += int(positive)
             exact_positive_count += int(exact)
             validation_count += int(not is_training)
@@ -488,6 +594,7 @@ def main() -> None:
                 "positiveMatchedSourceNotes": positive_count,
                 "exactPitchPositiveSourceNotes": exact_positive_count,
                 "validationNotes": validation_count,
+                "durationExamples": duration_count,
                 "ignoredOutsideTrustedSections": ignored_count,
                 "trustedSourceRanges": len(training_ranges) if training_ranges is not None else None,
                 "alignmentConfidence": alignment.get("metrics", {}).get("confidence"),
@@ -516,6 +623,24 @@ def main() -> None:
     training_metrics = classification_metrics(
         labels[training_mask], probabilities[training_mask], sample_weights[training_mask], threshold
     )
+    duration_feature_matrix = np.asarray(duration_features, dtype=np.float64)
+    duration_target_array = np.asarray(duration_targets, dtype=np.float64)
+    duration_weight_array = np.asarray(duration_weights, dtype=np.float64)
+    duration_training_mask = np.asarray(duration_training, dtype=bool)
+    if not len(duration_feature_matrix) or not duration_training_mask.any() or duration_training_mask.all():
+        raise ValueError("Duration training requires matched notes in both training and validation blocks.")
+    (
+        duration_learned_weights,
+        duration_means,
+        duration_scales,
+        duration_predicted_seconds,
+        duration_diagnostics,
+    ) = train_duration_model(
+        duration_feature_matrix,
+        duration_target_array,
+        duration_weight_array,
+        duration_training_mask,
+    )
     per_pair_metrics: dict[str, dict[str, float]] = {}
     pair_id_array = np.asarray(all_pair_ids)
     for pair in pairs:
@@ -525,12 +650,24 @@ def main() -> None:
             per_pair_metrics[pair_id] = classification_metrics(
                 labels[mask], probabilities[mask], sample_weights[mask], threshold
             )
+    duration_pair_metrics: dict[str, dict[str, float]] = {}
+    duration_pair_id_array = np.asarray(duration_pair_ids)
+    duration_validation_mask = ~duration_training_mask
+    for pair in pairs:
+        pair_id = str(pair["id"])
+        mask = (duration_pair_id_array == pair_id) & duration_validation_mask
+        if mask.any():
+            duration_pair_metrics[pair_id] = duration_regression_metrics(
+                duration_target_array[mask],
+                duration_predicted_seconds[mask],
+                duration_weight_array[mask],
+            )
 
     learned_style, style_diagnostics = build_style_profile(pairs, match_maps)
     profile: dict[str, Any] = {
         "schema": SCHEMA,
         "version": 1,
-        "id": manifest.get("profileId", "pianella-supervised-v001"),
+        "id": args.profile_id or manifest.get("profileId", "pianella-supervised-v001"),
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "routing": {
             "upstream": "MuScriptor instrument-aware transcription",
@@ -547,11 +684,22 @@ def main() -> None:
             "scales": [round(float(value), 10) for value in scales],
             "threshold": round(float(threshold), 6),
         },
+        "durationModel": {
+            "type": "standardized-log-duration-ridge-v1",
+            "featureNames": list(DURATION_FEATURE_NAMES),
+            "weights": [round(float(value), 10) for value in duration_learned_weights],
+            "means": [round(float(value), 10) for value in duration_means],
+            "scales": [round(float(value), 10) for value in duration_scales],
+            "predictionWeight": round(clamp(args.duration_prediction_weight, 0.0, 1.0), 4),
+            "minimumSeconds": 0.05,
+            "maximumSeconds": 4.0,
+        },
         **learned_style,
         "decoder": {
             "windowSeconds": 0.5,
-            "expandSparseHarmony": True,
-            "preCleanupDensityMultiplier": 1.45,
+            "expandSparseHarmony": bool(args.expand_sparse_harmony),
+            "compactHarmonyVoicing": False,
+            "preCleanupDensityMultiplier": round(clamp(args.density_multiplier, 0.6, 3.0), 4),
             "sourceDurationWeight": 1.0,
         },
         "training": {
@@ -560,6 +708,8 @@ def main() -> None:
             "iterations": args.iterations,
             "trainingExamples": int(training_mask.sum()),
             "validationExamples": int(validation_mask.sum()),
+            "durationTrainingExamples": int(duration_training_mask.sum()),
+            "durationValidationExamples": int((~duration_training_mask).sum()),
             "sourcePairs": pair_reports,
             "commercialUseAllowed": False,
             "purpose": "private research evaluation",
@@ -580,6 +730,8 @@ def main() -> None:
         "trainingMetrics": training_metrics,
         "heldOutBlockMetrics": validation_metrics,
         "heldOutBlockMetricsByPair": per_pair_metrics,
+        "durationMetrics": duration_diagnostics,
+        "durationHeldOutBlockMetricsByPair": duration_pair_metrics,
         "styleDiagnostics": style_diagnostics,
         "optimizationHistory": history,
         "sourcePairs": pair_reports,
@@ -599,6 +751,7 @@ def main() -> None:
                 "validationExamples": int(validation_mask.sum()),
                 "trainingF1": training_metrics["f1"],
                 "heldOutBlockF1": validation_metrics["f1"],
+                "heldOutDurationMaeSeconds": duration_diagnostics["heldOutBlocks"]["meanAbsoluteErrorSeconds"],
                 "threshold": round(threshold, 6),
                 "targetNotesPerSecond": profile["style"]["targetNotesPerSecond"],
             },

@@ -53,10 +53,10 @@ const TONE_PRESETS = {
 
     presenceFrequency: 2500,
     presenceQ: 0.82,
-    presenceGain: 0.95,
+    presenceGain: 0.68,
 
     airFrequency: 7800,
-    airGain: 0.38,
+    airGain: 0.28,
 
     glueThreshold: -18,
     glueKnee: 24,
@@ -100,11 +100,11 @@ const TONE_PRESETS = {
     velocityGainFloor: 0.38,
     velocityPower: 0.9,
 
-    sampleAttackSeconds: 0.006,
+    sampleAttackSeconds: 0.008,
 
     bodyBoost: 0.22,
     hammerSoft: -0.55,
-    hammerHard: 0.82,
+    hammerHard: 0.52,
     highAirGain: -0.12,
   },
 

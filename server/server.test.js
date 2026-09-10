@@ -224,10 +224,12 @@ test('selected acoustic guitar keeps MIDI timing while enforcing a playable six-
   const payload = {
     title: 'Guitar arrangement fixture',
     notes: [
+      { midi: 36, time: 1, duration: 0.1, velocity: 0.95, instrument: 'drums' },
       { midi: 28, time: 1, duration: 0.8, velocity: 0.7, instrument: 'acoustic_bass' },
       { midi: 40, time: 1.01, duration: 0.9, velocity: 0.7, instrument: 'acoustic_guitar' },
       { midi: 52, time: 1.012, duration: 0.7, velocity: 0.8, instrument: 'acoustic_guitar' },
       { midi: 55, time: 1.014, duration: 0.7, velocity: 0.8, instrument: 'voice' },
+      { midi: 67, time: 1.015, duration: 0.2, velocity: 0.3, instrument: 'voice' },
       { midi: 59, time: 1.016, duration: 0.7, velocity: 0.8, instrument: 'acoustic_piano' },
       { midi: 64, time: 1.018, duration: 0.7, velocity: 0.8, instrument: 'acoustic_piano' },
       { midi: 67, time: 1.02, duration: 0.7, velocity: 0.8, instrument: 'acoustic_piano' },
@@ -249,6 +251,43 @@ test('selected acoustic guitar keeps MIDI timing while enforcing a playable six-
   assert.ok(result.notes.every((note) => note.time === 1));
   assert.ok(result.instrumentArrangement.removedDuplicateNotes >= 1);
   assert.ok(result.instrumentArrangement.removedUnplayableChordNotes >= 1);
+  assert.equal(result.instrumentArrangement.removedPercussionNotes, 1);
+  assert.equal(result.instrumentArrangement.removedVocalPitchAlternatives, 1);
+  assert.equal(result.notes.some((note) => note.sourceInstrument === 'drums'), false);
+  const melody = result.notes.find((note) => note.sourceInstrument === 'voice');
+  const bass = result.notes.find((note) => note.arrangementRole === 'bass');
+  assert.ok(melody);
+  assert.ok(bass);
+  assert.ok(melody.velocity > bass.velocity);
+  assert.equal(result.vocalMelodyIncluded, true);
+  assert.equal(result.instrumentArrangement.vocalMelodyNotes, 1);
+  assert.equal(result.performance.melodyForwardDynamics, true);
+  assert.equal(result.instrumentArrangement.expression.profile, 'melody-forward-guitar-v1');
+});
+
+test('selected guitar limits dense model chatter while spreading notes across time', () => {
+  const notes = [];
+  for (let onset = 0; onset < 5; onset += 1) {
+    for (let voice = 0; voice < 6; voice += 1) {
+      notes.push({
+        midi: 45 + voice * 4,
+        time: 1 + onset * 0.09,
+        duration: 0.3,
+        velocity: 0.7,
+        instrument: voice === 5 ? 'synth_lead' : 'acoustic_piano',
+      });
+    }
+  }
+
+  const result = postProcessMuscriptorResult(
+    { title: 'Dense guitar fixture', notes },
+    { instrument: 'guitar', playbackMode: 'full' },
+  );
+
+  assert.ok(result.notes.length <= 8);
+  assert.ok(new Set(result.notes.map((note) => note.time)).size >= 4);
+  assert.ok(result.instrumentArrangement.removedForHumanDensity > 0);
+  assert.equal(result.performance.maximumNotesPerSecond, 16);
 });
 
 test('instrumental guitar excludes voice before revoicing the selected instrument', () => {
@@ -259,6 +298,8 @@ test('instrumental guitar excludes voice before revoicing the selected instrumen
     ],
   }, { instrument: 'guitar', playbackMode: 'instrumental' });
   assert.deepEqual(result.notes.map((note) => note.midi), [52]);
+  assert.equal(result.vocalMelodyIncluded, false);
+  assert.equal(result.instrumentArrangement.vocalMelodyNotes, 0);
 });
 
 test('admin policies, vouchers, password reset, and hashed sessions persist', async (context) => {

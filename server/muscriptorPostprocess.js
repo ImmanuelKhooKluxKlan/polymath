@@ -10,7 +10,19 @@ const MAX_PIANO_HOLD_SECONDS = 8;
 const MAX_GUITAR_HOLD_SECONDS = 6;
 const MAX_GUITAR_ONSET_NOTES = 6;
 const GUITAR_CLUSTER_SECONDS = 0.045;
+const VOCAL_LEAD_CLUSTER_SECONDS = 0.055;
+const GUITAR_DENSITY_WINDOW_SECONDS = 0.5;
+const MAX_GUITAR_NOTES_PER_DENSITY_WINDOW = 8;
 const VOCAL_MELODY_GAIN = 1.18;
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const PERCUSSION_INSTRUMENTS = new Set(['drums', 'timpani', 'percussion']);
+const BASS_INSTRUMENTS = new Set(['acoustic_bass', 'electric_bass', 'contrabass']);
+const VOICE_INSTRUMENTS = new Set(['voice']);
+const LEAD_INSTRUMENTS = new Set([
+  'synth_lead', 'violin', 'viola', 'cello', 'flutes', 'oboe', 'english_horn',
+  'bassoon', 'clarinet', 'soprano_and_alto_sax', 'tenor_sax', 'baritone_sax',
+  'trumpet',
+]);
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
@@ -19,6 +31,11 @@ function clamp(value, minimum, maximum) {
 function round(value, places = 4) {
   const scale = 10 ** places;
   return Math.round(value * scale) / scale;
+}
+
+function midiToNote(midi) {
+  const value = clamp(Math.round(midi), 0, 127);
+  return `${NOTE_NAMES[value % 12]}${Math.floor(value / 12) - 1}`;
 }
 
 function instrumentPriority(instrument) {
@@ -164,20 +181,185 @@ function selectEvenlySpacedPitches(notes, limit) {
   return [...selected.values()].sort((a, b) => a.midi - b.midi);
 }
 
+function guitarArrangementRole(note) {
+  const instrument = String(note.instrument || '').toLowerCase();
+  if (VOICE_INSTRUMENTS.has(instrument) || LEAD_INSTRUMENTS.has(instrument) || note.midi >= 72) {
+    return 'melody';
+  }
+  if (BASS_INSTRUMENTS.has(instrument) || note.midi <= 48) return 'bass';
+  return 'harmony';
+}
+
+function guitarRolePriority(note) {
+  if (note.arrangementRole === 'melody') return 0;
+  if (note.arrangementRole === 'bass') return 1;
+  return 2;
+}
+
+function selectMonophonicVocalLine(notes) {
+  const nonVocal = notes.filter((note) => !VOICE_INSTRUMENTS.has(note.instrument));
+  const vocal = notes
+    .filter((note) => VOICE_INSTRUMENTS.has(note.instrument))
+    .sort((a, b) => a.time - b.time || a.midi - b.midi);
+  const selected = [];
+  let previousMidi = null;
+  let removed = 0;
+  for (let index = 0; index < vocal.length;) {
+    const start = vocal[index].time;
+    const group = [];
+    while (index < vocal.length && vocal[index].time - start <= VOCAL_LEAD_CLUSTER_SECONDS) {
+      group.push(vocal[index]);
+      index += 1;
+    }
+    const best = [...group].sort((a, b) => {
+      const score = (note) => (
+        note.velocity * 1.5
+        + Math.sqrt(note.duration) * 0.25
+        - (previousMidi == null ? 0 : Math.abs(note.midi - previousMidi) * 0.025)
+      );
+      return score(b) - score(a) || b.midi - a.midi;
+    })[0];
+    selected.push(best);
+    previousMidi = best.midi;
+    removed += group.length - 1;
+  }
+  return {
+    notes: [...nonVocal, ...selected].sort((a, b) => a.time - b.time || a.midi - b.midi),
+    removed,
+  };
+}
+
+function shapeGuitarExpression(notes) {
+  const roleBands = {
+    melody: [0.78, 0.92],
+    harmony: [0.48, 0.68],
+    bass: [0.38, 0.52],
+  };
+  const roleVelocities = { melody: [], harmony: [], bass: [] };
+  notes.forEach((note) => {
+    const role = note.arrangementRole || 'harmony';
+    const [minimum, maximum] = roleBands[role];
+    const sourceExpression = clamp((note.velocity - 0.32) / 0.64, 0, 1);
+    const upperStringAccent = note.midi >= 64 ? 0.025 : 0;
+    note.velocity = round(clamp(
+      minimum + (maximum - minimum) * sourceExpression + upperStringAccent,
+      minimum,
+      maximum,
+    ), 3);
+    roleVelocities[role].push(note.velocity);
+  });
+  const mean = (values) => values.length
+    ? values.reduce((total, value) => total + value, 0) / values.length
+    : 0;
+  return {
+    profile: 'melody-forward-guitar-v1',
+    roleMeanVelocities: Object.fromEntries(
+      Object.entries(roleVelocities).map(([role, values]) => [role, round(mean(values), 3)]),
+    ),
+    velocityBands: roleBands,
+  };
+}
+
+function limitGuitarDensity(notes) {
+  const windows = new Map();
+  notes.forEach((note) => {
+    const key = Math.floor(note.time / GUITAR_DENSITY_WINDOW_SECONDS);
+    const entries = windows.get(key) || [];
+    entries.push(note);
+    windows.set(key, entries);
+  });
+  const kept = [];
+  let removed = 0;
+  [...windows.keys()].sort((a, b) => a - b).forEach((key) => {
+    const entries = windows.get(key).sort((a, b) => a.time - b.time || a.midi - b.midi);
+    if (entries.length <= MAX_GUITAR_NOTES_PER_DENSITY_WINDOW) {
+      kept.push(...entries);
+      return;
+    }
+
+    // The singer/lead line is compulsory in Full Song mode. Remaining slots
+    // are shared across onset groups so one noisy chord cannot erase the next
+    // half-second of rhythm.
+    const compulsory = entries.filter((note) => note.sourceInstrument === 'voice');
+    const selected = [...compulsory];
+    const selectedSet = new Set(selected);
+    const clusters = [];
+    entries.filter((note) => !selectedSet.has(note)).forEach((note) => {
+      const cluster = clusters.at(-1);
+      if (!cluster || note.time - cluster.start > GUITAR_CLUSTER_SECONDS) {
+        clusters.push({ start: note.time, notes: [note] });
+      } else {
+        cluster.notes.push(note);
+      }
+    });
+    clusters.forEach((cluster) => cluster.notes.sort((a, b) => (
+      guitarRolePriority(a) - guitarRolePriority(b)
+      || (b.velocity * Math.sqrt(b.duration)) - (a.velocity * Math.sqrt(a.duration))
+      || a.midi - b.midi
+    )));
+
+    let layer = 0;
+    while (selected.length < MAX_GUITAR_NOTES_PER_DENSITY_WINDOW) {
+      let added = false;
+      for (const cluster of clusters) {
+        const candidate = cluster.notes[layer];
+        if (!candidate) continue;
+        selected.push(candidate);
+        added = true;
+        if (selected.length >= MAX_GUITAR_NOTES_PER_DENSITY_WINDOW) break;
+      }
+      if (!added) break;
+      layer += 1;
+    }
+    kept.push(...selected);
+    removed += entries.length - selected.length;
+  });
+  return {
+    notes: kept.sort((a, b) => a.time - b.time || a.midi - b.midi),
+    removed,
+  };
+}
+
 function shapeGuitarArrangement(payload, options) {
   const targetInstrument = options.instrument === 'electric-guitar'
     ? 'clean_electric_guitar'
     : 'acoustic_guitar';
   const excludeVocals = options.playbackMode === 'instrumental';
-  const normalized = payload.notes
-    .filter((note) => !excludeVocals || String(note?.instrument || '').toLowerCase() !== 'voice')
+  let removedPercussionNotes = 0;
+  const normalizedSource = payload.notes
+    .filter((note) => {
+      const sourceInstrument = String(note?.instrument || '').toLowerCase();
+      if (PERCUSSION_INSTRUMENTS.has(sourceInstrument)) {
+        removedPercussionNotes += 1;
+        return false;
+      }
+      return !excludeVocals || !VOICE_INSTRUMENTS.has(sourceInstrument);
+    })
     .map(normalizeNote)
-    .filter(Boolean)
-    .map((note) => ({
-      ...note,
-      midi: foldIntoRange(note.midi, 40, 88),
-      instrument: targetInstrument,
-    }));
+    .filter(Boolean);
+  const vocalLine = selectMonophonicVocalLine(normalizedSource);
+  const normalized = vocalLine.notes
+    .map((note) => {
+      const arrangementRole = guitarArrangementRole(note);
+      const targetRange = arrangementRole === 'melody'
+        ? [55, 88]
+        : arrangementRole === 'bass'
+          ? [40, 52]
+          : [45, 76];
+      const midi = foldIntoRange(note.midi, targetRange[0], targetRange[1]);
+      const durationScale = arrangementRole === 'melody' ? 1.08 : arrangementRole === 'bass' ? 1.05 : 0.96;
+      const maximumDuration = arrangementRole === 'bass' ? 3.5 : arrangementRole === 'melody' ? 3 : 2.5;
+      return {
+        ...note,
+        midi,
+        note: midiToNote(midi),
+        duration: round(clamp(note.duration * durationScale, 0.08, maximumDuration)),
+        sourceInstrument: note.instrument,
+        arrangementRole,
+        articulation: arrangementRole === 'melody' ? 'connected-lead' : 'natural-guitar',
+        instrument: targetInstrument,
+      };
+    });
   const collapsed = collapseDuplicateOnsets(normalized);
   const sorted = collapsed.notes.sort((a, b) => a.time - b.time || a.midi - b.midi);
   const clusters = [];
@@ -194,24 +376,42 @@ function shapeGuitarArrangement(payload, options) {
     const byPitch = new Map();
     for (const note of cluster.notes) {
       const existing = byPitch.get(note.midi);
-      if (!existing || note.velocity * note.duration > existing.velocity * existing.duration) {
+      if (!existing
+        || guitarRolePriority(note) < guitarRolePriority(existing)
+        || (guitarRolePriority(note) === guitarRolePriority(existing)
+          && note.velocity * note.duration > existing.velocity * existing.duration)) {
         byPitch.set(note.midi, note);
       }
     }
     const unique = [...byPitch.values()];
-    const selected = selectEvenlySpacedPitches(unique, MAX_GUITAR_ONSET_NOTES);
+    let selected = selectEvenlySpacedPitches(unique, MAX_GUITAR_ONSET_NOTES);
+    const strongestMelody = unique
+      .filter((note) => note.arrangementRole === 'melody')
+      .sort((a, b) => b.velocity * b.duration - a.velocity * a.duration)[0];
+    if (strongestMelody && !selected.includes(strongestMelody)) {
+      selected = [...selected]
+        .sort((a, b) => guitarRolePriority(a) - guitarRolePriority(b) || b.velocity - a.velocity)
+        .slice(0, MAX_GUITAR_ONSET_NOTES - 1);
+      selected.push(strongestMelody);
+    }
     removedUnplayableChordNotes += cluster.notes.length - selected.length;
     return selected.map((note) => ({ ...note, time: round(cluster.start) }));
   });
   const resolved = resolveSameKeyOverlaps(voiced, MAX_GUITAR_HOLD_SECONDS);
+  const densityLimited = limitGuitarDensity(resolved.notes);
   const envelope = options.sourceEnvelope || readWavRmsEnvelope(options.preparedPath);
-  const sourceDynamicsApplied = applySourceDynamics(resolved.notes, envelope);
-  const notes = resolved.notes.sort((a, b) => a.time - b.time || a.midi - b.midi);
+  const sourceDynamicsApplied = applySourceDynamics(densityLimited.notes, envelope);
+  const expression = shapeGuitarExpression(densityLimited.notes);
+  const notes = densityLimited.notes;
+  const vocalMelodyNotes = notes.filter((note) => (
+    note.arrangementRole === 'melody' && note.sourceInstrument === 'voice'
+  )).length;
   return {
     ...payload,
     instrument: options.instrument,
     notes,
     instrumentGroups: [targetInstrument],
+    vocalMelodyIncluded: vocalMelodyNotes > 0,
     performance: {
       ...(payload.performance || {}),
       profile: 'selected-guitar-midi-phrasing-v1',
@@ -220,6 +420,8 @@ function shapeGuitarArrangement(payload, options) {
       defaultAutoplayReleaseSeconds: 0.42,
       targetRange: [40, 88],
       maximumSimultaneousStrings: MAX_GUITAR_ONSET_NOTES,
+      maximumNotesPerSecond: MAX_GUITAR_NOTES_PER_DENSITY_WINDOW / GUITAR_DENSITY_WINDOW_SECONDS,
+      melodyForwardDynamics: true,
     },
     instrumentArrangement: {
       version: 1,
@@ -227,12 +429,18 @@ function shapeGuitarArrangement(payload, options) {
       renderedInstrument: targetInstrument,
       sourceNoteCount: payload.notes.length,
       outputNoteCount: notes.length,
+      vocalMelodyNotes,
       removedDuplicateNotes: collapsed.removed,
+      removedVocalPitchAlternatives: vocalLine.removed,
       removedUnplayableChordNotes,
+      removedForHumanDensity: densityLimited.removed,
+      removedPercussionNotes,
       shortenedSameKeyOverlaps: resolved.shortened,
       cappedImpossibleDurations: resolved.capped,
       sourceDynamicsApplied,
+      expression,
       timingPolicy: 'preserve-model-midi-coordinates',
+      densityWindowSeconds: GUITAR_DENSITY_WINDOW_SECONDS,
       pitchPolicy: 'octave-fold-to-standard-guitar-range',
     },
   };

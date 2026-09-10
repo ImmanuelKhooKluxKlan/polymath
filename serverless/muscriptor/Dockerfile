@@ -18,5 +18,6 @@ RUN python -m pip install --upgrade pip \
     && python -m pip install -r /app/requirements.txt
 
 COPY ml /app/ml
+COPY serverless/muscriptor/beat_grid.py /app/beat_grid.py
 COPY serverless/muscriptor/handler.py /app/handler.py
 CMD python -u /app/handler.py

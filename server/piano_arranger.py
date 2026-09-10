@@ -21,6 +21,8 @@ from omr.polymath_omr.performance import shape_piano_performance
 
 PIANO_MIN_MIDI = 21
 PIANO_MAX_MIDI = 108
+COMPACT_PIANO_MIN_MIDI = 33  # A1
+COMPACT_PIANO_MAX_MIDI = 96  # C7
 MELODY_MIN_MIDI = 55
 MELODY_MAX_MIDI = 88
 BASS_MIN_MIDI = 28
@@ -108,6 +110,52 @@ def map_octave_to_range(midi: int, minimum: int, maximum: int) -> int:
     while value > maximum:
         value -= 12
     return int(clamp(value, minimum, maximum))
+
+
+def compact_pianella_register(
+    notes: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fold rare grand-piano outliers into one practical A1-C7 row.
+
+    Notes below A1 receive an initial two-octave lift, so A0 becomes A2.
+    Ordinary notes are not transposed: C4 stays C4. This preserves pitch class
+    and removes the handful of outliers that previously forced a two-storey UI.
+    """
+    output: list[dict[str, Any]] = []
+    shifted = 0
+    shift_counts: Counter[int] = Counter()
+    for source in notes:
+        note = dict(source)
+        original_midi = int(note["midi"])
+        midi = original_midi
+        if midi < COMPACT_PIANO_MIN_MIDI:
+            midi += 24
+        while midi < COMPACT_PIANO_MIN_MIDI:
+            midi += 12
+        while midi > COMPACT_PIANO_MAX_MIDI:
+            midi -= 12
+        midi = int(clamp(midi, COMPACT_PIANO_MIN_MIDI, COMPACT_PIANO_MAX_MIDI))
+        shift = midi - original_midi
+        if shift:
+            shifted += 1
+            shift_counts[shift] += 1
+            note["originalMidiBeforeRangeFold"] = original_midi
+            note["originalNoteBeforeRangeFold"] = note.get("note") or midi_to_note(original_midi)
+        note["midi"] = midi
+        note["note"] = midi_to_note(midi)
+        note["hand"] = "left" if midi < 60 else "right"
+        output.append(note)
+    return output, {
+        "profile": "pianella-compact-a1-c7-v1",
+        "minimumMidi": COMPACT_PIANO_MIN_MIDI,
+        "maximumMidi": COMPACT_PIANO_MAX_MIDI,
+        "minimumNote": "A1",
+        "maximumNote": "C7",
+        "shiftedNotes": shifted,
+        "semitoneShiftCounts": {
+            str(shift): count for shift, count in sorted(shift_counts.items())
+        },
+    }
 
 
 def normalize_source_note(note: dict[str, Any]) -> dict[str, Any] | None:
@@ -620,7 +668,6 @@ def arrange_payload(
     if (
         style_profile
         and not profile["detectedAcousticPianoPerformance"]
-        and profile["acousticPianoRatio"] < 0.75
     ):
         # MuScriptor has already detected the instruments. The explicit Piano
         # route now hands that factual score to a separate supervised arranger;
@@ -631,9 +678,46 @@ def arrange_payload(
 
         learned = arrange_with_profile(payload, mode, style_profile)
         learned["pianoArrangement"]["sourceProfile"] = profile
+        learned["notes"], range_compaction = compact_pianella_register(learned["notes"])
+        learned["notes"], range_fold_collisions = merge_phrase_retriggers(learned["notes"])
+        for note in learned["notes"]:
+            role = str(note.get("arrangementRole") or "harmony")
+            note["scoreDuration"] = note["duration"]
+            note["visualDuration"] = note["duration"]
+            note["voice"] = (
+                role
+                if role in {"melody", "bass"}
+                else f"harmony-{int(note['midi'])}"
+            )
+            note.setdefault("articulation", "legato")
+            note["maximumLegatoBridgeSeconds"] = {
+                "melody": 0.90,
+                "bass": 1.80,
+                "harmony": 2.40,
+            }.get(role, 1.20)
+            note["maximumPhysicalHoldSeconds"] = {
+                "melody": 1.35,
+                "bass": 2.20,
+                "harmony": 2.60,
+            }.get(role, 1.50)
+            note.pop("audioDuration", None)
+            note.pop("releaseSeconds", None)
+        learned["notes"], expression = shape_melody_forward_expression(
+            learned["notes"]
+        )
+        learned = shape_piano_performance(learned, infer_pedal=True)
+        learned["performance"]["profile"] = "polymath-learned-piano-arranger-v2"
+        learned["performance"]["defaultAutoplayReleaseSeconds"] = 0.62
+        learned["performance"]["melodyForwardDynamics"] = True
+        learned["pianoArrangement"]["version"] = 6
+        learned["pianoArrangement"]["expression"] = expression
+        learned["pianoArrangement"]["compactRange"] = range_compaction
+        learned["pianoArrangement"]["rangeFoldCollisionsRemoved"] = range_fold_collisions
+        learned["pianoArrangement"]["physicalPerformance"] = {
+            **(learned.get("pianoPerformance") or {}),
+            "profile": "written-key-hold-damper-v1",
+        }
         return learned
-    if style_profile and not profile["detectedAcousticPianoPerformance"]:
-        learned_profile_bypass_reason = "mostly-acoustic-piano-source-preserved"
     percussion_removed = sum(
         1 for note in source_notes if note["instrument"] in PERCUSSION_INSTRUMENTS
     )
@@ -662,7 +746,9 @@ def arrange_payload(
         ]
         if mode == "full" and voice_notes:
             role_notes["melody"] = select_lead(
-                voice_notes, window_seconds=0.08
+                # Keep sung syllable changes while still collapsing simultaneous
+                # pitch alternatives emitted by the separator.
+                voice_notes, window_seconds=0.045
             )
         else:
             explicit_leads = [
@@ -725,6 +811,12 @@ def arrange_payload(
             density_limited
         )
 
+    arranged_notes, range_compaction = compact_pianella_register(arranged_notes)
+    if arranger_profile == "full-mix-piano-reduction":
+        arranged_notes, range_fold_collisions = merge_phrase_retriggers(arranged_notes)
+    else:
+        arranged_notes, range_fold_collisions = suppress_rapid_retriggers(arranged_notes)
+    retriggers_removed += range_fold_collisions
     arranged_notes, expression = shape_melody_forward_expression(arranged_notes)
 
     vocal_melody_notes = sum(
@@ -741,6 +833,24 @@ def arrange_payload(
     for note in arranged_notes:
         note["scoreDuration"] = note["duration"]
         note["visualDuration"] = note["duration"]
+        if arranger_profile == "full-mix-piano-reduction":
+            role = str(note.get("arrangementRole") or "harmony")
+            note["voice"] = (
+                role
+                if role in {"melody", "bass"}
+                else f"harmony-{int(note['midi'])}"
+            )
+            note.setdefault("articulation", "legato")
+            note["maximumLegatoBridgeSeconds"] = {
+                "melody": 0.90,
+                "bass": 1.80,
+                "harmony": 2.40,
+            }.get(role, 1.20)
+            note["maximumPhysicalHoldSeconds"] = {
+                "melody": 1.35,
+                "bass": 2.20,
+                "harmony": 2.60,
+            }.get(role, 1.50)
         note.pop("audioDuration", None)
         note.pop("releaseSeconds", None)
     output = dict(payload)
@@ -767,11 +877,13 @@ def arrange_payload(
         "outputNotesPerSecond": round_number(notes_per_second(arranged_notes), 3),
         "outputMaximumOnsetCluster": maximum_onset_cluster(arranged_notes),
         "pianoRange": {
-            "minimumMidi": PIANO_MIN_MIDI,
-            "maximumMidi": PIANO_MAX_MIDI,
-            "minimumNote": "A0",
-            "maximumNote": "C8",
+            "minimumMidi": COMPACT_PIANO_MIN_MIDI,
+            "maximumMidi": COMPACT_PIANO_MAX_MIDI,
+            "minimumNote": "A1",
+            "maximumNote": "C7",
         },
+        "compactRange": range_compaction,
+        "rangeFoldCollisionsRemoved": range_fold_collisions,
         "densityLimitNotesPerSecond": density_limit,
         "maximumOnsetCluster": MAX_ONSET_CLUSTER,
         "minimumSameKeyRetriggerMs": round(MIN_RETRIGGER_SECONDS * 1000),
@@ -904,10 +1016,10 @@ def main() -> None:
 
     input_path = Path(args.input)
     output_path = Path(args.output)
-    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    payload = json.loads(input_path.read_text(encoding="utf-8-sig"))
     style_profile = None
     if args.profile:
-        style_profile = json.loads(Path(args.profile).read_text(encoding="utf-8"))
+        style_profile = json.loads(Path(args.profile).read_text(encoding="utf-8-sig"))
     arranged = arrange_payload(payload, args.mode, style_profile=style_profile)
     temporary_path = output_path.with_name(f"{output_path.name}.tmp")
     temporary_path.write_text(

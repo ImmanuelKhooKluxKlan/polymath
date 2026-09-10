@@ -33,6 +33,13 @@ placed under `/runpod-volume/jobs`, processed, and deleted in a `finally`
 block. The backend also attempts deletion through S3 after completion or
 failure, preventing abandoned uploads from filling the volume.
 
+The image pins MuScriptor 0.3.0 so inference and training use the same event
+decoder. After note decoding, the worker runs MuScriptor's best-effort beat-grid
+detector and returns its BPM, meter, downbeat, and measured onset correction.
+The piano arranger uses that BPM for pedal phrasing; recordings without a
+stable beat safely retain the 120 BPM fallback and are never rejected solely
+because tempo detection failed.
+
 ## Custom or amended weights
 
 Do not edit Hugging Face's local cache in place. Copy `model.safetensors` and

@@ -16,6 +16,19 @@ export const PIANELLA_DEFAULT_END_MIDI = parseNote(PIANELLA_DEFAULT_END_NOTE).mi
 export const TWO_STOREY_SPLIT_MIDI = parseNote(TWO_STOREY_SPLIT_NOTE).midi;
 export const PIANELLA_SINGLE_STOREY_MAX_SPAN = PIANELLA_DEFAULT_END_MIDI - PIANELLA_DEFAULT_START_MIDI + 1;
 
+export function foldMidiIntoPianellaRange(rawMidi) {
+  let midi = Math.round(Number(rawMidi));
+  if (!Number.isFinite(midi)) return null;
+
+  // Very deep bass is lifted two octaves, matching the compact cover register
+  // without transposing ordinary melody notes. A0 therefore becomes A2, while
+  // C4 remains C4.
+  if (midi < PIANELLA_DEFAULT_START_MIDI) midi += 24;
+  while (midi < PIANELLA_DEFAULT_START_MIDI) midi += 12;
+  while (midi > PIANELLA_DEFAULT_END_MIDI) midi -= 12;
+  return Math.max(PIANELLA_DEFAULT_START_MIDI, Math.min(PIANELLA_DEFAULT_END_MIDI, midi));
+}
+
 export const grandPianoKeys = buildPianoRange(GRAND_START_NOTE, GRAND_END_NOTE);
 export const grandWhiteCount = grandPianoKeys.filter((key) => !key.isBlack).length;
 
@@ -33,10 +46,6 @@ function countWhiteKeysBefore(midi, startMidi) {
     if (isWhiteMidi(candidate)) count += 1;
   }
   return count;
-}
-
-function rowForMidi(rows, midi) {
-  return rows.find((row) => midi >= row.startMidi && midi <= row.endMidi) || null;
 }
 
 function buildRow(id, label, startMidi, endMidi) {
@@ -150,53 +159,29 @@ export function getSongMidiRange(songOrNotes) {
 }
 
 export function shouldUseTwoStoreys(songOrNotes) {
-  const { minMidi, maxMidi, span } = getSongMidiRange(songOrNotes);
-
-  return (
-    minMidi < PIANELLA_DEFAULT_START_MIDI
-    || maxMidi > PIANELLA_DEFAULT_END_MIDI
-    || span > PIANELLA_SINGLE_STOREY_MAX_SPAN
-  );
+  void songOrNotes;
+  return false;
 }
 
 export function buildAdaptivePianoLayout(songOrNotes = null) {
   const songRange = getSongMidiRange(songOrNotes);
-  const twoStoreys = shouldUseTwoStoreys(songOrNotes);
-
-  if (!twoStoreys) {
-    const row = buildRow(
-      'main',
-      'Polymath Musician row',
-      PIANELLA_DEFAULT_START_MIDI,
-      PIANELLA_DEFAULT_END_MIDI,
-    );
-
-    return {
-      mode: 'pianella-single',
-      isTwoStorey: false,
-      songRange,
-      rows: [row],
-      rangeLabel: `${row.startNote}-${row.endNote}`,
-      getPosition(noteOrMidi) {
-        return row.getPosition(noteOrMidi);
-      },
-    };
-  }
-
-  const lower = buildRow('lower', 'Lower storey', GRAND_START_MIDI, TWO_STOREY_SPLIT_MIDI - 1);
-  const upper = buildRow('upper', 'Upper storey', TWO_STOREY_SPLIT_MIDI, GRAND_END_MIDI);
-  const rows = [upper, lower];
+  const fullGrand = !Array.isArray(songOrNotes)
+    && songOrNotes?.performance?.preserveFullGrandRange === true;
+  const row = buildRow(
+    'main',
+    fullGrand ? 'Full grand piano' : 'Polymath Musician row',
+    fullGrand ? GRAND_START_MIDI : PIANELLA_DEFAULT_START_MIDI,
+    fullGrand ? GRAND_END_MIDI : PIANELLA_DEFAULT_END_MIDI,
+  );
 
   return {
-    mode: 'two-storey-grand',
-    isTwoStorey: true,
+    mode: fullGrand ? 'grand-single' : 'pianella-single',
+    isTwoStorey: false,
     songRange,
-    rows,
-    rangeLabel: `${GRAND_START_NOTE}-${GRAND_END_NOTE}`,
+    rows: [row],
+    rangeLabel: `${row.startNote}-${row.endNote}`,
     getPosition(noteOrMidi) {
-      const midi = typeof noteOrMidi === 'number' ? noteOrMidi : parseNote(noteOrMidi).midi;
-      const row = rowForMidi(rows, midi);
-      return row?.getPosition(midi) || null;
+      return row.getPosition(noteOrMidi);
     },
   };
 }
@@ -236,6 +221,9 @@ export function buildLearningHandLayout(songOrNotes = null, hand = 'both') {
 }
 
 export function describeLayout(layout = buildAdaptivePianoLayout()) {
+  if (layout.mode === 'grand-single' || layout.mode === 'learn-grand-single') {
+    return `Single-row grand piano ${layout.rangeLabel}`;
+  }
   if (layout.isTwoStorey) {
     return `Two-storey grand piano ${GRAND_START_NOTE}-${GRAND_END_NOTE} because song range is ${layout.songRange.minNote}-${layout.songRange.maxNote}`;
   }

@@ -82,6 +82,37 @@ class MusicHelpersTest(unittest.TestCase):
         self.assertTrue(result["pedals"])
         self.assertTrue(all(event["inferred"] for event in result["pedals"]))
 
+    def test_learned_legato_bridge_has_a_safe_maximum(self):
+        payload = {
+            "instrument": "piano",
+            "bpm": 100,
+            "notes": [
+                {
+                    "note": "C4", "midi": 60, "time": 0, "duration": 0.3,
+                    "voice": "harmony-60", "articulation": "legato",
+                    "maximumLegatoBridgeSeconds": 2.4,
+                    "maximumPhysicalHoldSeconds": 2.2,
+                },
+                {
+                    "note": "C4", "midi": 60, "time": 2, "duration": 0.3,
+                    "voice": "harmony-60", "articulation": "legato",
+                    "maximumLegatoBridgeSeconds": 2.4,
+                    "maximumPhysicalHoldSeconds": 2.2,
+                },
+                {
+                    "note": "C4", "midi": 60, "time": 8, "duration": 0.3,
+                    "voice": "harmony-60", "articulation": "legato",
+                    "maximumLegatoBridgeSeconds": 2.4,
+                    "maximumPhysicalHoldSeconds": 2.2,
+                },
+            ],
+        }
+
+        result = shape_piano_performance(payload, infer_pedal=False)
+
+        self.assertGreater(result["notes"][0]["audioDuration"], 1.9)
+        self.assertLess(result["notes"][1]["audioDuration"], 0.4)
+
     def test_playback_graph_honours_repeats_endings_and_ds_al_coda(self):
         never_order, never_diagnostics = _playback_measure_order(47, [(6, 24)], {
             "segnoMeasure": 14,

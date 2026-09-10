@@ -94,8 +94,14 @@ def _shape_key_holds(notes: list[dict]) -> dict:
 
             if following is not None:
                 if "legato" in articulation or "slur" in articulation:
-                    key_hold = min(max(key_hold, following - start + 0.032), following - start + 0.045)
-                    legato_connections += 1
+                    maximum_bridge = _clamp(
+                        float(note.get("maximumLegatoBridgeSeconds", 32.0) or 32.0),
+                        0.05,
+                        32.0,
+                    )
+                    if following - start <= maximum_bridge:
+                        key_hold = min(max(key_hold, following - start + 0.032), following - start + 0.045)
+                        legato_connections += 1
                 else:
                     # A real hand normally leaves a tiny breath before the next
                     # attack. The sample's release tail supplies continuity.
@@ -105,6 +111,13 @@ def _shape_key_holds(notes: list[dict]) -> dict:
             if restrike is not None and start + key_hold > restrike - 0.038:
                 key_hold = max(0.055, restrike - start - 0.038)
                 shortened_for_restrike += 1
+
+            maximum_physical_hold = _clamp(
+                float(note.get("maximumPhysicalHoldSeconds", 16.0) or 16.0),
+                0.055,
+                16.0,
+            )
+            key_hold = min(key_hold, maximum_physical_hold)
 
             note["duration"] = _rounded(score_duration)
             note["scoreDuration"] = _rounded(score_duration)

@@ -3,11 +3,15 @@ import unittest
 from pathlib import Path
 
 from piano_arranger import (
+    COMPACT_PIANO_MAX_MIDI,
+    COMPACT_PIANO_MIN_MIDI,
     MAX_ARRANGED_NOTES_PER_SECOND,
     PIANO_MAX_MIDI,
     PIANO_MIN_MIDI,
     arrange_payload,
+    compact_pianella_register,
 )
+from piano_arranger_adapter import DURATION_FEATURE_NAMES, duration_predictions, normalize_source_notes
 
 
 LEARNED_PROFILE = json.loads(
@@ -27,6 +31,26 @@ def note(midi, time, instrument, duration=0.3, velocity=0.75):
 
 
 class PianoLegatoTests(unittest.TestCase):
+    def test_compacts_grand_outliers_without_transposing_the_middle_register(self):
+        compacted, diagnostics = compact_pianella_register(
+            [
+                {**note(21, 0, 'acoustic_piano'), 'note': 'A0'},
+                {**note(60, 1, 'acoustic_piano'), 'note': 'C4'},
+                {**note(108, 2, 'acoustic_piano'), 'note': 'C8'},
+            ]
+        )
+
+        self.assertEqual([item['midi'] for item in compacted], [45, 60, 96])
+        self.assertTrue(all(
+            COMPACT_PIANO_MIN_MIDI <= item['midi'] <= COMPACT_PIANO_MAX_MIDI
+            for item in compacted
+        ))
+        self.assertEqual(diagnostics['shiftedNotes'], 2)
+        self.assertEqual(
+            diagnostics['semitoneShiftCounts'],
+            {'-12': 1, '24': 1},
+        )
+
     def test_shapes_connected_harmony_with_a_long_release(self):
         notes = [note(72, 0, 'voice', duration=0.2), note(43, 0, 'electric_bass')]
         for index, onset in enumerate((0.0, 0.3, 0.6, 0.9)):
@@ -110,6 +134,8 @@ class PianoLegatoTests(unittest.TestCase):
         self.assertTrue(all('releaseSeconds' in item for item in result['notes']))
         self.assertTrue(all(item['scoreDuration'] == item['duration'] for item in result['notes']))
         self.assertTrue(result['pianoArrangement']['physicalPerformance']['writtenAndPhysicalDurationsSeparated'])
+        self.assertTrue(all(item['articulation'] == 'legato' for item in result['notes']))
+        self.assertTrue(all('maximumPhysicalHoldSeconds' in item for item in result['notes']))
 
     def test_preserved_piano_gets_register_balance_without_clipping(self):
         notes = []
@@ -133,6 +159,33 @@ class PianoLegatoTests(unittest.TestCase):
             result['pianoArrangement']['expression']['rightToLeftVelocityRatio'],
             1.2,
         )
+
+
+class LearnedDurationTests(unittest.TestCase):
+    def test_duration_model_is_optional_and_decodes_without_an_ml_runtime(self):
+        notes = normalize_source_notes([
+            note(60, 0.0, 'voice', duration=0.2),
+            note(48, 0.5, 'electric_bass', duration=0.3),
+        ])
+        self.assertEqual(duration_predictions(notes, {}), [None, None])
+
+        weights = [0.0] * len(DURATION_FEATURE_NAMES)
+        weights[0] = 0.7884573604  # log(1 + 1.2 seconds)
+        profile = {
+            'durationModel': {
+                'weights': weights,
+                'means': [0.0] * len(weights),
+                'scales': [1.0] * len(weights),
+                'minimumSeconds': 0.05,
+                'maximumSeconds': 4.0,
+            }
+        }
+
+        predictions = duration_predictions(notes, profile)
+
+        self.assertEqual(len(predictions), 2)
+        self.assertAlmostEqual(predictions[0], 1.2, places=4)
+        self.assertAlmostEqual(predictions[1], 1.2, places=4)
 
 
 class PianoArrangerTests(unittest.TestCase):
@@ -187,7 +240,7 @@ class PianoArrangerTests(unittest.TestCase):
             all(item.get("sourceInstrument") != "voice" for item in result["notes"])
         )
 
-    def test_mostly_piano_source_is_preserved_instead_of_regenerated(self):
+    def test_mixed_source_does_not_bypass_the_learned_arranger_because_of_its_piano_ratio(self):
         notes = [
             note(48 + index % 24, index * 0.14, "acoustic_piano")
             for index in range(80)
@@ -204,12 +257,40 @@ class PianoArrangerTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            result["pianoArrangement"]["learnedProfileBypassReason"],
-            "mostly-acoustic-piano-source-preserved",
+            result["pianoArrangement"]["learnedProfileId"],
+            "pianella-supervised-v006",
         )
+        self.assertEqual(result["pianoArrangement"]["version"], 6)
+        self.assertTrue(result["performance"]["melodyForwardDynamics"])
+        self.assertTrue(result["pedals"])
+        self.assertTrue(all("audioDuration" in item for item in result["notes"]))
+        self.assertTrue(
+            all(item["articulation"] == "legato" for item in result["notes"])
+        )
+        self.assertTrue(
+            all("maximumLegatoBridgeSeconds" in item for item in result["notes"])
+        )
+
+    def test_clean_solo_piano_still_bypasses_the_learned_arranger(self):
+        notes = [
+            note(48 + index % 24, index * 0.18, "acoustic_piano", duration=0.42)
+            for index in range(100)
+        ]
+
+        result = arrange_payload(
+            {"title": "Clean solo piano", "notes": notes},
+            "full",
+            style_profile=LEARNED_PROFILE,
+        )
+
+        self.assertEqual(result["pianoArrangement"]["profile"], "acoustic-piano-preserve")
         self.assertEqual(
             result["pianoArrangement"]["requestedLearnedProfileId"],
             "pianella-supervised-v006",
+        )
+        self.assertEqual(
+            result["pianoArrangement"]["learnedProfileBypassReason"],
+            "genuine-solo-piano-preserved",
         )
 
     def test_preserves_clean_acoustic_piano_inside_88_key_range(self):
