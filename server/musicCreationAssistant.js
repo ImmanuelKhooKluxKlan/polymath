@@ -85,6 +85,8 @@ function sanitizeBrief(input = {}) {
     vocalRange: clean(input.vocalRange, 30),
     reference: clean(input.reference, 300),
     referenceNotes: clean(input.referenceNotes, 800),
+    stylePreset: clean(input.stylePreset, 50),
+    singerVoice: clean(input.singerVoice, 50),
     instruments,
     sections,
     existingLyrics: clean(input.existingLyrics, 12000),
@@ -97,6 +99,8 @@ function systemPrompt(kind) {
     SYSTEMS.songArchitect,
     `Task: ${kind === 'revise' ? 'revise the supplied original draft while preserving unchanged strengths' : 'create an original song blueprint and lyric draft'}.`,
     'Include all lyric sections even when a section contains no lines. Keep chord degrees in Roman-numeral form.',
+    'Write for singing: use natural word stress, breathable phrases, concrete images, and a concise chorus hook that earns its repetition.',
+    'Honor the requested style preset, tempo, energy, vocal range, and instrumentation while keeping the melody and lyrics original.',
   ].join('\n');
 }
 

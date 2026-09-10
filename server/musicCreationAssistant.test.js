@@ -51,12 +51,17 @@ test('song architect submits a bounded, original-song request and parses its blu
     idea: 'Start again after a storm',
     reference: 'a famous pop singer',
     bpm: 108,
+    stylePreset: 'catchy-acoustic',
+    singerVoice: 'warm-alto',
   });
   assert.equal(submitted.id, 'job_create_12345');
   assert.match(submittedMessages[0].content, /Never copy/);
   assert.match(submittedMessages[0].content, /structured-output schema/);
   assert.match(submittedMessages[0].content, /human remain the lead artist/);
+  assert.match(submittedMessages[0].content, /natural word stress/);
   assert.match(submittedMessages[1].content, /UNTRUSTED USER CREATIVE BRIEF/);
+  assert.match(submittedMessages[1].content, /catchy-acoustic/);
+  assert.match(submittedMessages[1].content, /warm-alto/);
 
   const completed = await assistant.status(submitted.id, submitted.brief);
   assert.equal(completed.finished, true);

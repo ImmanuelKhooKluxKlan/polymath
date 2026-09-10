@@ -278,6 +278,38 @@
 .creation-reference-note strong { color: #3659a7; }
 .creation-next { justify-self: end; min-width: 190px; }
 
+.creation-style-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.creation-style-grid button {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  min-height: 132px;
+  padding: 15px;
+  border: 1px solid var(--creation-line);
+  border-radius: 17px;
+  color: #302b53;
+  text-align: left;
+  background: rgba(250, 249, 255, 0.78);
+}
+
+.creation-style-grid button:hover { border-color: rgba(102, 85, 232, 0.34); }
+
+.creation-style-grid button.active {
+  border-color: rgba(102, 85, 232, 0.58);
+  background: linear-gradient(145deg, rgba(235, 231, 255, 0.96), rgba(238, 247, 255, 0.9));
+  box-shadow: 0 12px 26px rgba(74, 60, 153, 0.12);
+}
+
+.creation-style-grid strong { overflow-wrap: anywhere; font-size: 0.9rem; }
+.creation-style-grid span { color: var(--creation-muted); font-size: 0.74rem; line-height: 1.42; }
+.creation-style-grid small { align-self: end; color: #5648c8; font-size: 0.67rem; font-weight: 800; }
+
 .creation-choice-grid {
   display: grid;
   gap: 14px;
@@ -295,6 +327,7 @@
 }
 
 .creation-energy button,
+.creation-singer-voices button,
 .creation-instruments button {
   min-height: 42px;
   border: 1px solid transparent;
@@ -306,6 +339,7 @@
 }
 
 .creation-energy button.active,
+.creation-singer-voices button.active,
 .creation-instruments button.active {
   border-color: rgba(102, 85, 232, 0.26);
   color: #4d3fc4;
@@ -313,6 +347,7 @@
   box-shadow: 0 7px 18px rgba(81, 63, 159, 0.1);
 }
 
+.creation-singer-voices,
 .creation-instruments {
   min-width: 0;
   padding: 16px;
@@ -320,7 +355,41 @@
   border-radius: 18px;
 }
 
+.creation-singer-voices legend,
 .creation-instruments legend { padding-inline: 7px; font-weight: 850; }
+
+.creation-singer-voices > p {
+  margin: 0 0 12px;
+  color: var(--creation-muted);
+  font-size: 0.74rem;
+}
+
+.creation-singer-voices > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.creation-singer-voices > div button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px;
+  background: rgba(103, 87, 190, 0.055);
+  text-align: left;
+  text-transform: none;
+}
+
+.creation-singer-voices button strong,
+.creation-singer-voices button small { overflow-wrap: anywhere; }
+.creation-singer-voices button small { color: var(--creation-muted); font-weight: 600; }
+.creation-singer-voices .singer-preview-button { margin-top: 12px; padding-inline: 14px; text-transform: none; }
+.creation-honesty-note { display: block; margin-top: 8px; color: var(--creation-muted); font-size: 0.68rem; }
+
+.creation-instruments {
+  min-width: 0;
+}
+
 .creation-instruments > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .creation-instruments button { padding-inline: 15px; background: rgba(103, 87, 190, 0.055); }
 
@@ -582,6 +651,8 @@
   .create-music-hero-actions { grid-template-columns: 1fr auto; min-width: 0; }
   .creation-rehearsal { grid-template-columns: 1fr; }
   .creation-mixer { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .creation-style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .creation-singer-voices > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 600px) {
@@ -596,6 +667,8 @@
   .creation-steps button.active strong { position: static; width: auto; height: auto; margin-left: 5px; clip: auto; }
   .creation-focus-card { gap: 16px; padding: 21px 16px; border-radius: 21px; }
   .creation-choice-grid.two { grid-template-columns: 1fr; }
+  .creation-style-grid { grid-template-columns: 1fr; }
+  .creation-style-grid button { min-height: 0; }
   .creation-reference-note { grid-template-columns: 1fr; gap: 4px; }
   .creation-next { justify-self: stretch; width: 100%; }
   .creation-button-row { display: grid; grid-template-columns: 1fr; }

@@ -227,6 +227,46 @@ const PROFILES = {
       { type: 'square', gain: 0.08, detune: 0 },
     ],
   },
+  'vocal-airy': {
+    attack: 0.055, release: 0.42, filter: 6100, resonance: 0.8, noise: 0.018,
+    oscillators: [
+      { type: 'sine', gain: 0.58, detune: 0 },
+      { type: 'triangle', gain: 0.3, detune: 3 },
+      { type: 'sawtooth', gain: 0.08, detune: -3 },
+    ],
+    formants: [{ frequency: 820, gain: 5, q: 1.4 }, { frequency: 2400, gain: 3.5, q: 1.8 }],
+    vibratoRate: 5.4, vibratoDepth: 13,
+  },
+  'vocal-warm': {
+    attack: 0.045, release: 0.46, filter: 4800, resonance: 1, noise: 0.01,
+    oscillators: [
+      { type: 'triangle', gain: 0.46, detune: -2 },
+      { type: 'sine', gain: 0.38, detune: 2 },
+      { type: 'sawtooth', gain: 0.13, detune: 0 },
+    ],
+    formants: [{ frequency: 720, gain: 5.5, q: 1.5 }, { frequency: 1850, gain: 3.2, q: 1.7 }],
+    vibratoRate: 5.1, vibratoDepth: 11,
+  },
+  'vocal-clear': {
+    attack: 0.035, release: 0.38, filter: 5200, resonance: 1.1, noise: 0.008,
+    oscillators: [
+      { type: 'triangle', gain: 0.42, detune: -2 },
+      { type: 'sawtooth', gain: 0.2, detune: 2 },
+      { type: 'sine', gain: 0.34, detune: 0 },
+    ],
+    formants: [{ frequency: 620, gain: 4.8, q: 1.5 }, { frequency: 1550, gain: 3.4, q: 1.8 }],
+    vibratoRate: 5, vibratoDepth: 9,
+  },
+  'vocal-rich': {
+    attack: 0.045, release: 0.5, filter: 3900, resonance: 1.2, noise: 0.006,
+    oscillators: [
+      { type: 'triangle', gain: 0.44, detune: -3 },
+      { type: 'sawtooth', gain: 0.24, detune: 3 },
+      { type: 'sine', gain: 0.32, detune: 0 },
+    ],
+    formants: [{ frequency: 520, gain: 5.2, q: 1.6 }, { frequency: 1280, gain: 3, q: 1.9 }],
+    vibratoRate: 4.7, vibratoDepth: 8,
+  },
   synth: {
     attack: 0.018,
     release: 0.5,
@@ -833,7 +873,17 @@ class EnsembleAudioEngine {
     }
     voiceGain.gain.exponentialRampToValueAtTime(0.0001, stopAt);
 
-    filter.connect(voiceGain);
+    let toneOutput = filter;
+    (profile.formants || []).forEach((definition) => {
+      const formant = context.createBiquadFilter();
+      formant.type = 'peaking';
+      formant.frequency.setValueAtTime(definition.frequency, startAt);
+      formant.Q.setValueAtTime(definition.q || 1.5, startAt);
+      formant.gain.setValueAtTime(definition.gain || 0, startAt);
+      toneOutput.connect(formant);
+      toneOutput = formant;
+    });
+    toneOutput.connect(voiceGain);
     voiceGain.connect(this.input);
 
     const oscillators = profile.oscillators.map((definition) => {

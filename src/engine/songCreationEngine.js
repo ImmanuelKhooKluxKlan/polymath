@@ -18,6 +18,87 @@ export const CREATE_MUSIC_MOODS = [
   'Heartbroken', 'Peaceful', 'Playful', 'Dark', 'Triumphant',
 ];
 
+export const CREATE_MUSIC_STYLES = Object.freeze([
+  {
+    id: 'catchy-acoustic',
+    label: 'Catchy acoustic',
+    description: 'Warm strums, a clear hook and a piano melody that leaves room for your voice.',
+    genre: 'Acoustic pop', mood: 'Hopeful', energy: 'medium', bpm: 106,
+    instruments: ['acoustic-guitar', 'piano', 'upright-bass', 'drums'],
+    pianoPattern: 'flowing', groove: 0.035,
+  },
+  {
+    id: 'intimate-piano',
+    label: 'Intimate piano',
+    description: 'Soft felt-style piano, spacious phrases and restrained dynamics.',
+    genre: 'Pop', mood: 'Bittersweet', energy: 'low', bpm: 76,
+    instruments: ['piano', 'upright-bass', 'violin'],
+    pianoPattern: 'ballad', groove: 0.012,
+  },
+  {
+    id: 'bright-pop',
+    label: 'Bright pop hook',
+    description: 'Punchy rhythm, short memorable phrases and a lifted chorus.',
+    genre: 'Dance pop', mood: 'Joyful', energy: 'high', bpm: 122,
+    instruments: ['piano', 'synth', 'upright-bass', 'drums'],
+    pianoPattern: 'syncopated', groove: 0.026,
+  },
+  {
+    id: 'dreamy-indie',
+    label: 'Dreamy indie',
+    description: 'Wide arpeggios, gentle motion and an airy late-night atmosphere.',
+    genre: 'Indie', mood: 'Dreamy', energy: 'low', bpm: 88,
+    instruments: ['piano', 'electric-guitar', 'upright-bass', 'violin'],
+    pianoPattern: 'open', groove: 0.02,
+  },
+  {
+    id: 'soulful-rnb',
+    label: 'Soulful R&B',
+    description: 'Laid-back pocket, warmer voicings and room for expressive vocals.',
+    genre: 'R&B', mood: 'Romantic', energy: 'medium', bpm: 82,
+    instruments: ['piano', 'synth', 'upright-bass', 'drums'],
+    pianoPattern: 'pocket', groove: 0.055,
+  },
+  {
+    id: 'cinematic-rise',
+    label: 'Cinematic rise',
+    description: 'A spacious opening that grows into a broad, emotional final chorus.',
+    genre: 'Cinematic', mood: 'Triumphant', energy: 'high', bpm: 96,
+    instruments: ['piano', 'upright-bass', 'drums', 'violin', 'flute'],
+    pianoPattern: 'cinematic', groove: 0.014,
+  },
+]);
+
+export const CREATE_MUSIC_VOICES = Object.freeze([
+  {
+    id: 'airy-soprano', label: 'Airy soprano', description: 'Light and floating',
+    defaultRange: 'C4-G5',
+    instrument: 'vocal-airy', speechPitch: 1.16, speechRate: 0.94,
+    preferredNames: ['samantha', 'aria', 'jenny', 'karen', 'tessa', 'zira'],
+  },
+  {
+    id: 'warm-alto', label: 'Warm alto', description: 'Close and expressive',
+    defaultRange: 'G3-D5',
+    instrument: 'vocal-warm', speechPitch: 1.02, speechRate: 0.91,
+    preferredNames: ['ava', 'serena', 'sonia', 'salli', 'moira', 'victoria'],
+  },
+  {
+    id: 'clear-tenor', label: 'Clear tenor', description: 'Bright and direct',
+    defaultRange: 'C3-G4',
+    instrument: 'vocal-clear', speechPitch: 0.92, speechRate: 0.96,
+    preferredNames: ['daniel', 'ryan', 'aaron', 'guy', 'alex'],
+  },
+  {
+    id: 'rich-baritone', label: 'Rich baritone', description: 'Deep and grounded',
+    defaultRange: 'G2-D4',
+    instrument: 'vocal-rich', speechPitch: 0.78, speechRate: 0.88,
+    preferredNames: ['george', 'brian', 'tom', 'fred', 'ralph'],
+  },
+]);
+
+const STYLE_BY_ID = Object.fromEntries(CREATE_MUSIC_STYLES.map((style) => [style.id, style]));
+const VOICE_BY_ID = Object.fromEntries(CREATE_MUSIC_VOICES.map((voice) => [voice.id, voice]));
+
 export const CREATE_MUSIC_INSTRUMENTS = [
   { id: 'piano', label: 'Piano', role: 'harmony' },
   { id: 'synth', label: 'Synth', role: 'harmony' },
@@ -89,10 +170,12 @@ export function createBlankMusicProject() {
       bpm: 104,
       key: 'C major',
       timeSignature: '4/4',
-      vocalRange: 'C3-G4',
+      vocalRange: 'G3-D5',
       reference: '',
       referenceNotes: '',
-      instruments: ['piano', 'upright-bass', 'drums'],
+      stylePreset: 'catchy-acoustic',
+      singerVoice: 'warm-alto',
+      instruments: ['acoustic-guitar', 'piano', 'upright-bass', 'drums'],
       structure: DEFAULT_STRUCTURE,
     },
     lyrics: defaultLyrics(),
@@ -107,6 +190,26 @@ export function createBlankMusicProject() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+export function applySongStyle(projectInput, styleId) {
+  const project = cloneJson(projectInput || createBlankMusicProject());
+  const style = STYLE_BY_ID[styleId] || STYLE_BY_ID['catchy-acoustic'];
+  project.brief = {
+    ...project.brief,
+    stylePreset: style.id,
+    genre: style.genre,
+    mood: style.mood,
+    energy: style.energy,
+    bpm: style.bpm,
+    instruments: [...style.instruments],
+  };
+  project.updatedAt = new Date().toISOString();
+  return project;
+}
+
+export function musicVoiceProfile(voiceId) {
+  return VOICE_BY_ID[voiceId] || VOICE_BY_ID['warm-alto'];
 }
 
 export function applySongBlueprint(currentProject, blueprint) {
@@ -216,15 +319,195 @@ function makeTrack(id, label, instrument, role, colour) {
   return { id, label, instrument, role, colour, events: [] };
 }
 
-function melodyPitch(scaleMidis, index, previous, random, energy) {
-  const contour = Math.sin(index * 0.82) * 1.6 + (random() - 0.5) * (energy === 'high' ? 2.2 : 1.2);
-  const target = clamp(Math.round((scaleMidis.length - 1) / 2 + contour), 0, scaleMidis.length - 1);
-  const pitch = scaleMidis[target];
-  if (!Number.isFinite(previous)) return pitch;
-  if (Math.abs(pitch - previous) <= 7) return pitch;
-  return scaleMidis.reduce((best, candidate) => (
-    Math.abs(candidate - previous) < Math.abs(best - previous) ? candidate : best
-  ), pitch);
+function activeStyle(project) {
+  const selected = STYLE_BY_ID[project.brief?.stylePreset];
+  if (selected) return selected;
+  const genre = String(project.brief?.genre || '').toLowerCase();
+  if (genre.includes('acoustic') || genre.includes('country')) return STYLE_BY_ID['catchy-acoustic'];
+  if (genre.includes('r&b') || genre.includes('soul')) return STYLE_BY_ID['soulful-rnb'];
+  if (genre.includes('indie')) return STYLE_BY_ID['dreamy-indie'];
+  if (genre.includes('cinematic')) return STYLE_BY_ID['cinematic-rise'];
+  return STYLE_BY_ID['bright-pop'];
+}
+
+function sectionFamily(sectionName) {
+  const value = String(sectionName || '').toLowerCase();
+  if (value.includes('chorus')) return 'chorus';
+  if (value.includes('pre')) return 'pre-chorus';
+  if (value.includes('bridge')) return 'bridge';
+  if (value.includes('intro') || value.includes('outro')) return 'instrumental';
+  return 'verse';
+}
+
+function voiceLedChord(chord, previousVoicing = null) {
+  const candidates = [];
+  for (let inversion = 0; inversion < chord.notes.length; inversion += 1) {
+    const rotated = [
+      ...chord.notes.slice(inversion),
+      ...chord.notes.slice(0, inversion).map((midi) => midi + 12),
+    ];
+    for (const shift of [-12, 0, 12]) {
+      const notes = rotated.map((midi) => midi + shift);
+      if (notes[0] < 48 || notes[notes.length - 1] > 76) continue;
+      const movement = previousVoicing
+        ? notes.reduce((total, midi, index) => total + Math.abs(midi - previousVoicing[index]), 0)
+        : Math.abs(notes.reduce((total, midi) => total + midi, 0) / notes.length - 61);
+      candidates.push({ notes, movement });
+    }
+  }
+  return candidates.sort((left, right) => left.movement - right.movement)[0]?.notes
+    || chord.notes.map((midi) => midi + (midi < 48 ? 12 : 0));
+}
+
+function humanizedTime(time, random, amount, floor = 0) {
+  return Math.max(floor, time + (random() - 0.5) * amount);
+}
+
+function pianoPatternOffsets(pattern, beatsPerBar) {
+  if (pattern === 'syncopated') return [0, 1.5, 2, 3.5].filter((beat) => beat < beatsPerBar);
+  if (pattern === 'pocket') return [0, 0.75, 2, 2.75].filter((beat) => beat < beatsPerBar);
+  if (pattern === 'cinematic') return [0, Math.max(1, beatsPerBar / 2)];
+  if (pattern === 'ballad') return Array.from({ length: beatsPerBar }, (_, index) => index);
+  return Array.from({ length: beatsPerBar * 2 }, (_, index) => index / 2);
+}
+
+function addPianoBar(track, chord, voicing, time, barSeconds, beatUnit, beatsPerBar, style, sectionName, random) {
+  const family = sectionFamily(sectionName);
+  const lift = family === 'chorus' ? 0.09 : family === 'bridge' ? 0.045 : 0;
+  const leftRoot = chord.root - 12;
+  const leftFifth = chord.notes[2] - 12;
+  addTrackNote(track, leftRoot, time, barSeconds * 0.72, 0.43 + lift, {
+    hand: 'left', scoreRole: 'accompaniment', articulation: 'sustain',
+  });
+  if (style.pianoPattern !== 'ballad' && beatsPerBar >= 4) {
+    addTrackNote(track, leftFifth, time + beatUnit * 2, beatUnit * 1.45, 0.34 + lift, {
+      hand: 'left', scoreRole: 'accompaniment', articulation: 'sustain',
+    });
+  }
+
+  const offsets = pianoPatternOffsets(style.pianoPattern, beatsPerBar);
+  if (['syncopated', 'pocket', 'cinematic'].includes(style.pianoPattern)) {
+    offsets.forEach((beat, hitIndex) => {
+      voicing.forEach((midi, voiceIndex) => addTrackNote(
+        track,
+        midi,
+        humanizedTime(time + beat * beatUnit + voiceIndex * 0.012, random, style.groove, time),
+        beatUnit * (style.pianoPattern === 'cinematic' ? 1.65 : 0.58),
+        0.37 + lift + (hitIndex === 0 ? 0.055 : 0) + voiceIndex * 0.012,
+        { hand: 'right', scoreRole: 'accompaniment', articulation: 'connected' },
+      ));
+    });
+    return;
+  }
+
+  offsets.forEach((beat, noteIndex) => {
+    const sequence = style.pianoPattern === 'ballad' ? [0, 2, 1, 2] : [0, 1, 2, 1, 0, 1, 2, 1];
+    const midi = voicing[sequence[noteIndex % sequence.length] % voicing.length];
+    addTrackNote(
+      track,
+      midi,
+      humanizedTime(time + beat * beatUnit, random, style.groove, time),
+      beatUnit * (style.pianoPattern === 'ballad' ? 0.78 : 0.42),
+      0.34 + lift + (noteIndex % Math.max(1, beatsPerBar) === 0 ? 0.065 : 0) + (random() - 0.5) * 0.035,
+      { hand: 'right', scoreRole: 'accompaniment', articulation: 'legato' },
+    );
+  });
+}
+
+function addHarmonyBar(track, chord, time, barSeconds, beatUnit, beatsPerBar, style, sectionName, random) {
+  const plucked = track.instrument.includes('guitar');
+  const family = sectionFamily(sectionName);
+  const level = (family === 'chorus' ? 0.54 : 0.42) + (style.energy === 'high' ? 0.04 : 0);
+  const hitBeats = plucked
+    ? (style.id === 'catchy-acoustic' ? [0, 1, 2, 2.5, 3].filter((beat) => beat < beatsPerBar) : [0, 2].filter((beat) => beat < beatsPerBar))
+    : [0, Math.max(1, beatsPerBar / 2)];
+  hitBeats.forEach((beat, hitIndex) => {
+    const direction = hitIndex % 2 === 0 ? 1 : -1;
+    chord.notes.forEach((unusedMidi, index) => {
+      const voiceIndex = direction > 0 ? index : chord.notes.length - 1 - index;
+      const playedMidi = chord.notes[voiceIndex] + (family === 'chorus' && voiceIndex === 2 ? 12 : 0);
+      const stringIndex = voiceIndex + 1;
+      const guitarOpenMidi = [40, 45, 50, 55, 59, 64][stringIndex];
+      addTrackNote(
+        track,
+        playedMidi,
+        humanizedTime(time + beat * beatUnit + index * (plucked ? 0.018 : 0.01), random, style.groove, time),
+        plucked ? beatUnit * 0.72 : barSeconds * 0.43,
+        level + (hitIndex === 0 ? 0.05 : 0) + index * 0.015,
+        {
+          hand: playedMidi < 60 ? 'left' : 'right', scoreRole: 'harmony',
+          articulation: plucked ? (direction > 0 ? 'down-strum' : 'up-strum') : 'connected',
+          ...(plucked ? { stringIndex, fret: clamp(playedMidi - guitarOpenMidi, 0, 24) } : {}),
+        },
+      );
+    });
+  });
+}
+
+const MELODY_DEGREES = Object.freeze({
+  verse: [3, 2, 1, 2, 3, 5, 3, 2],
+  'pre-chorus': [2, 3, 4, 5, 4, 5, 6, 5],
+  chorus: [5, 5, 6, 5, 3, 2, 3, 1],
+  bridge: [6, 5, 4, 3, 4, 2, 5, 3],
+});
+
+const RHYTHM_WEIGHTS = Object.freeze({
+  'catchy-acoustic': [0.5, 0.5, 1, 0.5, 0.5, 1],
+  'intimate-piano': [1, 0.5, 1.5, 0.5, 1, 1.5],
+  'bright-pop': [0.5, 0.5, 0.5, 1, 0.5, 1],
+  'dreamy-indie': [1, 0.5, 1, 1.5, 0.5, 1],
+  'soulful-rnb': [0.75, 0.5, 1.25, 0.5, 0.75, 1.25],
+  'cinematic-rise': [1, 1, 0.5, 1.5, 1, 2],
+});
+
+function nearestScalePitch(scaleMidis, pitchClass, target) {
+  const matching = scaleMidis.filter((midi) => ((midi % 12) + 12) % 12 === pitchClass);
+  const choices = matching.length ? matching : scaleMidis;
+  return choices.reduce((best, midi) => (
+    Math.abs(midi - target) < Math.abs(best - target) ? midi : best
+  ), choices[0]);
+}
+
+function phraseMelodyPitch({ key, scaleMidis, chord, family, index, count, lineIndex, previous }) {
+  const scale = key.minor ? MINOR_SCALE : MAJOR_SCALE;
+  const motif = MELODY_DEGREES[family] || MELODY_DEGREES.verse;
+  let degree = motif[(index + lineIndex * 2) % motif.length] - 1;
+  if (index === count - 1) degree = family === 'chorus' ? 0 : romanDegree(chord.degree).index;
+  const pitchClass = (key.root + scale[degree % scale.length]) % 12;
+  const centre = scaleMidis[Math.floor(scaleMidis.length * (family === 'chorus' ? 0.6 : 0.48))];
+  const contour = Math.sin((index / Math.max(1, count - 1)) * Math.PI) * (family === 'chorus' ? 4 : 2);
+  const target = Number.isFinite(previous)
+    ? previous + clamp(centre + contour - previous, -5, 5)
+    : centre + contour;
+  return nearestScalePitch(scaleMidis, pitchClass, target);
+}
+
+function polishPianoPerformance(events) {
+  const sorted = events
+    .map((event) => ({ ...event }))
+    .sort((left, right) => left.time - right.time || left.midi - right.midi);
+  const output = [];
+  const lastByMidi = new Map();
+  sorted.forEach((event) => {
+    const previous = lastByMidi.get(event.midi);
+    if (previous && event.time - previous.time < 0.065) {
+      if (event.scoreRole === 'vocal-melody' && previous.scoreRole !== 'vocal-melody') {
+        const previousIndex = output.indexOf(previous);
+        if (previousIndex >= 0) output.splice(previousIndex, 1);
+      } else {
+        previous.duration = Math.max(previous.duration, event.duration);
+        previous.audioDuration = previous.duration;
+        previous.velocity = Math.max(previous.velocity, event.velocity);
+        return;
+      }
+    } else if (previous && previous.time + previous.duration > event.time - 0.018) {
+      previous.duration = Number(Math.max(0.06, event.time - previous.time - 0.018).toFixed(4));
+      previous.audioDuration = previous.duration;
+    }
+    output.push(event);
+    lastByMidi.set(event.midi, event);
+  });
+  return output.sort((left, right) => left.time - right.time || left.midi - right.midi);
 }
 
 function vocalScale(key, range = 'C3-G4') {
@@ -249,6 +532,8 @@ export function buildSongArrangement(projectInput) {
   const beatUnit = project.brief?.timeSignature === '6/8' ? beatSeconds / 2 : beatSeconds;
   const barSeconds = beatsPerBar * beatUnit;
   const key = parseKey(project.brief?.key);
+  const style = activeStyle(project);
+  const voice = musicVoiceProfile(project.brief?.singerVoice);
   const progression = Array.isArray(project.chordDegrees) && project.chordDegrees.length
     ? project.chordDegrees.slice(0, 12)
     : ['I', 'V', 'vi', 'IV'];
@@ -269,8 +554,8 @@ export function buildSongArrangement(projectInput) {
     'acoustic-guitar': '#f5a862',
     'electric-guitar': '#ef6aa8',
   };
-  const harmonyInstruments = Object.keys(harmonyLabels).filter((instrument) => instruments.has(instrument));
-  if (!harmonyInstruments.length) harmonyInstruments.push('piano');
+  const harmonyInstruments = Object.keys(harmonyLabels)
+    .filter((instrument) => instrument !== 'piano' && instruments.has(instrument));
   const harmonyTracks = harmonyInstruments.map((instrument) => makeTrack(
     `harmony-${instrument}`,
     harmonyLabels[instrument],
@@ -278,9 +563,11 @@ export function buildSongArrangement(projectInput) {
     'harmony',
     harmonyColours[instrument],
   ));
+  const pianoTrack = makeTrack('harmony-piano', 'Piano accompaniment', 'piano', 'harmony', harmonyColours.piano);
+  pianoTrack.enabled = instruments.has('piano');
   const bassTrack = makeTrack('bass', 'Bass', 'upright-bass', 'bass', '#5ce1d7');
   const drumTrack = makeTrack('drums', 'Drums', 'drums', 'rhythm', '#ff6c9f');
-  const melodyTrack = makeTrack('guide-melody', 'Vocal guide melody', 'synth', 'melody', '#ffd85c');
+  const melodyTrack = makeTrack('guide-melody', `${voice.label} guide`, voice.instrument, 'melody', '#ffd85c');
   const textureTracks = ['violin', 'flute']
     .filter((instrument) => instruments.has(instrument))
     .map((instrument) => makeTrack(
@@ -290,7 +577,7 @@ export function buildSongArrangement(projectInput) {
       'texture',
       instrument === 'violin' ? '#b88cff' : '#6cbcff',
     ));
-  const tracks = [...harmonyTracks, bassTrack, drumTrack, ...textureTracks, melodyTrack];
+  const tracks = [pianoTrack, ...harmonyTracks, bassTrack, drumTrack, ...textureTracks, melodyTrack];
   bassTrack.enabled = instruments.has('upright-bass');
   drumTrack.enabled = instruments.has('drums');
   melodyTrack.enabled = true;
@@ -300,6 +587,8 @@ export function buildSongArrangement(projectInput) {
     lyrics: project.lyrics,
     bpm,
     key: project.brief?.key,
+    style: style.id,
+    voice: voice.id,
   }));
   const random = seededRandom(seed);
   const sections = [];
@@ -308,8 +597,8 @@ export function buildSongArrangement(projectInput) {
   const guideSyllables = [];
   const scaleMidis = vocalScale(key, project.brief?.vocalRange || project.vocalCoach?.comfortableRange);
   let cursor = 0;
-  let melodyIndex = 0;
   let previousMelody = null;
+  let previousPianoVoicing = null;
 
   structure.forEach((sectionName, sectionIndex) => {
     const lines = sectionLyrics(project, sectionName);
@@ -328,30 +617,35 @@ export function buildSongArrangement(projectInput) {
     for (let bar = 0; bar < bars; bar += 1) {
       const degree = progression[(bar + sectionIndex) % progression.length];
       const chord = chordForDegree(key, degree, 3);
+      chord.degree = degree;
       const time = sectionStart + bar * barSeconds;
       chords.push({ time: Number(time.toFixed(4)), duration: Number(barSeconds.toFixed(4)), degree, label: chord.label });
+      const pianoVoicing = voiceLedChord(chord, previousPianoVoicing);
+      addPianoBar(
+        pianoTrack,
+        chord,
+        pianoVoicing,
+        time,
+        barSeconds,
+        beatUnit,
+        beatsPerBar,
+        style,
+        sectionName,
+        random,
+      );
+      previousPianoVoicing = pianoVoicing;
       harmonyTracks.forEach((harmonyTrack, trackIndex) => {
-        const plucked = harmonyTrack.instrument.includes('guitar');
-        chord.notes.forEach((midi, voiceIndex) => {
-          const playedMidi = midi + (voiceIndex === 2 && sectionName.includes('chorus') ? 12 : 0);
-          const guitarStringIndex = voiceIndex + 1;
-          const guitarOpenMidi = [40, 45, 50, 55, 59, 64][guitarStringIndex];
-          addTrackNote(
-            harmonyTrack,
-            playedMidi,
-            time + (voiceIndex * (plucked ? 0.026 : 0.012)) + trackIndex * 0.006,
-            barSeconds * (plucked ? 0.72 : 0.9),
-            (sectionName.includes('chorus') ? 0.58 : 0.46) + voiceIndex * 0.02,
-            {
-              hand: midi < 60 ? 'left' : 'right',
-              scoreRole: 'harmony',
-              ...(plucked ? {
-                stringIndex: guitarStringIndex,
-                fret: clamp(playedMidi - guitarOpenMidi, 0, 24),
-              } : {}),
-            },
-          );
-        });
+        addHarmonyBar(
+          harmonyTrack,
+          chord,
+          time + trackIndex * 0.004,
+          barSeconds,
+          beatUnit,
+          beatsPerBar,
+          style,
+          sectionName,
+          random,
+        );
       });
       textureTracks.forEach((textureTrack, textureIndex) => {
         const textureMidi = chord.notes[(bar + textureIndex + 1) % chord.notes.length] + 12;
@@ -368,17 +662,36 @@ export function buildSongArrangement(projectInput) {
         const bassRoot = chord.root - 12;
         const bassPulses = project.brief?.energy === 'low' ? 1 : 2;
         for (let pulse = 0; pulse < bassPulses; pulse += 1) {
-          addTrackNote(bassTrack, bassRoot, time + pulse * (barSeconds / bassPulses), barSeconds / bassPulses * 0.72, 0.62, { scoreRole: 'bass' });
+          const bassMidi = pulse === 0 ? bassRoot : chord.notes[2] - 12;
+          addTrackNote(
+            bassTrack,
+            bassMidi,
+            humanizedTime(time + pulse * (barSeconds / bassPulses), random, style.groove * 0.5, time),
+            barSeconds / bassPulses * 0.68,
+            0.54 + (sectionFamily(sectionName) === 'chorus' ? 0.08 : 0),
+            { scoreRole: 'bass', articulation: 'rounded' },
+          );
         }
       }
       if (drumTrack.enabled) {
-        const subdivisions = project.brief?.energy === 'high' ? beatsPerBar * 2 : beatsPerBar;
-        for (let step = 0; step < subdivisions; step += 1) {
-          const drumTime = time + step * (barSeconds / subdivisions);
+        const hatSteps = beatsPerBar * 2;
+        for (let step = 0; step < hatSteps; step += 1) {
+          const drumTime = humanizedTime(time + step * (beatUnit / 2), random, style.groove * 0.35, time);
           addTrackNote(drumTrack, 42, drumTime, 0.08, step % 2 ? 0.3 : 0.42, { percussion: 'closed-hat' });
         }
-        addTrackNote(drumTrack, 36, time, 0.12, 0.72, { percussion: 'kick' });
-        if (beatsPerBar >= 4) addTrackNote(drumTrack, 38, time + barSeconds / 2, 0.12, 0.68, { percussion: 'snare' });
+        const kickBeats = project.brief?.energy === 'high' ? [0, 2, 2.75] : project.brief?.energy === 'low' ? [0] : [0, 2];
+        kickBeats
+          .filter((beat) => beat < beatsPerBar)
+          .forEach((beat) => addTrackNote(drumTrack, 36, time + beat * beatUnit, 0.12, beat === 0 ? 0.7 : 0.58, { percussion: 'kick' }));
+        const snareBeats = beatsPerBar >= 4 ? [1, 3] : [Math.floor(beatsPerBar / 2)];
+        snareBeats.forEach((beat) => addTrackNote(
+          drumTrack,
+          38,
+          humanizedTime(time + beat * beatUnit, random, style.groove * 0.25, time),
+          0.12,
+          0.62,
+          { percussion: 'snare' },
+        ));
       }
     }
 
@@ -387,7 +700,16 @@ export function buildSongArrangement(projectInput) {
       lines.forEach((line, lineIndex) => {
         const lineStart = sectionStart + lineIndex * lineDuration;
         const units = lyricUnits(line);
-        const unitDuration = lineDuration / Math.max(1, units.length);
+        const family = sectionFamily(sectionName);
+        const leadIn = Math.min(beatUnit * 0.25, lineDuration * 0.06);
+        const restTail = Math.max(beatUnit * 0.65, lineDuration * 0.18);
+        const phraseDuration = Math.max(beatUnit, lineDuration - leadIn - restTail);
+        const rhythm = RHYTHM_WEIGHTS[style.id] || RHYTHM_WEIGHTS['catchy-acoustic'];
+        const weights = units.map((unit, index) => (
+          rhythm[index % rhythm.length] * (unit.continuation ? 0.72 : 1)
+        ));
+        const weightTotal = weights.reduce((total, weight) => total + weight, 0) || 1;
+        const scaleDuration = phraseDuration / weightTotal;
         lyricCues.push({
           id: `${sectionIndex}-${lineIndex}`,
           section: sectionName,
@@ -395,17 +717,39 @@ export function buildSongArrangement(projectInput) {
           start: Number(lineStart.toFixed(4)),
           end: Number((lineStart + lineDuration).toFixed(4)),
         });
+        let phraseCursor = lineStart + leadIn;
         units.forEach((unit, unitIndex) => {
-          const pitch = melodyPitch(scaleMidis, melodyIndex, previousMelody, random, project.brief?.energy);
-          const start = lineStart + unitIndex * unitDuration;
-          const duration = unitDuration * (unitIndex === units.length - 1 ? 1.45 : 0.86);
+          const localBar = clamp(Math.floor((phraseCursor - sectionStart) / barSeconds), 0, bars - 1);
+          const degree = progression[(localBar + sectionIndex) % progression.length];
+          const activeChord = chordForDegree(key, degree, 3);
+          activeChord.degree = degree;
+          const pitch = phraseMelodyPitch({
+            key,
+            scaleMidis,
+            chord: activeChord,
+            family,
+            index: unitIndex,
+            count: units.length,
+            lineIndex,
+            previous: previousMelody,
+          });
+          const start = humanizedTime(phraseCursor, random, style.groove * 0.32, lineStart);
+          const noteSpace = weights[unitIndex] * scaleDuration;
+          const available = Math.max(0.05, lineStart + lineDuration - start - 0.04);
+          const duration = Math.min(available, noteSpace * (unitIndex === units.length - 1 ? 1.18 : 0.82));
+          const actualDuration = Math.min(available, Math.max(beatUnit * 0.22, duration));
           const strongBeat = Math.abs(((start - sectionStart) / beatUnit) % 1) < 0.15;
-          addTrackNote(melodyTrack, pitch, start, duration, strongBeat ? 0.82 : 0.72, {
-            hand: 'right', scoreRole: 'vocal-melody', lyric: unit.text, word: unit.word,
+          const melodicLift = family === 'chorus' ? 0.08 : 0;
+          addTrackNote(melodyTrack, pitch, start, actualDuration, (strongBeat ? 0.76 : 0.66) + melodicLift, {
+            hand: 'right',
+            scoreRole: 'vocal-melody',
+            lyric: unit.text,
+            word: unit.word,
+            articulation: unit.continuation ? 'legato' : 'sung',
           });
           guideSyllables.push({
             time: Number(start.toFixed(4)),
-            duration: Number(duration.toFixed(4)),
+            duration: Number(actualDuration.toFixed(4)),
             note: midiToNote(pitch),
             midi: pitch,
             text: unit.text,
@@ -413,33 +757,36 @@ export function buildSongArrangement(projectInput) {
             section: sectionName,
           });
           previousMelody = pitch;
-          melodyIndex += 1;
+          phraseCursor += noteSpace;
         });
       });
     }
     cursor += sectionDuration;
   });
 
-  const pianoNotes = [
-    ...harmonyTracks[0].events,
-    ...melodyTrack.events.map((event) => ({ ...event, velocity: Math.min(1, event.velocity + 0.06) })),
-    ...(bassTrack.enabled ? bassTrack.events : []),
-  ].sort((left, right) => left.time - right.time || left.midi - right.midi);
-  const pedals = sections.flatMap((section) => [
-    { time: section.start, down: true },
-    { time: Math.max(section.start, section.end - 0.08), down: false },
+  const pianoNotes = polishPianoPerformance([
+    ...pianoTrack.events,
+    ...melodyTrack.events.map((event) => ({ ...event, velocity: Math.min(0.96, event.velocity + 0.1) })),
+  ]);
+  const pedals = chords.flatMap((chord) => [
+    { time: Number((chord.time + 0.035).toFixed(4)), down: true },
+    { time: Number(Math.max(chord.time + 0.08, chord.time + chord.duration - 0.055).toFixed(4)), down: false },
   ]);
 
   return {
     title: project.title || titleFromIdea(project.brief?.idea),
     composer: 'Created with Polymath Musician',
     sourceType: 'polymath-create-music',
-    readyToPlayFormat: 'polymath-arrangement-v1',
+    readyToPlayFormat: 'polymath-arrangement-v2',
     bpm,
     key: project.brief?.key || 'C major',
     timeSignature: project.brief?.timeSignature || '4/4',
     genre: project.brief?.genre || 'Pop',
     mood: project.brief?.mood || 'Hopeful',
+    stylePreset: style.id,
+    styleLabel: style.label,
+    singerVoice: voice.id,
+    singerVoiceLabel: voice.label,
     duration: Number(cursor.toFixed(4)),
     notes: pianoNotes,
     pedals,
@@ -452,9 +799,10 @@ export function buildSongArrangement(projectInput) {
     vocalCoach: project.vocalCoach,
     provenance: {
       generatedAt: new Date().toISOString(),
-      engine: 'polymath-deterministic-arranger-v001',
+      engine: 'polymath-musical-arranger-v002',
       userLed: true,
       referencePolicy: 'high-level musical traits only',
+      pedalPolicy: 'repedal-each-harmony-change',
     },
   };
 }

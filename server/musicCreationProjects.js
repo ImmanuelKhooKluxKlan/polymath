@@ -41,6 +41,7 @@ function sanitizeEvent(event) {
     lyric: clean(event.lyric, 40),
     word: clean(event.word, 80),
     percussion: clean(event.percussion, 30),
+    articulation: clean(event.articulation, 30),
     ...(Number.isInteger(event.stringIndex) ? { stringIndex: Math.max(0, Math.min(5, event.stringIndex)) } : {}),
     ...(Number.isFinite(Number(event.fret)) ? { fret: clampNumber(event.fret, 0, 24, 0) } : {}),
   };
@@ -65,6 +66,10 @@ function sanitizeArrangement(value) {
     key: clean(value.key, 20),
     timeSignature: ['4/4', '3/4', '6/8'].includes(value.timeSignature) ? value.timeSignature : '4/4',
     duration: clampNumber(value.duration, 0, 7200, 0),
+    stylePreset: clean(value.stylePreset, 50),
+    styleLabel: clean(value.styleLabel, 80),
+    singerVoice: clean(value.singerVoice, 50),
+    singerVoiceLabel: clean(value.singerVoiceLabel, 80),
     notes: (Array.isArray(value.notes) ? value.notes : []).slice(0, 30000).map(sanitizeEvent).filter(Boolean),
     pedals: (Array.isArray(value.pedals) ? value.pedals : []).slice(0, 5000).map((pedal) => ({
       time: clampNumber(pedal.time, 0, 7200, 0), down: Boolean(pedal.down),
@@ -96,6 +101,7 @@ function sanitizeArrangement(value) {
       generatedAt: clean(value.provenance?.generatedAt, 40),
       userLed: value.provenance?.userLed !== false,
       referencePolicy: clean(value.provenance?.referencePolicy, 120),
+      pedalPolicy: clean(value.provenance?.pedalPolicy, 100),
     },
   };
 }
@@ -121,6 +127,8 @@ function sanitizeProject(value) {
       vocalRange: clean(brief.vocalRange, 30),
       reference: clean(brief.reference, 300),
       referenceNotes: clean(brief.referenceNotes, 800),
+      stylePreset: clean(brief.stylePreset, 50),
+      singerVoice: clean(brief.singerVoice, 50),
       instruments: cleanLines(brief.instruments, 8, 50),
       structure: cleanLines(brief.structure, 16, 40),
     },

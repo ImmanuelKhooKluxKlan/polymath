@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  applySongStyle,
   applySongBlueprint,
   buildSongArrangement,
   CREATE_MUSIC_GENRES,
   CREATE_MUSIC_INSTRUMENTS,
   CREATE_MUSIC_MOODS,
+  CREATE_MUSIC_STYLES,
+  CREATE_MUSIC_VOICES,
   createBlankMusicProject,
   lyricsAsText,
   lyricsFromText,
+  musicVoiceProfile,
 } from '../engine/songCreationEngine.js';
 import { pianoAudio } from '../engine/audioEngine.js';
 import { ensembleAudio } from '../engine/ensembleEngine.js';
@@ -52,11 +56,20 @@ function restoreActiveJobId(userId) {
 }
 
 function loadDraft() {
+  const blank = createBlankMusicProject();
   try {
     const saved = JSON.parse(window.localStorage.getItem(DRAFT_STORAGE_KEY) || 'null');
-    return saved?.brief && saved?.lyrics ? saved : createBlankMusicProject();
+    if (!saved?.brief || !saved?.lyrics) return blank;
+    return {
+      ...blank,
+      ...saved,
+      brief: {
+        ...blank.brief,
+        ...saved.brief,
+      },
+    };
   } catch {
-    return createBlankMusicProject();
+    return blank;
   }
 }
 
@@ -109,6 +122,16 @@ function firstEventAtOrAfter(events, time) {
   return low;
 }
 
+function matchingDeviceVoice(profile) {
+  const voices = window.speechSynthesis?.getVoices?.() || [];
+  const englishVoices = voices.filter((voice) => String(voice.lang || '').toLowerCase().startsWith('en'));
+  const pool = englishVoices.length ? englishVoices : voices;
+  return pool.find((voice) => profile.preferredNames.some((name) => voice.name.toLowerCase().includes(name)))
+    || pool.find((voice) => voice.localService)
+    || pool[0]
+    || null;
+}
+
 function playArrangementEvent(event, track, delay) {
   const duration = Math.max(0.06, Number(event.duration || 0.35));
   if (track.instrument === 'piano') {
@@ -132,6 +155,7 @@ function ArrangementPlayer({
   arrangement,
   guideVoice,
   setGuideVoice,
+  voiceProfile,
   onUseInPiano,
   canExport,
   canGuideVoice,
@@ -217,9 +241,11 @@ function ArrangementPlayer({
         const cue = arrangement.lyricCues[nextCueIndex];
         if (cue && cue.start <= horizon && cue.start >= songTime - 0.08) {
           const utterance = new window.SpeechSynthesisUtterance(cue.text);
-          utterance.rate = Math.max(0.65, Math.min(1.35, arrangement.bpm / 105));
-          utterance.pitch = 1.08;
-          utterance.volume = 0.38;
+          const selectedDeviceVoice = matchingDeviceVoice(voiceProfile);
+          if (selectedDeviceVoice) utterance.voice = selectedDeviceVoice;
+          utterance.rate = Math.max(0.68, Math.min(1.24, (arrangement.bpm / 108) * voiceProfile.speechRate));
+          utterance.pitch = voiceProfile.speechPitch;
+          utterance.volume = 0.32;
           window.speechSynthesis.speak(utterance);
           playbackRef.current.spokenCue = nextCueIndex;
         }
@@ -300,7 +326,7 @@ function ArrangementPlayer({
           aria-pressed={guideVoice}
           onClick={() => canGuideVoice ? setGuideVoice(!guideVoice) : onUnlock()}
         >
-          {!canGuideVoice ? 'Unlock guide voice' : guideVoice ? 'Timing voice on' : 'Timing voice off'}
+          {!canGuideVoice ? 'Unlock spoken lyrics' : guideVoice ? 'Spoken lyrics on' : 'Spoken lyrics off'}
         </button>
       </div>
 
@@ -346,6 +372,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
   const [cloudProjects, setCloudProjects] = useState([]);
   const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false);
   const arrangement = useMemo(() => buildSongArrangement(project), [project]);
+  const voiceProfile = useMemo(() => musicVoiceProfile(project.brief?.singerVoice), [project.brief?.singerVoice]);
   const hasCreatorAccess = Boolean(user?.admin || user?.access?.createMusic);
   const hasAiAccess = Boolean(user?.admin || user?.access?.createMusicAi);
   const hasArrangementAccess = Boolean(user?.admin || user?.access?.createMusicArrangements);
@@ -451,6 +478,29 @@ export default function CreateMusicPage({ user, onNavigate }) {
     if (current.has(instrumentId)) current.delete(instrumentId);
     else if (current.size < 6) current.add(instrumentId);
     updateBrief({ instruments: [...current] });
+  }
+
+  function chooseStyle(styleId) {
+    setProject((current) => applySongStyle(current, styleId));
+  }
+
+  function chooseSingerVoice(voice) {
+    updateBrief({ singerVoice: voice.id, vocalRange: voice.defaultRange });
+  }
+
+  function previewSingerVoice() {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      setError('Voice previews are not available in this browser.');
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new window.SpeechSynthesisUtterance('Let the melody breathe, then lift the final word.');
+    const selectedDeviceVoice = matchingDeviceVoice(voiceProfile);
+    if (selectedDeviceVoice) utterance.voice = selectedDeviceVoice;
+    utterance.pitch = voiceProfile.speechPitch;
+    utterance.rate = voiceProfile.speechRate;
+    utterance.volume = 0.72;
+    window.speechSynthesis.speak(utterance);
   }
 
   function openCreatorPlans() {
@@ -653,7 +703,22 @@ export default function CreateMusicPage({ user, onNavigate }) {
           <div className='creation-question'>
             <span>2 of 5</span>
             <h2>How should it feel?</h2>
-            <p>These decisions guide the arrangement and the way you will sing it.</p>
+            <p>Start with one sound. You can fine-tune every setting underneath.</p>
+          </div>
+          <div className='creation-style-grid' role='group' aria-label='Song style'>
+            {CREATE_MUSIC_STYLES.map((style) => (
+              <button
+                type='button'
+                key={style.id}
+                className={project.brief.stylePreset === style.id ? 'active' : ''}
+                aria-pressed={project.brief.stylePreset === style.id}
+                onClick={() => chooseStyle(style.id)}
+              >
+                <strong>{style.label}</strong>
+                <span>{style.description}</span>
+                <small>{style.bpm} BPM · {style.genre}</small>
+              </button>
+            ))}
           </div>
           <div className='creation-choice-grid two'>
             <label className='field'>Genre<select value={project.brief.genre} onChange={(event) => updateBrief({ genre: event.target.value })}>{CREATE_MUSIC_GENRES.map((genre) => <option key={genre}>{genre}</option>)}</select></label>
@@ -664,6 +729,26 @@ export default function CreateMusicPage({ user, onNavigate }) {
           <div className='creation-energy' role='group' aria-label='Song energy'>
             {['low', 'medium', 'high'].map((energy) => <button type='button' key={energy} className={project.brief.energy === energy ? 'active' : ''} onClick={() => updateBrief({ energy })}>{energy}</button>)}
           </div>
+          <fieldset className='creation-singer-voices'>
+            <legend>Guide singer</legend>
+            <p>Choose the melodic rehearsal colour. Your lyrics remain yours to perform or record.</p>
+            <div>
+              {CREATE_MUSIC_VOICES.map((voice) => (
+                <button
+                  type='button'
+                  key={voice.id}
+                  className={project.brief.singerVoice === voice.id ? 'active' : ''}
+                  aria-pressed={project.brief.singerVoice === voice.id}
+                  onClick={() => chooseSingerVoice(voice)}
+                >
+                  <strong>{voice.label}</strong>
+                  <small>{voice.description} · {voice.defaultRange}</small>
+                </button>
+              ))}
+            </div>
+            <button type='button' className='ghost singer-preview-button' onClick={previewSingerVoice}>Preview spoken colour</button>
+            <small className='creation-honesty-note'>The preview speaks; the arrangement track follows the actual melody and rhythm.</small>
+          </fieldset>
           <fieldset className='creation-instruments'>
             <legend>Backing instruments</legend>
             <div>
@@ -720,6 +805,8 @@ export default function CreateMusicPage({ user, onNavigate }) {
             <p>Polymath matched your lyric rhythm to an original melody, chords, bass and drums. Review the musical map before rehearsing.</p>
           </div>
           <div className='arrangement-summary-grid'>
+            <article><small>Sound</small><strong>{arrangement.styleLabel}</strong></article>
+            <article><small>Guide singer</small><strong>{arrangement.singerVoiceLabel}</strong></article>
             <article><small>Tempo</small><strong>{arrangement.bpm} BPM</strong></article>
             <article><small>Key</small><strong>{arrangement.key}</strong></article>
             <article><small>Length</small><strong>{formatTime(arrangement.duration)}</strong></article>
@@ -746,6 +833,7 @@ export default function CreateMusicPage({ user, onNavigate }) {
             arrangement={arrangement}
             guideVoice={guideVoice}
             setGuideVoice={setGuideVoice}
+            voiceProfile={voiceProfile}
             onUseInPiano={useInPiano}
             canExport={canExport}
             canGuideVoice={hasGuideVoiceAccess}

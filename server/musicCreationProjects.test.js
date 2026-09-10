@@ -21,6 +21,8 @@ function project(title = 'First light') {
       bpm: 104,
       key: 'C major',
       timeSignature: '4/4',
+      stylePreset: 'catchy-acoustic',
+      singerVoice: 'warm-alto',
       instruments: ['piano', 'drums'],
       structure: ['verse-1', 'chorus'],
     },
@@ -35,8 +37,13 @@ function arrangement() {
     key: 'C major',
     timeSignature: '4/4',
     duration: 12,
-    notes: [{ note: 'C4', midi: 60, time: 0, duration: 1, velocity: 0.75 }],
+    stylePreset: 'catchy-acoustic',
+    styleLabel: 'Catchy acoustic',
+    singerVoice: 'warm-alto',
+    singerVoiceLabel: 'Warm alto',
+    notes: [{ note: 'C4', midi: 60, time: 0, duration: 1, velocity: 0.75, articulation: 'legato' }],
     tracks: [{ id: 'piano', label: 'Piano', instrument: 'piano', events: [] }],
+    provenance: { engine: 'polymath-musical-arranger-v002', pedalPolicy: 'repedal-each-harmony-change' },
   };
 }
 
@@ -48,6 +55,12 @@ test('music projects are private, revision-safe, and removable', () => {
   assert.equal(findProject(db, 'user-b', created.id), null);
   assert.equal(listProjects(db, 'user-a').length, 1);
   assert.equal(listProjects(db, 'user-a')[0].arrangement, undefined);
+  assert.equal(created.brief.stylePreset, 'catchy-acoustic');
+  assert.equal(created.brief.singerVoice, 'warm-alto');
+  assert.equal(created.arrangement.styleLabel, 'Catchy acoustic');
+  assert.equal(created.arrangement.singerVoiceLabel, 'Warm alto');
+  assert.equal(created.arrangement.notes[0].articulation, 'legato');
+  assert.equal(created.arrangement.provenance.pedalPolicy, 'repedal-each-harmony-change');
 
   const updated = updateProject(db, 'user-a', created.id, project('New title'), arrangement(), 1);
   assert.equal(updated.title, 'New title');
