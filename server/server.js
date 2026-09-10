@@ -97,6 +97,7 @@ const {
   trimRoomMessages,
 } = require('./communityChat');
 const { createChatBossAssistant } = require('./chatBossAssistant');
+const { createLoginRateLimiter } = require('./loginRateLimit');
 const { createAwsRdsPasswordProvider } = require('./awsSecrets');
 const {
   learningAttemptsForUser,
@@ -111,6 +112,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+app.disable('x-powered-by');
 const CLIENT_ORIGINS = buildClientOrigins(process.env);
 const DATABASE_PASSWORD_PROVIDER = createAwsRdsPasswordProvider({
   secretId: process.env.AWS_RDS_SECRET_ARN,
@@ -229,6 +231,7 @@ const JOB_QUEUE = createJobQueue({
 const MEDIA_TRANSCRIPTION_POOL = createTaskPool(BACKGROUND_JOB_CONCURRENCY);
 const SCORE_TRANSLATION_POOL = createTaskPool(Math.min(2, BACKGROUND_JOB_CONCURRENCY));
 const PRODUCT_EVENT_REQUEST_WINDOWS = new Map();
+const LOGIN_RATE_LIMITER = createLoginRateLimiter(process.env);
 
 const WITHDRAWAL_FEE_RATE = 0.25;
 const MARKETPLACE_FEE_RATE = 0.25;
@@ -3324,6 +3327,17 @@ function requestIntervalAllowed(store, key, minimumIntervalMs) {
   return true;
 }
 
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+  if (IS_PRODUCTION) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
 app.use(cors({
   origin(origin, callback) {
     if (clientOriginAllowed(origin, CLIENT_ORIGINS)) {
@@ -5239,6 +5253,13 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   const identifier = String(req.body.identifier || req.body.email || '').trim();
+  const loginAllowance = LOGIN_RATE_LIMITER.inspect(req, identifier);
+  if (!loginAllowance.allowed) {
+    res.set('Retry-After', String(loginAllowance.retryAfterSeconds));
+    return res.status(429).json({
+      error: 'Too many unsuccessful sign-in attempts. Wait a few minutes and try again.',
+    });
+  }
   const email = identifier.toLowerCase();
   const phone = normalizePhone(identifier);
   const password = String(req.body.password || '');
@@ -5247,10 +5268,17 @@ app.post('/api/auth/login', async (req, res) => {
     String(candidate.email || '').toLowerCase() === email
     || (phone.length >= 7 && normalizePhone(candidate.phone) === phone)
   ));
-  if (!user || !user.passwordHash) return res.status(401).json({ error: 'Email/phone or password is incorrect.' });
+  if (!user || !user.passwordHash) {
+    LOGIN_RATE_LIMITER.recordFailure(req, identifier);
+    return res.status(401).json({ error: 'Email/phone or password is incorrect.' });
+  }
   const { hash } = hashPassword(password, user.passwordSalt);
   const matches = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.passwordHash, 'hex'));
-  if (!matches) return res.status(401).json({ error: 'Email/phone or password is incorrect.' });
+  if (!matches) {
+    LOGIN_RATE_LIMITER.recordFailure(req, identifier);
+    return res.status(401).json({ error: 'Email/phone or password is incorrect.' });
+  }
+  LOGIN_RATE_LIMITER.reset(req, identifier);
   const token = createSession(db, user.id);
   db.sessions = db.sessions.filter((session) => new Date(session.expiresAt).getTime() >= Date.now());
   user.lastLoginAt = new Date().toISOString();

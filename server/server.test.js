@@ -322,7 +322,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     const data = await response.json();
-    return { status: response.status, data };
+    return { status: response.status, data, headers: response.headers };
   }
 
   async function register(_pathname, { body }) {
@@ -375,6 +375,11 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
 
   const health = await api('/api/health');
   assert.equal(health.status, 200);
+  assert.equal(health.headers.get('x-powered-by'), null);
+  assert.equal(health.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(health.headers.get('x-frame-options'), 'DENY');
+  assert.equal(health.headers.get('referrer-policy'), 'no-referrer');
+  assert.match(health.headers.get('content-security-policy'), /default-src 'none'/);
   assert.deepEqual(health.data, {
     ok: true,
     storage: 'atomic-json',

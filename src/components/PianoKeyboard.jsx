@@ -91,13 +91,15 @@ function PianoRow({
       style={{ '--white-count': row.whiteCount, '--black-width-ratio': BLACK_KEY_WIDTH_RATIO }}
     >
       <div className="piano-range-label">{row.label} • {row.startNote} to {row.endNote}</div>
-      <div className="keyboard-deck">
+      <div className="keyboard-deck" role="group" aria-label={`${row.label}, ${row.startNote} to ${row.endNote}`}>
         <div className="white-layer">
           {row.whiteKeys.map((key) => {
             const version = strikeVersionFor(strikeVersions, key.note);
             return (
               <button
                 key={key.note}
+                type="button"
+                aria-label={`Piano key ${noteToDisplayName(key.midi, true)}`}
                 className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)}`}
                 disabled={disabled}
                 {...(disabled ? {} : pointerHandlers(key.note, onPress, onRelease))}
@@ -110,12 +112,14 @@ function PianoRow({
           })}
         </div>
 
-        <div className="black-layer" aria-hidden="true">
+        <div className="black-layer">
           {row.blackKeys.map((key) => {
             const version = strikeVersionFor(strikeVersions, key.note);
             return (
               <button
                 key={key.note}
+                type="button"
+                aria-label={`Piano key ${noteToDisplayName(key.midi, true)}`}
                 className={`piano-key black ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)}`}
                 style={{
                   left: `calc(${key.position.leftEdgeWhiteUnits} * (100% / var(--white-count)))`,
