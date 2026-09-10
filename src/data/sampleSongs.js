@@ -1,4 +1,3 @@
-import { Midi } from '@tonejs/midi';
 const FREE_PIANO_SONGS = [
   {
     url: 'songs/BS.mid',
@@ -48,7 +47,11 @@ function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function convertMidiToSong(arrayBuffer, entry) {
+async function convertMidiToSong(arrayBuffer, entry) {
+  // Keep the MIDI decoder out of the first-screen bundle. Browsers cache the
+  // dynamic module after this first request, while the initial UI can render
+  // without parsing code that is only needed for MIDI-backed songs.
+  const { Midi } = await import('@tonejs/midi');
   const midi = new Midi(arrayBuffer);
 
   const notes = midi.tracks
