@@ -15,15 +15,104 @@ export const PIANELLA_DEFAULT_START_MIDI = parseNote(PIANELLA_DEFAULT_START_NOTE
 export const PIANELLA_DEFAULT_END_MIDI = parseNote(PIANELLA_DEFAULT_END_NOTE).midi;
 export const TWO_STOREY_SPLIT_MIDI = parseNote(TWO_STOREY_SPLIT_NOTE).midi;
 export const PIANELLA_SINGLE_STOREY_MAX_SPAN = PIANELLA_DEFAULT_END_MIDI - PIANELLA_DEFAULT_START_MIDI + 1;
+export const PIANELLA_PREFERRED_GLOBAL_SHIFT = 24;
+export const PIANELLA_RANGE_PROFILE = 'pianella-range-aware-a1-c7-v2';
 
-export function foldMidiIntoPianellaRange(rawMidi) {
-  let midi = Math.round(Number(rawMidi));
-  if (!Number.isFinite(midi)) return null;
+function readableMidiFromNote(note) {
+  try {
+    const midi = Number.isFinite(Number(note?.midi))
+      ? Math.round(Number(note.midi))
+      : parseNote(note?.note).midi;
+    return midi >= GRAND_START_MIDI && midi <= GRAND_END_MIDI ? midi : null;
+  } catch {
+    return null;
+  }
+}
 
-  // Very deep bass is lifted two octaves, matching the compact cover register
-  // without transposing ordinary melody notes. A0 therefore becomes A2, while
-  // C4 remains C4.
-  if (midi < PIANELLA_DEFAULT_START_MIDI) midi += 24;
+/**
+ * Pick one octave transposition for the whole score before repairing edge
+ * notes. We prefer a two-octave lift, but reduce that lift when the upper
+ * register has no room. A 1% tolerance prevents a handful of noisy outliers
+ * from forcing the other 99% of a performance back down.
+ */
+export function planPianellaRangeShift(
+  songOrNotes,
+  {
+    preferredShiftSemitones = PIANELLA_PREFERRED_GLOBAL_SHIFT,
+    overflowToleranceRatio = 0.01,
+  } = {},
+) {
+  const notes = Array.isArray(songOrNotes) ? songOrNotes : (songOrNotes?.notes || []);
+  const midis = notes.map(readableMidiFromNote).filter(Number.isFinite);
+  const requestedShift = Number(preferredShiftSemitones);
+  const preferredShift = Number.isFinite(requestedShift)
+    ? Math.max(0, Math.min(84, Math.floor(requestedShift / 12) * 12))
+    : PIANELLA_PREFERRED_GLOBAL_SHIFT;
+
+  if (!midis.length) {
+    return {
+      globalShiftSemitones: 0,
+      preferredShiftSemitones: preferredShift,
+      sourceNoteCount: 0,
+      sourceMinimumMidi: null,
+      sourceMaximumMidi: null,
+      notesInsideAfterGlobalShift: 0,
+      notesOutsideAfterGlobalShift: 0,
+      coverageRatio: 1,
+    };
+  }
+
+  const candidates = [];
+  // -84 is enough to bring the top of an 88-key grand piano below C7.
+  for (let shift = preferredShift; shift >= -84; shift -= 12) {
+    const inside = midis.reduce(
+      (count, midi) => count + Number(
+        midi + shift >= PIANELLA_DEFAULT_START_MIDI
+        && midi + shift <= PIANELLA_DEFAULT_END_MIDI,
+      ),
+      0,
+    );
+    candidates.push({ shift, inside });
+  }
+
+  const bestCoverage = Math.max(...candidates.map((candidate) => candidate.inside));
+  const toleratedMisses = Math.floor(
+    midis.length * Math.max(0, Math.min(0.05, Number(overflowToleranceRatio) || 0)),
+  );
+  const selected = candidates.find(
+    (candidate) => candidate.inside >= bestCoverage - toleratedMisses,
+  ) || candidates[candidates.length - 1];
+  const shiftedMidis = midis.map((midi) => midi + selected.shift);
+
+  return {
+    globalShiftSemitones: selected.shift,
+    preferredShiftSemitones: preferredShift,
+    sourceNoteCount: midis.length,
+    sourceMinimumMidi: Math.min(...midis),
+    sourceMaximumMidi: Math.max(...midis),
+    notesInsideAfterGlobalShift: selected.inside,
+    notesOutsideAfterGlobalShift: midis.length - selected.inside,
+    coverageRatio: Number((selected.inside / midis.length).toFixed(4)),
+    shiftedMinimumMidi: Math.min(...shiftedMidis),
+    shiftedMaximumMidi: Math.max(...shiftedMidis),
+  };
+}
+
+export function foldMidiIntoPianellaRange(rawMidi, globalShiftSemitones = 0) {
+  const originalMidi = Math.round(Number(rawMidi));
+  if (!Number.isFinite(originalMidi)) return null;
+  const globalShift = Math.round(Number(globalShiftSemitones) || 0);
+  let midi = originalMidi + globalShift;
+
+  // Deep source notes always receive at least the requested two-octave lift.
+  // This keeps A0 -> A2 even when upper-register headroom made the score-wide
+  // shift smaller than +24.
+  if (
+    originalMidi < PIANELLA_DEFAULT_START_MIDI
+    && midi < originalMidi + PIANELLA_PREFERRED_GLOBAL_SHIFT
+  ) {
+    midi = originalMidi + PIANELLA_PREFERRED_GLOBAL_SHIFT;
+  }
   while (midi < PIANELLA_DEFAULT_START_MIDI) midi += 12;
   while (midi > PIANELLA_DEFAULT_END_MIDI) midi -= 12;
   return Math.max(PIANELLA_DEFAULT_START_MIDI, Math.min(PIANELLA_DEFAULT_END_MIDI, midi));

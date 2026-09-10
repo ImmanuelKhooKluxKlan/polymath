@@ -1,7 +1,9 @@
 import {
   GRAND_END_MIDI,
   GRAND_START_MIDI,
+  PIANELLA_RANGE_PROFILE,
   foldMidiIntoPianellaRange,
+  planPianellaRangeShift,
 } from './grandPianoLayout.js';
 
 import {
@@ -609,6 +611,48 @@ function removeImpossibleSamePitchOverlaps(
   }
 }
 
+function mergeRangeFoldCollisions(notes) {
+  const output = [];
+  const lastByMidi = new Map();
+  let removed = 0;
+
+  for (const note of notes) {
+    const previous = lastByMidi.get(note.midi);
+    const isRangeCollision = previous
+      && Math.abs(note.time - previous.time) <= SIMULTANEOUS_WINDOW
+      && (previous.wasOctaveFolded || note.wasOctaveFolded);
+
+    if (!isRangeCollision) {
+      output.push(note);
+      lastByMidi.set(note.midi, note);
+      continue;
+    }
+
+    const mergeDuration = (field, fallbackField = 'duration') => {
+      const previousDuration = Number(previous[field] ?? previous[fallbackField] ?? 0);
+      const noteDuration = Number(note[field] ?? note[fallbackField] ?? 0);
+      const mergedEnd = Math.max(
+        previous.time + (Number.isFinite(previousDuration) ? previousDuration : 0),
+        note.time + (Number.isFinite(noteDuration) ? noteDuration : 0),
+      );
+      previous[field] = Number(Math.max(0.055, mergedEnd - previous.time).toFixed(4));
+    };
+
+    mergeDuration('duration');
+    mergeDuration('visualDuration');
+    mergeDuration('audioDuration');
+    mergeDuration('scoreDuration');
+    previous.velocity = Math.max(previous.velocity, note.velocity);
+    previous.wasOctaveFolded = previous.wasOctaveFolded || note.wasOctaveFolded;
+    previous.rangeFoldCollisionCount = Number(previous.rangeFoldCollisionCount || 0) + 1;
+    if (!previous.scoreRole && note.scoreRole) previous.scoreRole = note.scoreRole;
+    removed += 1;
+  }
+
+  notes.splice(0, notes.length, ...output);
+  return removed;
+}
+
 export function getSongDuration(
   song
 ) {
@@ -741,6 +785,18 @@ export function normalizeSong(
   song
 ) {
   const compactPianoRange = song?.performance?.preserveFullGrandRange !== true;
+  const previousRangeNormalization = song?.pianoRangeNormalization;
+  const wholeScoreRangeShift = compactPianoRange && (
+    song?.performance?.autoShiftPianoRegister === true
+    || previousRangeNormalization?.profile === PIANELLA_RANGE_PROFILE
+  );
+  const rangeAlreadyNormalized = compactPianoRange
+    && previousRangeNormalization?.applied === true
+    && previousRangeNormalization?.profile === PIANELLA_RANGE_PROFILE;
+  const rangePlan = wholeScoreRangeShift && !rangeAlreadyNormalized
+    ? planPianellaRangeShift(song)
+    : null;
+  const globalRangeShift = rangePlan?.globalShiftSemitones || 0;
   const hasExactDurationFields =
     Array.isArray(song?.notes) &&
     song.notes.some((note) => (
@@ -839,8 +895,26 @@ export function normalizeSong(
         }
 
         const midi = compactPianoRange
-          ? foldMidiIntoPianellaRange(parsedNote.midi)
+          ? foldMidiIntoPianellaRange(parsedNote.midi, globalRangeShift)
           : parsedNote.midi;
+
+        const shiftedBeforeEdgeRepair = parsedNote.midi + globalRangeShift;
+        const priorOriginalMidi = Number(
+          note.originalMidi
+          ?? note.originalMidiBeforeRangeShift
+          ?? note.originalMidiBeforeRangeFold,
+        );
+        const originalMidi = rangeAlreadyNormalized && Number.isFinite(priorOriginalMidi)
+          ? priorOriginalMidi
+          : parsedNote.midi;
+        const priorGlobalShift = Number(note.globalRegisterShiftSemitones);
+        const noteGlobalShift = rangeAlreadyNormalized && Number.isFinite(priorGlobalShift)
+          ? priorGlobalShift
+          : globalRangeShift;
+        const priorEdgeFold = Number(note.edgeOctaveFoldSemitones);
+        const edgeOctaveFoldSemitones = rangeAlreadyNormalized && Number.isFinite(priorEdgeFold)
+          ? priorEdgeFold
+          : midi - shiftedBeforeEdgeRepair;
 
         const normalizedNote =
           midiToNote(midi);
@@ -943,16 +1017,28 @@ export function normalizeSong(
           originalNote:
             note.original_note ||
             note.originalNote ||
+            note.originalNoteBeforeRangeShift ||
+            note.originalNoteBeforeRangeFold ||
             note.note,
 
           originalMidi:
-            parsedNote.midi,
+            originalMidi,
+
+          globalRegisterShiftSemitones:
+            noteGlobalShift,
+
+          edgeOctaveFoldSemitones,
 
           octaveShiftSemitones:
-            midi - parsedNote.midi,
+            midi - originalMidi,
 
           wasOctaveFolded:
-            midi !== parsedNote.midi,
+            rangeAlreadyNormalized
+              ? note.wasOctaveFolded === true
+              : edgeOctaveFoldSemitones !== 0,
+
+          wasRegisterShifted:
+            midi !== originalMidi,
 
           measure:
             note.measure,
@@ -1031,6 +1117,10 @@ export function normalizeSong(
         b.id
       );
     });
+
+  const rangeFoldCollisionsRemoved = compactPianoRange
+    ? mergeRangeFoldCollisions(parsed)
+    : 0;
 
   removeImpossibleSamePitchOverlaps(
     parsed,
@@ -1153,10 +1243,40 @@ export function normalizeSong(
       song.percussionEvents,
 
     pedals,
-    pianoRangeNormalization: {
-      mode: compactPianoRange ? 'pianella-compact-a1-c7' : 'full-grand-a0-c8',
-      shiftedNotes: parsed.filter((note) => note.wasOctaveFolded).length,
-    },
+    pianoRangeNormalization: compactPianoRange
+      ? wholeScoreRangeShift
+        ? rangeAlreadyNormalized
+          ? {
+              ...previousRangeNormalization,
+              applied: true,
+              reapplied: false,
+            }
+          : {
+              profile: PIANELLA_RANGE_PROFILE,
+              mode: 'whole-score-octave-shift-then-edge-fold-a1-c7',
+              applied: true,
+              ...rangePlan,
+              shiftedNotes: parsed.filter((note) => note.wasRegisterShifted).length,
+              edgeFoldedNotes: parsed.filter((note) => note.wasOctaveFolded).length,
+              rangeFoldCollisionsRemoved,
+            }
+        : {
+            profile: 'pianella-edge-fold-a1-c7-v1',
+            mode: 'edge-fold-only',
+            applied: true,
+            globalShiftSemitones: 0,
+            shiftedNotes: parsed.filter((note) => note.wasRegisterShifted).length,
+            edgeFoldedNotes: parsed.filter((note) => note.wasOctaveFolded).length,
+            rangeFoldCollisionsRemoved,
+          }
+      : {
+          profile: 'full-grand-a0-c8',
+          mode: 'preserved',
+          applied: false,
+          globalShiftSemitones: 0,
+          shiftedNotes: 0,
+          edgeFoldedNotes: 0,
+        },
     notes: parsed,
   };
 }

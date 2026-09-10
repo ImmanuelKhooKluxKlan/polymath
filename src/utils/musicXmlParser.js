@@ -171,6 +171,7 @@ export function parseMusicXmlText(text, filename = 'Uploaded MusicXML.musicxml')
       profile: 'musicxml-import-v9',
       preserveScoreDurations: true,
       preserveScoreTiming: true,
+      autoShiftPianoRegister: true,
       noOctaveFolding: true,
       sameKeyRetriggerGapSeconds: 0.035,
       defaultAutoplayReleaseSeconds: 0.45,

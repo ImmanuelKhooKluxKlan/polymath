@@ -23,6 +23,8 @@ PIANO_MIN_MIDI = 21
 PIANO_MAX_MIDI = 108
 COMPACT_PIANO_MIN_MIDI = 33  # A1
 COMPACT_PIANO_MAX_MIDI = 96  # C7
+PIANELLA_PREFERRED_GLOBAL_SHIFT = 24
+PIANELLA_RANGE_PROFILE = "pianella-range-aware-a1-c7-v2"
 MELODY_MIN_MIDI = 55
 MELODY_MAX_MIDI = 88
 BASS_MIN_MIDI = 28
@@ -115,43 +117,102 @@ def map_octave_to_range(midi: int, minimum: int, maximum: int) -> int:
 def compact_pianella_register(
     notes: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Fold rare grand-piano outliers into one practical A1-C7 row.
+    """Shift the score together, then octave-fold only unavoidable edges.
 
-    Notes below A1 receive an initial two-octave lift, so A0 becomes A2.
-    Ordinary notes are not transposed: C4 stays C4. This preserves pitch class
-    and removes the handful of outliers that previously forced a two-storey UI.
+    The preferred global move is +24 semitones (C4 -> C6). If the score's
+    upper notes would not fit, the planner reduces the global shift in octave
+    steps. A 1% outlier tolerance prevents a few noisy detections from moving
+    an otherwise comfortable arrangement. Any remaining edge events are
+    octave-folded, never dropped or pitch-class-clamped.
     """
+    source_midis = [int(note["midi"]) for note in notes]
+    global_shift = 0
+    source_minimum = min(source_midis) if source_midis else None
+    source_maximum = max(source_midis) if source_midis else None
+    global_inside = 0
+    if source_midis:
+        candidates: list[tuple[int, int]] = []
+        for shift in range(PIANELLA_PREFERRED_GLOBAL_SHIFT, -85, -12):
+            inside = sum(
+                COMPACT_PIANO_MIN_MIDI <= midi + shift <= COMPACT_PIANO_MAX_MIDI
+                for midi in source_midis
+            )
+            candidates.append((shift, inside))
+        best_coverage = max(inside for _, inside in candidates)
+        tolerated_misses = math.floor(len(source_midis) * 0.01)
+        global_shift, global_inside = next(
+            candidate
+            for candidate in candidates
+            if candidate[1] >= best_coverage - tolerated_misses
+        )
+
     output: list[dict[str, Any]] = []
     shifted = 0
+    edge_folded = 0
     shift_counts: Counter[int] = Counter()
     for source in notes:
         note = dict(source)
         original_midi = int(note["midi"])
-        midi = original_midi
-        if midi < COMPACT_PIANO_MIN_MIDI:
-            midi += 24
+        midi = original_midi + global_shift
+        # Preserve the explicit A0 -> A2 rule even when upper headroom caused
+        # the score-wide shift to be less than two octaves.
+        if (
+            original_midi < COMPACT_PIANO_MIN_MIDI
+            and midi < original_midi + PIANELLA_PREFERRED_GLOBAL_SHIFT
+        ):
+            midi = original_midi + PIANELLA_PREFERRED_GLOBAL_SHIFT
+        before_edge_fold = original_midi + global_shift
         while midi < COMPACT_PIANO_MIN_MIDI:
             midi += 12
         while midi > COMPACT_PIANO_MAX_MIDI:
             midi -= 12
         midi = int(clamp(midi, COMPACT_PIANO_MIN_MIDI, COMPACT_PIANO_MAX_MIDI))
+        edge_fold = midi - before_edge_fold
         shift = midi - original_midi
         if shift:
             shifted += 1
             shift_counts[shift] += 1
+            note["originalMidiBeforeRangeShift"] = original_midi
+            note["originalNoteBeforeRangeShift"] = note.get("note") or midi_to_note(original_midi)
+            # Backwards-compatible names retained for previously downloaded
+            # Polymath JSON files and older analytics views.
             note["originalMidiBeforeRangeFold"] = original_midi
             note["originalNoteBeforeRangeFold"] = note.get("note") or midi_to_note(original_midi)
+        if edge_fold:
+            edge_folded += 1
+        note["globalRegisterShiftSemitones"] = global_shift
+        note["edgeOctaveFoldSemitones"] = edge_fold
+        note["octaveShiftSemitones"] = shift
+        note["wasOctaveFolded"] = edge_fold != 0
+        note["wasRegisterShifted"] = shift != 0
         note["midi"] = midi
         note["note"] = midi_to_note(midi)
-        note["hand"] = "left" if midi < 60 else "right"
+        source_hand = str(source.get("hand") or "").lower()
+        note["hand"] = (
+            source_hand
+            if source_hand in {"left", "right"}
+            else "left" if original_midi < 60 else "right"
+        )
         output.append(note)
     return output, {
-        "profile": "pianella-compact-a1-c7-v1",
+        "profile": PIANELLA_RANGE_PROFILE,
+        "mode": "whole-score-octave-shift-then-edge-fold-a1-c7",
+        "applied": True,
         "minimumMidi": COMPACT_PIANO_MIN_MIDI,
         "maximumMidi": COMPACT_PIANO_MAX_MIDI,
         "minimumNote": "A1",
         "maximumNote": "C7",
+        "preferredShiftSemitones": PIANELLA_PREFERRED_GLOBAL_SHIFT,
+        "globalShiftSemitones": global_shift,
+        "sourceNoteCount": len(source_midis),
+        "sourceMinimumMidi": source_minimum,
+        "sourceMaximumMidi": source_maximum,
+        "notesInsideAfterGlobalShift": global_inside,
+        "notesOutsideAfterGlobalShift": len(source_midis) - global_inside,
+        "coverageRatio": round_number(global_inside / len(source_midis), 4)
+        if source_midis else 1.0,
         "shiftedNotes": shifted,
+        "edgeFoldedNotes": edge_folded,
         "semitoneShiftCounts": {
             str(shift): count for shift, count in sorted(shift_counts.items())
         },
@@ -264,7 +325,9 @@ def expression_role(note: dict[str, Any]) -> str:
         return "melody"
     if role == "bass":
         return "bass"
-    if note["midi"] < 60:
+    hand = str(note.get("hand") or "").lower()
+    is_left = hand == "left" if hand in {"left", "right"} else note["midi"] < 60
+    if is_left:
         return "source_left" if role == "source_piano" else "left_hand"
     return "source_right" if role == "source_piano" else "right_hand"
 
@@ -348,14 +411,15 @@ def shape_melody_forward_expression(
             velocity += 0.035
 
         note["velocity"] = round_number(clamp(velocity, minimum, maximum), 3)
-        note["hand"] = "left" if note["midi"] < 60 else "right"
+        if str(note.get("hand") or "").lower() not in {"left", "right"}:
+            note["hand"] = "left" if note["midi"] < 60 else "right"
         role_velocities[role].append(note["velocity"])
 
     right_velocities = [
-        note["velocity"] for note in shaped if note["midi"] >= 60
+        note["velocity"] for note in shaped if note.get("hand") != "left"
     ]
     left_velocities = [
-        note["velocity"] for note in shaped if note["midi"] < 60
+        note["velocity"] for note in shaped if note.get("hand") == "left"
     ]
     right_mean = average(right_velocities)
     left_mean = average(left_velocities)
@@ -713,6 +777,7 @@ def arrange_payload(
         learned["pianoArrangement"]["expression"] = expression
         learned["pianoArrangement"]["compactRange"] = range_compaction
         learned["pianoArrangement"]["rangeFoldCollisionsRemoved"] = range_fold_collisions
+        learned["pianoRangeNormalization"] = range_compaction
         learned["pianoArrangement"]["physicalPerformance"] = {
             **(learned.get("pianoPerformance") or {}),
             "profile": "written-key-hold-damper-v1",
@@ -856,6 +921,7 @@ def arrange_payload(
     output = dict(payload)
     output["instrument"] = "piano"
     output["notes"] = arranged_notes
+    output["pianoRangeNormalization"] = range_compaction
     output["instrumentGroups"] = ["acoustic_piano"]
     output["vocalMelodyIncluded"] = vocal_melody_notes > 0
     output["arrangementProfile"] = "piano-reduction-with-physical-performance-v5"

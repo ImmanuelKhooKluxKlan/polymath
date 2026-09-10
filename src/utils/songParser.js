@@ -7,6 +7,16 @@ function fileExtension(filename = '') {
   return filename.split('.').pop()?.toLowerCase() || '';
 }
 
+function markUploadedPianoRange(song) {
+  return {
+    ...song,
+    performance: {
+      ...(song?.performance || {}),
+      autoShiftPianoRegister: true,
+    },
+  };
+}
+
 export async function parseUploadedSongFile(file) {
   const extension = fileExtension(file.name);
   let parsedSong;
@@ -44,7 +54,9 @@ export function parseSongText(text, filename = 'Uploaded Song') {
 
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed)) return normalizeSong({ title: filename, notes: parsed });
+    if (Array.isArray(parsed)) {
+      return normalizeSong(markUploadedPianoRange({ title: filename, notes: parsed }));
+    }
     if (!Array.isArray(parsed.notes) && Array.isArray(parsed.events)) {
       const openStringMidi = [40, 45, 50, 55, 59, 64];
       const notes = parsed.events.flatMap((event, eventIndex) => {
@@ -84,9 +96,9 @@ export function parseSongText(text, filename = 'Uploaded Song') {
           velocity,
         }];
       });
-      return normalizeSong({ ...parsed, notes });
+      return normalizeSong(markUploadedPianoRange({ ...parsed, notes }));
     }
-    return normalizeSong(parsed);
+    return normalizeSong(markUploadedPianoRange(parsed));
   }
 
   return parseCsv(trimmed, filename);
@@ -152,6 +164,7 @@ function parseCsv(text, filename) {
       profile: 'csv-json-import-v9',
       preserveScoreDurations: true,
       preserveScoreTiming: true,
+      autoShiftPianoRegister: true,
       noOctaveFolding: true,
       sameKeyRetriggerGapSeconds: 0.035,
     },

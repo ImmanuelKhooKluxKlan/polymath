@@ -31,7 +31,40 @@ def note(midi, time, instrument, duration=0.3, velocity=0.75):
 
 
 class PianoLegatoTests(unittest.TestCase):
-    def test_compacts_grand_outliers_without_transposing_the_middle_register(self):
+    def test_shifts_the_whole_score_two_octaves_when_there_is_room(self):
+        compacted, diagnostics = compact_pianella_register(
+            [
+                {**note(21, 0, 'acoustic_piano'), 'note': 'A0'},
+                {**note(36, 1, 'acoustic_piano'), 'note': 'C2'},
+                {**note(60, 2, 'acoustic_piano'), 'note': 'C4'},
+            ]
+        )
+
+        self.assertEqual([item['midi'] for item in compacted], [45, 60, 84])
+        self.assertTrue(all(
+            COMPACT_PIANO_MIN_MIDI <= item['midi'] <= COMPACT_PIANO_MAX_MIDI
+            for item in compacted
+        ))
+        self.assertEqual(diagnostics['globalShiftSemitones'], 24)
+        self.assertEqual(diagnostics['shiftedNotes'], 3)
+        self.assertEqual(diagnostics['edgeFoldedNotes'], 0)
+        self.assertEqual(
+            diagnostics['semitoneShiftCounts'],
+            {'24': 3},
+        )
+
+    def test_reduces_global_shift_when_upper_register_has_no_room(self):
+        compacted, diagnostics = compact_pianella_register(
+            [
+                {**note(48, 0, 'acoustic_piano'), 'note': 'C3'},
+                {**note(84, 1, 'acoustic_piano'), 'note': 'C6'},
+            ]
+        )
+
+        self.assertEqual(diagnostics['globalShiftSemitones'], 12)
+        self.assertEqual([item['midi'] for item in compacted], [60, 96])
+
+    def test_folds_unavoidable_edges_instead_of_dropping_them(self):
         compacted, diagnostics = compact_pianella_register(
             [
                 {**note(21, 0, 'acoustic_piano'), 'note': 'A0'},
@@ -40,16 +73,9 @@ class PianoLegatoTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([item['midi'] for item in compacted], [45, 60, 96])
-        self.assertTrue(all(
-            COMPACT_PIANO_MIN_MIDI <= item['midi'] <= COMPACT_PIANO_MAX_MIDI
-            for item in compacted
-        ))
-        self.assertEqual(diagnostics['shiftedNotes'], 2)
-        self.assertEqual(
-            diagnostics['semitoneShiftCounts'],
-            {'-12': 1, '24': 1},
-        )
+        self.assertEqual(diagnostics['globalShiftSemitones'], 24)
+        self.assertEqual(diagnostics['edgeFoldedNotes'], 1)
+        self.assertEqual([item['midi'] for item in compacted], [45, 84, 96])
 
     def test_shapes_connected_harmony_with_a_long_release(self):
         notes = [note(72, 0, 'voice', duration=0.2), note(43, 0, 'electric_bass')]

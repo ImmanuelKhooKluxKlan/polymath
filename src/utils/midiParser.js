@@ -370,6 +370,7 @@ function pairNoteEvents(trackParses, tempoMap, ticksPerQuarter, filename) {
       profile: 'midi-import-v10-musical',
       preserveScoreDurations: true,
       preserveScoreTiming: true,
+      autoShiftPianoRegister: true,
       noOctaveFolding: true,
       sameKeyRetriggerGapSeconds: 0.024,
       defaultAutoplayReleaseSeconds: 0.58,
