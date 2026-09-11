@@ -31,10 +31,29 @@ from ml.training.muscriptor_tokens import (
 
 
 RIGHTS_ACKNOWLEDGEMENT = "I_HAVE_TRAINING_RIGHTS"
+CONDITIONING_MODES = {"instrument", "unconditioned"}
 
 
 class TrainingError(RuntimeError):
     """Raised before any optimizer update when a safety invariant fails."""
+
+
+def conditioning_group(instrument: str, mode: str) -> str | None:
+    """Return the exact MuScriptor text condition used for a training clip.
+
+    The production piano-reduction route first listens to an unconstrained full
+    mix.  Route-specific checkpoints therefore need an explicit unconditioned
+    training option; training with the acoustic-piano condition and decoding
+    without it is a distribution mismatch that can look good on clip loss while
+    catastrophically changing the instruments emitted for real songs.
+    """
+
+    normalized = str(mode or "instrument").strip().lower()
+    if normalized not in CONDITIONING_MODES:
+        raise TrainingError(
+            "conditioningMode must be instrument or unconditioned"
+        )
+    return None if normalized == "unconditioned" else str(instrument_group_id(instrument))
 
 
 def target_token_weights(
@@ -111,6 +130,12 @@ def audit_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     for index, record in enumerate(records):
         clip_id = str(record.get("clipId") or f"clip-{index}")
         audio = Path(str(record.get("audioClip") or "")).resolve()
+        local_audio = Path(str(record.get("localAudioSource") or "")).resolve()
+        if (not audio.is_file() or audio.stat().st_size <= 44) and local_audio.is_file():
+            # Composed manifests deliberately point audioClip at the RunPod
+            # mount. Keep a provenance-only local copy path so the exact same
+            # manifest can still pass a desktop preflight before upload.
+            audio = local_audio
         if not audio.is_file() or audio.stat().st_size <= 44:
             raise TrainingError(f"{clip_id}: prepared audio clip is missing")
         duration = float(record.get("durationSeconds") or 0)
@@ -259,6 +284,7 @@ def clip_loss(
     timing_weight: float = 1.15,
     note_off_weight: float = 1.25,
     eos_weight: float = 1.20,
+    conditioning_mode: str = "instrument",
 ):
     import torch
     import torch.nn.functional as functional
@@ -279,7 +305,10 @@ def clip_loss(
     input_tensor = torch.tensor([inputs], dtype=torch.long, device=device)
     target_tensor = torch.tensor([targets], dtype=torch.long, device=device)
     wav = load_audio_clip(Path(record["audioClip"]), device)
-    conditions = transcription._build_conditions(wav, str(instrument_group_id(instrument)))
+    conditions = transcription._build_conditions(
+        wav,
+        conditioning_group(instrument, conditioning_mode),
+    )
     provider = transcription._model.condition_provider
     prepared = provider.tokenize(conditions)
     condition_tensors = provider(prepared)
@@ -300,7 +329,13 @@ def clip_loss(
     return loss
 
 
-def evaluate_loss(transcription, records: list[dict[str, Any]], device: str, precision: str) -> float:
+def evaluate_loss(
+    transcription,
+    records: list[dict[str, Any]],
+    device: str,
+    precision: str,
+    conditioning_mode: str = "instrument",
+) -> float:
     import torch
 
     transcription._model.eval()
@@ -309,7 +344,14 @@ def evaluate_loss(transcription, records: list[dict[str, Any]], device: str, pre
     with torch.no_grad():
         for record in records:
             with torch.autocast(device_type="cuda", dtype=dtype, enabled=device.startswith("cuda")):
-                losses.append(float(clip_loss(transcription, record, device).detach().cpu()))
+                losses.append(float(
+                    clip_loss(
+                        transcription,
+                        record,
+                        device,
+                        conditioning_mode=conditioning_mode,
+                    ).detach().cpu()
+                ))
     return sum(losses) / max(1, len(losses))
 
 
@@ -351,6 +393,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         raise TrainingError("Output must be outside the immutable base-checkpoint directory")
     if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
         raise TrainingError(f"Output path must be a new or empty directory: {args.out}")
+    conditioning_mode = str(
+        getattr(args, "conditioning_mode", "instrument") or "instrument"
+    ).strip().lower()
+    if conditioning_mode not in CONDITIONING_MODES:
+        raise TrainingError("conditioningMode must be instrument or unconditioned")
     train_records = read_jsonl(args.train_manifest)
     validation_records = read_jsonl(args.validation_manifest)
     train_audit = audit_records(train_records)
@@ -382,7 +429,13 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     }
     optimizer = torch.optim.AdamW(parameters, lr=args.learning_rate, weight_decay=args.weight_decay)
     dtype = torch.bfloat16 if args.precision == "bf16" else torch.float16
-    baseline_validation_loss = evaluate_loss(transcription, validation_records, device, args.precision)
+    baseline_validation_loss = evaluate_loss(
+        transcription,
+        validation_records,
+        device,
+        args.precision,
+        conditioning_mode,
+    )
     if progress_callback:
         progress_callback(
             f"Baseline validation loss: {baseline_validation_loss:.6f}",
@@ -406,6 +459,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     timing_weight=args.timing_token_weight,
                     note_off_weight=args.note_off_token_weight,
                     eos_weight=args.eos_token_weight,
+                    conditioning_mode=conditioning_mode,
                 ) / args.gradient_accumulation
             loss.backward()
             step += 1
@@ -420,7 +474,13 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             accumulated = 0
-        validation_loss = evaluate_loss(transcription, validation_records, device, args.precision)
+        validation_loss = evaluate_loss(
+            transcription,
+            validation_records,
+            device,
+            args.precision,
+            conditioning_mode,
+        )
         print(json.dumps({"epoch": epoch + 1, "validationLoss": validation_loss}), flush=True)
         if progress_callback:
             progress_callback(
@@ -450,6 +510,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "trainAudit": train_audit,
         "validationAudit": validation_audit,
         "instrumentFocus": train_audit["instruments"][0],
+        "conditioningMode": conditioning_mode,
         "trainLastLayers": args.train_last_layers,
         "learningRate": args.learning_rate,
         "timingTokenWeight": args.timing_token_weight,
@@ -485,6 +546,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timing-token-weight", type=float, default=1.15)
     parser.add_argument("--note-off-token-weight", type=float, default=1.25)
     parser.add_argument("--eos-token-weight", type=float, default=1.20)
+    parser.add_argument(
+        "--conditioning-mode",
+        choices=sorted(CONDITIONING_MODES),
+        default="instrument",
+        help="Use unconditioned only for a route decoded without an instrument constraint.",
+    )
     parser.add_argument("--precision", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--seed", default="polymath-piano-phase1-v001")
     return parser.parse_args()

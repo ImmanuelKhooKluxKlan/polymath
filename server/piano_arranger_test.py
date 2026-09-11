@@ -159,6 +159,8 @@ class PianoLegatoTests(unittest.TestCase):
         self.assertTrue(all('audioDuration' in item for item in result['notes']))
         self.assertTrue(all('releaseSeconds' in item for item in result['notes']))
         self.assertTrue(all(item['scoreDuration'] == item['duration'] for item in result['notes']))
+        self.assertTrue(all(item['visualDuration'] == item['audioDuration'] for item in result['notes']))
+        self.assertEqual(result['performance']['visualDurationPolicy'], 'physical-key-hold')
         self.assertTrue(result['pianoArrangement']['physicalPerformance']['writtenAndPhysicalDurationsSeparated'])
         self.assertTrue(all(item['articulation'] == 'legato' for item in result['notes']))
         self.assertTrue(all('maximumPhysicalHoldSeconds' in item for item in result['notes']))

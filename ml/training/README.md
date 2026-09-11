@@ -23,6 +23,30 @@ dataset.
 
 ## End-to-end flow
 
+For exact synthetic multitrack supervision, import the official CC BY 4.0
+BabySlakh prototype before the ordinary dataset-builder step. Per-stem MIDI is
+the same MIDI used to synthesize each stem, so the importer marks its fixed
+five-second windows as trusted without consulting model predictions. Duplicate
+composition identities are removed before song-level splits. The arranger
+teacher mode produces a route-specific, playable piano reduction; it does not
+replace a final untouched real-song listening test.
+
+```powershell
+python -m ml.training.import_slakh `
+  --dataset-root "C:\private-training\BabySlakh" `
+  --output-root "C:\private-training\babyslakh-piano-v001" `
+  --target-mode arranger-teacher `
+  --profile "server\models\piano-arranger\pianella-supervised-v006.json" `
+  --train-count 16 `
+  --validation-count 2
+```
+
+The importer writes `training-index.json`, factual source scores, frozen piano
+targets, exact supervision packages, hashes, licence attribution, and an import
+summary. Pass that index to `dataset_builder.py` exactly like reviewed human
+data. Keep at least one composition completely outside both fitting and model
+selection.
+
 1. Run a song through Admin → Piano Model Lab, or upload an existing raw
    MuScriptor MIDI/JSON.
 2. Upload the desired piano MIDI/JSON to the Supervised Learning workbench.
@@ -99,6 +123,16 @@ The detailed evaluator now reports each instrument independently and separates:
 
 - ignored notes and spurious notes;
 - wrong-instrument, octave, near-pitch, and near-timing substitutions;
+
+### Match training and inference conditioning
+
+The normal individual-instrument experiments use MuScriptor's instrument-group
+condition and must be evaluated with the same hard constraint.  A route-specific
+full-mix-to-piano experiment is different: production listens without an
+instrument constraint before arranging the result, so both training and
+checkpoint evaluation must use `--conditioning-mode unconditioned`.  Mixing
+those two modes can lower teacher-forcing loss while catastrophically changing
+the instruments emitted on a real song; the mixed-song canary remains mandatory.
 - repeated-key retriggers within 75 ms;
 - severely cut-off and overlong notes;
 - onset-only, onset+offset, and 20 ms frame scores;
@@ -135,6 +169,8 @@ checkpoint survives.
 
 - `dataset_builder.py`: validates supervision/rights, splits by song, and creates
   5-second JSONL clip manifests.
+- `import_slakh.py`: turns exact aligned Slakh stems into auditable piano-route
+  supervision and records immutable song-level splits and CC BY attribution.
 - `prepare_audio_clips.py`: uses FFmpeg to render mono 16 kHz WAV clips.
 - `evaluate_predictions.py`: instrument-aware pattern/error diagnostics and note metrics.
 - `muscriptor_tokens.py`: MT3-like individual-instrument targets, overlap normalization, and ties.

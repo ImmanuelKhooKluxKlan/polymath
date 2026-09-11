@@ -97,6 +97,7 @@ test('prepared dataset composition filters songs, copies audio, and writes RunPo
   const composedTrain = JSON.parse((await fs.readFile(path.join(output, 'prepared-train.jsonl'), 'utf8')).trim());
   assert.equal(composedTrain.clipId, 'keep-001');
   assert.equal(composedTrain.audioClip, '/runpod-volume/training/test-v001/audio/train/keep-001.wav');
+  assert.equal(composedTrain.localAudioSource, path.join(output, 'audio', 'train', 'keep-001.wav'));
   assert.equal(await fs.stat(path.join(output, 'audio', 'train', 'keep-001.wav')).then((item) => item.size), 80);
   const summary = JSON.parse(await fs.readFile(path.join(output, 'composition-summary.json'), 'utf8'));
   assert.equal(summary.splits.train.clips, 1);

@@ -447,6 +447,21 @@ def shape_melody_forward_expression(
     }
 
 
+def synchronize_generated_visual_holds(payload: dict[str, Any]) -> dict[str, Any]:
+    """Make falling bars show the physical key hold of a generated reduction."""
+    synchronized = 0
+    for note in payload.get("notes", []):
+        try:
+            physical = float(note.get("audioDuration", note.get("duration", 0.2)))
+        except (TypeError, ValueError):
+            continue
+        note["visualDuration"] = round_number(max(MIN_NOTE_SECONDS, physical), 6)
+        synchronized += 1
+    payload.setdefault("performance", {})["visualDurationPolicy"] = "physical-key-hold"
+    payload.setdefault("pianoPerformance", {})["visualHoldsSynchronized"] = synchronized
+    return payload
+
+
 def arranged_note(
     source: dict[str, Any],
     *,
@@ -770,6 +785,7 @@ def arrange_payload(
             learned["notes"]
         )
         learned = shape_piano_performance(learned, infer_pedal=True)
+        learned = synchronize_generated_visual_holds(learned)
         learned["performance"]["profile"] = "polymath-learned-piano-arranger-v2"
         learned["performance"]["defaultAutoplayReleaseSeconds"] = 0.62
         learned["performance"]["melodyForwardDynamics"] = True
@@ -974,6 +990,8 @@ def arrange_payload(
     # labelled pedal events let the string continue naturally.  Keeping these
     # concepts separate prevents both typewriter cut-offs and stuck overlaps.
     output = shape_piano_performance(output, infer_pedal=True)
+    if arranger_profile == 'full-mix-piano-reduction':
+        output = synchronize_generated_visual_holds(output)
     output['performance']['profile'] = 'polymath-piano-arranger-v5'
     output['performance']['defaultAutoplayReleaseSeconds'] = 0.62
     output['performance']['melodyForwardDynamics'] = True
@@ -1078,6 +1096,16 @@ def main() -> None:
         "--profile",
         help="Optional learned piano-arranger JSON profile. Used only for a detected full mix.",
     )
+    parser.add_argument(
+        "--density-multiplier",
+        type=float,
+        help="Research-only decoder override used for reproducible validation sweeps.",
+    )
+    parser.add_argument(
+        "--sparse-expansion",
+        choices=("enabled", "disabled"),
+        help="Research-only override for generated sparse-harmony expansion.",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -1086,6 +1114,13 @@ def main() -> None:
     style_profile = None
     if args.profile:
         style_profile = json.loads(Path(args.profile).read_text(encoding="utf-8-sig"))
+        decoder = style_profile.setdefault("decoder", {})
+        if args.density_multiplier is not None:
+            decoder["preCleanupDensityMultiplier"] = clamp(
+                float(args.density_multiplier), 0.5, 3.0
+            )
+        if args.sparse_expansion is not None:
+            decoder["expandSparseHarmony"] = args.sparse_expansion == "enabled"
     arranged = arrange_payload(payload, args.mode, style_profile=style_profile)
     temporary_path = output_path.with_name(f"{output_path.name}.tmp")
     temporary_path.write_text(

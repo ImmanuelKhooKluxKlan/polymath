@@ -25,6 +25,7 @@ async function main() {
   const specPath = path.resolve(required(argument('spec'), '--spec'));
   const spec = JSON.parse(await fs.readFile(specPath, 'utf8'));
   if (!Array.isArray(spec.tasks) || !spec.tasks.length) throw new Error('The batch spec contains no tasks');
+  const defaultCheckpoint = String(spec.checkpoint || 'original').trim();
 
   const client = createRunpodServerlessClient({
     endpointId: process.env.RUNPOD_SERVERLESS_ENDPOINT_ID,
@@ -44,6 +45,10 @@ async function main() {
     const audio = path.resolve(required(task.audio, `tasks[${index}].audio`));
     const output = path.resolve(required(task.output, `tasks[${index}].output`));
     const id = required(task.id, `tasks[${index}].id`).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80);
+    const checkpoint = String(task.checkpoint || defaultCheckpoint).trim();
+    if (!/^(?:original|phase\d+-v\d+)$/i.test(checkpoint)) {
+      throw new Error(`tasks[${index}].checkpoint is invalid`);
+    }
     await fs.access(audio);
     await fs.mkdir(path.dirname(output), { recursive: true });
     process.stdout.write(`[${index + 1}/${spec.tasks.length}] ${task.title || id}\n`);
@@ -56,6 +61,7 @@ async function main() {
       },
       preparedPath: audio,
       constraints: [],
+      checkpointVersion: checkpoint,
       onProgress(status) {
         const text = `${status.state || ''} ${status.progress || ''}`.trim();
         if (text && text !== lastProgress) {
@@ -69,7 +75,7 @@ async function main() {
       trainingProvenance: {
         generatedAt: new Date().toISOString(),
         endpointId: process.env.RUNPOD_SERVERLESS_ENDPOINT_ID,
-        checkpoint: 'endpoint-default-muscriptor-large',
+        checkpoint,
         sourceAudio: audio,
         phase: spec.phase || '',
       },

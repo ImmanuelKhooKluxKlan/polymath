@@ -49,6 +49,7 @@ async function main() {
         dataset_id: args.dataset,
         version: args.version,
         baseline_version: args['baseline-version'] || 'original',
+        conditioning_mode: args['conditioning-mode'] || 'instrument',
       },
       policy: { executionTimeout: 60 * 60 * 1000, ttl: 2 * 60 * 60 * 1000 },
     }),

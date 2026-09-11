@@ -38,6 +38,14 @@ function parseReplicas(value) {
   }
 }
 
+function parseConcurrency(value) {
+  const parsed = Number.parseInt(String(value || '6'), 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 16) {
+    throw new Error('--concurrency must be an integer from 1 through 16');
+  }
+  return parsed;
+}
+
 function targetForVolume(volumeId) {
   const targets = [
     {
@@ -102,6 +110,53 @@ async function sha256(filename) {
   return hash.digest('hex');
 }
 
+async function remoteObjectSize(client, bucket, key) {
+  try {
+    const response = await client.send(new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Range: 'bytes=0-0',
+    }));
+    response.Body?.destroy?.();
+    return response.ContentRange
+      ? Number(response.ContentRange.split('/').at(-1))
+      : Number.NaN;
+  } catch (error) {
+    const status = Number(error?.$metadata?.httpStatusCode || 0);
+    if (status === 404 || ['NoSuchKey', 'NotFound'].includes(error?.name)) return null;
+    throw error;
+  }
+}
+
+async function uploadOne({ client, bucket, filename, root, prefix, resume }) {
+  const relative = path.relative(root, filename).split(path.sep).join('/');
+  const key = `${prefix}/${relative}`;
+  const size = (await fsp.stat(filename)).size;
+  let remoteSize = resume ? await remoteObjectSize(client, bucket, key) : null;
+  const reused = remoteSize === size;
+  if (!reused) {
+    await client.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: fs.createReadStream(filename),
+      ContentType: path.extname(filename).toLowerCase() === '.wav'
+        ? 'audio/wav'
+        : 'application/octet-stream',
+    }));
+    remoteSize = await remoteObjectSize(client, bucket, key);
+  }
+  if (Number.isFinite(remoteSize) && remoteSize !== size) {
+    throw new Error(`${key}: remote size ${remoteSize} does not equal local size ${size}`);
+  }
+  return {
+    key,
+    bytes: size,
+    sha256: await sha256(filename),
+    remoteSizeVerified: remoteSize === size,
+    reused,
+  };
+}
+
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   if (!args.root || !args['volume-id'] || !args.prefix) {
@@ -117,40 +172,37 @@ async function main() {
   }
   const client = createClient(target);
   const prefix = String(args.prefix).replace(/^\/+|\/+$/g, '');
-  const files = await collectFiles(root);
-  const manifest = [];
-  for (const [index, filename] of files.entries()) {
-    const relative = path.relative(root, filename).split(path.sep).join('/');
-    const key = `${prefix}/${relative}`;
-    const size = (await fsp.stat(filename)).size;
-    process.stdout.write(`[${index + 1}/${files.length}] ${relative}\n`);
-    await client.send(new PutObjectCommand({
-      Bucket: target.volumeId,
-      Key: key,
-      Body: fs.createReadStream(filename),
-      ContentType: path.extname(filename).toLowerCase() === '.wav'
-        ? 'audio/wav'
-        : 'application/octet-stream',
-    }));
-    const verification = await client.send(new GetObjectCommand({
-      Bucket: target.volumeId,
-      Key: key,
-      Range: 'bytes=0-0',
-    }));
-    verification.Body?.destroy?.();
-    const remoteSize = verification.ContentRange
-      ? Number(verification.ContentRange.split('/').at(-1))
-      : Number.NaN;
-    if (Number.isFinite(remoteSize) && remoteSize !== size) {
-      throw new Error(`${key}: remote size ${remoteSize} does not equal local size ${size}`);
+  const manifestPath = path.resolve(args.manifest || path.join(root, 'runpod-upload-manifest.json'));
+  const files = (await collectFiles(root)).filter(
+    (filename) => path.resolve(filename) !== manifestPath,
+  );
+  const manifest = Array(files.length);
+  const concurrency = parseConcurrency(args.concurrency);
+  let cursor = 0;
+  let completed = 0;
+  async function worker() {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= files.length) return;
+      const filename = files[index];
+      const relative = path.relative(root, filename).split(path.sep).join('/');
+      const result = await uploadOne({
+        client,
+        bucket: target.volumeId,
+        filename,
+        root,
+        prefix,
+        resume: Boolean(args.resume),
+      });
+      manifest[index] = result;
+      completed += 1;
+      process.stdout.write(
+        `[${completed}/${files.length}] ${result.reused ? 'reused' : 'uploaded'} ${relative}\n`,
+      );
     }
-    manifest.push({
-      key,
-      bytes: size,
-      sha256: await sha256(filename),
-      remoteSizeVerified: remoteSize === size,
-    });
   }
+  await Promise.all(Array.from({ length: Math.min(concurrency, files.length) }, () => worker()));
   const result = {
     schema: 'polymath-runpod-dataset-upload-v1',
     generatedAt: new Date().toISOString(),
@@ -158,10 +210,11 @@ async function main() {
     volumeId: target.volumeId,
     region: target.region,
     prefix,
+    concurrency,
+    resume: Boolean(args.resume),
     files: manifest,
     totalBytes: manifest.reduce((sum, file) => sum + file.bytes, 0),
   };
-  const manifestPath = path.resolve(args.manifest || path.join(root, 'runpod-upload-manifest.json'));
   await fsp.writeFile(manifestPath, `${JSON.stringify(result, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify({
     volumeId: result.volumeId,

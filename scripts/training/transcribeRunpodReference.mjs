@@ -21,13 +21,17 @@ function argumentsFrom(argv) {
 async function main() {
   const args = argumentsFrom(process.argv.slice(2));
   if (!args.input || !args.output) {
-    throw new Error('Usage: --input prepared.wav --output raw.json [--checkpoint phase1-v002] [--instrument piano]');
+    throw new Error('Usage: --input prepared.wav --output raw.json [--checkpoint phase1-v002] [--instrument piano] [--constraints acoustic_piano,electric_piano]');
   }
   const repoRoot = path.resolve(import.meta.dirname, '..', '..');
   process.loadEnvFile(path.join(repoRoot, 'server', '.env'));
   const inputPath = path.resolve(args.input);
   const outputPath = path.resolve(args.output);
   const checkpoint = args.checkpoint || 'phase1-v002';
+  const constraints = String(args.constraints || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
   const client = createRunpodServerlessClient({
     endpointId: process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || process.env.RUNPOD_ENDPOINT_ID,
     apiKey: process.env.RUNPOD_API_KEY,
@@ -50,7 +54,7 @@ async function main() {
       instrument: args.instrument || 'piano',
     },
     preparedPath: inputPath,
-    constraints: [],
+    constraints,
     checkpointVersion: checkpoint,
     onProgress({ state, progress }) {
       const message = `${state}:${String(progress || '')}`;
@@ -63,7 +67,13 @@ async function main() {
   const temporaryPath = `${outputPath}.partial`;
   await fs.writeFile(temporaryPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
   await fs.rename(temporaryPath, outputPath);
-  process.stdout.write(`${JSON.stringify({ output: outputPath, notes: result.notes.length, instrumentGroups: result.instrumentGroups })}\n`);
+  process.stdout.write(`${JSON.stringify({
+    output: outputPath,
+    checkpoint,
+    constraints,
+    notes: result.notes.length,
+    instrumentGroups: result.instrumentGroups,
+  })}\n`);
 }
 
 main().catch((error) => {

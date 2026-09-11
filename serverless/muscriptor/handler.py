@@ -223,12 +223,17 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
     epochs = int(job_input.get('epochs') or 1)
     train_last_layers = int(job_input.get('train_last_layers') or 1)
     learning_rate = float(job_input.get('learning_rate') or 2e-6)
+    conditioning_mode = str(
+        job_input.get('conditioning_mode') or 'instrument'
+    ).strip().lower()
     if epochs < 1 or epochs > 3:
         raise ValueError('Experimental training accepts between one and three epochs')
     if train_last_layers < 1 or train_last_layers > 2:
         raise ValueError('Experimental training accepts one or two final layers')
     if learning_rate <= 0 or learning_rate > 1e-5:
         raise ValueError('Experimental learning rate must be above zero and at most 1e-5')
+    if conditioning_mode not in {'instrument', 'unconditioned'}:
+        raise ValueError('conditioning_mode must be instrument or unconditioned')
 
     train_manifest = safe_training_file(dataset_id, 'prepared-train.jsonl')
     validation_manifest = safe_training_file(dataset_id, 'prepared-validation.jsonl')
@@ -270,6 +275,7 @@ def train_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> dic
         timing_token_weight=float(job_input.get('timing_token_weight') or 1.15),
         note_off_token_weight=float(job_input.get('note_off_token_weight') or 1.25),
         eos_token_weight=float(job_input.get('eos_token_weight') or 1.20),
+        conditioning_mode=conditioning_mode,
         precision='bf16',
         seed=f'polymath-{version}',
     )
@@ -298,6 +304,11 @@ def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> 
     instrument = canonical_instrument_name(
         job_input.get('instrument') or 'acoustic_piano'
     )
+    conditioning_mode = str(
+        job_input.get('conditioning_mode') or 'instrument'
+    ).strip().lower()
+    if conditioning_mode not in {'instrument', 'unconditioned'}:
+        raise ValueError('conditioning_mode must be instrument or unconditioned')
     if not re.fullmatch(r'phase\d+-v\d{3,}', version):
         raise ValueError('Evaluation version must look like phase1-v001')
     validation_manifest = safe_training_file(dataset_id, 'prepared-validation.jsonl')
@@ -319,7 +330,7 @@ def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> 
         candidate,
         validation_manifest,
         progress_callback=lambda message: runpod.serverless.progress_update(job, message),
-        instruments=(instrument,),
+        instruments=None if conditioning_mode == 'unconditioned' else (instrument,),
     )
     destination = candidate_root / f'evaluation-{dataset_id}.json'
     save_comparison(result, destination)
@@ -336,6 +347,7 @@ def evaluate_piano_candidate(job: dict[str, Any], job_input: dict[str, Any]) -> 
         'version': version,
         'baselineVersion': baseline_version,
         'instrument': instrument,
+        'conditioningMode': conditioning_mode,
         'evaluationPath': str(destination),
         **response_result,
     }

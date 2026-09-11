@@ -72,6 +72,7 @@ async function main() {
           ...record,
           split,
           audioClip: `${remoteRoot}/audio/${split}/${clipId}.wav`,
+          localAudioSource: destinationAudio,
           compositionSourceManifest: manifest,
         });
       }

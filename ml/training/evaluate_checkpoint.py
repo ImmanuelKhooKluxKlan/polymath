@@ -182,7 +182,7 @@ def evaluate_checkpoint(
     checkpoint: Path,
     records: list[dict[str, Any]],
     progress_callback: Callable[[str], None] | None = None,
-    instruments: tuple[str, ...] = PIANO_INSTRUMENTS,
+    instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
     include_raw_predictions: bool = False,
 ) -> dict[str, Any]:
     """Load one checkpoint, decode every frozen clip, and calculate note scores."""
@@ -198,7 +198,7 @@ def evaluate_checkpoint(
         predictions.append(decoded_notes(
             transcription.transcribe(
                 str(Path(record["audioClip"])),
-                instruments=list(instruments),
+                instruments=list(instruments) if instruments else None,
             ),
         ))
         if progress_callback and (index == 1 or index % 5 == 0 or index == len(records)):
@@ -242,7 +242,7 @@ def compare_checkpoints(
     candidate: Path,
     validation_manifest: Path,
     progress_callback: Callable[[str], None] | None = None,
-    instruments: tuple[str, ...] = PIANO_INSTRUMENTS,
+    instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
 ) -> dict[str, Any]:
     records = read_jsonl(validation_manifest)
     if progress_callback:
@@ -263,7 +263,7 @@ def compare_checkpoints(
         "schema": "polymath-checkpoint-comparison-v1",
         "validationManifest": str(validation_manifest),
         "clips": len(records),
-        "instrumentConstraint": list(instruments),
+        "instrumentConstraint": list(instruments) if instruments else [],
         "baseline": baseline,
         "candidate": candidate_metrics,
         "candidateMinusBaselineMicroF1": deltas,

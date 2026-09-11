@@ -32,7 +32,7 @@ function required(name) {
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   if (!args.dataset || !args.version) {
-    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--base-version original] [--result result.json]');
+    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--base-version original] [--conditioning-mode instrument|unconditioned] [--result result.json]');
   }
   await loadEnvironment(path.resolve('server/.env'));
   const endpoint = required('RUNPOD_SERVERLESS_ENDPOINT_ID');
@@ -66,6 +66,7 @@ async function main() {
         timing_token_weight: Number(args['timing-token-weight'] || 1.15),
         note_off_token_weight: Number(args['note-off-token-weight'] || 1.25),
         eos_token_weight: Number(args['eos-token-weight'] || 1.20),
+        conditioning_mode: args['conditioning-mode'] || 'instrument',
         rights_acknowledgement: 'I_HAVE_TRAINING_RIGHTS',
       },
       policy: {
