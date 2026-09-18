@@ -188,7 +188,9 @@ def deskew(gray: np.ndarray) -> tuple[np.ndarray, float]:
     )
     angles = []
     if lines is not None:
-        for x1, y1, x2, y2 in lines[:, 0]:
+        # OpenCV builds return either (N, 1, 4) or (N, 4).  Flatten only the
+        # wrapper dimensions so both ABI shapes produce the same line tuples.
+        for x1, y1, x2, y2 in np.asarray(lines).reshape(-1, 4):
             angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
             if abs(angle) <= 6:
                 angles.append(angle)
