@@ -91,6 +91,8 @@ jobs:
           OPENAI_CHAT_REASONING_EFFORT: ${{ vars.OPENAI_CHAT_REASONING_EFFORT || 'low' }}
           OPENAI_MUSIC_REASONING_EFFORT: ${{ vars.OPENAI_MUSIC_REASONING_EFFORT || 'medium' }}
           OPENAI_VISION_REASONING_EFFORT: ${{ vars.OPENAI_VISION_REASONING_EFFORT || 'low' }}
+          PIANO_ARRANGER_WORKER: /app/server/piano_arranger_pipeline.py
+          PIANO_ARRANGER_PROFILE_PATH: /app/server/models/piano-arranger/polymath-pianella-v003.json
           CLIENT_ORIGINS: ${{ vars.CLIENT_ORIGINS || 'https://www.polymathmusician67.com,https://polymath-musician.pages.dev,https://scaling-preview.polymath-musician.pages.dev' }}
           APP_RELEASE: ${{ github.sha }}
         run: |
@@ -104,6 +106,8 @@ jobs:
              --arg openAiChatEffort "$OPENAI_CHAT_REASONING_EFFORT" \
              --arg openAiMusicEffort "$OPENAI_MUSIC_REASONING_EFFORT" \
              --arg openAiVisionEffort "$OPENAI_VISION_REASONING_EFFORT" \
+             --arg pianoArrangerWorker "$PIANO_ARRANGER_WORKER" \
+             --arg pianoArrangerProfile "$PIANO_ARRANGER_PROFILE_PATH" \
              --arg clientOrigins "$CLIENT_ORIGINS" \
              --arg appRelease "$APP_RELEASE" '
             .containerDefinitions[0].image = $image
@@ -130,6 +134,8 @@ jobs:
                   and .name != "OPENAI_CHAT_REASONING_EFFORT"
                   and .name != "OPENAI_MUSIC_REASONING_EFFORT"
                   and .name != "OPENAI_VISION_REASONING_EFFORT"
+                  and .name != "PIANO_ARRANGER_WORKER"
+                  and .name != "PIANO_ARRANGER_PROFILE_PATH"
                   and .name != "CLIENT_ORIGINS"
                   and .name != "APP_RELEASE"))
                   + [
@@ -140,6 +146,8 @@ jobs:
                     { name: "OPENAI_CHAT_REASONING_EFFORT", value: $openAiChatEffort },
                     { name: "OPENAI_MUSIC_REASONING_EFFORT", value: $openAiMusicEffort },
                     { name: "OPENAI_VISION_REASONING_EFFORT", value: $openAiVisionEffort },
+                    { name: "PIANO_ARRANGER_WORKER", value: $pianoArrangerWorker },
+                    { name: "PIANO_ARRANGER_PROFILE_PATH", value: $pianoArrangerProfile },
                     { name: "CLIENT_ORIGINS", value: $clientOrigins },
                     { name: "APP_RELEASE", value: $appRelease }
                   ]

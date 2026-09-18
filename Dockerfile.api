@@ -17,6 +17,13 @@ COPY server/omr/requirements.txt ./server/omr/requirements.txt
 RUN python3 -m pip install --no-cache-dir --break-system-packages -r server/omr/requirements.txt
 
 COPY server ./server
+# Frozen production piano inference operators used by piano_arranger_pipeline.py.
+# Training datasets and research-only dependencies are intentionally excluded.
+COPY ml/__init__.py ./ml/
+COPY ml/training/__init__.py \
+    ml/training/apply_adaptive_pianist_register_zones.py \
+    ml/training/apply_raw_support_recovery.py \
+    ./ml/training/
 COPY scripts/alignment ./scripts/alignment
 
 RUN mkdir -p /app/server/data/uploads \
