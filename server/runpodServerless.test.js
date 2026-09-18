@@ -50,6 +50,74 @@ test('uploads audio, polls a permanent endpoint, and cleans the volume object', 
     const submitted = JSON.parse(requests[0].options.body);
     assert.equal(submitted.input.audio_path, '/runpod-volume/jobs/media-1.wav');
     assert.equal(submitted.input.checkpoint_version, 'phase1-v002');
+    assert.deepEqual(submitted.input.instruments, ['voice']);
+    assert.equal(Object.hasOwn(submitted.input, 'focused_instruments'), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('sends a requested focused voice pass but leaves it disabled by default', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'runpod-focused-pass-'));
+  const audioPath = path.join(directory, 'prepared.wav');
+  fs.writeFileSync(audioPath, 'wav-fixture');
+  const requests = [];
+  const client = createRunpodServerlessClient({
+    endpointId: 'endpoint-focused', apiKey: 'secret', volumeId: 'volume-focused',
+    region: 'US-KS-2', s3Endpoint: 'https://s3.example.test',
+    s3AccessKeyId: 'storage-user', s3SecretAccessKey: 'storage-secret',
+    pollIntervalMs: 1,
+  }, {
+    s3: {
+      async send(command) {
+        if (command.constructor.name === 'PutObjectCommand') {
+          for await (const chunk of command.input.Body) assert.ok(chunk.length > 0);
+        }
+      },
+    },
+    async fetchImpl(url, options) {
+      requests.push({ url, options });
+      const payload = url.endsWith('/run')
+        ? { id: 'focused-job' }
+        : { status: 'COMPLETED', output: { notes: [{ midi: 60 }] } };
+      return { ok: true, status: 200, async text() { return JSON.stringify(payload); } };
+    },
+  });
+
+  try {
+    await client.transcribe({
+      job: { id: 'focused-media', title: 'Real video', instrument: 'piano' },
+      preparedPath: audioPath,
+      focusedConstraints: ['voice'],
+    });
+    const submitted = JSON.parse(requests[0].options.body);
+    assert.deepEqual(submitted.input.focused_instruments, ['voice']);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('rejects unsupported focused passes before uploading customer audio', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'runpod-focused-reject-'));
+  const audioPath = path.join(directory, 'prepared.wav');
+  fs.writeFileSync(audioPath, 'wav-fixture');
+  let storageCalls = 0;
+  const client = createRunpodServerlessClient({
+    endpointId: 'endpoint-focused', apiKey: 'secret', volumeId: 'volume-focused',
+    region: 'US-KS-2', s3Endpoint: 'https://s3.example.test',
+    s3AccessKeyId: 'storage-user', s3SecretAccessKey: 'storage-secret',
+  }, { s3: { async send() { storageCalls += 1; } } });
+
+  try {
+    await assert.rejects(
+      client.transcribe({
+        job: { id: 'bad-focused-media', title: 'Fixture', instrument: 'piano' },
+        preparedPath: audioPath,
+        focusedConstraints: ['drums'],
+      }),
+      /supports voice only/,
+    );
+    assert.equal(storageCalls, 0);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

@@ -1,0 +1,58 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Evaluate the piano-preserving v038 route gate on five reviewed songs plus the now-unsealed 22 development song. Kiss Me is trusted only before 02:30 reference time.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "back-to-december",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/loso-production-sources-a1-c8/back-to-december.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/baseline-live-default-a1-c8/back-to-december-arranged.json"
+    },
+    {
+      "id": "mean",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/mean-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/loso-production-sources-a1-c8/mean.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/mean-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/baseline-live-default-a1-c8/mean-arranged.json"
+    },
+    {
+      "id": "the-way-i-loved-you",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/the-way-i-loved-you-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/loso-production-sources-a1-c8/the-way-i-loved-you.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/the-way-i-loved-you-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/baseline-live-default-a1-c8/the-way-i-loved-you-arranged.json"
+    },
+    {
+      "id": "you-need-to-calm-down",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/you-need-to-calm-down.json",
+      "referenceAlreadyAligned": false,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/loso-production-sources-a1-c8/you-need-to-calm-down.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/you-need-to-calm-down/section-alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/baseline-live-default-a1-c8/you-need-to-calm-down-arranged.json"
+    },
+    {
+      "id": "kiss-me",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/fresh-production-replay/kiss-me-postprocessed-full.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/root-reset-phase-holdout-v022-p4/kiss-me-plus-unseen-chord-mapper.json",
+      "candidateEndSeconds": 141.562443881
+    },
+    {
+      "id": "22-development-after-unseal",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-6-expanded-piano-2026-09-03/targets/22.json",
+      "referenceAlreadyAligned": false,
+      "source": "D:/Polymath Training/phase-37-ideal-match-2026-09-16/sealed-22-v026/22-postprocessed-full.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-6-expanded-piano-2026-09-03/legacy-evaluation/22/section-alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-37-ideal-match-2026-09-16/sealed-22-v026/22-frozen-production-baseline.json"
+    }
+  ]
+}

@@ -31,18 +31,25 @@ if str(SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVER_ROOT))
 
 from piano_arranger_adapter import (  # noqa: E402
+    CONTEXT_SELECTION_FEATURE_NAMES,
     DURATION_FEATURE_NAMES,
     FEATURE_NAMES,
+    ROBUST_CONTEXT_SELECTION_FEATURE_NAMES,
     arrangement_role,
     duration_feature_rows,
+    instrument_family,
     normalize_source_notes,
     raw_feature_rows,
+    selection_feature_rows,
+    selection_scores,
 )
 
 
 SCHEMA = "polymath-piano-arranger-profile-v1"
 DEFAULT_BLOCK_SECONDS = 20.0
 DEFAULT_SEED = 0x504F4C59
+REGISTER_SHIFT_VALUES = (-48, -36, -24, -12, 0, 12, 24, 36, 48)
+SUPERVISION_TASKS = frozenset({"selection", "duration", "style", "register"})
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -125,6 +132,111 @@ def alignment_match_map(report: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return strongest
 
 
+def pair_supervision_tasks(pair: dict[str, Any]) -> frozenset[str]:
+    """Return the explicitly permitted learning targets for one pair.
+
+    Human-reviewed pairs retain the historical all-task default. Auxiliary
+    teacher labels must declare a narrower list in the manifest; this keeps a
+    baseline-imitation example from silently teaching register, timing, or
+    Pianella style.
+    """
+    configured = pair.get("supervisionTasks")
+    if configured is None:
+        return SUPERVISION_TASKS
+    if not isinstance(configured, list) or not configured:
+        raise ValueError(
+            f"Pair {pair.get('id', '<unknown>')} supervisionTasks must be a non-empty list."
+        )
+    tasks = frozenset(str(value).strip().lower() for value in configured)
+    unknown = tasks - SUPERVISION_TASKS
+    if unknown:
+        raise ValueError(
+            f"Pair {pair.get('id', '<unknown>')} has unsupported supervision tasks: "
+            + ", ".join(sorted(unknown))
+        )
+    if "selection" not in tasks:
+        raise ValueError(
+            f"Pair {pair.get('id', '<unknown>')} must include selection supervision."
+        )
+    return tasks
+
+
+def manifest_training_pairs(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Combine primary and always-train auxiliary pairs without ambiguity."""
+    primary = manifest.get("pairs") or []
+    auxiliary = manifest.get("auxiliaryPairs") or []
+    auxiliary_defaults = manifest.get("auxiliaryDefaults") or {}
+    if not isinstance(primary, list) or not isinstance(auxiliary, list):
+        raise ValueError("pairs and auxiliaryPairs must be lists.")
+    if not isinstance(auxiliary_defaults, dict):
+        raise ValueError("auxiliaryDefaults must be an object when provided.")
+    combined = [*primary, *[{**auxiliary_defaults, **pair} for pair in auxiliary]]
+    ids = [str(pair.get("id")) for pair in combined]
+    duplicate_ids = {value for value in ids if ids.count(value) > 1}
+    if duplicate_ids:
+        raise ValueError(
+            "Every primary and auxiliary pair id must be unique: "
+            + ", ".join(sorted(duplicate_ids))
+        )
+    return combined
+
+
+def source_index_match_map(
+    source_notes: list[dict[str, Any]],
+    target_payload: dict[str, Any],
+) -> dict[int, dict[str, Any]]:
+    """Build deterministic selection labels from a shared MIDI source index.
+
+    Exact synthetic arrangements retain ``sourceIndex`` from the event that
+    caused each selected piano note. Multiple generated octave notes may point
+    to one source event, so the most literal representative is retained for
+    diagnostics. This mode is enabled only by an explicit manifest declaration
+    in ``main``.
+    """
+    source_lookup = {int(note["sourceIndex"]): note for note in source_notes}
+    strongest: dict[int, tuple[tuple[int, int, int, float], dict[str, Any]]] = {}
+    for item in target_payload.get("notes", []):
+        try:
+            source_index = int(item["sourceIndex"])
+            target_midi = int(round(float(item.get("midi", item.get("pitch")))))
+            target_time = float(
+                item.get("time", item.get("startTime", item.get("start")))
+            )
+            target_duration = max(0.01, float(item.get("duration", 0.2)))
+            target_velocity = clamp(float(item.get("velocity", 0.72)), 0.0, 1.0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        source = source_lookup.get(source_index)
+        if source is None or not 21 <= target_midi <= 108 or target_time < 0:
+            continue
+        source_midi = int(source["midi"])
+        exact = target_midi == source_midi
+        same_pitch_class = target_midi % 12 == source_midi % 12
+        generated = bool(item.get("generatedBy"))
+        quality = (
+            int(exact),
+            int(same_pitch_class),
+            int(not generated),
+            -abs(target_time - float(source["time"])),
+        )
+        candidate = {
+            "exactPitch": exact,
+            "directSourceIndex": True,
+            "observed": dict(source),
+            "reference": {
+                **item,
+                "midi": target_midi,
+                "time": target_time,
+                "duration": target_duration,
+                "velocity": target_velocity,
+            },
+        }
+        previous = strongest.get(source_index)
+        if previous is None or quality > previous[0]:
+            strongest[source_index] = (quality, candidate)
+    return {source_index: value[1] for source_index, value in strongest.items()}
+
+
 def alignment_training_ranges(report: dict[str, Any]) -> list[tuple[float, float]] | None:
     """Return trusted source-time ranges when a section-aware report provides them.
 
@@ -156,6 +268,154 @@ def note_is_in_training_range(
         return True
     time = float(note["time"])
     return any(start <= time < end for start, end in ranges)
+
+
+def trusted_alignment_matches(
+    matches: dict[int, dict[str, Any]],
+    source_notes: list[dict[str, Any]],
+    ranges: list[tuple[float, float]] | None,
+) -> dict[int, dict[str, Any]]:
+    """Keep alignment evidence only where the source timeline was approved.
+
+    Selection and duration examples have always been range-filtered in the
+    main training loop.  Style and register statistics use the match map
+    directly, so they must receive the same filtered view or weak alignment
+    windows can leak back into the learned profile.
+    """
+    source_lookup = {int(note["sourceIndex"]): note for note in source_notes}
+    return {
+        source_index: match
+        for source_index, match in matches.items()
+        if source_index in source_lookup
+        and note_is_in_training_range(source_lookup[source_index], ranges)
+    }
+
+
+def source_midi_band(midi: int) -> str:
+    if midi < 48:
+        return "low"
+    if midi < 60:
+        return "mid"
+    return "high"
+
+
+def build_register_model(
+    pairs: list[dict[str, Any]],
+    match_maps: dict[str, dict[int, dict[str, Any]]],
+    *,
+    fallback_shift_semitones: int,
+    uncertain_shift_semitones: int,
+    minimum_confidence: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Learn conservative octave choices from trusted, pitch-class matches.
+
+    The model is deliberately a compact hierarchical table rather than a
+    high-capacity network: our real-song corpus is still small.  Inference
+    first asks for role + source-family + pitch-band evidence, then backs off
+    to role + family and role-only evidence.  Unsupported inputs retain the
+    configured fallback instead of inventing an octave from a tiny sample.
+    """
+    weighted_counts: dict[str, Counter[int]] = defaultdict(Counter)
+    raw_examples: dict[str, int] = Counter()
+    rejected_non_octave = 0
+
+    for pair in pairs:
+        pair_id = str(pair["id"])
+        pair_weight = max(0.0, float(pair.get("weight", 1.0)))
+        source_lookup = {
+            int(note["sourceIndex"]): note
+            for note in normalize_source_notes(
+                load_json(Path(pair["source"])).get("notes", [])
+            )
+        }
+        for source_index, match in match_maps[pair_id].items():
+            source = source_lookup.get(int(source_index))
+            reference = match.get("reference") or {}
+            if source is None:
+                continue
+            try:
+                target_midi = int(round(float(reference["midi"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+            difference = target_midi - int(source["midi"])
+            if difference % 12 != 0:
+                rejected_non_octave += 1
+                continue
+            shift = int(clamp(difference, REGISTER_SHIFT_VALUES[0], REGISTER_SHIFT_VALUES[-1]))
+            shift = int(round(shift / 12.0) * 12)
+            evidence_weight = pair_weight * (1.0 if match.get("exactPitch") else 0.65)
+            role = arrangement_role(source)
+            family = instrument_family(str(source.get("instrument") or ""))
+            band = source_midi_band(int(source["midi"]))
+            for key in (
+                f"{role}|{family}|{band}",
+                f"{role}|{family}",
+                role,
+            ):
+                weighted_counts[key][shift] += evidence_weight
+                raw_examples[key] += 1
+
+    groups: dict[str, dict[str, Any]] = {}
+    for key, counts in sorted(weighted_counts.items()):
+        total = sum(float(value) for value in counts.values())
+        if total <= 0:
+            continue
+        best_shift, best_weight = max(
+            counts.items(),
+            key=lambda item: (float(item[1]), -abs(int(item[0])), -int(item[0])),
+        )
+        groups[key] = {
+            "shiftSemitones": int(best_shift),
+            "weightedSupport": round(total, 4),
+            "rawExamples": int(raw_examples[key]),
+            "confidence": round(float(best_weight) / total, 6),
+            "weightedCounts": {
+                str(value): round(float(counts.get(value, 0.0)), 4)
+                for value in REGISTER_SHIFT_VALUES
+                if counts.get(value, 0.0) > 0
+            },
+        }
+
+    fallback = int(
+        clamp(
+            round(float(fallback_shift_semitones) / 12.0) * 12,
+            REGISTER_SHIFT_VALUES[0],
+            REGISTER_SHIFT_VALUES[-1],
+        )
+    )
+    uncertain = int(
+        clamp(
+            round(float(uncertain_shift_semitones) / 12.0) * 12,
+            REGISTER_SHIFT_VALUES[0],
+            REGISTER_SHIFT_VALUES[-1],
+        )
+    )
+    model = {
+        "type": "hierarchical-categorical-octave-shift-v1",
+        "shiftValuesSemitones": list(REGISTER_SHIFT_VALUES),
+        "fallbackShiftSemitones": fallback,
+        "uncertainShiftSemitones": uncertain,
+        "minimumSpecificWeightedSupport": 18.0,
+        "minimumRoleWeightedSupport": 36.0,
+        "minimumConfidence": round(clamp(minimum_confidence, 0.0, 1.0), 4),
+        "groups": groups,
+    }
+    diagnostics = {
+        "groups": len(groups),
+        "fallbackShiftSemitones": fallback,
+        "uncertainShiftSemitones": uncertain,
+        "minimumConfidence": model["minimumConfidence"],
+        "rejectedNonOctaveMatches": rejected_non_octave,
+        "mostSupportedGroups": [
+            {"key": key, **value}
+            for key, value in sorted(
+                groups.items(),
+                key=lambda item: float(item[1]["weightedSupport"]),
+                reverse=True,
+            )[:12]
+        ],
+    }
+    return model, diagnostics
 
 
 def classification_metrics(labels: np.ndarray, probabilities: np.ndarray, weights: np.ndarray, threshold: float) -> dict[str, float]:
@@ -511,14 +771,51 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--iterations", type=int, default=1200)
     parser.add_argument("--profile-id", default="")
+    parser.add_argument(
+        "--selection-feature-version",
+        choices=("v1", "v2-lite", "v2"),
+        default="v1",
+        help=(
+            "v1 preserves the original 20-feature selector; v2-lite adds only "
+            "transferable musical context; v2 also adds exact stem subtypes."
+        ),
+    )
     parser.add_argument("--duration-prediction-weight", type=float, default=0.22)
     parser.add_argument("--density-multiplier", type=float, default=1.50)
     parser.add_argument("--expand-sparse-harmony", action="store_true")
+    parser.add_argument(
+        "--learn-register-model",
+        action="store_true",
+        help="Learn a trusted-evidence octave selector for the Piano route.",
+    )
+    parser.add_argument(
+        "--register-fallback-shift-semitones",
+        type=int,
+        default=12,
+        help="Octave fallback used when the register model lacks supported evidence.",
+    )
+    parser.add_argument(
+        "--register-uncertain-shift-semitones",
+        type=int,
+        default=0,
+        help="Conservative octave choice when evidence exists but is weak or conflicting.",
+    )
+    parser.add_argument(
+        "--register-minimum-confidence",
+        type=float,
+        default=0.75,
+        help="Minimum winning-class share required to apply learned octave evidence.",
+    )
     args = parser.parse_args()
+    selection_feature_names = {
+        "v1": FEATURE_NAMES,
+        "v2-lite": ROBUST_CONTEXT_SELECTION_FEATURE_NAMES,
+        "v2": CONTEXT_SELECTION_FEATURE_NAMES,
+    }[args.selection_feature_version]
 
     manifest_path = Path(args.manifest).resolve()
     manifest = load_json(manifest_path)
-    pairs = manifest.get("pairs") or []
+    pairs = manifest_training_pairs(manifest)
     if len(pairs) < 2:
         raise ValueError("At least two aligned source/target pairs are required.")
 
@@ -534,41 +831,107 @@ def main() -> None:
     duration_pair_ids: list[str] = []
     match_maps: dict[str, dict[int, dict[str, Any]]] = {}
     pair_reports: list[dict[str, Any]] = []
+    style_pairs: list[dict[str, Any]] = []
+    register_pairs: list[dict[str, Any]] = []
 
     for pair in pairs:
         pair_id = str(pair["id"])
         pair_weight = float(pair.get("weight", 1.0))
+        supervision_tasks = pair_supervision_tasks(pair)
         source_payload = load_json(Path(pair["source"]))
         source_notes = normalize_source_notes(source_payload.get("notes", []))
-        features = raw_feature_rows(source_notes)
+        features = selection_feature_rows(source_notes, selection_feature_names)
         duration_rows = duration_feature_rows(source_notes)
-        alignment = load_json(Path(pair["alignmentReport"]))
-        matches = alignment_match_map(alignment)
-        training_ranges = alignment_training_ranges(alignment)
-        match_maps[pair_id] = matches
+        alignment_mode = str(pair.get("alignmentMode", "report")).strip().lower()
+        teacher_probabilities: list[float] | None = None
+        if alignment_mode == "source-index":
+            if pair.get("pseudoLabel") is not True:
+                raise ValueError(
+                    f"Pair {pair_id} must declare pseudoLabel=true for source-index supervision."
+                )
+            if supervision_tasks != frozenset({"selection"}):
+                raise ValueError(
+                    f"Pair {pair_id} source-index pseudo-labels are selection-only."
+                )
+            target_payload = load_json(Path(pair["target"]))
+            matches = source_index_match_map(source_notes, target_payload)
+            training_ranges = None
+            alignment = {
+                "method": "shared-source-index-pseudo-label",
+                "metrics": {
+                    "confidence": 1.0,
+                    "verdict": "selection-only-teacher-label",
+                },
+            }
+        elif alignment_mode == "teacher-profile":
+            if pair.get("pseudoLabel") is not True:
+                raise ValueError(
+                    f"Pair {pair_id} must declare pseudoLabel=true for teacher-profile supervision."
+                )
+            if supervision_tasks != frozenset({"selection"}):
+                raise ValueError(
+                    f"Pair {pair_id} teacher-profile pseudo-labels are selection-only."
+                )
+            teacher_profile = load_json(Path(pair["teacherProfile"]))
+            teacher_probabilities = selection_scores(source_notes, teacher_profile)
+            matches = {}
+            training_ranges = None
+            alignment = {
+                "method": "frozen-teacher-soft-probability",
+                "metrics": {
+                    "confidence": 1.0,
+                    "verdict": "selection-only-soft-teacher-label",
+                },
+                "teacherProfileId": teacher_profile.get("id"),
+                "teacherProfileSha256": teacher_profile.get("profileSha256"),
+            }
+        elif alignment_mode == "report":
+            alignment = load_json(Path(pair["alignmentReport"]))
+            matches = alignment_match_map(alignment)
+            training_ranges = alignment_training_ranges(alignment)
+        else:
+            raise ValueError(
+                f"Pair {pair_id} has unsupported alignmentMode {alignment_mode!r}."
+            )
+        match_maps[pair_id] = trusted_alignment_matches(
+            matches, source_notes, training_ranges
+        )
+        if "style" in supervision_tasks:
+            style_pairs.append(pair)
+        if "register" in supervision_tasks:
+            register_pairs.append(pair)
         positive_count = 0
         exact_positive_count = 0
         validation_count = 0
         duration_count = 0
         ignored_count = 0
-        for note, row, duration_row in zip(source_notes, features, duration_rows):
+        for example_index, (note, row, duration_row) in enumerate(
+            zip(source_notes, features, duration_rows)
+        ):
             if not note_is_in_training_range(note, training_ranges):
                 ignored_count += 1
                 continue
             match = matches.get(note["sourceIndex"])
-            positive = match is not None
-            exact = positive and match["exactPitch"]
+            target_probability = (
+                teacher_probabilities[example_index]
+                if teacher_probabilities is not None
+                else 1.0 if match is not None else 0.0
+            )
+            positive = target_probability >= 0.5
+            exact = bool(positive and match is not None and match["exactPitch"])
             block = int(float(note["time"]) // DEFAULT_BLOCK_SECONDS)
             is_training = block % 5 != 4
-            evidence_weight = pair_weight * (
-                1.5 if exact else 0.95 if positive else 0.16
+            evidence_weight = (
+                pair_weight
+                if teacher_probabilities is not None
+                else pair_weight * (1.5 if exact else 0.95 if positive else 0.16)
             )
             all_features.append(row)
-            all_labels.append(1.0 if positive else 0.0)
+            all_labels.append(float(target_probability))
             all_weights.append(evidence_weight)
             all_training.append(is_training)
             all_pair_ids.append(pair_id)
-            if positive:
+            if positive and "duration" in supervision_tasks:
                 try:
                     target_duration = clamp(
                         float(match["reference"].get("duration", note["duration"])),
@@ -590,6 +953,9 @@ def main() -> None:
             {
                 "id": pair_id,
                 "weight": pair_weight,
+                "alignmentMode": alignment_mode,
+                "pseudoLabel": bool(pair.get("pseudoLabel", False)),
+                "supervisionTasks": sorted(supervision_tasks),
                 "sourceNonPercussiveNotes": len(source_notes),
                 "positiveMatchedSourceNotes": positive_count,
                 "exactPitchPositiveSourceNotes": exact_positive_count,
@@ -599,6 +965,7 @@ def main() -> None:
                 "trustedSourceRanges": len(training_ranges) if training_ranges is not None else None,
                 "alignmentConfidence": alignment.get("metrics", {}).get("confidence"),
                 "alignmentVerdict": alignment.get("metrics", {}).get("verdict"),
+                "teacherProfileId": alignment.get("teacherProfileId"),
             }
         )
 
@@ -663,7 +1030,19 @@ def main() -> None:
                 duration_weight_array[mask],
             )
 
-    learned_style, style_diagnostics = build_style_profile(pairs, match_maps)
+    if not style_pairs:
+        raise ValueError("At least one pair must permit style supervision.")
+    learned_style, style_diagnostics = build_style_profile(style_pairs, match_maps)
+    register_model = None
+    register_diagnostics = None
+    if args.learn_register_model:
+        register_model, register_diagnostics = build_register_model(
+            register_pairs,
+            match_maps,
+            fallback_shift_semitones=args.register_fallback_shift_semitones,
+            uncertain_shift_semitones=args.register_uncertain_shift_semitones,
+            minimum_confidence=args.register_minimum_confidence,
+        )
     profile: dict[str, Any] = {
         "schema": SCHEMA,
         "version": 1,
@@ -678,7 +1057,7 @@ def main() -> None:
         },
         "selectionModel": {
             "type": "standardized-logistic-note-ranker-v1",
-            "featureNames": list(FEATURE_NAMES),
+            "featureNames": list(selection_feature_names),
             "weights": [round(float(value), 10) for value in learned_weights],
             "means": [round(float(value), 10) for value in means],
             "scales": [round(float(value), 10) for value in scales],
@@ -694,6 +1073,7 @@ def main() -> None:
             "minimumSeconds": 0.05,
             "maximumSeconds": 4.0,
         },
+        **({"registerModel": register_model} if register_model is not None else {}),
         **learned_style,
         "decoder": {
             "windowSeconds": 0.5,
@@ -710,6 +1090,7 @@ def main() -> None:
             "validationExamples": int(validation_mask.sum()),
             "durationTrainingExamples": int(duration_training_mask.sum()),
             "durationValidationExamples": int((~duration_training_mask).sum()),
+            "registerModelEnabled": bool(args.learn_register_model),
             "sourcePairs": pair_reports,
             "commercialUseAllowed": False,
             "purpose": "private research evaluation",
@@ -726,13 +1107,15 @@ def main() -> None:
         "profile": str(output_path),
         "profileId": profile["id"],
         "profileSha256": profile["profileSha256"],
-        "featureNames": list(FEATURE_NAMES),
+        "featureNames": list(selection_feature_names),
+        "selectionFeatureVersion": args.selection_feature_version,
         "trainingMetrics": training_metrics,
         "heldOutBlockMetrics": validation_metrics,
         "heldOutBlockMetricsByPair": per_pair_metrics,
         "durationMetrics": duration_diagnostics,
         "durationHeldOutBlockMetricsByPair": duration_pair_metrics,
         "styleDiagnostics": style_diagnostics,
+        "registerDiagnostics": register_diagnostics,
         "optimizationHistory": history,
         "sourcePairs": pair_reports,
         "warning": (

@@ -1,0 +1,203 @@
+{
+    "schema":  "polymath-piano-arranger-profile-v1",
+    "id":  "polymath-pianella-v003",
+    "decoder":  {
+                    "defaultPipeline":  true,
+                    "defaultFullMix":  {
+                                           "harmonyWindowSeconds":  0.3,
+                                           "maximumHarmonyPitchClasses":  4,
+                                           "sourceSupportedCyclicHarmony":  {
+                                                                                "enabled":  true,
+                                                                                "onsetPolicy":  "compact",
+                                                                                "phaseClock":  "harmonic-root-event-index",
+                                                                                "onsetWindowSeconds":  0.035,
+                                                                                "minimumPulseSeconds":  0.125,
+                                                                                "maximumPulseSeconds":  0.17,
+                                                                                "minimumGuitarShare":  0.7,
+                                                                                "minimumGridCoverage":  0.78,
+                                                                                "minimumStableTransitionShare":  0.45,
+                                                                                "minimumRunGroups":  8,
+                                                                                "contextRadiusSeconds":  0.26,
+                                                                                "phasePattern":  [
+                                                                                                     "compact-upper",
+                                                                                                     "compact-inner",
+                                                                                                     "compact-preserve",
+                                                                                                     "compact-preserve"
+                                                                                                 ],
+                                                                                "useBassContextForRoot":  true,
+                                                                                "bassContextRadiusSeconds":  1.2
+                                                                            }
+                                       },
+                    "gestureDynamics":  {
+                                            "enabled":  true,
+                                            "onsetWindowSeconds":  0.035,
+                                            "minimumVelocity":  0.38,
+                                            "maximumVelocity":  0.94,
+                                            "sourceBlend":  0.82,
+                                            "melodyPerformanceGain":  1.12,
+                                            "accompanimentGainDuringMelody":  0.88,
+                                            "neutralPerformanceGain":  1.0
+                                        },
+                    "preferredGlobalRegisterShiftSemitones":  0,
+                    "authoredTwoHandStyle":  {
+                                                 "enabled":  true,
+                                                 "schema":  "polymath-authored-two-hand-style-v1",
+                                                 "harmonyHandAssignment":  "preserve-native-register",
+                                                 "targetUpperNoteShare":  0.50634,
+                                                 "lower":  {
+                                                               "minimumMidi":  34,
+                                                               "p10Midi":  39,
+                                                               "medianMidi":  51,
+                                                               "p90Midi":  58,
+                                                               "maximumMidi":  58
+                                                           },
+                                                 "upper":  {
+                                                               "minimumMidi":  60,
+                                                               "p10Midi":  61,
+                                                               "medianMidi":  67,
+                                                               "p90Midi":  77,
+                                                               "maximumMidi":  84
+                                                           },
+                                                 "preferredOctaveShiftsSemitones":  {
+                                                                                        "melodyUpper":  0,
+                                                                                        "bassLower":  0,
+                                                                                        "harmonyUpper":  0,
+                                                                                        "harmonyLower":  0
+                                                                                    },
+                                                 "durationGrid":  {
+                                                                      "enabled":  true,
+                                                                      "referenceSubdivisionSeconds":  0.16,
+                                                                      "writtenReleaseRatio":  0.895833,
+                                                                      "maximumUnits":  12,
+                                                                      "lowerHistogram":  [
+                                                                                             {
+                                                                                                 "units":  1.0,
+                                                                                                 "notes":  102,
+                                                                                                 "share":  0.174658
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  2.0,
+                                                                                                 "notes":  160,
+                                                                                                 "share":  0.273973
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  3.0,
+                                                                                                 "notes":  181,
+                                                                                                 "share":  0.309932
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  4.0,
+                                                                                                 "notes":  113,
+                                                                                                 "share":  0.193493
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  5.0,
+                                                                                                 "notes":  7,
+                                                                                                 "share":  0.011986
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  6.0,
+                                                                                                 "notes":  2,
+                                                                                                 "share":  0.003425
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  7.0,
+                                                                                                 "notes":  7,
+                                                                                                 "share":  0.011986
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  8.0,
+                                                                                                 "notes":  3,
+                                                                                                 "share":  0.005137
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  9.0,
+                                                                                                 "notes":  9,
+                                                                                                 "share":  0.015411
+                                                                                             }
+                                                                                         ],
+                                                                      "upperHistogram":  [
+                                                                                             {
+                                                                                                 "units":  1.0,
+                                                                                                 "notes":  105,
+                                                                                                 "share":  0.175292
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  2.0,
+                                                                                                 "notes":  250,
+                                                                                                 "share":  0.417362
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  3.0,
+                                                                                                 "notes":  106,
+                                                                                                 "share":  0.176962
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  4.0,
+                                                                                                 "notes":  100,
+                                                                                                 "share":  0.166945
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  5.0,
+                                                                                                 "notes":  10,
+                                                                                                 "share":  0.016694
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  6.0,
+                                                                                                 "notes":  3,
+                                                                                                 "share":  0.005008
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  7.0,
+                                                                                                 "notes":  14,
+                                                                                                 "share":  0.023372
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  8.0,
+                                                                                                 "notes":  5,
+                                                                                                 "share":  0.008347
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  10.0,
+                                                                                                 "notes":  3,
+                                                                                                 "share":  0.005008
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  13.0,
+                                                                                                 "notes":  1,
+                                                                                                 "share":  0.001669
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  14.0,
+                                                                                                 "notes":  1,
+                                                                                                 "share":  0.001669
+                                                                                             },
+                                                                                             {
+                                                                                                 "units":  16.0,
+                                                                                                 "notes":  1,
+                                                                                                 "share":  0.001669
+                                                                                             }
+                                                                                         ]
+                                                                  },
+                                                 "referenceEvidence":  {
+                                                                           "notes":  1183,
+                                                                           "lowerNotes":  584,
+                                                                           "upperNotes":  599,
+                                                                           "staffSplit":  {
+                                                                                              "method":  "explicit-reference-hand-labels",
+                                                                                              "lowerTrack":  "left",
+                                                                                              "upperTrack":  "right",
+                                                                                              "ignoredMiddleTrackNotes":  0
+                                                                                          },
+                                                                           "registerTransposeSemitones":  0,
+                                                                           "scope":  "style-only-not-time-aligned-note-accuracy"
+                                                                       }
+                                             }
+                },
+    "deployment":  {
+                       "status":  "owner-approved-canary",
+                       "sourceProfileId":  "pianella-natural-two-hand-phase80-v002-native-harmony",
+                       "sourceProfileSha256":  "03cc7e46af93bd69e89c9dbdeaf048e6cf8f0d3ec1f23382a55f2fade272ce81",
+                       "blanketGlobalRegisterShiftEnabled":  false
+                   }
+}

@@ -14,7 +14,7 @@ services:
       POLYMATH_DATA_DIR: /app/server/data
       MUSCRIPTOR_ADMIN_ONLY: 'true'
       PIANO_ARRANGER_PYTHON: python3
-      PIANO_ARRANGER_WORKER: /app/server/piano_arranger.py
+      PIANO_ARRANGER_WORKER: /app/server/piano_arranger_pipeline.py
     volumes:
       - polymath_data:/app/server/data
     expose:

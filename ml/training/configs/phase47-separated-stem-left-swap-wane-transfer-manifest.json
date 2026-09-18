@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Opened WANE transfer diagnostic for the phase-47 stacked separated-stem pipeline. Never use this file for fitting or policy selection.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "we-are-never-getting-back-together",
+      "reference": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-no-vocals-phase46-v007-raw.json",
+      "vocalSource": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-vocals-phase46-v007-raw.json",
+      "alignment": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "candidate": "D:/Polymath Training/phase-47-source-separation-2026-09-17/wane-one-shot/wane-phase45-plus-separated-left-swap-v001.json",
+      "textureCandidate": "D:/Polymath Training/phase-47-source-separation-2026-09-17/wane-one-shot/wane-phase45-plus-separated-left-swap-v001.json",
+      "candidateEndSeconds": 194.090688
+    }
+  ]
+}

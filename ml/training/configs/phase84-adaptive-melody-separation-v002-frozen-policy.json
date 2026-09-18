@@ -1,0 +1,100 @@
+{
+  "schema": "polymath-adaptive-melody-separation-policy-v1",
+  "id": "phase84-pianella-melody-harmony-separation-v002",
+  "purpose": "Raise a buried melody by one octave only when its whole-song median register is too close to the harmony register.",
+  "commercialUseAllowed": false,
+  "baseCandidate": "phase82-native-register-gesture-completion-v001",
+  "profile": "ml/training/configs/phase84-adaptive-melody-separation-v002.json",
+  "policy": {
+    "shiftSemitones": 12,
+    "minimumMelodyEvents": 200,
+    "minimumHarmonyEvents": 200,
+    "minimumMelodyMedianMidi": 60,
+    "maximumMelodyMedianMidiExclusive": 72,
+    "minimumCurrentMedianSeparationSemitones": 0,
+    "maximumCurrentMedianSeparationSemitones": 7,
+    "minimumOutputMidi": 33,
+    "maximumOutputMidi": 108,
+    "collisionPolicy": "deduplicate-exact-onset-key"
+  },
+  "safetyRules": [
+    "Use only candidate roles, counts, and MIDI medians at inference.",
+    "Never inspect the title, song identity, desired MIDI, or alignment at inference.",
+    "Abstain when either role has fewer than 200 events.",
+    "Abstain when melody already sits more than seven semitones above harmony.",
+    "Move melody only; preserve onsets, durations, velocities, pitch classes, and accompaniment.",
+    "Reject exact onset/key collisions and preserve the A1-C8 output range."
+  ],
+  "developmentEvidence": {
+    "songs": 5,
+    "referenceNotes": 5658,
+    "activatedSongs": ["back-to-december", "kiss-me"],
+    "weightedDeltaQuality": 0.010352,
+    "weightedDeltaExactF1_100ms": 0.030523,
+    "weightedDeltaExactF1_250ms": 0.038086,
+    "weightedDeltaPitchClassF1_250ms": 0.000057,
+    "worstSongDeltaQuality": 0.0,
+    "worstSongDeltaExactF1_250ms": 0.0,
+    "rapidRetriggerIncrease": 0,
+    "reportDirectory": "D:/Polymath Training/phase-84-sequence-register-2026-09-18/adaptive-melody-separation-v002/evaluations"
+  },
+  "transferEvidence": [
+    {
+      "id": "a-thousand-years",
+      "activated": true,
+      "melodyHarmonyMedianGapSemitones": 4.0,
+      "shiftedNotes": 232,
+      "deltaQuality": 0.016087,
+      "deltaExactF1_100ms": 0.042341,
+      "deltaExactF1_250ms": 0.074786,
+      "deltaPitchClassF1_250ms": 0.000207,
+      "rapidRetriggerIncrease": 0
+    },
+    {
+      "id": "22-development-after-unseal",
+      "activated": false,
+      "melodyHarmonyMedianGapSemitones": 12.0,
+      "allMetricDeltas": 0.0
+    },
+    {
+      "id": "babyslakh-track18-independent",
+      "activated": false,
+      "allMetricDeltas": 0.0
+    },
+    {
+      "id": "babyslakh-track20-independent",
+      "activated": false,
+      "melodyHarmonyMedianGapSemitones": 14.5,
+      "allMetricDeltas": 0.0
+    }
+  ],
+  "blindListeningEvidence": {
+    "recordingId": "kiss-me-trusted-000-150",
+    "listeningPackCommitment": "0265e9e01713acc03753756ed59cb9eefa81f720542b68e705dccd111da57253",
+    "choiceRecordedBeforeReveal": true,
+    "choice": "B",
+    "resolvedRole": "candidate",
+    "candidateWon": true,
+    "verdictDirectory": "D:/Polymath Training/phase-84-sequence-register-2026-09-18/blind-verdict-kiss-me-melody-separation-v002",
+    "promotionVerifierStatus": "FAIL",
+    "promotionVerifierInterpretation": "The listening gate passed. Production promotion remains intentionally blocked because Kiss Me is development evidence rather than a new untouched holdout; the freeze receipt also preserves a one-character clerical runtime-hash mismatch instead of rewriting pre-reveal evidence."
+  },
+  "freshHoldoutEvidence": {
+    "id": "babyslakh-track00009-target-blind-register-holdout",
+    "selectionWasLockedBeforeTargetReveal": true,
+    "candidateWasFrozenBeforeTargetReveal": true,
+    "result": "ml/training/evidence/phase87-babyslakh-track09-register-holdout/RESULT.json",
+    "deltaQuality": -0.059784,
+    "deltaExactF1_100ms": -0.21904,
+    "deltaExactF1_250ms": -0.217265,
+    "rapidRetriggerIncrease": 0,
+    "rootCause": "The narrow-gap rule octave-shifted 301 melody-role events even though all 301 were piano-derived. Candidate role geometry alone could not distinguish a buried lead from an already-authored piano line.",
+    "outcome": "V002 rejected. Its earlier blind-listening win remains valid development evidence but does not override the fresh holdout failure."
+  },
+  "rejectedAblations": [
+    "Per-note logistic, random-forest, extra-trees, and histogram octave routers: complete-song transfer regressed badly.",
+    "Unconditional plus-one-octave melody shifting: unsafe for songs whose melody already has adequate separation.",
+    "Lower-confidence chord additions and dual-model score ensembles: they improved averages but regressed at least one whole song."
+  ],
+  "decision": "REJECTED_AFTER_FRESH_HOLDOUT_REGISTER_REGRESSION"
+}

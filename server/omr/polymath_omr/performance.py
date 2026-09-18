@@ -36,6 +36,8 @@ def _hold_ratio(articulation: str) -> float:
         return 1.035
     if "accent" in articulation or "marcato" in articulation:
         return 0.84
+    if "repeated" in articulation:
+        return 0.78
     return 0.92
 
 
@@ -46,6 +48,10 @@ def _release_seconds(articulation: str, score_duration: float) -> float:
         return 0.30
     if "accent" in articulation or "marcato" in articulation:
         return 0.40
+    if "repeated" in articulation:
+        # The damper/key releases before the next hammer strike, but the
+        # sample's quiet soundboard tail is allowed to overlap naturally.
+        return 0.50
     return _clamp(0.42 + score_duration * 0.14, 0.44, 0.72)
 
 
@@ -60,6 +66,7 @@ def _shape_key_holds(notes: list[dict]) -> dict:
 
     shortened_for_restrike = 0
     legato_connections = 0
+    independent_piano_holds_preserved = 0
     for voice_notes in by_voice.values():
         voice_notes.sort(key=lambda item: (float(item.get("time", 0)), str(item.get("note", ""))))
         onset_times = sorted({float(note.get("time", 0)) for note in voice_notes})
@@ -91,6 +98,15 @@ def _shape_key_holds(notes: list[dict]) -> dict:
                 note["velocity"] = _rounded(_clamp(float(note.get("velocity", 0.76)) * 1.08, 0.04, 1.0), 4)
             key_hold = score_duration * _hold_ratio(articulation)
             following = next_onset.get(start)
+            # Direct acoustic-piano transcription is already a polyphonic
+            # performance. ``hand`` is only a register label there, not a
+            # monophonic score voice: one finger may keep a key depressed
+            # while another finger in the same hand attacks the next note.
+            # The global same-pitch pass below still creates a safe release
+            # gap before an actual restrike of this key.
+            preserve_independent_hold = (
+                str(note.get("arrangementRole") or "") == "source_piano"
+            )
 
             if following is not None:
                 if "legato" in articulation or "slur" in articulation:
@@ -102,6 +118,8 @@ def _shape_key_holds(notes: list[dict]) -> dict:
                     if following - start <= maximum_bridge:
                         key_hold = min(max(key_hold, following - start + 0.032), following - start + 0.045)
                         legato_connections += 1
+                elif preserve_independent_hold:
+                    independent_piano_holds_preserved += 1
                 else:
                     # A real hand normally leaves a tiny breath before the next
                     # attack. The sample's release tail supplies continuity.
@@ -147,6 +165,7 @@ def _shape_key_holds(notes: list[dict]) -> dict:
         "voices": len(by_voice),
         "restrikesGivenReleaseGap": shortened_for_restrike,
         "legatoConnections": legato_connections,
+        "independentPianoHoldsPreserved": independent_piano_holds_preserved,
     }
 
 

@@ -16,6 +16,7 @@ from huggingface_hub import hf_hub_download
 from muscriptor import TranscriptionModel
 
 from beat_grid import apply_onset_delay, normalize_beat_grid
+from ml.training.merge_focused_transcription import fuse_focused_transcription
 
 
 MODEL_NAME = os.environ.get('MUSCRIPTOR_MODEL', 'large').strip().lower()
@@ -31,6 +32,38 @@ ORIGINAL_MODEL_ROOT = Path('/runpod-volume/models/original').resolve()
 TEST_MODEL_ROOT = Path('/runpod-volume/models/muscriptor-tester').resolve()
 NOTE_NAMES = ('C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B')
 VALID_MODELS = {'small', 'medium', 'large'}
+FOCUSED_VOCAL_FUSION_POLICY = {
+    'strategy': 'corroborated-union',
+    'support_scope': 'primary-target',
+    'fallback_support_scope': 'primary-pitched',
+    'support_pitch_mode': 'exact',
+    'support_tolerance_seconds': 0.04,
+    'minimum_pass_support_ratio': 0.30,
+    # A sealed vocal holdout exposed a real singer with only 8 broad-pass
+    # voice labels (0.20% of pitched events). Four labels plus 0.10% is enough
+    # to prove that the broad classifier heard voice at multiple moments,
+    # while the consumed instrumental-sax safety case remains at zero/zero.
+    'minimum_primary_target_notes_for_fallback': 4,
+    'minimum_primary_target_ratio_for_fallback': 0.001,
+    'retain_unmatched_primary': False,
+    'focused_melody_decoder': {
+        'enabled': True,
+        # The accepted real-video development songs produce roughly 1.6-2.3
+        # corroborated voice events/second. A failed long-form holdout emitted
+        # 8.17/s. Preserve normal output and decode only this clearly
+        # fragmented regime.
+        'minimum_input_notes_per_second': 4.0,
+        'retain_unmatched_primary_when_applied': True,
+        'decode_all_candidates_after_acceptance': True,
+        # Maximin search across two consumed singer references favored a
+        # flexible candidate set with a mild top-line bias and continuity
+        # penalty. This improved the weaker song instead of overfitting the
+        # easier one.
+        'maximum_unanchored_polyphony': 8,
+        'upper_candidate_preference': 0.10,
+        'jump_penalty_per_semitone': 0.06,
+    },
+}
 BOOTSTRAP_REPO = 'MuScriptor/muscriptor-large'
 BOOTSTRAP_REVISION = os.environ.get(
     'MUSCRIPTOR_BOOTSTRAP_REVISION',
@@ -381,21 +414,38 @@ def temporary_audio_path(job: dict[str, Any], encoded: str) -> Path:
     return destination
 
 
-def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path) -> dict[str, Any]:
-    requested = job_input.get('instruments') or []
-    instruments = [str(value).strip() for value in requested if str(value).strip()] or None
-    runpod.serverless.progress_update(job, 'Listening for notes and instruments')
+def requested_instruments(value: Any, *, focused: bool = False) -> list[str]:
+    if value in (None, ''):
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError('Instrument constraints must be an array')
+    instruments = list(dict.fromkeys(
+        str(candidate).strip().lower()
+        for candidate in value
+        if str(candidate).strip()
+    ))
+    if focused:
+        if len(instruments) > 1:
+            raise ValueError('Only one focused instrument pass is supported')
+        unsupported = set(instruments) - {'voice'}
+        if unsupported:
+            raise ValueError('The focused pass currently supports voice only')
+    return instruments
 
+
+def transcribe_note_pass(
+    job: dict[str, Any],
+    model: TranscriptionModel,
+    audio_path: Path,
+    instruments: list[str],
+    model_source_id: str,
+    progress_label: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     starts: dict[int, Any] = {}
     notes: list[dict[str, Any]] = []
     progress = {'completed': 0, 'total': 0}
-    beat_grid = None
-
-    model_source, source_key, model_provider, model_source_id = resolve_inference_source(
-        job_input.get('checkpoint_version')
-    )
-    model = get_model(model_source, source_key)
-    for event in model.transcribe(str(audio_path), instruments=instruments):
+    runpod.serverless.progress_update(job, progress_label)
+    for event in model.transcribe(str(audio_path), instruments=instruments or None):
         if hasattr(event, 'start_time') and hasattr(event, 'pitch'):
             starts[int(event.index)] = event
         elif hasattr(event, 'end_time') and hasattr(event, 'start_event'):
@@ -418,7 +468,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
             progress = {'completed': int(event.completed), 'total': int(event.total)}
             runpod.serverless.progress_update(
                 job,
-                f'Transcribing {progress["completed"]} of {progress["total"]} audio sections',
+                f'{progress_label}: {progress["completed"]} of {progress["total"]} audio sections',
             )
 
     for start in starts.values():
@@ -433,6 +483,64 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
             'instrument': str(start.instrument),
             'source': model_source_id,
         })
+
+    notes.sort(key=lambda note: (note['time'], note['midi'], note['instrument']))
+    return notes, progress
+
+
+def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path) -> dict[str, Any]:
+    instruments = requested_instruments(job_input.get('instruments'))
+    focused_instruments = requested_instruments(
+        job_input.get('focused_instruments'), focused=True
+    )
+    beat_grid = None
+
+    model_source, source_key, model_provider, model_source_id = resolve_inference_source(
+        job_input.get('checkpoint_version')
+    )
+    model = get_model(model_source, source_key)
+    notes, progress = transcribe_note_pass(
+        job,
+        model,
+        audio_path,
+        instruments,
+        model_source_id,
+        'Listening for the complete arrangement',
+    )
+    fusion_diagnostics: dict[str, Any] | None = None
+    if focused_instruments:
+        try:
+            focused_notes, focused_progress = transcribe_note_pass(
+                job,
+                model,
+                audio_path,
+                focused_instruments,
+                model_source_id,
+                'Listening again for the singer melody',
+            )
+            fused = fuse_focused_transcription(
+                {'notes': notes},
+                {'notes': focused_notes},
+                focused_instruments,
+                known_shared_audio=True,
+                **FOCUSED_VOCAL_FUSION_POLICY,
+            )
+            notes = fused['notes']
+            fusion_diagnostics = {
+                **fused['focusedTranscriptionFusion'],
+                'focusedProgress': focused_progress,
+            }
+        except Exception as error:
+            # The broad pass is already a valid transcription. A missing or
+            # unsuitable focused melody must fall back to it rather than turn
+            # a recoverable enhancement failure into a lost customer job.
+            print(f'Focused Polymath pass fell back to the complete arrangement: {error}', flush=True)
+            fusion_diagnostics = {
+                'schema': 'polymath-focused-transcription-fusion-v1',
+                'targetInstruments': focused_instruments,
+                'applied': False,
+                'fallbackReason': 'focused-pass-unavailable',
+            }
 
     # The streaming API returns note/progress events only. Tempo detection is a
     # separate MuScriptor operation; run it once, then measure the model's own
@@ -472,6 +580,7 @@ def transcribe(job: dict[str, Any], job_input: dict[str, Any], audio_path: Path)
         'diagnostics': {
             'onsetDelayAppliedSeconds': onset_delay,
             'tempoSource': 'muscriptor-beat-grid' if beat_grid else 'fallback-120-bpm',
+            'focusedTranscriptionFusion': fusion_diagnostics,
         },
     }
 

@@ -1,0 +1,52 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Opened development corpus for learning register placement on phase46-v007 acoustic-piano-constrained outputs after the frozen t075r3g5 gesture pruner. Complete-song leave-one-out folds are mandatory; never final promotion evidence.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "kiss-me",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/fresh-production-replay/kiss-me-postprocessed-full.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "candidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/kiss-me-phase46-v007-prune-t075r3g5.json",
+      "textureCandidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/kiss-me-phase46-v007-prune-t075r3g5.json",
+      "candidateEndSeconds": 141.562443881
+    },
+    {
+      "id": "back-to-december",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/loso-production-sources-a1-c8/back-to-december.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json",
+      "candidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/back-to-december-phase46-v007-prune-t075r3g5.json",
+      "textureCandidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/back-to-december-phase46-v007-prune-t075r3g5.json"
+    },
+    {
+      "id": "cruel-summer",
+      "reference": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/transcriptions/cruel-summer-original-postprocessed-full.json",
+      "alignment": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "candidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/cruel-summer-phase46-v007-prune-t075r3g5.json",
+      "textureCandidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/cruel-summer-phase46-v007-prune-t075r3g5.json",
+      "candidateEndSeconds": 183.658688
+    },
+    {
+      "id": "we-are-never-getting-back-together",
+      "reference": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-original-postprocessed-full.json",
+      "alignment": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "candidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/wane-gbt-phase46-v007-prune-t075r3g5.json",
+      "textureCandidate": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/candidates/wane-gbt-phase46-v007-prune-t075r3g5.json",
+      "candidateEndSeconds": 194.090688
+    }
+  ]
+}

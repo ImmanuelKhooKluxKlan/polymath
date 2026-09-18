@@ -1,0 +1,51 @@
+{
+  "schema": "polymath-training-index-v1",
+  "purpose": "Private research curriculum stage 1. Pair trusted ideal-piano labels with pure and 75%-piano/25%-full-mix audio so the foundation learns to suppress a competing commercial mix before harder ratios are introduced.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "songId": "wane-ideal-p100-curriculum-v001",
+      "sourceMedia": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/audio/wane-ideal-training-eligible.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "train",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied private research material; commercial licensing is unverified and checkpoint promotion is prohibited."
+      }
+    },
+    {
+      "songId": "wane-mix-p075-curriculum-v001",
+      "sourceMedia": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/audio/wane-curriculum-p075.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "train",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied private research material; commercial licensing is unverified and checkpoint promotion is prohibited."
+      }
+    },
+    {
+      "songId": "cruel-ideal-p100-curriculum-v001",
+      "sourceMedia": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/audio/cruel-ideal-training-eligible.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "train",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied private research material; commercial licensing is unverified and checkpoint promotion is prohibited."
+      }
+    },
+    {
+      "songId": "cruel-mix-p075-curriculum-v001",
+      "sourceMedia": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/audio/cruel-curriculum-p075.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "train",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied private research material; commercial licensing is unverified and checkpoint promotion is prohibited."
+      }
+    }
+  ]
+}

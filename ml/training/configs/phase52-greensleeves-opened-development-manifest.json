@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Greensleeves blind transfer is now opened after PRE-TARGET-REVEAL-COMMITMENT.json and its zero-delta result were recorded. This manifest is development-only from this point forward.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "greensleeves-opened-development",
+      "reference": "D:/Polymath Training/phase-52-greensleeves-blind-transfer-2026-09-17/alignment/plus5-v002/aligned-target.json",
+      "referenceAlreadyAligned": true,
+      "referenceTransposeSemitones": 0,
+      "source": "D:/Polymath Training/phase-52-greensleeves-blind-transfer-2026-09-17/prepared/greensleeves-original-postprocessed.json",
+      "alignment": "D:/Polymath Training/phase-52-greensleeves-blind-transfer-2026-09-17/alignment/plus5-v002/section-alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-52-greensleeves-blind-transfer-2026-09-17/candidates/greensleeves-phase45-frozen-baseline.json",
+      "candidate": "D:/Polymath Training/phase-52-greensleeves-blind-transfer-2026-09-17/candidates/greensleeves-phase45-frozen-baseline.json",
+      "textureCandidate": "D:/Polymath Training/phase-52-greensleeves-blind-transfer-2026-09-17/candidates/greensleeves-phase45-frozen-baseline.json"
+    }
+  ]
+}

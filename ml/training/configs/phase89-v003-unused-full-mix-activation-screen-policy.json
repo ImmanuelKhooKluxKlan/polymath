@@ -1,0 +1,47 @@
+{
+  "schema": "polymath-target-blind-eligibility-screen-v1",
+  "id": "phase89-v003-unused-full-mix-activation-screen",
+  "lockedAtUtc": "2026-09-18T12:53:46.6310364Z",
+  "candidateId": "phase88-pianella-adaptive-melody-separation-v003",
+  "candidateProfile": "ml/training/configs/phase88-adaptive-melody-separation-v003.json",
+  "candidateProfileSha256": "da6962c1197e2ef91c05dd7af6ec301b2b935611e9a3303106d973eb08bd4e36",
+  "runtimeSha256": "20907e8b4251413ba27033d0757a5fc35b773e7c1c1d61e16effb3b0e9b0aa85",
+  "orderedSources": [
+    {
+      "id": "still-the-one-live",
+      "path": "C:/Users/admin/Documents/Polymath Training/round-1/raw-import-2026-08-28/still the one/You're Still the One - The Petersens (LIVE) - YouTube - Google Chrome 2026-08-05 11-56-36.mp4",
+      "sha256": "142f07a1f9102fcaa453463c73e9519035a4373575f759e63b466becb57d8d46"
+    },
+    {
+      "id": "jesus-i-am-resting-titlecase",
+      "path": "C:/Users/admin/Documents/Polymath Training/round-1/raw-import-2026-08-28/jesus i am resting resting/Jesus, I Am Resting, Resting - YouTube - Google Chrome 2026-08-05 12-22-27.mp4",
+      "sha256": "f517db0217453a453fe405117a126c1e953cdd8543a1ebe56587ba4428b5542a"
+    },
+    {
+      "id": "jesus-i-am-resting-lowercase",
+      "path": "C:/Users/admin/Documents/Polymath Training/round-1/raw-import-2026-08-28/jesus i am resting resting/jesus i am resting resting.mp4",
+      "sha256": "abcf2c8912e893028e168c13d468c7ec379a55049f77d8f77c3303957513ad22"
+    }
+  ],
+  "selectionRule": "Process the ordered, previously unused full-mix sources using only their first 90 seconds. Use the frozen original transcription checkpoint, the frozen Phase80 arranger, Phase82 conservative raw-support recovery, and frozen v003 register profile. Stop at the first source where v003 applies a nonzero melody shift and reports melodyShiftBlockedBySourceFamily=false.",
+  "disallowedSelectionSignals": [
+    "desired MIDI or JSON",
+    "target-derived alignment",
+    "reference score metrics",
+    "song-specific thresholds",
+    "human listening before the first eligible source is frozen"
+  ],
+  "candidatePipeline": {
+    "sourceExcerptSeconds": 90,
+    "transcriptionCheckpoint": "original",
+    "instrument": "piano",
+    "forcedInstrumentConstraints": [],
+    "phase80Profile": "D:/Polymath Training/phase-80-pianella-register-intro-2026-09-18/profiles/pianella-natural-two-hand-v002-native-harmony.json",
+    "phase82Selector": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/five-song-selector-all-v001-loso/profile.json",
+    "phase88Profile": "ml/training/configs/phase88-adaptive-melody-separation-v003.json"
+  },
+  "evidenceBoundary": "These local sources do not currently have unopened authored targets. A positive activation can support a sealed blind listening comparison, but it cannot authorize production promotion without later target scoring or another untouched source/target pair.",
+  "commercialUseAllowed": false,
+  "status": "COMPLETED_NO_ELIGIBLE_ACTIVATION",
+  "result": "ml/training/evidence/phase89-v003-unused-full-mix-activation-screen/RESULT.json"
+}

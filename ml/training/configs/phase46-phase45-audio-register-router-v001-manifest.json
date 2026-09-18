@@ -1,0 +1,35 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Fit an audio-aware octave router specifically for the frozen phase45 production arranger. WANE is excluded from fitting and policy selection.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "kiss-me",
+      "reference": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/references/kiss-me/aligned-reference.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "alignment": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/references/kiss-me/alignment-report.json",
+      "audio": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/fresh-production-replay/kiss-me-prepared-16k-mono.wav",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "candidateEndSeconds": 141.562443881
+    },
+    {
+      "id": "back-to-december",
+      "reference": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/references/back-to-december/aligned-reference.json",
+      "referenceAlreadyAligned": true,
+      "alignment": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/references/back-to-december/alignment-report.json",
+      "audio": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/audio/back-to-december-original-16k-mono.wav",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json"
+    },
+    {
+      "id": "cruel-summer",
+      "reference": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "alignment": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/alignment-report.json",
+      "audio": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/audio/cruel-summer-original-16k-mono.wav",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "candidateEndSeconds": 183.658688
+    }
+  ]
+}

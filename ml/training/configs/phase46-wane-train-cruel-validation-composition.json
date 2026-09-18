@@ -1,0 +1,27 @@
+{
+  "schema": "polymath-prepared-dataset-composition-spec-v1",
+  "purpose": "Research-only foundation update: add trusted WANE windows to the rebalanced training set and keep Cruel Summer entirely in validation.",
+  "remoteRoot": "/runpod-volume/training/phase-46-wane-train-cruel-validation-v002",
+  "splits": {
+    "train": [
+      {
+        "manifest": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/datasets/phase-46-pianella-rebalanced-v001/prepared-train.jsonl",
+        "localRoot": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/runpod-phase8-piano-route-v003"
+      },
+      {
+        "manifest": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/datasets/hard-songs-wane-train-cruel-validation-v001/prepared-train.jsonl",
+        "localRoot": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/datasets/hard-songs-wane-train-cruel-validation-v001"
+      }
+    ],
+    "validation": [
+      {
+        "manifest": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/runpod-phase8-piano-route-v003/prepared-validation.jsonl",
+        "localRoot": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/runpod-phase8-piano-route-v003"
+      },
+      {
+        "manifest": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/datasets/hard-songs-wane-train-cruel-validation-v001/prepared-validation.jsonl",
+        "localRoot": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/datasets/hard-songs-wane-train-cruel-validation-v001"
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema": "polymath-piano-arranger-candidate-freeze-v1",
+  "status": "FROZEN_RESEARCH_CANDIDATE_BEFORE_MAPPING_REVEAL",
+  "frozenAtUtc": "2026-09-18T11:58:30.2059007Z",
+  "candidate": {
+    "id": "phase84-pianella-adaptive-melody-separation-v002-frozen",
+    "path": "D:/Polymath Training/phase-84-sequence-register-2026-09-18/adaptive-melody-separation-v002/candidates/kiss-me.json",
+    "fileSha256": "e4817ce67049cabde279ee3f5c86897e37acf9282f1228639e42def03eccd028"
+  },
+  "runtime": {
+    "gitHeadAtFreeze": "e17deec4fd6391b9cf06183ed1356f8281681032",
+    "workingTreeHadUncommittedResearchChanges": true,
+    "files": {
+      "ml/training/apply_adaptive_pianist_register_zones.py": "fe0eb913a1ffb07e395c8d2bd2e84b420c50126764229a93fab68f6d1e45983f",
+      "ml/training/configs/phase84-adaptive-melody-separation-v002.json": "2a1a5b7dce8c265f4c705cc27cbae32a62a8a3ea722a72d13d755d427866c304",
+      "ml/training/evaluate_pianist_candidate_pair.py": "e7661bfc7eb006a9809f566272e94f6a6f20464ad5ca48ff59883daf42fb90de",
+      "ml/training/evaluate_piano_arranger.py": "22e093612c9cd1f056c0bdfcc938eba8d36664be22e95c8b10b7e6a2e6bd0c9",
+      "ml/training/search_default_piano_pipeline.py": "fa4656843ff49471d4743f5d3989041671697ce65405d80fab8cfcc0d15c6685"
+    }
+  },
+  "evidenceClassification": "development-song blind listening with separate transfer evidence; not an untouched final holdout",
+  "promotionStillRequires": [
+    "a new untouched hard-song holdout",
+    "commercial rights clearance for every model and dataset dependency",
+    "a separate production deployment decision"
+  ]
+}

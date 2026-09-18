@@ -97,7 +97,13 @@ async function collectFiles(root) {
     for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
       const filename = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(filename);
-      else if (entry.isFile()) result.push(filename);
+      else if (entry.isFile()) {
+        // RunPod's S3-compatible gateway rejects zero-byte streaming PUTs with
+        // a misleading signature error. Empty split manifests contain no
+        // usable dataset records, so omit them rather than retrying forever.
+        const stat = await fsp.stat(filename);
+        if (stat.size > 0) result.push(filename);
+      }
     }
   }
   await visit(root);

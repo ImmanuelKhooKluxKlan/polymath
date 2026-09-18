@@ -7,6 +7,7 @@ const {
 
 const TERMINAL_FAILURES = new Set(['CANCELLED', 'FAILED', 'TIMED_OUT']);
 const INFERENCE_CHECKPOINT_PATTERN = /^(?:original|phase\d+-v\d{3,})$/;
+const FOCUSED_INSTRUMENTS = new Set(['voice']);
 
 function clean(value) {
   return String(value || '').trim();
@@ -18,6 +19,18 @@ function normalizeInferenceCheckpoint(value, fallback = 'original') {
     throw new Error('Inference checkpoint must be original or a version such as phase1-v002.');
   }
   return requested;
+}
+
+function normalizeFocusedConstraints(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error('Focused instrument constraints must be an array.');
+  }
+  const selected = [...new Set(value.map((entry) => clean(entry).toLowerCase()).filter(Boolean))];
+  if (selected.length > 1 || selected.some((entry) => !FOCUSED_INSTRUMENTS.has(entry))) {
+    throw new Error('The focused transcription pass currently supports voice only.');
+  }
+  return selected;
 }
 
 function parseReplicas(value) {
@@ -182,11 +195,13 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
     job,
     preparedPath,
     constraints = [],
+    focusedConstraints = [],
     checkpointVersion = inferenceVersion,
     onProgress = () => {},
   }) {
     assertConfigured();
     const selectedCheckpoint = normalizeInferenceCheckpoint(checkpointVersion, inferenceVersion);
+    const selectedFocusedConstraints = normalizeFocusedConstraints(focusedConstraints);
     const key = `jobs/${job.id}.wav`;
     const uploads = await Promise.allSettled(storageClients.map(({ s3, volumeId: targetVolumeId }) => s3.send(new PutObjectCommand({
         Bucket: targetVolumeId,
@@ -213,6 +228,9 @@ function createRunpodServerlessClient(configuration = {}, dependencies = {}) {
             title: job.title,
             instrument: job.instrument,
             instruments: constraints,
+            ...(selectedFocusedConstraints.length
+              ? { focused_instruments: selectedFocusedConstraints }
+              : {}),
             checkpoint_version: selectedCheckpoint,
           },
           policy: {

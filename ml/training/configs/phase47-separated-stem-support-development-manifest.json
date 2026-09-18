@@ -1,0 +1,41 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Phase-47 private development set for learning conservative left-hand recovery from Demucs no-vocals stem transcriptions. WANE is deliberately absent so it remains a one-shot transfer test.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "kiss-me",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/kiss-no-vocals-phase46-v007-raw.json",
+      "vocalSource": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/kiss-vocals-phase46-v007-raw.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "candidateEndSeconds": 141.562443881
+    },
+    {
+      "id": "back-to-december",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/back-no-vocals-phase46-v007-raw.json",
+      "vocalSource": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/back-vocals-phase46-v007-raw.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json"
+    },
+    {
+      "id": "cruel-summer",
+      "reference": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/cruel-no-vocals-phase46-v007-raw.json",
+      "vocalSource": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/cruel-vocals-phase46-v007-raw.json",
+      "alignment": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "candidateEndSeconds": 183.658688
+    }
+  ]
+}

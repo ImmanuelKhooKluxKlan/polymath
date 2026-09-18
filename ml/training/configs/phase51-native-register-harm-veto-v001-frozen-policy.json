@@ -1,0 +1,62 @@
+{
+  "schema": "polymath-frozen-research-policy-v1",
+  "id": "phase51-native-register-harm-veto-v001",
+  "status": "research-only-frozen-before-22-regression",
+  "productionApproved": false,
+  "commercialUseAllowed": false,
+  "architecture": {
+    "proposalRegisters": [0],
+    "sourceRadiusSeconds": 0.18,
+    "sourceMidiRange": [0, 59],
+    "outputMidiRange": [33, 71],
+    "baseBenefitThreshold": 0.8,
+    "minimumSelectorProbability": 0.4,
+    "minimumProbabilityGain": 0.45,
+    "harmVetoThreshold": 0.45,
+    "maximumReplacementsPerGesture": 1,
+    "vetoRule": "Set the base score to zero when P(harm) >= 0.45; never raise a base score."
+  },
+  "selectedModel": {
+    "name": "harm-extra-trees-d8-l10",
+    "path": "D:/Polymath Training/phase-51-mixed-source-benefit-2026-09-17/harm-veto-final-v001/harm-extra-trees-d8-l10.joblib",
+    "sha256": "20c38387c783d50c160020dd34b84140819e3e8ee6f2795b0d0d60b5e75bbb29",
+    "featureCount": 69
+  },
+  "upstreamProfiles": {
+    "selector": {
+      "path": "D:/Polymath Training/phase-51-mixed-source-benefit-2026-09-17/selector-evidence-v001/profile.json",
+      "sha256": "cc7cfcb0687b921d262e65dc7d5713c076f2a45eb12af89c15e8c253895dcfad"
+    },
+    "benefit": {
+      "path": "D:/Polymath Training/phase-51-mixed-source-benefit-2026-09-17/benefit-evidence-v001/profile.json",
+      "sha256": "1a6233f4c9a327485bfd0df0e7bc32103979974cbfd0e2907e66fbf1b6e8882a5"
+    }
+  },
+  "developmentEvidence": {
+    "songs": 8,
+    "modelSelectionReport": {
+      "path": "D:/Polymath Training/phase-51-mixed-source-benefit-2026-09-17/harm-veto-ablation-v001.json",
+      "sha256": "418b768541ee90d0408f0bfc6cf91db76d6d0ed180b59de13d1d165ffa2bec89"
+    },
+    "policyReport": {
+      "path": "D:/Polymath Training/phase-51-mixed-source-benefit-2026-09-17/harm-veto-policy-search-v001/base-with-harm-extra-trees-d8-l10-veto-ge-0-45/report.json",
+      "sha256": "ec1c511d6e823db18f58ad675fdaf0779830823b8f53dd7272655926b486fcda"
+    },
+    "weightedDeltasVersusPhase45": {
+      "quality": 0.0009,
+      "exactF1_100ms": 0.000522,
+      "exactF1_250ms": 0.00073,
+      "pitchClassF1_250ms": 0.001651,
+      "pitchClassRecall_250ms": 0.001768
+    },
+    "replacements": 49,
+    "rapidRetriggerIncrease": 0,
+    "allSongProtectedMetricsNonnegative": true
+  },
+  "evidenceLimitations": [
+    "The eight-song result selected this model and threshold and is development evidence, not an untouched test.",
+    "The 22 failure motivated this harm-veto architecture, so any later 22 result is a regression check, not independent validation.",
+    "A genuinely unseen, licensed song is required before promotion.",
+    "The serialized scikit-learn model is private research infrastructure and is not bundled in the public worker."
+  ]
+}

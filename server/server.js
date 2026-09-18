@@ -264,6 +264,9 @@ const MUSCRIPTOR_ENABLED = String(process.env.MUSCRIPTOR_ENABLED || 'false').tri
 const MUSCRIPTOR_ADMIN_ONLY = String(
   process.env.MUSCRIPTOR_ADMIN_ONLY || (IS_PRODUCTION ? 'true' : 'false'),
 ).trim().toLowerCase() === 'true';
+const MUSCRIPTOR_TWO_PASS_VOCAL_ENABLED = String(
+  process.env.MUSCRIPTOR_TWO_PASS_VOCAL_ENABLED || 'false',
+).trim().toLowerCase() === 'true';
 const MUSCRIPTOR_MODEL = ['small', 'medium', 'large'].includes(
   String(process.env.MUSCRIPTOR_MODEL || 'large').trim().toLowerCase(),
 )
@@ -282,11 +285,13 @@ const MUSCRIPTOR_WORKER = String(process.env.MUSCRIPTOR_WORKER || '').trim()
 const PIANO_ARRANGER_PYTHON = String(process.env.PIANO_ARRANGER_PYTHON || '').trim()
   || MUSCRIPTOR_PYTHON;
 const PIANO_ARRANGER_WORKER = String(process.env.PIANO_ARRANGER_WORKER || '').trim()
-  || path.join(__dirname, 'piano_arranger.py');
-// Learned arranger candidates are opt-in. A profile must pass unseen-song
-// validation before it becomes the production default.
+  || path.join(__dirname, 'piano_arranger_pipeline.py');
+// The owner-approved v003 profile is bundled so local, AWS, and background
+// deployment workers reproduce the same listening candidate. An explicit
+// environment value can still pin or roll back to another profile.
 const PIANO_ARRANGER_PROFILE_PATH = String(
-  process.env.PIANO_ARRANGER_PROFILE_PATH || '',
+  process.env.PIANO_ARRANGER_PROFILE_PATH
+    || path.join(__dirname, 'models', 'piano-arranger', 'polymath-pianella-v003.json'),
 ).trim();
 const MUSCRIPTOR_REMOTE_URL = String(process.env.MUSCRIPTOR_REMOTE_URL || '').trim().replace(/\/+$/, '');
 const MUSCRIPTOR_REMOTE_TOKEN = String(process.env.MUSCRIPTOR_REMOTE_TOKEN || '').trim();
@@ -2708,6 +2713,7 @@ function muscriptorAvailability() {
     acceptedExtensions: [...MEDIA_EXTENSIONS],
     license: 'CC-BY-NC-4.0',
     commercialUseAllowed: false,
+    twoPassVocalResearchEnabled: MUSCRIPTOR_TWO_PASS_VOCAL_ENABLED,
     reason,
   };
 }
@@ -3051,12 +3057,19 @@ async function runRemoteMuscriptor(job, preparedPath, outputPath, constraints) {
   return payload;
 }
 
-async function runServerlessMuscriptor(job, preparedPath, outputPath, constraints) {
+async function runServerlessMuscriptor(
+  job,
+  preparedPath,
+  outputPath,
+  constraints,
+  focusedConstraints = [],
+) {
   let lastProgressSignature = '';
   const raw = await RUNPOD_SERVERLESS.transcribe({
     job,
     preparedPath,
     constraints,
+    focusedConstraints,
     onProgress(remote) {
       const state = String(remote.state || '').trim().toUpperCase();
       const progressLabel = String(remote.progress || '').trim();
@@ -3137,8 +3150,20 @@ async function processMediaTranscriptionJob(jobId) {
       progress: 20,
     });
     const constraints = muscriptorConstraints(job.instrument, job.playbackMode);
+    const focusedConstraints = (
+      MUSCRIPTOR_TWO_PASS_VOCAL_ENABLED
+      && execution === 'runpod-serverless'
+      && job.instrument === 'piano'
+      && job.playbackMode === 'full'
+    ) ? ['voice'] : [];
     if (execution === 'runpod-serverless') {
-      await runServerlessMuscriptor(job, preparedPath, outputPath, constraints);
+      await runServerlessMuscriptor(
+        job,
+        preparedPath,
+        outputPath,
+        constraints,
+        focusedConstraints,
+      );
     } else if (execution === 'remote-gpu') {
       await runRemoteMuscriptor(job, preparedPath, outputPath, constraints);
     } else {

@@ -1,0 +1,36 @@
+{
+  "schema": "polymath-adaptive-pianist-register-zones-v1",
+  "id": "pianella-adaptive-register-zones-v001",
+  "status": "research-only",
+  "commercialUseAllowed": false,
+  "outputRange": {
+    "minimumMidi": 33,
+    "maximumMidi": 108
+  },
+  "melody": {
+    "shiftSemitones": 12,
+    "fluteDominanceThreshold": 0.5,
+    "shiftHarmonyWithFluteMelody": true,
+    "fluteHarmonyMinimumMidi": 60,
+    "stableEventMinimum": 250,
+    "lowTessituraMinimumMidi": 66,
+    "lowTessituraMaximumExclusiveMidi": 72
+  },
+  "bass": {
+    "shiftSemitones": 12,
+    "stableEventMinimum": 250,
+    "melodyAbsentMinimumMedianMidi": 53,
+    "highMelodyMinimumMedianMidi": 75,
+    "highMelodyLowBassMaximumExclusiveMidi": 40,
+    "veryLowBassMaximumMidi": 36
+  },
+  "inferenceBoundary": {
+    "usesSongIdentity": false,
+    "usesAbsoluteSongTime": false,
+    "usesReferenceAtInference": false,
+    "usesCandidateRoleCountsAndMedians": true,
+    "usesSourceInstrumentFamily": true,
+    "developmentEvidenceOnly": true
+  },
+  "evidenceNote": "Thresholds were selected on opened development songs. A different untouched hard-song holdout and blind listening test are mandatory before promotion."
+}

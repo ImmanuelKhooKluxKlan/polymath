@@ -1,0 +1,17 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Audit the held-out melody/touch challenger against the trusted Kiss Me excerpt without changing inference.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "kiss-me",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "candidate": "D:/Polymath Training/phase-36-3a-champion-refinement-2026-09-16/candidate-v036-unseen-velocity-duration/kiss-me.json",
+      "candidateEndSeconds": 141.562443881,
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Seven-song opened development corpus using the best phase-45 register-plus-pitch candidate for the four hard songs and inference-only adaptive register zoning for the three auxiliary songs. Never final promotion evidence.",
+  "commercialUseAllowed": false,
+  "primarySongIds": [
+    "kiss-me",
+    "back-to-december",
+    "cruel-summer",
+    "we-are-never-getting-back-together"
+  ],
+  "auxiliarySongIds": [
+    "the-way-i-loved-you-auxiliary",
+    "mean-auxiliary",
+    "you-need-to-calm-down-auxiliary"
+  ],
+  "songs": [
+    {
+      "id": "kiss-me",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/fresh-production-replay/kiss-me-postprocessed-full.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-44-v043-frozen-final-holdout-2026-09-16/eight-song-development-evaluation/candidates/kiss-me.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "textureCandidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "candidateEndSeconds": 141.562443881
+    },
+    {
+      "id": "back-to-december",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/loso-production-sources-a1-c8/back-to-december.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-44-v043-frozen-final-holdout-2026-09-16/eight-song-development-evaluation/candidates/back-to-december.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json",
+      "textureCandidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json"
+    },
+    {
+      "id": "cruel-summer",
+      "reference": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/transcriptions/cruel-summer-original-postprocessed-full.json",
+      "alignment": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-44-v043-frozen-final-holdout-2026-09-16/eight-song-development-evaluation/candidates/cruel-summer-sealed-holdout.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "textureCandidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "candidateEndSeconds": 183.658688
+    },
+    {
+      "id": "we-are-never-getting-back-together",
+      "reference": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-original-postprocessed-full.json",
+      "alignment": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-44-v043-frozen-final-holdout-2026-09-16/eight-song-development-evaluation/candidates/wane-gbt-sealed-holdout.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "textureCandidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "candidateEndSeconds": 194.090688
+    },
+    {
+      "id": "the-way-i-loved-you-auxiliary",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/the-way-i-loved-you-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-4-pianella-style-2026-09-02/baseline-current/the-way-i-loved-you-original.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/the-way-i-loved-you-tight250/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v006-seven-base/the-way-i-loved-you-auxiliary.json",
+      "textureCandidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v006-seven-base/the-way-i-loved-you-auxiliary.json"
+    },
+    {
+      "id": "mean-auxiliary",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/mean-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-4-pianella-style-2026-09-02/baseline-current/mean-original.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/mean-tight250/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v006-seven-base/mean-auxiliary.json",
+      "textureCandidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v006-seven-base/mean-auxiliary.json"
+    },
+    {
+      "id": "you-need-to-calm-down-auxiliary",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/you-need-to-calm-down/aligned-target.json",
+      "referenceAlreadyAligned": true,
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-4-pianella-style-2026-09-02/baseline-current/you-need-to-calm-down-original.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/you-need-to-calm-down/section-alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v006-seven-base/you-need-to-calm-down-auxiliary.json",
+      "textureCandidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v006-seven-base/you-need-to-calm-down-auxiliary.json"
+    }
+  ]
+}

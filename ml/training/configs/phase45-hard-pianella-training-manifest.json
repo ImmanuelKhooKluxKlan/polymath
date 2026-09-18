@@ -1,0 +1,66 @@
+{
+  "schema": "polymath-piano-arranger-training-manifest-v1",
+  "profileId": "pianella-hard-gesture-v044-development",
+  "purpose": "Leakage-aware hard-song Pianella arranger development. Each named hard song is held out as a complete fold; auxiliary songs remain training-only. This is private research evidence and does not establish commercial rights.",
+  "commercialUseAllowed": false,
+  "pairs": [
+    {
+      "id": "kiss-me",
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/fresh-production-replay/kiss-me-postprocessed-full.json",
+      "target": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "alignmentReport": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "weight": 1.0,
+      "reason": "User-approved Pianella target restricted to the trusted pre-02:30 section."
+    },
+    {
+      "id": "back-to-december",
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-4-pianella-style-2026-09-02/baseline-current/back-to-december-original.json",
+      "target": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/back-to-december.json",
+      "alignmentReport": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/alignment-report.json",
+      "weight": 0.85,
+      "reason": "Pianella performance admitted only inside audio-alignment trusted windows."
+    },
+    {
+      "id": "cruel-summer",
+      "source": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/transcriptions/cruel-summer-original-postprocessed-full.json",
+      "target": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/transcriptions/cruel-summer-pianella-raw-reference.json",
+      "alignmentReport": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/alignment-report.json",
+      "weight": 0.9,
+      "reason": "Hard full-mix to solo-piano pair with 75.6% trusted timeline."
+    },
+    {
+      "id": "we-are-never-getting-back-together",
+      "source": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-original-postprocessed-full.json",
+      "target": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-pianella-raw-reference.json",
+      "alignmentReport": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "weight": 1.0,
+      "reason": "Hard full-mix to solo-piano pair with 89.3% trusted timeline."
+    }
+  ],
+  "auxiliaryPairs": [
+    {
+      "id": "the-way-i-loved-you-auxiliary",
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-4-pianella-style-2026-09-02/baseline-current/the-way-i-loved-you-original.json",
+      "target": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/the-way-i-loved-you.json",
+      "alignmentReport": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/the-way-i-loved-you-tight250/alignment-report.json",
+      "weight": 0.9,
+      "reason": "Strong authored structural pairing used only as auxiliary training data."
+    },
+    {
+      "id": "mean-auxiliary",
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-4-pianella-style-2026-09-02/baseline-current/mean-original.json",
+      "target": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/mean.json",
+      "alignmentReport": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/mean-tight250/alignment-report.json",
+      "weight": 0.45,
+      "reason": "Shorter authored pair restricted to trusted windows."
+    },
+    {
+      "id": "you-need-to-calm-down-auxiliary",
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-4-pianella-style-2026-09-02/baseline-current/you-need-to-calm-down-original.json",
+      "target": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/you-need-to-calm-down.json",
+      "alignmentReport": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/you-need-to-calm-down/section-alignment-report.json",
+      "weight": 0.15,
+      "reason": "Weak Pianella pseudo-label retained as low-weight auxiliary texture evidence."
+    }
+  ]
+}

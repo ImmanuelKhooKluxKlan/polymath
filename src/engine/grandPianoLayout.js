@@ -3,7 +3,7 @@ import { buildPianoRange, midiToNote, NOTE_NAMES, parseNote } from './noteMath.j
 export const GRAND_START_NOTE = 'A0';
 export const GRAND_END_NOTE = 'C8';
 export const PIANELLA_DEFAULT_START_NOTE = 'A1';
-export const PIANELLA_DEFAULT_END_NOTE = 'C7';
+export const PIANELLA_DEFAULT_END_NOTE = 'C8';
 export const TWO_STOREY_SPLIT_NOTE = 'C4';
 
 // Real piano dimensions: black keys are roughly 0.58 of a white key.
@@ -15,8 +15,8 @@ export const PIANELLA_DEFAULT_START_MIDI = parseNote(PIANELLA_DEFAULT_START_NOTE
 export const PIANELLA_DEFAULT_END_MIDI = parseNote(PIANELLA_DEFAULT_END_NOTE).midi;
 export const TWO_STOREY_SPLIT_MIDI = parseNote(TWO_STOREY_SPLIT_NOTE).midi;
 export const PIANELLA_SINGLE_STOREY_MAX_SPAN = PIANELLA_DEFAULT_END_MIDI - PIANELLA_DEFAULT_START_MIDI + 1;
-export const PIANELLA_PREFERRED_GLOBAL_SHIFT = 24;
-export const PIANELLA_RANGE_PROFILE = 'pianella-range-aware-a1-c7-v2';
+export const PIANELLA_PREFERRED_GLOBAL_SHIFT = 0;
+export const PIANELLA_RANGE_PROFILE = 'pianella-range-aware-a1-c8-v3';
 
 function readableMidiFromNote(note) {
   try {
@@ -30,10 +30,9 @@ function readableMidiFromNote(note) {
 }
 
 /**
- * Pick one octave transposition for the whole score before repairing edge
- * notes. We prefer a two-octave lift, but reduce that lift when the upper
- * register has no room. A 1% tolerance prevents a handful of noisy outliers
- * from forcing the other 99% of a performance back down.
+ * Preserve the score's authored register before repairing edge notes. The
+ * default is no blanket transposition: only notes outside A1-C8 are folded by
+ * octaves until they fit.
  */
 export function planPianellaRangeShift(
   songOrNotes,
@@ -46,7 +45,7 @@ export function planPianellaRangeShift(
   const midis = notes.map(readableMidiFromNote).filter(Number.isFinite);
   const requestedShift = Number(preferredShiftSemitones);
   const preferredShift = Number.isFinite(requestedShift)
-    ? Math.max(0, Math.min(84, Math.floor(requestedShift / 12) * 12))
+    ? Math.max(-84, Math.min(0, Math.floor(requestedShift / 12) * 12))
     : PIANELLA_PREFERRED_GLOBAL_SHIFT;
 
   if (!midis.length) {
@@ -104,15 +103,6 @@ export function foldMidiIntoPianellaRange(rawMidi, globalShiftSemitones = 0) {
   const globalShift = Math.round(Number(globalShiftSemitones) || 0);
   let midi = originalMidi + globalShift;
 
-  // Deep source notes always receive at least the requested two-octave lift.
-  // This keeps A0 -> A2 even when upper-register headroom made the score-wide
-  // shift smaller than +24.
-  if (
-    originalMidi < PIANELLA_DEFAULT_START_MIDI
-    && midi < originalMidi + PIANELLA_PREFERRED_GLOBAL_SHIFT
-  ) {
-    midi = originalMidi + PIANELLA_PREFERRED_GLOBAL_SHIFT;
-  }
   while (midi < PIANELLA_DEFAULT_START_MIDI) midi += 12;
   while (midi > PIANELLA_DEFAULT_END_MIDI) midi -= 12;
   return Math.max(PIANELLA_DEFAULT_START_MIDI, Math.min(PIANELLA_DEFAULT_END_MIDI, midi));

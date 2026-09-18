@@ -25,6 +25,13 @@ COPY server/package.json server/package-lock.json ./server/
 RUN npm ci --omit=dev --prefix server
 
 COPY server ./server
+# The production piano wrapper uses only these two frozen inference operators.
+# Keep research datasets and training-only dependencies out of the runtime image.
+COPY ml/__init__.py ./ml/
+COPY ml/training/__init__.py \
+    ml/training/apply_adaptive_pianist_register_zones.py \
+    ml/training/apply_raw_support_recovery.py \
+    ./ml/training/
 COPY scripts/alignment ./scripts/alignment
 COPY --from=frontend-build /app/dist ./dist
 

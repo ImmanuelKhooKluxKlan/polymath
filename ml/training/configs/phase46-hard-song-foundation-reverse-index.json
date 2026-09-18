@@ -1,0 +1,28 @@
+{
+  "schema": "polymath-training-index-v1",
+  "purpose": "Private research-only reverse hard-song foundation experiment. Commercial licensing remains unverified; do not promote or distribute resulting checkpoints.",
+  "songs": [
+    {
+      "songId": "cruel-summer-hard-train-v001",
+      "sourceMedia": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/audio/cruel-summer-original-16k-mono.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "train",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied local material explicitly authorized for private research training only; commercial licensing is unverified and promotion is prohibited."
+      }
+    },
+    {
+      "songId": "wane-gbt-hard-validation-v001",
+      "sourceMedia": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/audio/wane-gbt-original-16k-mono.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "validation",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied local material explicitly authorized for private research training only; commercial licensing is unverified and promotion is prohibited."
+      }
+    }
+  ]
+}

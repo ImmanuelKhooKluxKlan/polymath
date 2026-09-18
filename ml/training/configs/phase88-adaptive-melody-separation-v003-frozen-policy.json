@@ -1,0 +1,70 @@
+{
+  "schema": "polymath-adaptive-melody-separation-policy-v1",
+  "id": "phase88-pianella-melody-harmony-separation-v003",
+  "purpose": "Preserve v002's verified voice/flute melody separation while refusing unsafe octave shifts on strongly piano-derived melody roles.",
+  "commercialUseAllowed": false,
+  "parentCandidate": "phase84-pianella-adaptive-melody-separation-v002-frozen",
+  "profile": "ml/training/configs/phase88-adaptive-melody-separation-v003.json",
+  "profileSha256": "da6962c1197e2ef91c05dd7af6ec301b2b935611e9a3303106d973eb08bd4e36",
+  "runtimeSha256": "20907e8b4251413ba27033d0757a5fc35b773e7c1c1d61e16effb3b0e9b0aa85",
+  "changeFromV002": {
+    "blockedDominantSourceFamilies": [
+      "piano"
+    ],
+    "blockedDominantSourceFamilyMinimumShare": 0.8,
+    "allOtherThresholdsUnchanged": true
+  },
+  "safetyRules": [
+    "Never use song identity, title, absolute song time, reference MIDI, or alignment at inference.",
+    "Use the sourceInstrument labels already carried by candidate notes.",
+    "Abstain from melody octave shifting when piano supplies at least 80% of melody-role events.",
+    "Keep the original v002 decision for voice-, flute-, guitar-, and other-derived melody unless another existing v002 gate abstains.",
+    "Preserve onsets, durations, velocities, and pitch classes when a shift is allowed.",
+    "Remain research-only until a new untouched activation holdout and sealed blind listening both pass."
+  ],
+  "developmentRegression": {
+    "songs": 5,
+    "referenceNotes": 5658,
+    "activatedSongs": [
+      "back-to-december",
+      "kiss-me"
+    ],
+    "weightedDeltaQuality": 0.010352,
+    "weightedDeltaExactF1_100ms": 0.030523,
+    "weightedDeltaExactF1_250ms": 0.038086,
+    "weightedDeltaPitchClassF1_250ms": 0.000057,
+    "worstSongDeltaQuality": 0.0,
+    "worstSongDeltaExactF1_250ms": 0.0,
+    "rapidRetriggerIncrease": 0,
+    "reportDirectory": "D:/Polymath Training/phase-88-piano-source-safety-2026-09-18/five-song-regression"
+  },
+  "transferRegression": {
+    "songs": [
+      "22",
+      "a-thousand-years",
+      "babyslakh-track18",
+      "babyslakh-track20"
+    ],
+    "allCoreNoteSequencesEqualV002": true,
+    "aThousandYearsVoiceDerivedGainPreserved": true,
+    "reportDirectory": "D:/Polymath Training/phase-88-piano-source-safety-2026-09-18/transfer-regression"
+  },
+  "revealedFailureRepair": {
+    "song": "babyslakh-track00009",
+    "classification": "post-holdout repair; not independent validation",
+    "v002ShiftedMelodyEvents": 301,
+    "v003ShiftedMelodyEvents": 0,
+    "v003BlockedReason": "dominant source family 'piano' is blocked for octave shifts",
+    "v003AllMetricDeltasVersusPhase82": 0.0,
+    "result": "ml/training/evidence/phase88-adaptive-melody-separation-v003/POST_HOLDOUT_REPAIR_RESULT.json"
+  },
+  "newUnusedFullMixScreen": {
+    "policy": "ml/training/configs/phase89-v003-unused-full-mix-activation-screen-policy.json",
+    "sourcesProcessed": 3,
+    "eligibleActivations": 0,
+    "targetsOpened": 0,
+    "blindListeningPacksCreated": 0,
+    "interpretation": "The frozen candidate abstained on every newly screened source. This supplies additional abstention/safety evidence but is not positive validation of the v003 intervention."
+  },
+  "decision": "RESEARCH_ONLY_AWAITING_NEW_UNTOUCHED_ACTIVATION_HOLDOUT"
+}

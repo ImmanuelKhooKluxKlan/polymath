@@ -66,6 +66,79 @@ test('piano reduction keeps authored piano and selected melody but not drums or 
   assert.ok(target.notes.every((note) => note.instrument === 'acoustic_piano'));
   assert.deepEqual(target.notes.map((note) => note.role), ['piano-accompaniment', 'melody-revoiced-on-piano']);
   assert.equal(target.reduction.selectedTrackCount, 2);
+  assert.equal(target.reduction.transposeSemitones, 0);
+});
+
+test('piano reduction applies only an explicit whole-semitone key shift', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'polymath-piano-transpose-'));
+  const input = path.join(root, 'melody.mid');
+  const output = path.join(root, 'target.json');
+  const midi = new Midi();
+  const flute = midi.addTrack();
+  flute.instrument.number = 73;
+  flute.addNote({ midi: 60, time: 0, duration: 1, velocity: 0.8 });
+  await fs.writeFile(input, Buffer.from(midi.toArray()));
+  await run(process.execPath, [
+    reducer,
+    '--input', input,
+    '--output', output,
+    '--melody', 'flute',
+    '--transpose', '3',
+  ]);
+  const target = JSON.parse(await fs.readFile(output, 'utf8'));
+  assert.equal(target.notes[0].midi, 63);
+  assert.equal(target.notes[0].note, 'D#4');
+  assert.equal(target.reduction.transposeSemitones, 3);
+  assert.match(target.reduction.transposeRule, /Explicit/);
+});
+
+test('piano reduction can explicitly remove grace-note ornaments by duration', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'polymath-piano-ornaments-'));
+  const input = path.join(root, 'melody.mid');
+  const output = path.join(root, 'target.json');
+  const midi = new Midi();
+  const flute = midi.addTrack();
+  flute.instrument.number = 73;
+  flute.addNote({ midi: 61, time: 0, duration: 0.05, velocity: 0.6 });
+  flute.addNote({ midi: 62, time: 0.05, duration: 0.5, velocity: 0.8 });
+  await fs.writeFile(input, Buffer.from(midi.toArray()));
+  await run(process.execPath, [
+    reducer,
+    '--input', input,
+    '--output', output,
+    '--melody', 'flute',
+    '--minimum-duration', '0.1',
+  ]);
+  const target = JSON.parse(await fs.readFile(output, 'utf8'));
+  assert.deepEqual(target.notes.map((note) => note.midi), [62]);
+  assert.equal(target.reduction.minimumDurationSeconds, 0.1);
+  assert.match(target.reduction.durationFilterRule, /Explicit/);
+});
+
+test('piano reduction can freeze an explicit score excerpt and rebase its clock', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'polymath-piano-excerpt-'));
+  const input = path.join(root, 'melody.mid');
+  const output = path.join(root, 'target.json');
+  const midi = new Midi();
+  const piano = midi.addTrack();
+  piano.instrument.number = 0;
+  piano.addNote({ midi: 60, time: 1, duration: 1, velocity: 0.7 });
+  piano.addNote({ midi: 62, time: 3, duration: 2, velocity: 0.7 });
+  piano.addNote({ midi: 64, time: 5, duration: 1, velocity: 0.7 });
+  await fs.writeFile(input, Buffer.from(midi.toArray()));
+  await run(process.execPath, [
+    reducer,
+    '--input', input,
+    '--output', output,
+    '--start-time', '2',
+    '--end-time', '4',
+  ]);
+  const target = JSON.parse(await fs.readFile(output, 'utf8'));
+  assert.deepEqual(target.notes.map((note) => note.midi), [62]);
+  assert.equal(target.notes[0].time, 1);
+  assert.equal(target.notes[0].duration, 1);
+  assert.equal(target.reduction.excerptStartSeconds, 2);
+  assert.equal(target.reduction.excerptEndSeconds, 4);
 });
 
 test('prepared dataset composition filters songs, copies audio, and writes RunPod paths', async () => {

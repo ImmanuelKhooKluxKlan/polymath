@@ -596,15 +596,23 @@ function buildWarpAnchors(matches, line, options) {
 
 function normalizeManualAnchors(input, maximumReferenceTime, sourceDurationSeconds) {
   const anchors = (Array.isArray(input) ? input : [])
-    .map((anchor, index) => ({
-      referenceTime: Number(anchor?.referenceTime ?? anchor?.reference ?? anchor?.midiTime),
-      observedTime: Number(anchor?.observedTime ?? anchor?.observed ?? anchor?.sourceTime),
-      support: Number.MAX_SAFE_INTEGER,
-      exactPitchShare: 1,
-      medianLineResidualMs: 0,
-      kind: 'manual',
-      manualIndex: index,
-    }))
+    .map((anchor, index) => {
+      const structuralSimilarity = Number(anchor?.structuralSimilarity);
+      return {
+        referenceTime: Number(anchor?.referenceTime ?? anchor?.reference ?? anchor?.midiTime),
+        observedTime: Number(anchor?.observedTime ?? anchor?.observed ?? anchor?.sourceTime),
+        support: Number.MAX_SAFE_INTEGER,
+        exactPitchShare: 1,
+        medianLineResidualMs: 0,
+        kind: 'manual',
+        manualIndex: index,
+        ...(Number.isFinite(structuralSimilarity) ? { structuralSimilarity } : {}),
+        ...(anchor?.sourceKind ? { sourceKind: String(anchor.sourceKind) } : {}),
+        ...(Number.isFinite(Number(anchor?.sourceSupport))
+          ? { sourceSupport: Number(anchor.sourceSupport) }
+          : {}),
+      };
+    })
     .filter((anchor) => Number.isFinite(anchor.referenceTime) && Number.isFinite(anchor.observedTime))
     .filter((anchor) => anchor.referenceTime >= 0 && anchor.referenceTime <= maximumReferenceTime + 1)
     .filter((anchor) => anchor.observedTime >= 0 && (
@@ -945,14 +953,27 @@ const DEFAULT_OPTIONS = {
   manualAnchors: [],
   excludedRanges: [],
   reviewDecisions: {},
+  observedInstruments: [],
 };
+
+function normalizeInstrumentFilter(value) {
+  const values = Array.isArray(value) ? value : String(value || '').split(',');
+  return [...new Set(values.map((item) => String(item).trim().toLowerCase()).filter(Boolean))];
+}
 
 export function alignNoteCoordinates(referenceInput, observedInput, overrides = {}) {
   const options = { ...DEFAULT_OPTIONS, ...overrides };
   const reference = normalizeNotes(referenceInput, { dropPercussion: true });
-  const observed = normalizeNotes(observedInput, { dropPercussion: true });
+  const observedInputNotes = normalizeNotes(observedInput, { dropPercussion: true });
+  const observedInstrumentFilter = normalizeInstrumentFilter(options.observedInstruments);
+  const observed = observedInstrumentFilter.length
+    ? observedInputNotes.filter((note) => observedInstrumentFilter.includes(note.instrument.toLowerCase()))
+    : observedInputNotes;
   if (reference.length < 8 || observed.length < 8) {
-    throw new Error('At least eight usable notes are required in both files.');
+    const filterDetail = observedInstrumentFilter.length
+      ? ` after filtering observed instruments to ${observedInstrumentFilter.join(', ')}`
+      : '';
+    throw new Error(`At least eight usable notes are required in both files${filterDetail}.`);
   }
   const coarse = estimateCoarseLine(reference, observed, options);
   let line = coarse;
@@ -1033,6 +1054,8 @@ export function alignNoteCoordinates(referenceInput, observedInput, overrides = 
   const eligibleNotes = alignedReference.filter((note) => note.trainingEligible).length;
   const metrics = {
     ...baseMetrics,
+    observedInputNotes: observedInputNotes.length,
+    observedInstrumentFilter,
     manualAnchorCount: manualAnchors.length,
     automaticAnchorCount: anchors.filter((anchor) => String(anchor.kind).startsWith('automatic')).length,
     qualityWindowCount: qualityWindows.length,
@@ -1060,6 +1083,7 @@ export function alignNoteCoordinates(referenceInput, observedInput, overrides = 
     },
     alignment: {
       metrics,
+      observedInstrumentFilter,
       coarse: line,
       anchors,
       manualAnchors,
@@ -1170,6 +1194,53 @@ function parseArguments(argv) {
   return args;
 }
 
+function optionalNumericArgument(args, name, { integer = false, minimum = -Infinity } = {}) {
+  if (args[name] == null || args[name] === '') return undefined;
+  const value = Number(args[name]);
+  if (!Number.isFinite(value) || (integer && !Number.isInteger(value)) || value < minimum) {
+    const kind = integer ? 'an integer' : 'a number';
+    throw new Error(`--${name} must be ${kind} greater than or equal to ${minimum}`);
+  }
+  return value;
+}
+
+export function alignmentOptionsFromArguments(args) {
+  const minimumScale = optionalNumericArgument(args, 'minimum-scale', { minimum: 0.05 });
+  const maximumScale = optionalNumericArgument(args, 'maximum-scale', { minimum: 0.05 });
+  if (minimumScale != null && maximumScale != null && maximumScale < minimumScale) {
+    throw new Error('--maximum-scale must be greater than or equal to --minimum-scale');
+  }
+  const ransacIterations = optionalNumericArgument(args, 'ransac-iterations', {
+    integer: true,
+    minimum: 100,
+  });
+  return {
+    sourceDurationSeconds: args['source-duration'] || null,
+    observedInstruments: String(args['observed-instruments'] || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean),
+    ...(minimumScale == null ? {} : { minimumScale }),
+    ...(maximumScale == null ? {} : { maximumScale }),
+    ...(ransacIterations == null ? {} : { ransacIterations }),
+  };
+}
+
+export function alignmentControlArray(payload, keys, label) {
+  const candidates = [payload, ...keys.map((key) => payload?.[key])];
+  const values = candidates.find(Array.isArray);
+  if (!values) {
+    throw new Error(`${label} must be a JSON array or an object containing ${keys.join(' or ')}.`);
+  }
+  return values;
+}
+
+async function loadAlignmentControlArray(filename, keys, label) {
+  const resolved = path.resolve(filename);
+  const payload = JSON.parse(await fs.readFile(resolved, 'utf8'));
+  return alignmentControlArray(payload, keys, label);
+}
+
 function extractJsonNotes(payload) {
   const candidates = [payload?.notes, payload?.song?.notes, payload?.result?.notes, payload?.output?.notes];
   return candidates.find(Array.isArray) || [];
@@ -1211,24 +1282,50 @@ async function runCli() {
   const referenceFile = args.reference || args.midi;
   const observedFile = args.observed || args.muscriptor;
   if (!referenceFile || !observedFile) {
-    throw new Error('Usage: npm run align:notes -- --reference ideal.mid-or-json --observed model.mid-or-json [--out alignment-output]');
+    throw new Error(
+      'Usage: npm run align:notes -- --reference ideal.mid-or-json --observed model.mid-or-json ' +
+      '[--out alignment-output] [--manual-anchors anchors.json] [--excluded-ranges ranges.json]',
+    );
   }
   const [referenceNotes, observedNotes] = await Promise.all([
     loadNoteFile(referenceFile),
     loadNoteFile(observedFile),
   ]);
-  const result = alignNoteCoordinates(referenceNotes, observedNotes, {
-    sourceDurationSeconds: args['source-duration'] || null,
-  });
+  const options = alignmentOptionsFromArguments(args);
+  if (args['manual-anchors']) {
+    options.manualAnchors = await loadAlignmentControlArray(
+      args['manual-anchors'],
+      ['manualAnchors', 'anchors'],
+      'Manual-anchor file',
+    );
+  }
+  if (args['excluded-ranges']) {
+    options.excludedRanges = await loadAlignmentControlArray(
+      args['excluded-ranges'],
+      ['excludedRanges', 'ranges'],
+      'Excluded-range file',
+    );
+  }
+  const result = alignNoteCoordinates(
+    referenceNotes,
+    observedNotes,
+    options,
+  );
   const outputDirectory = path.resolve(args.out || 'alignment-output');
   await fs.mkdir(outputDirectory, { recursive: true });
   await Promise.all([
     fs.writeFile(
       path.join(outputDirectory, 'alignment-report.json'),
       `${JSON.stringify({
+        schema: 'polymath-note-alignment-report-v2',
+        timeline: result.supervisionPackage.timeline,
         metrics: result.metrics,
         coarse: result.coarse,
         anchors: result.anchors,
+        manualAnchors: result.manualAnchors,
+        tempoSegments: result.tempoSegments,
+        qualityWindows: result.qualityWindows,
+        observedInstrumentFilter: result.metrics.observedInstrumentFilter,
         matches: result.matches.map((match) => ({
           reference: match.reference,
           observed: match.observed,

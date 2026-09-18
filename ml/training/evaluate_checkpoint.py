@@ -178,33 +178,58 @@ def aggregate_clip_scores(
     return result
 
 
-def evaluate_checkpoint(
-    checkpoint: Path,
+def aggregate_song_clip_scores(
+    records: list[dict[str, Any]],
+    references: list[list[dict[str, Any]]],
+    predictions: list[list[dict[str, Any]]],
+    tolerances: tuple[float, ...] = DEFAULT_TOLERANCES,
+) -> dict[str, Any]:
+    """Calculate the same micro scores separately for every validation song."""
+
+    if not (len(records) == len(references) == len(predictions)):
+        raise ValueError("Record, reference, and prediction clip counts differ")
+    grouped: dict[str, tuple[list[list[dict[str, Any]]], list[list[dict[str, Any]]]]] = {}
+    for record, reference, prediction in zip(records, references, predictions, strict=True):
+        song_id = str(record.get("songId") or "unknown")
+        targets, candidates = grouped.setdefault(song_id, ([], []))
+        targets.append(reference)
+        candidates.append(prediction)
+    return {
+        song_id: aggregate_clip_scores(targets, candidates, tolerances)
+        for song_id, (targets, candidates) in sorted(grouped.items())
+    }
+
+
+def evaluate_loaded_transcription(
+    transcription,
     records: list[dict[str, Any]],
     progress_callback: Callable[[str], None] | None = None,
     instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
     include_raw_predictions: bool = False,
 ) -> dict[str, Any]:
-    """Load one checkpoint, decode every frozen clip, and calculate note scores."""
+    """Decode a frozen panel with an already-loaded checkpoint."""
 
     import torch
-    from muscriptor import TranscriptionModel
 
-    transcription = TranscriptionModel.load_model(checkpoint, device="cuda")
+    transcription._model.eval()
     references: list[list[dict[str, Any]]] = []
     predictions: list[list[dict[str, Any]]] = []
-    for index, record in enumerate(records, 1):
-        references.append(list(record["notes"]))
-        predictions.append(decoded_notes(
-            transcription.transcribe(
-                str(Path(record["audioClip"])),
-                instruments=list(instruments) if instruments else None,
-            ),
-        ))
-        if progress_callback and (index == 1 or index % 5 == 0 or index == len(records)):
-            progress_callback(f"Decoded {index}/{len(records)} validation clips")
+    with torch.inference_mode():
+        for index, record in enumerate(records, 1):
+            references.append(list(record["notes"]))
+            predictions.append(decoded_notes(
+                transcription.transcribe(
+                    str(Path(record["audioClip"])),
+                    instruments=list(instruments) if instruments else None,
+                ),
+            ))
+            if progress_callback and (index == 1 or index % 5 == 0 or index == len(records)):
+                progress_callback(f"Decoded {index}/{len(records)} validation clips")
 
     metrics = aggregate_clip_scores(references, predictions)
+    metrics["perSongClipScores"] = aggregate_song_clip_scores(
+        records, references, predictions,
+    )
     stitched_references, reference_boundary_merges = stitch_clip_notes(
         records, references, reference=True,
     )
@@ -231,6 +256,29 @@ def evaluate_checkpoint(
             }
             for index, (record, notes) in enumerate(zip(records, predictions, strict=True))
         ]
+    return metrics
+
+
+def evaluate_checkpoint(
+    checkpoint: Path,
+    records: list[dict[str, Any]],
+    progress_callback: Callable[[str], None] | None = None,
+    instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
+    include_raw_predictions: bool = False,
+) -> dict[str, Any]:
+    """Load one checkpoint, decode every frozen clip, and calculate note scores."""
+
+    import torch
+    from muscriptor import TranscriptionModel
+
+    transcription = TranscriptionModel.load_model(checkpoint, device="cuda")
+    metrics = evaluate_loaded_transcription(
+        transcription,
+        records,
+        progress_callback,
+        instruments,
+        include_raw_predictions,
+    )
     del transcription
     gc.collect()
     torch.cuda.empty_cache()

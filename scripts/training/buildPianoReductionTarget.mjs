@@ -30,31 +30,78 @@ function included(track, melodyPattern) {
   return melodyPattern ? melodyPattern.test(name) : false;
 }
 
+function parseTranspose(value) {
+  if (value == null || value === '') return 0;
+  const semitones = Number(value);
+  if (!Number.isInteger(semitones) || semitones < -24 || semitones > 24) {
+    throw new Error('--transpose must be a whole number from -24 to 24 semitones.');
+  }
+  return semitones;
+}
+
+function parseMinimumDuration(value) {
+  if (value == null || value === '') return 0;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 5) {
+    throw new Error('--minimum-duration must be a number from 0 to 5 seconds.');
+  }
+  return seconds;
+}
+
+function parseTimeBoundary(value, name, fallback) {
+  if (value == null || value === '') return fallback;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new Error(`${name} must be a non-negative number of seconds.`);
+  }
+  return seconds;
+}
+
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   if (!args.input || !args.output) {
-    throw new Error('Usage: node scripts/training/buildPianoReductionTarget.mjs --input arrangement.mid --output piano-target.json [--melody "flute|voice"]');
+    throw new Error('Usage: node scripts/training/buildPianoReductionTarget.mjs --input arrangement.mid --output piano-target.json [--melody "flute|voice"] [--transpose 0] [--minimum-duration 0] [--start-time 0] [--end-time seconds]');
   }
   const source = path.resolve(args.input);
   const destination = path.resolve(args.output);
   const melodyPattern = args.melody ? new RegExp(args.melody, 'i') : null;
+  const transposeSemitones = parseTranspose(args.transpose);
+  const minimumDurationSeconds = parseMinimumDuration(args['minimum-duration']);
+  const excerptStartSeconds = parseTimeBoundary(args['start-time'], '--start-time', 0);
+  const excerptEndSeconds = parseTimeBoundary(args['end-time'], '--end-time', Number.POSITIVE_INFINITY);
+  if (excerptEndSeconds <= excerptStartSeconds) {
+    throw new Error('--end-time must be greater than --start-time.');
+  }
   const midi = new Midi(await fs.readFile(source));
   const selectedTracks = midi.tracks
     .map((track, trackIndex) => ({ track, trackIndex }))
     .filter(({ track }) => included(track, melodyPattern));
-  const notes = selectedTracks.flatMap(({ track, trackIndex }) => track.notes.map((note) => ({
-    midi: note.midi,
-    note: noteName(note.midi),
-    time: Number(note.time.toFixed(6)),
-    duration: Number(Math.max(0.01, note.duration).toFixed(6)),
-    velocity: Number(Math.max(0.05, Math.min(1, note.velocity || 0.75)).toFixed(4)),
-    instrument: 'acoustic_piano',
-    sourceTrack: trackIndex,
-    sourceInstrument: track.instrument?.name || 'unknown',
-    role: /piano/i.test(`${track.instrument?.name || ''} ${track.instrument?.family || ''}`)
-      ? 'piano-accompaniment'
-      : 'melody-revoiced-on-piano',
-  }))).sort((a, b) => a.time - b.time || a.midi - b.midi);
+  const notes = selectedTracks.flatMap(({ track, trackIndex }) => track.notes.map((note) => {
+    if (note.time < excerptStartSeconds || note.time >= excerptEndSeconds) return null;
+    const availableDuration = Number.isFinite(excerptEndSeconds)
+      ? Math.max(0.01, excerptEndSeconds - note.time)
+      : note.duration;
+    const duration = Math.min(Math.max(0.01, note.duration), availableDuration);
+    return {
+      midi: note.midi + transposeSemitones,
+      note: noteName(note.midi + transposeSemitones),
+      time: Number((note.time - excerptStartSeconds).toFixed(6)),
+      duration: Number(duration.toFixed(6)),
+      velocity: Number(Math.max(0.05, Math.min(1, note.velocity || 0.75)).toFixed(4)),
+      instrument: 'acoustic_piano',
+      sourceTrack: trackIndex,
+      sourceInstrument: track.instrument?.name || 'unknown',
+      role: /piano/i.test(`${track.instrument?.name || ''} ${track.instrument?.family || ''}`)
+        ? 'piano-accompaniment'
+        : 'melody-revoiced-on-piano',
+    };
+  })).filter((note) => (
+    note
+    && note.midi >= 0
+    && note.midi <= 127
+    && note.duration + Number.EPSILON >= minimumDurationSeconds
+  ))
+    .sort((a, b) => a.time - b.time || a.midi - b.midi);
   if (!notes.length) throw new Error('No piano or requested melody tracks were found.');
 
   const payload = {
@@ -76,6 +123,13 @@ async function main() {
         notes: track.notes.length,
       })),
       melodyPattern: args.melody || '',
+      transposeSemitones,
+      transposeRule: 'Explicit score-to-performance key normalization. Zero means the authored pitches are unchanged.',
+      minimumDurationSeconds,
+      durationFilterRule: 'Explicit ornament filter. Zero preserves every authored note; a positive value removes only shorter notes.',
+      excerptStartSeconds,
+      excerptEndSeconds: Number.isFinite(excerptEndSeconds) ? excerptEndSeconds : null,
+      excerptRule: 'Only notes whose authored onset falls inside [start, end) are retained; retained notes are shifted to start at zero.',
       warning: 'Research target only. This relabels selected authored melody notes as acoustic piano; it does not create guitar supervision.',
     },
     notes,

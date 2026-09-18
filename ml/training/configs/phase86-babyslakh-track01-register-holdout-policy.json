@@ -1,0 +1,55 @@
+{
+  "schema": "polymath-blind-transfer-commitment-v3",
+  "experimentId": "phase-86-babyslakh-track01-register-holdout-2026-09-18",
+  "frozenAtUtc": "2026-09-18T12:26:57.9155497Z",
+  "statusAtFreeze": "TARGET_NOTE_CONTENTS_NOT_PARSED_OR_INSPECTED",
+  "selectionRule": "Among BabySlakh Track00001-Track00020, exclude every track mentioned in existing repository or D-drive research artifacts. From the remaining tracks, use metadata only to require a rendered mix of at least 90 seconds and at least one authored Piano stem, then select the lowest numerical track ID. Track00001 is selected.",
+  "metadataBoundary": "metadata.yaml was used only to verify mix complexity, duration eligibility, and the presence of an authored piano instrument. all_src.mid note contents remain sealed.",
+  "candidate": {
+    "id": "phase84-pianella-adaptive-melody-separation-v002-frozen",
+    "profile": "C:/Users/admin/polymath_repo/ml/training/configs/phase84-adaptive-melody-separation-v002.json",
+    "profileSha256": "2a1a5b7dce8c265f4c705cc27cbae32a62a8a3ea722a72d13d755d427866c304",
+    "retuningAllowedBeforeFirstScore": false
+  },
+  "artifacts": {
+    "sourceExcerpt": {
+      "path": "D:/Polymath Training/phase-86-babyslakh-track01-register-holdout-2026-09-18/source/track01-mix-000-090.wav",
+      "sha256": "3251d6eb6a37993f5f55c8c6a0c452b3750401065608999f0c8a10c58f928dee"
+    },
+    "sealedTargetMidi": {
+      "path": "C:/Users/admin/Documents/Polymath Training/datasets/babyslakh/babyslakh_16k/Track00001/all_src.mid",
+      "sha256": "d605f26ed872e07114703ceb2d505eeb65bca8c6483f30b77d292a8a5eb029e3"
+    },
+    "arrangerProfile": {
+      "path": "D:/Polymath Training/phase-80-pianella-register-intro-2026-09-18/profiles/pianella-natural-two-hand-v002-native-harmony.json",
+      "sha256": "03cc7e46af93bd69e89c9dbdeaf048e6cf8f0d3ec1f23382a55f2fade272ce81"
+    },
+    "recoverySelector": {
+      "path": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/five-song-selector-all-v001-loso/profile.json",
+      "sha256": "cc7cfcb0687b921d262e65dc7d5713c076f2a45eb12af89c15e8c253895dcfad"
+    },
+    "transcriptionCodeSha256": "7f39477ab3be9964ab6acbde0756ea1ff1fa4a7292295218d9b0d01496d0cbb7",
+    "postprocessCodeSha256": "b2b7b41bab948f9710d10e67f348dad4195a59a9a1c8f7444ceca2400a5e0418",
+    "recoveryCodeSha256": "b2e9a844e2f2a854481691a46d90230c43bb49d33eb15c1bc9c175c7af39f4ff",
+    "candidateCodeSha256": "fe0eb913a1ffb07e395c8d2bd2e84b420c50126764229a93fab68f6d1e45983f"
+  },
+  "baselineRecipe": [
+    "RunPod original checkpoint transcription",
+    "production transcription postprocess",
+    "frozen Phase-80 natural two-hand arranger",
+    "Phase-82 conservative raw-support recovery with the final opened-development selector"
+  ],
+  "candidateRecipe": "Apply frozen Phase-84 v002 to the exact Phase-82 baseline without target access.",
+  "targetConstructionAfterCandidateFreeze": "Select only authored Piano MIDI tracks from all_src.mid, transpose 0, minimum duration 0, and clip to 0-90 seconds.",
+  "predeclaredGates": {
+    "melodySeparationRuleMustActivate": true,
+    "exactF1At100msMustImprove": true,
+    "exactF1At250msMustNotRegress": true,
+    "pitchClassF1At250msMustNotRegress": true,
+    "physicalDurationMustNotRegress": true,
+    "physicalCutoffRateMustNotRegress": true,
+    "rapidRetriggersMustNotIncrease": true,
+    "blindListeningRequiredAfterAutomatedPass": true
+  },
+  "claimBoundary": "Engineering transfer on a synthetic multi-instrument mix with an authored piano stem. It is not evidence of arbitrary commercial-song or Pianella preference accuracy."
+}

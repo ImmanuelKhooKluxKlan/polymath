@@ -1,0 +1,57 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Phase-48 five-song development set after Love Story transfer was opened. Used only to select a stricter family-aware separated-stem swap policy. Future transfer songs must remain absent.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "kiss-me",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/kiss-no-vocals-phase46-v007-raw.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/kiss-me.json",
+      "candidateEndSeconds": 141.562443881
+    },
+    {
+      "id": "back-to-december",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/back-no-vocals-phase46-v007-raw.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/back-to-december.json"
+    },
+    {
+      "id": "cruel-summer",
+      "reference": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/cruel-no-vocals-phase46-v007-raw.json",
+      "alignment": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/cruel-summer.json",
+      "candidateEndSeconds": 183.658688
+    },
+    {
+      "id": "we-are-never-getting-back-together",
+      "reference": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-no-vocals-phase46-v007-raw.json",
+      "alignment": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "candidateEndSeconds": 194.090688
+    },
+    {
+      "id": "love-story",
+      "reference": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/inputs/love-story-aligned-reference.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/transcriptions/love-story-no-vocals-phase46-v007-raw.json",
+      "alignment": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/inputs/love-story-alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/candidates/love-story-phase45-style-baseline.json",
+      "candidate": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/candidates/love-story-phase45-style-baseline.json"
+    }
+  ]
+}

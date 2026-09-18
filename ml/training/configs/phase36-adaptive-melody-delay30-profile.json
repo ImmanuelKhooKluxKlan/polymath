@@ -1,0 +1,57 @@
+{
+  "schema": "polymath-piano-arranger-profile-v1",
+  "id": "pianella-root-reset-adaptive-melody-delay30-v032",
+  "decoder": {
+    "defaultPipeline": true,
+    "defaultFullMix": {
+      "harmonyWindowSeconds": 0.3,
+      "maximumHarmonyPitchClasses": 4,
+      "sourceSupportedCyclicHarmony": {
+        "enabled": true,
+        "onsetPolicy": "compact",
+        "phaseClock": "harmonic-root-event-index",
+        "onsetWindowSeconds": 0.035,
+        "minimumPulseSeconds": 0.125,
+        "maximumPulseSeconds": 0.17,
+        "minimumGuitarShare": 0.7,
+        "minimumGridCoverage": 0.78,
+        "minimumStableTransitionShare": 0.45,
+        "minimumRunGroups": 8,
+        "contextRadiusSeconds": 0.26,
+        "phasePattern": [
+          "compact-upper",
+          "compact-inner",
+          "compact-preserve",
+          "compact-preserve"
+        ],
+        "useBassContextForRoot": true,
+        "bassContextRadiusSeconds": 1.2
+      },
+      "adaptiveMelodyRegisterSeparation": {
+        "enabled": true,
+        "minimumMelodyNotes": 24,
+        "minimumComparedNotes": 12,
+        "nearbyHarmonyRadiusSeconds": 0.12,
+        "collisionClearanceSemitones": 2,
+        "minimumCollisionShare": 0.2,
+        "octaveShiftSemitones": 12,
+        "onsetDelaySeconds": 0.03
+      }
+    },
+    "gestureDynamics": {
+      "enabled": true,
+      "onsetWindowSeconds": 0.035,
+      "minimumVelocity": 0.38,
+      "maximumVelocity": 0.94,
+      "sourceBlend": 0.82,
+      "melodyPerformanceGain": 1.12,
+      "accompanimentGainDuringMelody": 0.88,
+      "neutralPerformanceGain": 1.0
+    }
+  },
+  "training": {
+    "status": "RESEARCH_ONLY",
+    "method": "listener-selected root-reset texture plus inference-safe register gate and cross-song 30 ms melody timing correction",
+    "commercialUseAllowed": false
+  }
+}

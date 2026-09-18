@@ -1,0 +1,86 @@
+{
+  "schema": "polymath-raw-support-recovery-policy-v1",
+  "id": "phase82-native-register-gesture-completion-v001",
+  "purpose": "Conservatively restore high-confidence low accompaniment notes that the approved arrangement omitted.",
+  "commercialUseAllowed": false,
+  "startingCandidate": "phase80-natural-register-output",
+  "selectorEvidence": "whole-song leave-one-song-out selector profile",
+  "policy": {
+    "threshold": 0.9,
+    "coverageRadiusSeconds": 0.15,
+    "clusterSeconds": 0.08,
+    "onsetWindowSeconds": 0.1,
+    "maximumAdditionsPerOnset": 1,
+    "gestureAnchorRadiusSeconds": 0.18,
+    "maximumSourceMidi": 59,
+    "maximumPianoSourceMidi": 52,
+    "registerShiftSemitones": 0,
+    "minimumOutputMidi": 33,
+    "maximumOutputMidi": 71,
+    "styleVelocityBlend": 0.75,
+    "styleDurationBlend": 0.65
+  },
+  "safetyRules": [
+    "Preserve the source octave whenever it is inside the playable range.",
+    "Complete an existing gesture; do not invent a new onset.",
+    "Add at most one note at an onset.",
+    "Reject voice evidence and upper piano stem evidence.",
+    "Do not add an exact-key collision or an already-covered pitch class."
+  ],
+  "developmentEvidence": {
+    "songs": 5,
+    "referenceNotes": 5658,
+    "acceptedAdditions": 20,
+    "weightedDeltaExactF1_100ms": 0.000273,
+    "weightedDeltaExactF1_250ms": 0.000744,
+    "weightedDeltaPitchClassF1_250ms": 0.000737,
+    "weightedDeltaPitchClassRecall_250ms": 0.001061,
+    "weightedDeltaQuality": 0.000685,
+    "rapidRetriggerIncrease": 0,
+    "worstSongDeltaExactF1_250ms": 0.0,
+    "worstSongDeltaQuality": 0.0,
+    "report": "D:/Polymath Training/phase-82-note-accuracy-2026-09-18/piano-register-gate-grid/max52/report.json"
+  },
+  "transferEvidence": [
+    {
+      "id": "22-development-after-unseal",
+      "acceptedAdditions": 18,
+      "deltaExactF1_100ms": 0.002719,
+      "deltaExactF1_250ms": 0.00499,
+      "deltaPitchClassF1_250ms": 0.002769,
+      "deltaQuality": 0.0043,
+      "rapidRetriggerIncrease": 0
+    },
+    {
+      "id": "a-thousand-years-layer-transfer",
+      "acceptedAdditions": 0,
+      "deltaExactF1_250ms": 0.0,
+      "deltaPitchClassF1_250ms": 0.0,
+      "deltaQuality": 0.0,
+      "rapidRetriggerIncrease": 0
+    },
+    {
+      "id": "babyslakh-track20-independent",
+      "acceptedAdditions": 0,
+      "deltaExactF1_250ms": 0.0,
+      "deltaPitchClassF1_250ms": 0.0,
+      "deltaQuality": 0.0,
+      "rapidRetriggerIncrease": 0
+    },
+    {
+      "id": "babyslakh-track18-independent",
+      "acceptedAdditions": 0,
+      "deltaExactF1_250ms": 0.0,
+      "deltaPitchClassF1_250ms": 0.0,
+      "deltaQuality": 0.0,
+      "rapidRetriggerIncrease": 0
+    }
+  ],
+  "rejectedAblations": [
+    "The historical plus-12-semitone recovery shift: it recovered pitch classes in the wrong octave.",
+    "The existing learned register router on recovered notes: it reduced exact-note transfer accuracy.",
+    "A generic candidate-note pruning classifier: leave-one-song-out ranking was near random and did not transfer.",
+    "Upper-piano recovery: it added repeated false chord tones on the piano-rich safety song."
+  ],
+  "decision": "BLIND_LISTENING_REQUIRED_BEFORE_PROMOTION"
+}

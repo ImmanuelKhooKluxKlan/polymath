@@ -1,0 +1,31 @@
+{
+  "schema": "polymath-post-holdout-repair-result-v1",
+  "createdAtUtc": "2026-09-18T12:53:46.6310364Z",
+  "candidate": {
+    "id": "pianella-adaptive-melody-separation-v003",
+    "profileSha256": "da6962c1197e2ef91c05dd7af6ec301b2b935611e9a3303106d973eb08bd4e36",
+    "runtimeSha256": "20907e8b4251413ba27033d0757a5fc35b773e7c1c1d61e16effb3b0e9b0aa85"
+  },
+  "case": {
+    "id": "babyslakh-track00009",
+    "candidatePath": "D:/Polymath Training/phase-88-piano-source-safety-2026-09-18/Track00009/candidates/phase88-v003.json",
+    "candidateSha256": "dbb05f5429fd54d1960a715d5b59476b21e3dae303964db5afbad759be91c1a4",
+    "applicationReportPath": "D:/Polymath Training/phase-88-piano-source-safety-2026-09-18/Track00009/reports/phase88-v003.json",
+    "applicationReportSha256": "9dc09a9e3fca52882062996a1f2c45725442dbb74674f092bd79f8be7bd2dffc",
+    "evaluationPath": "D:/Polymath Training/phase-88-piano-source-safety-2026-09-18/Track00009/evaluation/phase88-v003-vs-phase82.json",
+    "evaluationSha256": "5647b9587ac951c35db9954845d67d9426893cd5298297ae7aeecd11fc1b4b3e",
+    "melodyEvents": 301,
+    "melodyDominantSourceFamily": "piano",
+    "melodyDominantSourceFamilyShare": 1.0,
+    "melodyShiftSemitones": 0,
+    "shiftedNotes": 0,
+    "deduplicatedCollisions": 0,
+    "allEvaluationDeltasVersusPhase82": 0.0
+  },
+  "classification": "POST_HOLDOUT_DEVELOPMENT_ONLY",
+  "interpretation": {
+    "supported": "The new source-family gate fixes the specific revealed v002 false octave shift without altering notes on the existing five-song and four-song transfer regressions.",
+    "notSupported": "This replay is not a fresh holdout, does not prove arbitrary-song accuracy, and does not authorize production deployment."
+  },
+  "nextRequiredGate": "Freeze v003 before seeing a new, unused full-mix song whose target-blind candidate activates the separation rule; then pass automated target scoring and sealed blind listening."
+}

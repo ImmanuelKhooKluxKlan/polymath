@@ -1,0 +1,17 @@
+{
+  "schema": "polymath-target-blind-eligibility-screen-v1",
+  "id": "phase87-babyslakh-v002-activation-screen",
+  "lockedAtUtc": "2026-09-18T12:31:20.3229747Z",
+  "candidateId": "phase84-pianella-adaptive-melody-separation-v002-frozen",
+  "candidateProfileSha256": "2a1a5b7dce8c265f4c705cc27cbae32a62a8a3ea722a72d13d755d427866c304",
+  "selectionRule": "Evaluate unused BabySlakh tracks Track00002 through Track00017 in ascending numerical order. Using metadata and source audio only, require a rendered mix of at least 90 seconds and an authored Piano stem. Generate the frozen baseline and v002 candidate without parsing all_src.mid. Stop at the first track where v002 reports at least 200 melody events, at least 200 harmony events, melody median MIDI in [60,72), and melody-minus-harmony median gap in [0,7]. Only that selected track's target may then be opened once.",
+  "disallowedSelectionSignals": [
+    "target MIDI notes",
+    "target-derived alignment",
+    "reference score metrics",
+    "human listening to the authored target"
+  ],
+  "status": "COMPLETED_TRACK00009_SELECTED_TARGET_REVEALED_V002_REJECTED",
+  "selectedTrack": "Track00009",
+  "result": "ml/training/evidence/phase87-babyslakh-track09-register-holdout/RESULT.json"
+}

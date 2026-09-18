@@ -1,0 +1,50 @@
+{
+  "schema": "polymath-piano-arranger-final-holdout-result-v1",
+  "createdAtUtc": "2026-09-18T11:58:30.2059007Z",
+  "candidate": {
+    "id": "phase84-pianella-adaptive-melody-separation-v002-frozen",
+    "fileSha256": "e4817ce67049cabde279ee3f5c86897e37acf9282f1228639e42def03eccd028",
+    "profileHashMatchedFreezeAtScoring": true,
+    "runtimeHashesMatchedFreezeAtScoring": true,
+    "retunedAfterFirstHoldoutScore": false
+  },
+  "primaryResult": {
+    "id": "kiss-me-trusted-000-150",
+    "evaluation": "D:/Polymath Training/phase-84-sequence-register-2026-09-18/adaptive-melody-separation-v002/evaluations/kiss-me.json",
+    "evaluationSha256": "537858d6408bfe7649ef0a9ff8e26cb43774cddd77afa52d6f5ea0f8ad6be7d7",
+    "referenceNotes": 1071,
+    "decision": "RESEARCH_ONLY",
+    "baseline": {
+      "exactF1At100ms": 0.311249,
+      "exactF1At250ms": 0.429524,
+      "physicalDurationMaeSeconds": 0.129459,
+      "physicalSevereCutoffRate": 0.08634,
+      "rapidRetriggersUnder100ms": 2
+    },
+    "candidate": {
+      "exactF1At100ms": 0.337039,
+      "exactF1At250ms": 0.464206,
+      "physicalDurationMaeSeconds": 0.129459,
+      "physicalSevereCutoffRate": 0.085052,
+      "rapidRetriggersUnder100ms": 2
+    },
+    "candidateMinusBaseline": {
+      "exactF1At100ms": 0.02579,
+      "exactF1At250ms": 0.034682,
+      "physicalDurationMaeSeconds": 0.0,
+      "physicalSevereCutoffRate": -0.001288,
+      "rapidRetriggersUnder100ms": 0
+    },
+    "allAutomatedPromotionGatesPassed": false,
+    "promotionGateReason": "Kiss Me is a development song, so this vote may select a research champion but cannot authorize production promotion."
+  },
+  "transferEvidence": {
+    "aThousandYearsExactF1At250msDelta": 0.074786,
+    "aThousandYearsQualityDelta": 0.016087,
+    "rapidRetriggerIncrease": 0
+  },
+  "interpretation": {
+    "claimSupported": "The frozen register candidate improved strict note matching on Kiss Me and separate A Thousand Years transfer evidence without increasing rapid retriggers.",
+    "claimNotSupported": "This evidence does not establish arbitrary-song accuracy, checkpoint fine-tuning, commercial rights, or production readiness."
+  }
+}

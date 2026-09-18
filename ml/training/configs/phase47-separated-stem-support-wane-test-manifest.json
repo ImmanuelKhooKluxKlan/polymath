@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Phase-47 one-shot WANE transfer test. This file is evaluation-only and must never be supplied to a fitter or policy search.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "we-are-never-getting-back-together",
+      "reference": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-no-vocals-phase46-v007-raw.json",
+      "vocalSource": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-vocals-phase46-v007-raw.json",
+      "alignment": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "candidate": "D:/Polymath Training/phase-45-hard-pianella-four-2026-09-16/combined-register-pitch-v005-threshold-search/best-candidates/we-are-never-getting-back-together.json",
+      "candidateEndSeconds": 194.090688
+    }
+  ]
+}

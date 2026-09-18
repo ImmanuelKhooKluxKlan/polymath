@@ -27,6 +27,12 @@ async function main() {
   if (!args.dataset || !args.version) {
     throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--result result.json]');
   }
+  if (!/^[a-z0-9][a-z0-9-]{2,50}$/.test(args.dataset)) {
+    throw new Error('--dataset must be 3-51 lowercase letters, digits, or hyphens, starting with a letter or digit');
+  }
+  if (!/^phase\d+-v\d{3,}$/.test(args.version)) {
+    throw new Error('--version must look like phase1-v001');
+  }
   await loadEnvironment(path.resolve('server/.env'));
   const endpoint = String(process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || '').trim();
   const apiKey = String(process.env.RUNPOD_API_KEY || '').trim();
@@ -77,7 +83,16 @@ async function main() {
       return;
     }
     if (['CANCELLED', 'FAILED', 'TIMED_OUT'].includes(status.status)) {
-      throw new Error(status.output?.error || JSON.stringify(status.output) || status.status);
+      let failure = status.output?.error || status.error || status.status;
+      if (typeof failure === 'string') {
+        try {
+          const parsed = JSON.parse(failure);
+          failure = parsed.error_message || parsed.error_type || failure;
+        } catch {
+          // RunPod also returns ordinary non-JSON failure strings.
+        }
+      }
+      throw new Error(typeof failure === 'string' ? failure : JSON.stringify(failure));
     }
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }

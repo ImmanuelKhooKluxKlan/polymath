@@ -1,0 +1,45 @@
+{
+    "schema":  "polymath-adaptive-pianist-register-zones-v1",
+    "id":  "polymath-production-adaptive-register-v003",
+    "status":  "owner-approved-canary",
+    "commercialUseAllowed":  false,
+    "outputRange":  {
+                        "minimumMidi":  33,
+                        "maximumMidi":  108
+                    },
+    "melody":  {
+                   "shiftSemitones":  12,
+                   "fluteDominanceThreshold":  1.1,
+                   "shiftHarmonyWithFluteMelody":  false,
+                   "stableEventMinimum":  100000,
+                   "lowTessituraMinimumMidi":  66,
+                   "lowTessituraMaximumExclusiveMidi":  72,
+                   "separationMelodyEventMinimum":  200,
+                   "separationHarmonyEventMinimum":  200,
+                   "separationMelodyMinimumMidi":  60,
+                   "separationMelodyMaximumExclusiveMidi":  72,
+                   "minimumCurrentSeparationSemitones":  0,
+                   "maximumCurrentSeparationSemitones":  7,
+                   "blockedDominantSourceFamilies":  [
+                                                         "piano"
+                                                     ],
+                   "blockedDominantSourceFamilyMinimumShare":  0.8
+               },
+    "bass":  {
+                 "shiftSemitones":  12,
+                 "stableEventMinimum":  100000,
+                 "melodyAbsentMinimumMedianMidi":  128,
+                 "highMelodyMinimumMedianMidi":  128,
+                 "highMelodyLowBassMaximumExclusiveMidi":  0,
+                 "veryLowBassMaximumMidi":  -1
+             },
+    "inferenceBoundary":  {
+                              "usesSongIdentity":  false,
+                              "usesAbsoluteSongTime":  false,
+                              "usesReferenceAtInference":  false,
+                              "usesCandidateRoleCountsAndMedians":  true,
+                              "usesSourceInstrumentFamily":  true,
+                              "developmentEvidenceOnly":  true
+                          },
+    "evidenceNote":  "Production canary selected after full-song listening. Piano-dominant melody evidence remains blocked; no blanket song-wide shift is allowed."
+}

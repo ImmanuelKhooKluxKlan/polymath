@@ -1,0 +1,78 @@
+{
+  "schema": "polymath-swap-benefit-register-branch-frozen-policy-v1",
+  "id": "phase48-register-branch-v002",
+  "frozenAt": "2026-09-17T10:56:44.2092288Z",
+  "researchOnly": true,
+  "commercialUseAllowed": false,
+  "productionEnabled": false,
+  "evidenceBoundary": "All component choices and policy constants were frozen after five-song whole-song-out-of-fold development evaluation and before applying this architecture to the phase-49 transfer files.",
+  "developmentManifest": {
+    "path": "C:\\Users\\admin\\polymath_repo\\ml\\training\\configs\\phase48-separated-stem-support-five-development-manifest.json",
+    "sha256": "9f127a6f4a25eaa2bc5a1c702c207a5071990b585812f7edcd223ffba7f67eb3"
+  },
+  "selectorProfile": {
+    "path": "D:\\Polymath Training\\phase-48-love-story-separated-transfer-2026-09-17\\five-song-selector-all-v001-loso\\profile.json",
+    "sha256": "cc7cfcb0687b921d262e65dc7d5713c076f2a45eb12af89c15e8c253895dcfad"
+  },
+  "nativeBenefitProfile": {
+    "path": "D:\\Polymath Training\\phase-48-love-story-separated-transfer-2026-09-17\\swap-benefit-ranker-v001-loso\\profile.json",
+    "sha256": "1a6233f4c9a327485bfddf0e7bc32103979974cbfd0e2907e66fbf1b6e8882a5"
+  },
+  "contextModel": {
+    "path": "D:\\Polymath Training\\phase-48-love-story-separated-transfer-2026-09-17\\swap-benefit-context-final-v001\\context-hist-gb-n31-l20.joblib",
+    "sha256": "8d36a933fae674d5b09beea01862a05dc0bf3535246629cfeba2597628ab408d",
+    "metadataPath": "D:\\Polymath Training\\phase-48-love-story-separated-transfer-2026-09-17\\swap-benefit-context-final-v001\\metadata.json",
+    "metadataSha256": "813be5a37032dafc84a5c39ba74519eb44da7e142a5a540fc4d88c0b84abbb6e",
+    "runtimeSafeForPublicWorker": false
+  },
+  "policy": {
+    "sourceRadiusSeconds": 0.18,
+    "sourceMidiRange": [0, 59],
+    "outputMidiRange": [33, 71],
+    "maximumReplacementsPerGesture": 1,
+    "commonThreshold": 0.8,
+    "nativeRegister": {
+      "registerShift": 0,
+      "model": "nativeBenefitProfile",
+      "threshold": 0.8,
+      "selectorMinimum": 0.4,
+      "probabilityGainMinimum": 0.45,
+      "commonMarginScale": 1.0
+    },
+    "octaveLiftRegister": {
+      "registerShift": 12,
+      "mlpWeight": 0.35,
+      "contextWeight": 0.65,
+      "threshold": 0.35,
+      "selectorMinimum": 0.4,
+      "probabilityGainMinimum": 0.3,
+      "commonMarginScale": 0.5
+    }
+  },
+  "developmentReport": {
+    "path": "D:\\Polymath Training\\phase-48-love-story-separated-transfer-2026-09-17\\swap-benefit-register-branch-scale-05-policy-search-v001\\report.json",
+    "sha256": "376a99325df0f7b61e9c4541d15f91daed417055ca27ecb48e11eb439e35fabd",
+    "weightedDeltas": {
+      "quality": 0.00122,
+      "exactF1_100ms": 0.000548,
+      "exactF1_250ms": 0.000826,
+      "pitchClassF1_250ms": 0.001893,
+      "pitchClassRecall_250ms": 0.001967
+    },
+    "replacements": 73,
+    "rapidRetriggerIncrease": 0,
+    "detailedWeightedDeltas": {
+      "physicalDurationMedianAbsoluteErrorSeconds": 0.0000194,
+      "physicalSevereCutoffRate": -0.0001057,
+      "physicalOnsetAndOffset250msF1": 0.0009609,
+      "scoreDurationMedianAbsoluteErrorSeconds": -0.0006156,
+      "scoreSevereCutoffRate": 0.0001205,
+      "scoreOnsetAndOffset250msF1": 0.0017634
+    }
+  },
+  "knownLimitations": [
+    "The context model is a research joblib artifact and must not be loaded by the public worker.",
+    "The phase-49 song is not a pristine project-wide holdout because it was used by an earlier architecture.",
+    "Commercial licensing and blinded listening approval remain unresolved."
+  ]
+}

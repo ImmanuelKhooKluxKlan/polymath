@@ -18,8 +18,23 @@ from statistics import median
 from typing import Any
 
 
+GATE_EPSILON = 1e-12
+
+
+def at_least(value: float, threshold: float) -> bool:
+    """Compare frozen metrics without rejecting an exact decimal boundary."""
+
+    return float(value) + GATE_EPSILON >= float(threshold)
+
+
+def at_most(value: float, threshold: float) -> bool:
+    """Compare frozen metrics without rejecting an exact decimal boundary."""
+
+    return float(value) <= float(threshold) + GATE_EPSILON
+
+
 def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def optional_duration(item: dict[str, Any], field: str, fallback: float) -> float:
@@ -30,11 +45,30 @@ def optional_duration(item: dict[str, Any], field: str, fallback: float) -> floa
     return max(0.01, value) if math.isfinite(value) else fallback
 
 
-def normalize_notes(payload: dict[str, Any]) -> list[dict[str, float | int]]:
+def normalized_velocity(item: dict[str, Any]) -> float:
+    try:
+        value = float(item.get("velocity", 0.72))
+    except (TypeError, ValueError):
+        value = 0.72
+    if value > 1.0:
+        value /= 127.0
+    if not math.isfinite(value):
+        value = 0.72
+    return max(0.01, min(1.0, value))
+
+
+def normalize_notes(
+    payload: dict[str, Any],
+    *,
+    transpose_semitones: int = 0,
+) -> list[dict[str, float | int]]:
     notes: list[dict[str, float | int]] = []
     for item in payload.get("notes", []):
         try:
-            midi = int(round(float(item.get("midi", item.get("pitch")))))
+            midi = (
+                int(round(float(item.get("midi", item.get("pitch")))))
+                + int(transpose_semitones)
+            )
             time = float(item.get("time", item.get("startTime", item.get("start"))))
             duration = max(0.01, float(item.get("duration", 0.2)))
         except (TypeError, ValueError):
@@ -49,9 +83,33 @@ def normalize_notes(payload: dict[str, Any]) -> list[dict[str, float | int]]:
                     "duration": duration,
                     "visualDuration": visual_duration,
                     "audioDuration": audio_duration,
+                    "velocity": normalized_velocity(item),
                 }
             )
     return sorted(notes, key=lambda note: (float(note["time"]), int(note["midi"])))
+
+
+def reference_transpose_semitones(pair: dict[str, Any]) -> int:
+    """Read a predeclared octave-only reference register convention.
+
+    Piano-route outputs use a frozen whole-score octave lift. Some trusted
+    targets instead retain the singer's written register. Requiring an octave
+    multiple prevents this metadata from becoming a candidate-specific pitch
+    correction while making exact-register scoring comparable.
+    """
+    raw_value = pair.get("referenceTransposeSemitones", 0)
+    try:
+        numeric = float(raw_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("referenceTransposeSemitones must be an integer") from error
+    if not math.isfinite(numeric) or not numeric.is_integer():
+        raise ValueError("referenceTransposeSemitones must be an integer")
+    semitones = int(numeric)
+    if abs(semitones) > 48 or semitones % 12 != 0:
+        raise ValueError(
+            "referenceTransposeSemitones must be an octave multiple between -48 and 48"
+        )
+    return semitones
 
 
 def monotonic_anchors(report: dict[str, Any]) -> list[tuple[float, float]]:
@@ -97,6 +155,7 @@ def map_reference_notes(notes: list[dict[str, float | int]], anchors: list[tuple
         end = map_time(float(note["time"]) + float(note["duration"]), anchors)
         mapped.append(
             {
+                **note,
                 "midi": int(note["midi"]),
                 "time": max(0.0, start),
                 "duration": max(0.01, end - start),
@@ -105,6 +164,47 @@ def map_reference_notes(notes: list[dict[str, float | int]], anchors: list[tuple
             }
         )
     return sorted(mapped, key=lambda note: (float(note["time"]), int(note["midi"])))
+
+
+def prepare_reference_notes(
+    pair: dict[str, Any],
+    target_payload: dict[str, Any],
+    alignment_report: dict[str, Any],
+) -> list[dict[str, float | int]]:
+    """Freeze one reference in the candidate/source clock exactly once.
+
+    Some supervised labels were already exported in source time.  Mapping
+    those labels through the alignment a second time silently corrupts every
+    onset and can make a worse decoder appear better.  Partial references are
+    clipped in their native clock before mapping; candidate/source cutoffs are
+    applied afterwards.
+    """
+
+    normalized = normalize_notes(
+        target_payload,
+        transpose_semitones=reference_transpose_semitones(pair),
+    )
+    reference_end = pair.get("referenceEndSeconds")
+    if reference_end is not None:
+        reference_end = float(reference_end)
+        if not math.isfinite(reference_end) or reference_end <= 0:
+            raise ValueError("referenceEndSeconds must be a positive finite number")
+        normalized = [
+            note for note in normalized if float(note["time"]) < reference_end
+        ]
+    mapped = (
+        normalized
+        if bool(pair.get("referenceAlreadyAligned"))
+        else map_reference_notes(normalized, monotonic_anchors(alignment_report))
+    )
+    mapped = notes_inside_ranges(mapped, trusted_source_ranges(alignment_report))
+    candidate_end = pair.get("candidateEndSeconds")
+    if candidate_end is not None:
+        candidate_end = float(candidate_end)
+        if not math.isfinite(candidate_end) or candidate_end <= 0:
+            raise ValueError("candidateEndSeconds must be a positive finite number")
+        mapped = [note for note in mapped if float(note["time"]) < candidate_end]
+    return mapped
 
 
 def trusted_source_ranges(report: dict[str, Any]) -> list[tuple[float, float]] | None:
@@ -271,7 +371,15 @@ def evaluate(reference: list[dict[str, float | int]], observed: list[dict[str, f
         metrics[f"exactPitchOnset{milliseconds}ms"] = f1_metrics(len(reference), len(observed), len(exact))
         metrics[f"pitchClassOnset{milliseconds}ms"] = f1_metrics(len(reference), len(observed), len(octave))
 
-    duration_matches = greedy_matches(reference, observed, 0.25)
+    # Hold quality must not disappear merely because a note was voiced in the
+    # wrong octave. Exact-register accuracy is already measured above. Using
+    # pitch-class + onset matches here keeps the duration population stable
+    # when a candidate fixes register placement and prevents a wrong-octave
+    # baseline from escaping cutoff penalties entirely.
+    duration_matches = greedy_matches(
+        reference, observed, 0.25, octave_equivalent=True
+    )
+    metrics["durationMatchingPolicy"] = "pitch-class-onset-250ms"
     for name, field in (
         ("duration", "duration"),
         ("visualDuration", "visualDuration"),
@@ -280,6 +388,31 @@ def evaluate(reference: list[dict[str, float | int]], observed: list[dict[str, f
         values, offset_matches = duration_metrics(duration_matches, field)
         values["onsetAndOffset250ms"] = f1_metrics(len(reference), len(observed), offset_matches)
         metrics[name] = values
+    velocity_errors = [
+        abs(float(target.get("velocity", 0.72)) - float(candidate.get("velocity", 0.72)))
+        for target, candidate in duration_matches
+    ]
+    velocity_bias = [
+        float(candidate.get("velocity", 0.72)) - float(target.get("velocity", 0.72))
+        for target, candidate in duration_matches
+    ]
+    metrics["velocity"] = {
+        "matchingPolicy": "pitch-class-onset-250ms",
+        "matchedNotes": len(duration_matches),
+        "meanAbsoluteError": (
+            round(sum(velocity_errors) / len(velocity_errors), 6)
+            if velocity_errors
+            else None
+        ),
+        "medianAbsoluteError": (
+            round(median(velocity_errors), 6) if velocity_errors else None
+        ),
+        "meanBias": (
+            round(sum(velocity_bias) / len(velocity_bias), 6)
+            if velocity_bias
+            else None
+        ),
+    }
     return metrics
 
 
@@ -309,12 +442,23 @@ def main() -> None:
     for pair in manifest.get("pairs", []):
         pair_id = str(pair["id"])
         weight = float(pair.get("weight", 1.0))
-        target = normalize_notes(load_json(Path(pair["target"])))
+        reference_transpose = reference_transpose_semitones(pair)
         alignment_report = load_json(Path(pair["alignmentReport"]))
         anchors = monotonic_anchors(alignment_report)
         ranges = trusted_source_ranges(alignment_report)
-        all_mapped_target = map_reference_notes(target, anchors)
-        mapped_target = notes_inside_ranges(all_mapped_target, ranges)
+        target_payload = load_json(Path(pair["target"]))
+        normalized_target = normalize_notes(
+            target_payload,
+            transpose_semitones=reference_transpose,
+        )
+        all_mapped_target = (
+            normalized_target
+            if bool(pair.get("referenceAlreadyAligned"))
+            else map_reference_notes(normalized_target, anchors)
+        )
+        mapped_target = prepare_reference_notes(
+            pair, target_payload, alignment_report
+        )
         baseline = notes_inside_ranges(
             normalize_notes(load_json(baseline_dir / f"{pair_id}-arranged.json")),
             ranges,
@@ -341,6 +485,7 @@ def main() -> None:
         )
         results[pair_id] = {
             "weight": weight,
+            "referenceTransposeSemitones": reference_transpose,
             "fixedAnchorCount": len(anchors),
             "approvedSourceRanges": None if ranges is None else len(ranges),
             "alignmentCoverage": None if coverage is None else round(coverage, 6),
@@ -351,12 +496,15 @@ def main() -> None:
         }
         for name, metrics in (("baseline", baseline_metrics), ("candidate", candidate_metrics)):
             for tolerance in (50, 100, 250):
-                aggregate_values[name][f"exactF1_{tolerance}ms"].append(
-                    (float(metrics[f"exactPitchOnset{tolerance}ms"]["f1"]), weight)
-                )
-                aggregate_values[name][f"pitchClassF1_{tolerance}ms"].append(
-                    (float(metrics[f"pitchClassOnset{tolerance}ms"]["f1"]), weight)
-                )
+                exact = metrics[f"exactPitchOnset{tolerance}ms"]
+                pitch_class = metrics[f"pitchClassOnset{tolerance}ms"]
+                for statistic in ("precision", "recall", "f1"):
+                    aggregate_values[name][
+                        f"exact{statistic.title()}_{tolerance}ms"
+                    ].append((float(exact[statistic]), weight))
+                    aggregate_values[name][
+                        f"pitchClass{statistic.title()}_{tolerance}ms"
+                    ].append((float(pitch_class[statistic]), weight))
             aggregate_values[name]["durationMedianAbsoluteErrorSeconds"].append(
                 (float(metrics["duration"]["medianAbsoluteErrorSeconds"] or 0.0), weight)
             )
@@ -397,27 +545,55 @@ def main() -> None:
     baseline = aggregate["baseline"]
     candidate = aggregate["candidate"]
     gates = {
-        "exactF1_100ms_improves": candidate["exactF1_100ms"] >= baseline["exactF1_100ms"] + 0.005,
-        "exactF1_250ms_does_not_regress": candidate["exactF1_250ms"] >= baseline["exactF1_250ms"] - 0.002,
-        "pitchClassF1_250ms_does_not_regress": candidate["pitchClassF1_250ms"] >= baseline["pitchClassF1_250ms"] - 0.002,
+        "exactF1_100ms_improves": at_least(
+            candidate["exactF1_100ms"], baseline["exactF1_100ms"] + 0.005
+        ),
+        # F1 can rise by deleting output notes while finding no additional
+        # music.  A promoted arranger must also retain more strict-onset target
+        # notes, which protects the sung/lead line from silent pruning.
+        "exactRecall_100ms_improves": at_least(
+            candidate["exactRecall_100ms"], baseline["exactRecall_100ms"] + 0.003
+        ),
+        "exactF1_250ms_does_not_regress": at_least(
+            candidate["exactF1_250ms"], baseline["exactF1_250ms"] - 0.002
+        ),
+        "pitchClassF1_250ms_does_not_regress": at_least(
+            candidate["pitchClassF1_250ms"], baseline["pitchClassF1_250ms"] - 0.002
+        ),
+        "pitchClassRecall_250ms_does_not_regress": at_least(
+            candidate["pitchClassRecall_250ms"],
+            baseline["pitchClassRecall_250ms"] - 0.002,
+        ),
         "no_trusted_song_regresses_over_1_point": not trusted_regressions,
-        "duration_error_not_over_10_percent_worse": candidate["durationMedianAbsoluteErrorSeconds"] <= baseline["durationMedianAbsoluteErrorSeconds"] * 1.10,
+        "duration_error_not_over_10_percent_worse": at_most(
+            candidate["durationMedianAbsoluteErrorSeconds"],
+            baseline["durationMedianAbsoluteErrorSeconds"] * 1.10,
+        ),
         # Rates are comparable when recall changes; raw counts are not. A
         # candidate that finds four times as many correct notes should not fail
         # merely because its larger matched set contains more absolute tails.
         "visual_cutoff_rate_not_worse": (
-            candidate["visualSevereCutoffRate"]
-            <= baseline["visualSevereCutoffRate"] * 1.05 + 0.005
+            at_most(
+                candidate["visualSevereCutoffRate"],
+                baseline["visualSevereCutoffRate"] * 1.05 + 0.005,
+            )
         ),
         "physical_duration_error_not_over_10_percent_worse": (
-            candidate["physicalDurationMedianAbsoluteErrorSeconds"]
-            <= baseline["physicalDurationMedianAbsoluteErrorSeconds"] * 1.10
+            at_most(
+                candidate["physicalDurationMedianAbsoluteErrorSeconds"],
+                baseline["physicalDurationMedianAbsoluteErrorSeconds"] * 1.10,
+            )
         ),
         "physical_cutoff_rate_not_worse": (
-            candidate["physicalSevereCutoffRate"]
-            <= baseline["physicalSevereCutoffRate"] * 1.05 + 0.005
+            at_most(
+                candidate["physicalSevereCutoffRate"],
+                baseline["physicalSevereCutoffRate"] * 1.05 + 0.005,
+            )
         ),
-        "rapid_retriggers_not_over_5_percent_worse": candidate["rapidRetriggersUnder100ms"] <= baseline["rapidRetriggersUnder100ms"] * 1.05 + 1.0,
+        "rapid_retriggers_not_over_5_percent_worse": at_most(
+            candidate["rapidRetriggersUnder100ms"],
+            baseline["rapidRetriggersUnder100ms"] * 1.05 + 1.0,
+        ),
         "alignment_coverage_is_sufficient": all(
             song["alignmentCoverage"] is None or float(song["alignmentCoverage"]) >= 0.60
             for song in results.values()

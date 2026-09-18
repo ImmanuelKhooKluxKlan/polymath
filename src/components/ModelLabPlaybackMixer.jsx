@@ -72,6 +72,7 @@ function normalizeNotes(raw) {
         time: Math.max(0, Number(note.time) || 0),
         duration: Math.max(0.04, Number(note.duration) || 0.4),
         velocity: Math.max(0.08, Math.min(1, Number(note.velocity) || 0.76)),
+        performanceGain: Math.max(0.25, Math.min(1.5, Number(note.performanceGain) || 1)),
       };
     })
     .filter((note) => Number.isFinite(note.midi) && note.midi >= 0 && note.midi <= 127)
@@ -203,7 +204,12 @@ export default function ModelLabPlaybackMixer({ raw, instrumentStats = [], initi
         note.velocity,
         note.duration,
         pianoAudio.getCurrentTime() + delay,
-        { source: 'autoplay', retriggerSameNote: true },
+        {
+          source: 'autoplay',
+          retriggerSameNote: true,
+          retriggerReleaseSeconds: note.retriggerReleaseSeconds,
+          performanceGain: note.performanceGain,
+        },
       );
       return true;
     }

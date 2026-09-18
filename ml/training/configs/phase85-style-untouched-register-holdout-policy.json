@@ -1,0 +1,33 @@
+{
+  "schema": "polymath-piano-arranger-holdout-policy-v1",
+  "id": "phase85-style-register-transfer-v001",
+  "lockedAtUtc": "2026-09-18T12:21:41.6524885Z",
+  "gitHeadAtLock": "e17deec4fd6391b9cf06183ed1356f8281681032",
+  "candidate": {
+    "id": "phase84-pianella-adaptive-melody-separation-v002-frozen",
+    "profile": "ml/training/configs/phase84-adaptive-melody-separation-v002.json",
+    "retuningAllowedBeforeFirstScore": false
+  },
+  "selectionRule": "From local song folders containing one original full-mix video, one generated JSON, and one separately labelled ideal JSON, exclude every song named in Phase 35-84 manifests or prior holdout directories; choose the first remaining folder in lexical order. Style is the first eligible folder found.",
+  "holdout": {
+    "id": "style",
+    "sourceVideo": "C:/Users/admin/Documents/Polymath Training/round-1/raw-import-2026-08-28/style/Taylor Swift - Style - YouTube - Google Chrome 2026-08-22 18-50-42.mp4",
+    "sourceVideoSha256": "b55344223a6f65f560e02e86d4ed3e1267d2aff807adce3ec3a8034ce148ed5f",
+    "frozenGeneratedInput": "C:/Users/admin/Documents/Polymath Training/round-1/raw-import-2026-08-28/style/current style.json",
+    "frozenGeneratedInputSha256": "6c53e91ba2810f238b436995bdf2eededa49a0a0695a7efa9fb5137e4a0c1fa0",
+    "sealedReference": "C:/Users/admin/Documents/Polymath Training/round-1/raw-import-2026-08-28/style/ideal data style.json",
+    "sealedReferenceSha256": "781ff144d6b17f4f4eafefee384a728916b91862402888988bece0b374384f50",
+    "referenceContentOpenedAtLock": false
+  },
+  "predeclaredGates": {
+    "candidateMustActivate": true,
+    "exactF1At100msMustImprove": true,
+    "exactF1At250msMustNotRegress": true,
+    "pitchClassF1At250msMustNotRegress": true,
+    "physicalDurationMustNotRegress": true,
+    "severeCutoffRateMustNotRegress": true,
+    "rapidRetriggersMustNotIncrease": true,
+    "blindListeningRequiredAfterAutomatedPass": true
+  },
+  "status": "LOCKED_BEFORE_REFERENCE_CONTENT_INSPECTION"
+}

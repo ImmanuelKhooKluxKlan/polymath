@@ -1,0 +1,56 @@
+{
+  "schema": "polymath-target-blind-register-holdout-result-v1",
+  "createdAtUtc": "2026-09-18T12:53:46.6310364Z",
+  "candidate": {
+    "id": "phase84-pianella-adaptive-melody-separation-v002-frozen",
+    "profileSha256": "2a1a5b7dce8c265f4c705cc27cbae32a62a8a3ea722a72d13d755d427866c304"
+  },
+  "selection": {
+    "policy": "ml/training/configs/phase87-target-blind-register-activation-screen-policy.json",
+    "selectedTrack": "Track00009",
+    "selectedInAscendingOrder": true,
+    "targetWasNotParsedUntilAfterCandidateFreeze": true,
+    "freezeReceipt": "ml/training/evidence/phase87-babyslakh-track09-register-holdout/PRE-TARGET-CANDIDATE-FREEZE.json"
+  },
+  "activationEvidenceBeforeTargetReveal": {
+    "melodyEvents": 301,
+    "harmonyEvents": 260,
+    "melodyMedianMidi": 66.0,
+    "harmonyMedianMidi": 62.0,
+    "melodyHarmonyMedianGapSemitones": 4.0,
+    "melodyDominantSourceFamily": "piano",
+    "melodyDominantSourceFamilyShare": 1.0,
+    "shiftedMelodyEvents": 301,
+    "deduplicatedCollisions": 2
+  },
+  "evaluation": {
+    "path": "D:/Polymath Training/phase-87-babyslakh-activation-screen-2026-09-18/Track00009/evaluation/phase84-v002-vs-phase82.json",
+    "referenceNotes": 438,
+    "baseline": {
+      "quality": 0.226268,
+      "exactF1_100ms": 0.351901,
+      "exactF1_250ms": 0.353669,
+      "pitchClassF1_250ms": 0.519894,
+      "rapidRetriggersUnder100ms": 0
+    },
+    "candidate": {
+      "quality": 0.166484,
+      "exactF1_100ms": 0.132861,
+      "exactF1_250ms": 0.136404,
+      "pitchClassF1_250ms": 0.520815,
+      "rapidRetriggersUnder100ms": 0
+    },
+    "candidateMinusBaseline": {
+      "quality": -0.059784,
+      "exactF1_100ms": -0.21904,
+      "exactF1_250ms": -0.217265,
+      "pitchClassF1_250ms": 0.000921,
+      "rapidRetriggersUnder100ms": 0
+    }
+  },
+  "decision": "REJECT_V002",
+  "blindListeningPackCreated": false,
+  "reason": "Automated exact-note gates failed catastrophically after an octave/register error, so asking for a listening preference would not rescue or promote the candidate.",
+  "rootCause": "All melody-role events were piano-derived. V002 used only role counts and register medians, so it treated an existing piano line like a buried vocal lead and shifted it by one octave.",
+  "replacementRuleStatus": "A source-family safety gate may be developed from this revealed failure, but that repair is post-holdout development and must face another untouched activation holdout."
+}

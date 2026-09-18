@@ -1,0 +1,67 @@
+{
+  "schema": "polymath-frozen-research-policy-v1",
+  "id": "phase48-swap-benefit-v001-frozen-before-transfer",
+  "frozenAt": "2026-09-17T17:31:36.9247697+08:00",
+  "purpose": "Freeze the complete post-arranger swap policy before opening the next transfer song.",
+  "commercialUseAllowed": false,
+  "developmentSongs": [
+    "kiss-me",
+    "back-to-december",
+    "cruel-summer",
+    "we-are-never-getting-back-together",
+    "love-story"
+  ],
+  "transferSong": "a-thousand-years",
+  "transferEvidenceBoundary": "A Thousand Years has historical project exposure but was absent from phase-47/48 separated-stem selector fitting, benefit-ranker fitting, and policy selection. It is an unseen-to-this-layer transfer test, not a pristine project-wide holdout.",
+  "selectorProfile": {
+    "path": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/five-song-selector-all-v001-loso/profile.json",
+    "sha256": "cc7cfcb0687b921d262e65dc7d5713c076f2a45eb12af89c15e8c253895dcfad"
+  },
+  "benefitProfile": {
+    "path": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/swap-benefit-ranker-v001-loso/profile.json",
+    "sha256": "1a6233f4c9a327485bfddf0e7bc32103979974cbfd0e2907e66fbf1b6e8882a5"
+  },
+  "developmentPolicyReport": {
+    "path": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/swap-benefit-policy-search-v001/report.json",
+    "sha256": "8256ff7ef5f38e7732450f47c902eae0e01fd98bb5f6f37f2566a527403fb297"
+  },
+  "policy": {
+    "benefitThreshold": 0.8,
+    "minimumSelectorProbability": 0.4,
+    "minimumProbabilityGain": 0.45,
+    "sourceRadiusSeconds": 0.18,
+    "maximumReplacementsPerGesture": 1,
+    "registerShifts": [
+      0
+    ],
+    "sourceMidiRange": [
+      0,
+      59
+    ],
+    "outputMidiRange": [
+      33,
+      71
+    ],
+    "replaceHands": [
+      "left"
+    ],
+    "replaceRoles": [
+      "bass",
+      "harmony"
+    ]
+  },
+  "developmentResult": {
+    "replacements": 42,
+    "weightedQualityDelta": 0.000903,
+    "weightedExactF1_100msDelta": 0.000271,
+    "weightedExactF1_250msDelta": 0.000684,
+    "weightedPitchClassF1_250msDelta": 0.001756,
+    "weightedPitchClassRecall_250msDelta": 0.001826,
+    "worstSongQualityDelta": 0.00039,
+    "worstSongExactF1_100msDelta": 0.0,
+    "worstSongExactF1_250msDelta": 0.0,
+    "rapidRetriggerIncrease": 0,
+    "timingDurationVelocityAndGestureSizeFrozen": true
+  },
+  "promotionRule": "Do not alter this policy after viewing transfer metrics. Production remains phase45 unless the frozen transfer improves quality and exact metrics without pitch-class, cutoff, timing, structure, or retrigger regressions."
+}

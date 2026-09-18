@@ -1,0 +1,60 @@
+{
+  "schema": "polymath-pre-target-reveal-candidates-v3",
+  "frozenAtUtc": "2026-09-18T12:45:33.2458199Z",
+  "screenPolicy": "ml/training/configs/phase87-target-blind-register-activation-screen-policy.json",
+  "status": "BASELINE_AND_CANDIDATE_FROZEN_TARGET_NOTE_CONTENTS_NOT_PARSED_OR_INSPECTED",
+  "screenedInAscendingOrder": [
+    {"track": "Track00002", "melodyEvents": 125, "harmonyEvents": 272, "gapSemitones": 12.0, "activated": false},
+    {"track": "Track00003", "melodyEvents": 356, "harmonyEvents": 131, "gapSemitones": 7.0, "activated": false},
+    {"track": "Track00004", "melodyEvents": 231, "harmonyEvents": 358, "gapSemitones": 16.0, "activated": false},
+    {"track": "Track00005", "melodyEvents": 293, "harmonyEvents": 307, "gapSemitones": 11.0, "activated": false},
+    {"track": "Track00006", "melodyEvents": 140, "harmonyEvents": 280, "gapSemitones": 8.0, "activated": false},
+    {"track": "Track00007", "melodyEvents": 224, "harmonyEvents": 305, "gapSemitones": 16.0, "activated": false},
+    {"track": "Track00008", "melodyEvents": 175, "harmonyEvents": 309, "gapSemitones": 9.0, "activated": false},
+    {"track": "Track00009", "melodyEvents": 301, "harmonyEvents": 260, "gapSemitones": 4.0, "activated": true}
+  ],
+  "selectedTrack": "Track00009",
+  "artifacts": {
+    "sourceExcerpt": {
+      "path": "D:/Polymath Training/phase-87-babyslakh-activation-screen-2026-09-18/Track00009/source/mix-000-090.wav",
+      "bytes": 2880078,
+      "sha256": "05fc3842c78f3a0644dc941e89c3f6243ab3a78b07670728badc69326a08aaf7"
+    },
+    "sealedTargetMidi": {
+      "path": "C:/Users/admin/Documents/Polymath Training/datasets/babyslakh/babyslakh_16k/Track00009/all_src.mid",
+      "bytes": 28857,
+      "sha256": "78abe0d178983250b7afe7c7ea4a358d8bf06c6f584703b8190423f47eb9e3f5"
+    },
+    "rawTranscription": {
+      "path": "D:/Polymath Training/phase-87-babyslakh-activation-screen-2026-09-18/Track00009/raw/original.json",
+      "bytes": 272433,
+      "sha256": "e22df781d304906942857bffb56ae81e684b741bc5bd4e78b5395836a5c8ddea"
+    },
+    "preparedTranscription": {
+      "path": "D:/Polymath Training/phase-87-babyslakh-activation-screen-2026-09-18/Track00009/prepared/postprocessed.json",
+      "bytes": 275631,
+      "sha256": "1813abe52f650de1a4f12f4163dfb5496b2a8ef1bf1c283c7363c2030e646309"
+    },
+    "phase82Baseline": {
+      "path": "D:/Polymath Training/phase-87-babyslakh-activation-screen-2026-09-18/Track00009/candidates/phase82.json",
+      "bytes": 677505,
+      "sha256": "31882cb940707467ca7e3aba98e6e62a161417996acf4b397a98ff5993616c9d"
+    },
+    "phase84Candidate": {
+      "path": "D:/Polymath Training/phase-87-babyslakh-activation-screen-2026-09-18/Track00009/candidates/phase84-v002.json",
+      "bytes": 727288,
+      "sha256": "549cb201d562d504abd8fab409b593822711bdeeb0a5a2e6a84f85d8c939c873"
+    },
+    "candidateApplication": {
+      "path": "D:/Polymath Training/phase-87-babyslakh-activation-screen-2026-09-18/Track00009/diagnostics/phase84-v002.json",
+      "bytes": 1260,
+      "sha256": "81a5d666b9f0ba4a087a4cf284470a94aa87bf8ece93da079070f8565d259b81"
+    }
+  },
+  "candidateDeltaKnownBeforeReveal": {
+    "shiftedMelodyNotes": 301,
+    "deduplicatedExactCollisions": 2,
+    "onsetsDurationsVelocitiesAndPitchClassesOtherwisePreserved": true
+  },
+  "nextAuthorizedStep": "Construct only the authored Piano 0-90 second target from the committed MIDI and evaluate once without tuning."
+}

@@ -1,0 +1,60 @@
+{
+  "schema": "polymath-target-blind-activation-screen-result-v1",
+  "createdAtUtc": "2026-09-18T13:04:35.9604976Z",
+  "policy": "ml/training/configs/phase89-v003-unused-full-mix-activation-screen-policy.json",
+  "candidate": {
+    "id": "phase88-pianella-adaptive-melody-separation-v003",
+    "profileSha256": "da6962c1197e2ef91c05dd7af6ec301b2b935611e9a3303106d973eb08bd4e36",
+    "runtimeSha256": "20907e8b4251413ba27033d0757a5fc35b773e7c1c1d61e16effb3b0e9b0aa85"
+  },
+  "sources": [
+    {
+      "id": "still-the-one-live",
+      "transcriptionNotes": 457,
+      "detectedInstrumentGroups": [
+        "acoustic_guitar",
+        "electric_bass"
+      ],
+      "melodyEvents": 138,
+      "harmonyEvents": 315,
+      "melodyMedianMidi": 62.0,
+      "harmonyMedianMidi": 55.0,
+      "melodyHarmonyMedianGapSemitones": 7.0,
+      "dominantMelodySourceFamily": "guitar",
+      "melodyShiftBlockedBySourceFamily": false,
+      "melodyShiftSemitones": 0,
+      "abstentionReason": "Only 138 melody events were available; the frozen rule requires at least 200."
+    },
+    {
+      "id": "jesus-i-am-resting-titlecase",
+      "transcriptionNotes": 428,
+      "detectedInstrumentGroups": [
+        "acoustic_piano"
+      ],
+      "route": "source_piano",
+      "melodyShiftSemitones": 0,
+      "abstentionReason": "The pure-piano route preserves source_piano notes and does not invoke the full-mix melody/harmony register rule."
+    },
+    {
+      "id": "jesus-i-am-resting-lowercase",
+      "transcriptionNotes": 395,
+      "detectedInstrumentGroups": [
+        "acoustic_piano"
+      ],
+      "route": "source_piano",
+      "melodyShiftSemitones": 0,
+      "abstentionReason": "The pure-piano route preserves source_piano notes and does not invoke the full-mix melody/harmony register rule."
+    }
+  ],
+  "result": {
+    "eligibleActivationFound": false,
+    "targetsOpened": 0,
+    "blindListeningPackCreated": false,
+    "candidateRetuned": false
+  },
+  "interpretation": {
+    "supported": "V003 remained conservative on three newly screened sources and did not force an octave shift when its frozen activation evidence was insufficient or inapplicable.",
+    "notSupported": "The screen does not validate the positive v003 shift path and does not authorize production deployment."
+  },
+  "nextRequiredInput": "One genuinely unused full-mix recording paired with an unopened authored/desired piano MIDI or JSON target. The candidate must be frozen before the target is parsed."
+}

@@ -1,0 +1,30 @@
+{
+  "schema": "polymath-paired-gesture-manifest-v1",
+  "purpose": "Fit touch calibration on the current root-reset plus adaptive-melody candidate distribution without any Kiss Me reference evidence.",
+  "songs": [
+    {
+      "id": "the-way-i-loved-you",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/the-way-i-loved-you.json",
+      "candidate": "D:/Polymath Training/phase-36-3a-champion-refinement-2026-09-16/adaptive-melody-delay30-v032/the-way-i-loved-you.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/the-way-i-loved-you/section-alignment-report.json"
+    },
+    {
+      "id": "back-to-december",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/back-to-december.json",
+      "candidate": "D:/Polymath Training/phase-36-3a-champion-refinement-2026-09-16/adaptive-melody-delay30-v032/back-to-december.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/back-to-december/section-alignment-report.json"
+    },
+    {
+      "id": "mean",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/mean.json",
+      "candidate": "D:/Polymath Training/phase-36-3a-champion-refinement-2026-09-16/adaptive-melody-delay30-v032/mean.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/mean/section-alignment-report.json"
+    },
+    {
+      "id": "you-need-to-calm-down",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/you-need-to-calm-down.json",
+      "candidate": "D:/Polymath Training/phase-36-3a-champion-refinement-2026-09-16/adaptive-melody-delay30-v032/you-need-to-calm-down.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/repaired-alignments/you-need-to-calm-down/section-alignment-report.json"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Phase-48 incremental-layer transfer evaluation. Love Story was not used to fit or select the phase-47 separated-stem selector/decoder, but it appeared in older phase-6 experiments, so this is not claimed as a pristine system-wide holdout.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "love-story",
+      "reference": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/inputs/love-story-aligned-reference.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/transcriptions/love-story-no-vocals-phase46-v007-raw.json",
+      "vocalSource": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/transcriptions/love-story-vocals-phase46-v007-raw.json",
+      "alignment": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/inputs/love-story-alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/candidates/love-story-phase45-style-baseline.json",
+      "candidate": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/candidates/love-story-phase45-plus-separated-left-swap.json",
+      "textureCandidate": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/candidates/love-story-phase45-plus-separated-left-swap.json"
+    }
+  ]
+}

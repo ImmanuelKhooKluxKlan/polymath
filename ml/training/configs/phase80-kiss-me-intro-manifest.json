@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-pianist-candidate-manifest-v1",
+  "purpose": "Research-only Kiss Me intro refinement against the user-approved Pianella reference through 02:30.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "kiss-me",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": 150.0,
+      "source": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/fresh-production-replay/kiss-me-postprocessed-full.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/root-reset-phase-holdout-v022-p4/kiss-me-plus-unseen-chord-mapper.json",
+      "candidate": "D:/Polymath Training/phase-80-pianella-register-intro-2026-09-18/candidates/kiss-me-natural-two-hand-v002-native-harmony.json",
+      "candidateEndSeconds": 141.562443881
+    }
+  ]
+}

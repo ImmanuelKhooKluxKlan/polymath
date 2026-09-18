@@ -1002,6 +1002,11 @@ export function normalizeSong(
                 )
               : 0.82,
 
+          performanceGain:
+            Number.isFinite(Number(note.performanceGain))
+              ? clamp(Number(note.performanceGain), 0.25, 1.5)
+              : 1,
+
           releaseSeconds:
             readSeconds(
               note.releaseSeconds,

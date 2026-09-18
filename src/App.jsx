@@ -1566,7 +1566,9 @@ export default function App() {
           pianoAudio.playAt(event.note, eventVelocity, noteDuration, audioStartAt, {
             source: 'autoplay',
             retriggerSameNote: true,
+            retriggerReleaseSeconds: event.retriggerReleaseSeconds,
             releaseSeconds: event.releaseSeconds,
+            performanceGain: event.performanceGain,
           });
         }
         scheduleVisualStrike(event, delaySeconds, visualDuration, runId);

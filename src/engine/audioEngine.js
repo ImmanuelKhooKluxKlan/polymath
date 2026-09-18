@@ -1993,6 +1993,15 @@ class PianoAudioEngine {
       preset
         .retriggerReleaseSeconds;
 
+    // Keep musical balance separate from MIDI velocity. Velocity selects the
+    // hammer character; performanceGain changes only the finished voice level.
+    voice.performanceGain =
+      clamp(
+        Number(options.performanceGain) || 1,
+        0.25,
+        1.5
+      );
+
     this.trackVoice(
       normalizedNote,
       voice
@@ -2487,7 +2496,11 @@ class PianoAudioEngine {
     const finalGain =
       clamp(
         registerGain *
-        velocityGain,
+        velocityGain *
+        (
+          voice.performanceGain ||
+          1
+        ),
 
         0.055,
         0.98
@@ -2736,6 +2749,13 @@ class PianoAudioEngine {
     const frequency =
       noteToFrequency(note);
 
+    const performanceGain =
+      clamp(
+        Number(voice.performanceGain) || 1,
+        0.25,
+        1.5
+      );
+
     try {
       voice.midi =
         parseNote(note).midi;
@@ -2830,14 +2850,14 @@ class PianoAudioEngine {
 
     voiceGain.gain
       .exponentialRampToValueAtTime(
-        0.11 * velocity,
+        0.11 * velocity * performanceGain,
 
         startAt + 0.012
       );
 
     voiceGain.gain
       .exponentialRampToValueAtTime(
-        0.046 * velocity,
+        0.046 * velocity * performanceGain,
 
         startAt + 0.19
       );
@@ -2911,7 +2931,8 @@ class PianoAudioEngine {
             .setValueAtTime(
               partial.gain *
               0.32 *
-              velocity,
+              velocity *
+              performanceGain,
 
               startAt
             );

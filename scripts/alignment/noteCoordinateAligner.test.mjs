@@ -1,10 +1,52 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  alignmentControlArray,
+  alignmentOptionsFromArguments,
   alignNoteCoordinates,
   createAlignmentSvg,
   mapReferenceTime,
 } from './noteCoordinateAligner.mjs';
+
+test('alignment control files accept either a direct array or a named array', () => {
+  const anchors = [{ referenceTime: 2, observedTime: 4 }];
+  assert.equal(alignmentControlArray(anchors, ['manualAnchors', 'anchors'], 'anchors'), anchors);
+  assert.equal(
+    alignmentControlArray({ manualAnchors: anchors }, ['manualAnchors', 'anchors'], 'anchors'),
+    anchors,
+  );
+  assert.throws(
+    () => alignmentControlArray({ nope: [] }, ['manualAnchors', 'anchors'], 'anchors'),
+    /JSON array/,
+  );
+});
+
+test('CLI alignment bounds are explicit, numeric, and internally consistent', () => {
+  assert.deepEqual(
+    alignmentOptionsFromArguments({
+      'source-duration': '238.56',
+      'observed-instruments': 'voice, clean_electric_guitar',
+      'minimum-scale': '0.92',
+      'maximum-scale': '1.12',
+      'ransac-iterations': '10000',
+    }),
+    {
+      sourceDurationSeconds: '238.56',
+      observedInstruments: ['voice', 'clean_electric_guitar'],
+      minimumScale: 0.92,
+      maximumScale: 1.12,
+      ransacIterations: 10000,
+    },
+  );
+  assert.throws(
+    () => alignmentOptionsFromArguments({ 'minimum-scale': '1.2', 'maximum-scale': '0.8' }),
+    /maximum-scale/,
+  );
+  assert.throws(
+    () => alignmentOptionsFromArguments({ 'ransac-iterations': '99' }),
+    /ransac-iterations/,
+  );
+});
 
 function desiredPerformance() {
   const pattern = [60, 64, 67, 62, 65, 69, 71, 67, 64, 60, 65, 72];
@@ -59,6 +101,30 @@ test('aligner refuses files without enough musical evidence', () => {
     () => alignNoteCoordinates([{ midi: 60, time: 0 }], [{ midi: 60, time: 7 }]),
     /At least eight usable notes/,
   );
+});
+
+test('alignment can explicitly restrict observed evidence to selected instruments', () => {
+  const reference = desiredPerformance();
+  const voice = reference.map((note) => ({
+    ...note,
+    time: 3 + note.time,
+    instrument: 'voice',
+  }));
+  const guitar = reference.map((note) => ({
+    ...note,
+    midi: note.midi + 1,
+    time: 1 + note.time * 0.8,
+    instrument: 'clean_electric_guitar',
+  }));
+  const result = alignNoteCoordinates(reference, [...voice, ...guitar], {
+    observedInstruments: ['VOICE'],
+  });
+
+  assert.equal(result.metrics.observedInputNotes, reference.length * 2);
+  assert.equal(result.metrics.observedNotes, reference.length);
+  assert.deepEqual(result.metrics.observedInstrumentFilter, ['voice']);
+  assert.deepEqual(result.supervisionPackage.alignment.observedInstrumentFilter, ['voice']);
+  assert.ok(Math.abs(result.metrics.coarseOffsetSeconds - 3) < 0.1);
 });
 
 test('local alignment follows tempo drift and a recording pause while keeping labels inside video time', () => {

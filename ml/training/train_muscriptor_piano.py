@@ -380,6 +380,11 @@ def save_checkpoint(transcription, base: Path, output: Path, metadata: dict[str,
 def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     import torch
     from muscriptor import TranscriptionModel
+    from ml.training.decoded_checkpoint_gate import (
+        decoded_checkpoint_gate,
+        select_decoded_gate_records,
+    )
+    from ml.training.evaluate_checkpoint import evaluate_loaded_transcription
 
     if not torch.cuda.is_available():
         raise TrainingError("CUDA GPU is required for the 1.3B checkpoint")
@@ -440,8 +445,31 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         progress_callback(
             f"Baseline validation loss: {baseline_validation_loss:.6f}",
         )
+    decoded_gate_clips_per_song = int(getattr(args, "decoded_gate_clips_per_song", 6))
+    decoded_gate_records = select_decoded_gate_records(
+        validation_records,
+        maximum_per_song=decoded_gate_clips_per_song,
+    )
+    decoded_instruments = (
+        None
+        if conditioning_mode == "unconditioned"
+        else (train_audit["instruments"][0],)
+    )
+    if progress_callback:
+        progress_callback(
+            f"Decoding baseline safety panel: {len(decoded_gate_records)} clips across "
+            f"{len({str(row.get('songId') or 'unknown') for row in decoded_gate_records})} songs",
+        )
+    baseline_decoded_metrics = evaluate_loaded_transcription(
+        transcription,
+        decoded_gate_records,
+        progress_callback,
+        decoded_instruments,
+    )
     best_validation_loss = baseline_validation_loss
+    best_decoded_metrics = None
     best_state = None
+    epoch_decisions: list[dict[str, Any]] = []
     step = 0
     accumulated = 0
     optimizer.zero_grad(set_to_none=True)
@@ -481,20 +509,62 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             args.precision,
             conditioning_mode,
         )
-        print(json.dumps({"epoch": epoch + 1, "validationLoss": validation_loss}), flush=True)
+        decision: dict[str, Any] = {
+            "epoch": epoch + 1,
+            "validationLoss": validation_loss,
+            "lossImprovedVersusBestEligible": validation_loss < best_validation_loss,
+        }
         if progress_callback:
             progress_callback(
                 f"Epoch {epoch + 1}/{args.epochs}; validation loss {validation_loss:.6f}",
             )
         if validation_loss < best_validation_loss:
-            best_validation_loss = validation_loss
-            best_state = {
-                name: parameter.detach().cpu().clone()
-                for name, parameter in transcription._model.state_dict().items()
-                if name in trainable_names
-            }
+            if progress_callback:
+                progress_callback(
+                    f"Epoch {epoch + 1}: loss improved; decoding the multi-song safety panel",
+                )
+            candidate_decoded_metrics = evaluate_loaded_transcription(
+                transcription,
+                decoded_gate_records,
+                progress_callback,
+                decoded_instruments,
+            )
+            gate = decoded_checkpoint_gate(
+                baseline_decoded_metrics,
+                candidate_decoded_metrics,
+                maximum_aggregate_f1_regression=float(
+                    getattr(args, "decoded_gate_max_aggregate_f1_regression", 0.001)
+                ),
+                maximum_aggregate_recall_regression=float(
+                    getattr(args, "decoded_gate_max_aggregate_recall_regression", 0.002)
+                ),
+                maximum_per_song_f1_regression=float(
+                    getattr(args, "decoded_gate_max_per_song_f1_regression", 0.010)
+                ),
+            )
+            decision["decodedGate"] = gate
+            if gate["passed"]:
+                decision["eligible"] = True
+                best_validation_loss = validation_loss
+                best_decoded_metrics = candidate_decoded_metrics
+                best_state = {
+                    name: parameter.detach().cpu().clone()
+                    for name, parameter in transcription._model.state_dict().items()
+                    if name in trainable_names
+                }
+            else:
+                decision["eligible"] = False
+                decision["rejectionReason"] = "decoded-note safety gate failed"
+        else:
+            decision["eligible"] = False
+            decision["rejectionReason"] = "validation loss did not beat the best eligible checkpoint"
+        epoch_decisions.append(decision)
+        print(json.dumps(decision), flush=True)
     if best_state is None:
-        raise TrainingError("Validation loss never improved; no candidate checkpoint was written")
+        raise TrainingError(
+            "No epoch improved validation loss while passing decoded multi-song note gates; "
+            "no candidate checkpoint was written"
+        )
     transcription._model.load_state_dict(best_state, strict=False)
     weight_delta = summarize_weight_delta(
         transcription._model,
@@ -520,6 +590,23 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "seed": args.seed,
         "baselineValidationLoss": baseline_validation_loss,
         "bestValidationLoss": best_validation_loss,
+        "decodedCheckpointSelection": {
+            "schema": "polymath-decoded-checkpoint-selection-v1",
+            "clipsPerSong": decoded_gate_clips_per_song,
+            "records": [
+                {
+                    "clipId": str(record.get("clipId") or ""),
+                    "songId": str(record.get("songId") or "unknown"),
+                    "sourceStart": float(record.get("sourceStart") or 0),
+                    "isNegativeExample": bool(record.get("isNegativeExample")),
+                }
+                for record in decoded_gate_records
+            ],
+            "instrumentConstraint": list(decoded_instruments or ()),
+            "baseline": baseline_decoded_metrics,
+            "bestCandidate": best_decoded_metrics,
+            "epochDecisions": epoch_decisions,
+        },
         "weightDelta": weight_delta,
         "commercialUseAllowed": False,
         "note": "Candidate only. Promotion requires frozen note-F1 tests and manual listening.",
@@ -554,6 +641,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--precision", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--seed", default="polymath-piano-phase1-v001")
+    parser.add_argument(
+        "--decoded-gate-clips-per-song",
+        type=int,
+        default=6,
+        help="Evenly spread clips decoded per validation song after a loss improvement.",
+    )
+    parser.add_argument("--decoded-gate-max-aggregate-f1-regression", type=float, default=0.001)
+    parser.add_argument("--decoded-gate-max-aggregate-recall-regression", type=float, default=0.002)
+    parser.add_argument("--decoded-gate-max-per-song-f1-regression", type=float, default=0.010)
     return parser.parse_args()
 
 

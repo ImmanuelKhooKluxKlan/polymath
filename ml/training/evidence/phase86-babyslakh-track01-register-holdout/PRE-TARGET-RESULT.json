@@ -1,0 +1,16 @@
+{
+  "schema": "polymath-pre-target-holdout-screen-result-v1",
+  "experimentId": "phase-86-babyslakh-track01-register-holdout-2026-09-18",
+  "completedAtUtc": "2026-09-18T12:31:20.3229747Z",
+  "targetNoteContentsOpened": false,
+  "candidateApplication": {
+    "melodyEvents": 202,
+    "harmonyEvents": 235,
+    "melodyMedianMidi": 65.0,
+    "harmonyMedianMidi": 57.0,
+    "melodyHarmonyMedianGapSemitones": 8.0,
+    "shiftedNotes": 0
+  },
+  "decision": "REJECT_BEFORE_TARGET_REVEAL",
+  "reason": "The frozen v002 melody-separation rule abstained, so this track cannot test the intervention."
+}
