@@ -10,9 +10,12 @@ import {
 } from './noteMath.js';
 import { getInitialPerformanceTier, normalizePerformanceTier } from './devicePerformance.js';
 import {
+  inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
   resolveSpeakerOutputProfile,
+  speakerPerformanceGain,
   speakerRegisterGain,
+  speakerVoiceProfile,
   tonePresetForSpeaker,
 } from './speakerOutputProfile.js';
 import { publicAssetUrl } from '../services/assetUrls.js';
@@ -669,6 +672,8 @@ class PianoAudioEngine {
 
     this.deviceClass = 'desktop';
 
+    this.portableSpeakerHint = false;
+
     this.speakerOutputMode = 'auto';
 
     this.speakerOutputProfile = resolveSpeakerOutputProfile(
@@ -676,6 +681,7 @@ class PianoAudioEngine {
       {
         deviceClass: this.deviceClass,
         performanceTier: this.performanceTier,
+        portableSpeakerHint: this.portableSpeakerHint,
       }
     );
 
@@ -762,6 +768,7 @@ class PianoAudioEngine {
       {
         deviceClass: this.deviceClass,
         performanceTier: this.performanceTier,
+        portableSpeakerHint: this.portableSpeakerHint,
       }
     );
 
@@ -774,6 +781,12 @@ class PianoAudioEngine {
   setSpeakerOutputMode(mode = 'auto', options = {}) {
     this.speakerOutputMode = normalizeSpeakerOutputMode(mode);
     if (options.deviceClass) this.deviceClass = String(options.deviceClass);
+    this.portableSpeakerHint = options.portableSpeakerHint ?? inferPortableSpeakerHint({
+      deviceClass: this.deviceClass,
+      screenWidth: options.screenWidth,
+      screenHeight: options.screenHeight,
+      hasBattery: options.hasBattery,
+    });
     this.refreshSpeakerOutputProfile();
     return this.speakerOutputProfile;
   }
@@ -2038,12 +2051,11 @@ class PianoAudioEngine {
 
     // Keep musical balance separate from MIDI velocity. Velocity selects the
     // hammer character; performanceGain changes only the finished voice level.
-    voice.performanceGain =
-      clamp(
-        Number(options.performanceGain) || 1,
-        0.25,
-        1.5
-      );
+    voice.performanceGain = speakerPerformanceGain(
+      options.performanceGain,
+      normalizedMidi,
+      this.speakerOutputProfile
+    );
 
     this.trackVoice(
       normalizedNote,
@@ -2390,6 +2402,11 @@ class PianoAudioEngine {
         .info
         .requestedMidi;
 
+    const outputVoiceProfile = speakerVoiceProfile(
+      requestedMidi,
+      this.speakerOutputProfile
+    );
+
     voice.midi =
       requestedMidi;
 
@@ -2426,23 +2443,26 @@ class PianoAudioEngine {
     highPass.type =
       'highpass';
 
-    highPass.frequency.value =
+    highPass.frequency.value = outputVoiceProfile.highPassFrequency ?? (
       requestedMidi < 36
         ? 14
         : requestedMidi < 48
           ? 18
-          : 26;
+          : 26
+    );
 
     highPass.Q.value =
       0.6;
 
-    body.type =
-      'lowshelf';
+    body.type = outputVoiceProfile.bodyType || 'lowshelf';
 
-    body.frequency.value =
+    body.frequency.value = outputVoiceProfile.bodyFrequency ?? (
       requestedMidi < 48
         ? 128
-        : 170;
+        : 170
+    );
+
+    body.Q.value = outputVoiceProfile.bodyQ ?? 0.7;
 
     body.gain.value =
       (
@@ -2452,7 +2472,8 @@ class PianoAudioEngine {
             ? 0.24
             : -0.12
       ) +
-      preset.bodyBoost;
+      preset.bodyBoost +
+      outputVoiceProfile.bodyGainOffset;
 
     hammerControl.type =
       'peaking';
@@ -2496,7 +2517,7 @@ class PianoAudioEngine {
         ],
 
         velocity
-      );
+      ) + outputVoiceProfile.hammerGainOffset;
 
     airControl.type =
       'highshelf';
@@ -2507,9 +2528,11 @@ class PianoAudioEngine {
         7200;
 
     airControl.gain.value =
-      requestedMidi > 84
-        ? preset.highAirGain
-        : 0.12;
+      (
+        requestedMidi > 84
+          ? preset.highAirGain
+          : 0.12
+      ) + outputVoiceProfile.airGainOffset;
 
     const velocityGain =
       preset.velocityGainFloor +

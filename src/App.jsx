@@ -14,6 +14,7 @@ import TaskProgress from './components/TaskProgress.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import {
+  inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
   SPEAKER_OUTPUT_MODE_LABELS,
 } from './engine/speakerOutputProfile.js';
@@ -191,6 +192,13 @@ export default function App() {
   const [toneMode, setToneMode] = useState('pianella');
   const [speakerOutputMode, setSpeakerOutputMode] = useState(() => (
     normalizeSpeakerOutputMode(window.localStorage.getItem('polymath-speaker-output-v1'))
+  ));
+  const [portableSpeakerHint, setPortableSpeakerHint] = useState(() => (
+    inferPortableSpeakerHint({
+      deviceClass: detectDeviceClass(),
+      screenWidth: window.screen?.width,
+      screenHeight: window.screen?.height,
+    })
   ));
   const [autoplayVolume, setAutoplayVolume] = useState(1);
   const [pedalDown, setPedalDown] = useState(false);
@@ -702,8 +710,29 @@ export default function App() {
     pianoAudio.setSpeakerOutputMode(speakerOutputMode, {
       deviceClass,
       performanceTier,
+      portableSpeakerHint,
+      screenWidth: window.screen?.width,
+      screenHeight: window.screen?.height,
     });
-  }, [speakerOutputMode, deviceClass, performanceTier]);
+  }, [speakerOutputMode, deviceClass, performanceTier, portableSpeakerHint]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (typeof navigator.getBattery !== 'function') return undefined;
+    navigator.getBattery()
+      .then((battery) => {
+        // Desktop Chrome may expose a permanently-full virtual battery. Only
+        // treat the API as portable evidence when it reports real discharge.
+        const hasRealBattery = battery && (
+          !battery.charging
+          || Number.isFinite(Number(battery.dischargingTime))
+          || Number(battery.level) < 0.999
+        );
+        if (!cancelled && hasRealBattery) setPortableSpeakerHint(true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (route.page === 'studio') return;
