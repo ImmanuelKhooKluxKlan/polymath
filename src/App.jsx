@@ -10,7 +10,7 @@ import PianoLearnJourney from './components/PianoLearnJourney.jsx';
 import PianoTeacherStudio from './components/PianoTeacherStudio.jsx';
 import SupportAssistant from './components/SupportAssistant.jsx';
 import GlobalTaskProgress from './components/GlobalTaskProgress.jsx';
-import TaskProgress from './components/TaskProgress.jsx';
+import RouteLoadingProgress from './components/RouteLoadingProgress.jsx';
 import RouteErrorBoundary from './components/RouteErrorBoundary.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
@@ -60,12 +60,18 @@ import {
 } from './engine/scheduler.js';
 import { apiAssetUrl, apiRequest, fetchProtectedFile, getAuthToken, setAuthToken } from './services/api.js';
 import {
+  FEATURED_SONGS_UPDATED_EVENT,
+  fetchFeaturedSongFile,
+  loadFeaturedSongCatalog,
+} from './services/featuredSongs.js';
+import {
   installProductAnalytics,
   rememberCampaignAttribution,
   trackProductEvent,
 } from './services/productAnalytics.js';
 import { parseUploadedSongFile } from './utils/songParser.js';
 import { analyzeLearningSections } from './utils/learningSections.js';
+import { loadRouteWithRetry } from './utils/routeLoading.js';
 import {
   DEFAULT_SITE_CONFIGURATION,
   normalizePublicSiteConfiguration,
@@ -80,19 +86,20 @@ function createLearningAttemptId() {
     || `attempt_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
 }
 
-const AccountPage = lazy(() => import('./pages/AccountPage.jsx'));
-const GuitarPage = lazy(() => import('./pages/GuitarPage.jsx'));
-const EnsemblePage = lazy(() => import('./pages/EnsemblePage.jsx'));
-const MarketplacePage = lazy(() => import('./pages/MarketplacePage.jsx'));
-const TeacherMarketplacePage = lazy(() => import('./pages/TeacherMarketplacePage.jsx'));
-const MessagesPage = lazy(() => import('./pages/MessagesPage.jsx'));
-const HumanLessonRoomPage = lazy(() => import('./pages/HumanLessonRoomPage.jsx'));
-const CommunityPage = lazy(() => import('./pages/CommunityPage.jsx'));
-const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
-const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
-const AdminDatabasePage = lazy(() => import('./pages/AdminDatabasePage.jsx'));
-const ChatBossPage = lazy(() => import('./pages/ChatBossPage.jsx'));
-const ModelLabPage = lazy(() => import('./pages/ModelLabPage.jsx'));
+const lazyRoute = (importer) => lazy(() => loadRouteWithRetry(importer));
+const AccountPage = lazyRoute(() => import('./pages/AccountPage.jsx'));
+const GuitarPage = lazyRoute(() => import('./pages/GuitarPage.jsx'));
+const EnsemblePage = lazyRoute(() => import('./pages/EnsemblePage.jsx'));
+const MarketplacePage = lazyRoute(() => import('./pages/MarketplacePage.jsx'));
+const TeacherMarketplacePage = lazyRoute(() => import('./pages/TeacherMarketplacePage.jsx'));
+const MessagesPage = lazyRoute(() => import('./pages/MessagesPage.jsx'));
+const HumanLessonRoomPage = lazyRoute(() => import('./pages/HumanLessonRoomPage.jsx'));
+const CommunityPage = lazyRoute(() => import('./pages/CommunityPage.jsx'));
+const PaymentPage = lazyRoute(() => import('./pages/PaymentPage.jsx'));
+const YourSongsPage = lazyRoute(() => import('./pages/YourSongsPage.jsx'));
+const AdminDatabasePage = lazyRoute(() => import('./pages/AdminDatabasePage.jsx'));
+const ChatBossPage = lazyRoute(() => import('./pages/ChatBossPage.jsx'));
+const ModelLabPage = lazyRoute(() => import('./pages/ModelLabPage.jsx'));
 
 function readRoute() {
   const redirectParams = new URLSearchParams(window.location.search);
@@ -144,6 +151,7 @@ function manualVoiceKey(note, interaction = {}) {
 
 function songLibraryId(song) {
   return song?.libraryId
+    || (song?.featuredSongId ? `featured:${song.featuredSongId}` : '')
     || (song?.personalSongId ? `personal:${song.personalSongId}` : '')
     || `${song?.libraryType || 'song'}:${song?.title || 'Untitled Song'}:${song?.composer || song?.artist || 'Unknown'}`;
 }
@@ -188,6 +196,7 @@ export default function App() {
   const [songs, setSongs] = useState(() => sampleSongs.map(normalizeSong));
   const [songSelectionId, setSongSelectionId] = useState(() => songLibraryId(sampleSongs[0]));
   const [personalSongs, setPersonalSongs] = useState([]);
+  const [featuredSongs, setFeaturedSongs] = useState([]);
   const [loadingPersonalSongId, setLoadingPersonalSongId] = useState('');
   const [personalSongStatus, setPersonalSongStatus] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -745,6 +754,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    async function refreshFeaturedSongs() {
+      try {
+        const catalog = await loadFeaturedSongCatalog();
+        if (!cancelled) setFeaturedSongs(catalog);
+      } catch (error) {
+        console.warn('Available songs could not be refreshed:', error);
+      }
+    }
+    refreshFeaturedSongs();
+    window.addEventListener(FEATURED_SONGS_UPDATED_EVENT, refreshFeaturedSongs);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(FEATURED_SONGS_UPDATED_EVENT, refreshFeaturedSongs);
+    };
+  }, []);
+
+  useEffect(() => {
     if (route.page === 'studio') return;
 
     stopPlayback();
@@ -1230,6 +1257,31 @@ export default function App() {
       setPersonalSongStatus('Cloud song ready.');
     } catch (error) {
       setPersonalSongStatus(error.message || 'The cloud song could not be loaded.');
+    } finally {
+      setLoadingPersonalSongId('');
+    }
+  }
+
+  async function loadFeaturedPianoSong(featuredSong) {
+    if (!featuredSong?.id || loadingPersonalSongId) return;
+    const loadingId = `featured:${featuredSong.id}`;
+    setLoadingPersonalSongId(loadingId);
+    setPersonalSongStatus('Loading available song...');
+    try {
+      const file = await fetchFeaturedSongFile(featuredSong);
+      const parsed = await parseUploadedSongFile(file);
+      if (!parsed.notes?.length) throw new Error('This song does not contain notes that can be played on piano.');
+      handleUpload({
+        ...parsed,
+        title: featuredSong.title || parsed.title,
+        composer: featuredSong.artist || parsed.composer,
+        featuredSongId: featuredSong.id,
+        libraryId: loadingId,
+        libraryType: 'free',
+      });
+      setPersonalSongStatus('Available song ready.');
+    } catch (error) {
+      setPersonalSongStatus(error.message || 'The available song could not be loaded.');
     } finally {
       setLoadingPersonalSongId('');
     }
@@ -1818,6 +1870,7 @@ export default function App() {
         setUser={setUser}
         onNavigate={navigate}
         personalSongs={personalSongs}
+        featuredSongs={featuredSongs}
         onPersonalSongSaved={rememberPersonalSong}
       />
     );
@@ -1827,6 +1880,7 @@ export default function App() {
         setUser={setUser}
         onNavigate={navigate}
         personalSongs={personalSongs}
+        featuredSongs={featuredSongs}
         onPersonalSongSaved={rememberPersonalSong}
       />
     );
@@ -1950,7 +2004,9 @@ export default function App() {
             expanded={openMusicChooser === 'available'}
             onToggle={() => setOpenMusicChooser((current) => current === 'available' ? null : 'available')}
             personalSongs={personalSongs}
+            featuredSongs={featuredSongs}
             onPersonalSongChange={loadPersonalPianoSong}
+            onFeaturedSongChange={loadFeaturedPianoSong}
             loadingPersonalSongId={loadingPersonalSongId}
             personalSongStatus={personalSongStatus}
           />}
@@ -2109,7 +2165,7 @@ export default function App() {
       </div>
       <main className="app-shell">
         <RouteErrorBoundary routeKey={`${route.page}?${route.params.toString()}`} onNavigate={navigate}>
-          <Suspense fallback={<div className="route-loading"><TaskProgress compact label="Opening this section…" ariaLabel="Section loading progress" /></div>}>
+          <Suspense fallback={<div className="route-loading"><RouteLoadingProgress /></div>}>
             {content}
           </Suspense>
         </RouteErrorBoundary>

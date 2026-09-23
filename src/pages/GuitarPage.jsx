@@ -9,6 +9,7 @@ import { GUITAR_TONE_LABELS, guitarAudio } from '../engine/guitarEngine.js';
 import { assignNotesToStrings } from '../engine/guitarVoicing.js';
 import { parseUploadedSongFile } from '../utils/songParser.js';
 import { apiRequest, fetchProtectedFile } from '../services/api.js';
+import { fetchFeaturedSongFile } from '../services/featuredSongs.js';
 import { analyzeLearningSections } from '../utils/learningSections.js';
 import { downloadSongJson } from '../utils/exporters.js';
 import { LIVE_PRODUCT_FEATURES } from '../config/liveProduct.js';
@@ -214,7 +215,7 @@ function songToGuitarLesson(song, metadata = {}) {
   }, metadata);
 }
 
-export default function GuitarPage({ user, setUser, onNavigate, personalSongs = [], onPersonalSongSaved }) {
+export default function GuitarPage({ user, setUser, onNavigate, personalSongs = [], featuredSongs = [], onPersonalSongSaved }) {
   const [selectedChord, setSelectedChord] = useState('C');
   const [lesson, setLesson] = useState(DEMO_LESSON);
   const [freeLessons, setFreeLessons] = useState([DEMO_LESSON]);
@@ -248,17 +249,25 @@ export default function GuitarPage({ user, setUser, onNavigate, personalSongs = 
 
   const duration = useMemo(() => lessonDuration(lesson), [lesson]);
   const songChoices = useMemo(() => {
-    const localLessons = lesson.personalSongId || freeLessons.some((candidate) => candidate === lesson)
+    const localLessons = lesson.personalSongId || lesson.featuredSongId || freeLessons.some((candidate) => candidate === lesson)
       ? freeLessons
       : [lesson, ...freeLessons];
     return [
       ...localLessons
-        .filter((candidate) => !candidate.personalSongId)
+        .filter((candidate) => !candidate.personalSongId && !candidate.featuredSongId)
         .map((candidate, index) => ({
           id: `local:${candidate.libraryId || `${candidate.title}:${candidate.artist || ''}:${index}`}`,
           label: lessonLabel(candidate),
           searchText: `${candidate.title} ${candidate.artist || ''}`,
           lesson: candidate,
+        })),
+      ...featuredSongs
+        .filter((candidate) => candidate.instrument === 'guitar')
+        .map((candidate) => ({
+          id: `featured:${candidate.id}`,
+          label: lessonLabel(candidate),
+          searchText: `${candidate.title} ${candidate.artist || ''}`,
+          featuredSong: candidate,
         })),
       ...personalSongs.map((candidate) => ({
         id: `personal:${candidate.id}`,
@@ -267,8 +276,10 @@ export default function GuitarPage({ user, setUser, onNavigate, personalSongs = 
         personalSong: candidate,
       })),
     ];
-  }, [freeLessons, lesson, personalSongs]);
-  const selectedSongChoice = lesson.personalSongId
+  }, [featuredSongs, freeLessons, lesson, personalSongs]);
+  const selectedSongChoice = lesson.featuredSongId
+    ? `featured:${lesson.featuredSongId}`
+    : lesson.personalSongId
     ? `personal:${lesson.personalSongId}`
     : songChoices.find((choice) => choice.lesson === lesson)?.id || songChoices[0]?.id || '';
   const learningSections = useMemo(
@@ -594,9 +605,36 @@ export default function GuitarPage({ user, setUser, onNavigate, personalSongs = 
     }
   }
 
+  async function loadFeaturedGuitarSong(featuredSong) {
+    if (!featuredSong?.id || loadingPersonalSongId) return;
+    const loadingId = `featured:${featuredSong.id}`;
+    setLoadingPersonalSongId(loadingId);
+    setPersonalSongStatus('Loading available song...');
+    try {
+      const file = await fetchFeaturedSongFile(featuredSong);
+      const parsed = await readLessonFile(file);
+      await loadReadyLesson(file, {
+        prepared: {
+          ...parsed,
+          title: featuredSong.title || parsed.title,
+          artist: featuredSong.artist || parsed.artist,
+          featuredSongId: featuredSong.id,
+          libraryId: loadingId,
+          libraryType: 'free',
+        },
+      });
+      setPersonalSongStatus('Available song ready.');
+    } catch (error) {
+      setPersonalSongStatus(error.message || 'The available song could not be loaded.');
+    } finally {
+      setLoadingPersonalSongId('');
+    }
+  }
+
   function chooseSong(value) {
     const choice = songChoices.find((candidate) => candidate.id === value);
-    if (choice?.personalSong) loadPersonalGuitarSong(choice.personalSong);
+    if (choice?.featuredSong) loadFeaturedGuitarSong(choice.featuredSong);
+    else if (choice?.personalSong) loadPersonalGuitarSong(choice.personalSong);
     else if (choice?.lesson) {
       stopLesson();
       setLesson(choice.lesson);

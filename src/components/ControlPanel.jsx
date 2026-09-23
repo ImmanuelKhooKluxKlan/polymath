@@ -17,18 +17,28 @@ export default function ControlPanel({
   expanded,
   onToggle,
   personalSongs = [],
+  featuredSongs = [],
   onPersonalSongChange,
+  onFeaturedSongChange,
   loadingPersonalSongId = '',
   personalSongStatus = '',
 }) {
   const choices = useMemo(() => [
     ...songs
-      .filter((candidate) => !candidate.personalSongId)
+      .filter((candidate) => !candidate.personalSongId && !candidate.featuredSongId)
       .map((candidate, index) => ({
         id: `local:${candidate.libraryId || `${candidate.title}:${index}`}`,
         label: songLabel(candidate),
         searchText: `${candidate.title} ${candidate.artist || candidate.composer || ''}`,
         song: candidate,
+      })),
+    ...featuredSongs
+      .filter((candidate) => candidate.instrument === 'piano')
+      .map((candidate) => ({
+        id: `featured:${candidate.id}`,
+        label: songLabel(candidate),
+        searchText: `${candidate.title} ${candidate.artist || ''}`,
+        featuredSong: candidate,
       })),
     ...personalSongs.map((candidate) => ({
       id: `personal:${candidate.id}`,
@@ -36,14 +46,17 @@ export default function ControlPanel({
       searchText: `${candidate.title} ${candidate.artist || ''}`,
       personalSong: candidate,
     })),
-  ], [personalSongs, songs]);
-  const selectedValue = song.personalSongId
+  ], [featuredSongs, personalSongs, songs]);
+  const selectedValue = song.featuredSongId
+    ? `featured:${song.featuredSongId}`
+    : song.personalSongId
     ? `personal:${song.personalSongId}`
     : choices.find((choice) => choice.song === song || choice.song?.libraryId === song.libraryId)?.id || choices[0]?.id || '';
 
   function choose(value) {
     const choice = choices.find((candidate) => candidate.id === value);
-    if (choice?.personalSong) onPersonalSongChange?.(choice.personalSong);
+    if (choice?.featuredSong) onFeaturedSongChange?.(choice.featuredSong);
+    else if (choice?.personalSong) onPersonalSongChange?.(choice.personalSong);
     else if (choice?.song) onSongChange(choice.song.libraryId);
   }
 

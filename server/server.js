@@ -622,6 +622,7 @@ function ensureStorage() {
       ],
       purchases: [],
       personalSongs: [],
+      featuredSongs: [],
       listingReviews: [],
       composerFollows: [],
       messages: [],
@@ -719,6 +720,7 @@ function normalizeDb(db) {
     'listings',
     'purchases',
     'personalSongs',
+    'featuredSongs',
     'listingReviews',
     'composerFollows',
     'messages',
@@ -3433,6 +3435,181 @@ app.get('/api/site-configuration', async (req, res) => {
   const db = await readDb();
   res.set('Cache-Control', 'no-store');
   return res.json({ configuration: publicSiteConfiguration(db) });
+});
+
+app.get('/api/featured-songs', async (req, res) => {
+  const db = await readDb();
+  const requestedInstrument = String(req.query.instrument || '').trim().toLowerCase();
+  const songs = db.featuredSongs
+    .filter((song) => song.active !== false)
+    .filter((song) => !requestedInstrument || song.instrument === requestedInstrument)
+    .sort(compareFeaturedSongs)
+    .map((song) => publicFeaturedSong(song));
+  res.set('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
+  return res.json({ songs });
+});
+
+app.get('/api/featured-songs/:songId/download', async (req, res, next) => {
+  try {
+    const db = await readDb();
+    const song = db.featuredSongs.find((candidate) => (
+      candidate.id === req.params.songId && candidate.active !== false
+    ));
+    if (!song) return res.status(404).json({ error: 'This available song could not be found.' });
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return ARTIFACT_STORE.sendDownload(
+      res,
+      song.assetPath,
+      song.filename,
+      song.format === 'JSON' ? 'application/json' : 'audio/midi',
+    );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/admin/featured-songs', requireAuth, requireAdmin, async (req, res) => {
+  const songs = [...req.db.featuredSongs]
+    .sort(compareFeaturedSongs)
+    .map((song) => publicFeaturedSong(song, { administrator: true }));
+  return res.json({ songs });
+});
+
+app.post('/api/admin/featured-songs', requireAuth, requireAdmin, async (req, res, next) => {
+  let storedKey = '';
+  try {
+    if (req.body.rightsConfirmed !== true) {
+      return res.status(400).json({ error: 'Confirm that Polymath may publish this song before adding it.' });
+    }
+    const filename = sanitizeFilename(String(req.body.filename || 'available-song'));
+    const format = readySheetFormat(filename);
+    if (!format) return res.status(400).json({ error: 'Upload a ready-to-play JSON, MID, or MIDI file.' });
+    const bytes = Buffer.from(String(req.body.contentBase64 || ''), 'base64');
+    validateMarketplaceAsset(format, filename, bytes);
+    const instrument = String(req.body.instrument || '').trim().toLowerCase();
+    if (!INSTRUMENTS[instrument]) {
+      return res.status(400).json({ error: 'Choose the instrument that should display this song.' });
+    }
+    const metadata = readySheetMetadata(bytes, format, {
+      title: req.body.title,
+      artist: req.body.artist,
+    });
+    const title = String(metadata.title || path.basename(filename, path.extname(filename)) || '').trim().slice(0, 160);
+    const artist = String(metadata.artist || '').trim().slice(0, 120);
+    if (!title) return res.status(400).json({ error: 'Add a title for this available song.' });
+
+    const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    const duplicate = req.db.featuredSongs.find((song) => (
+      song.instrument === instrument && song.sha256 === sha256
+    ));
+    if (duplicate) {
+      return res.status(409).json({
+        error: `${duplicate.title} is already in the ${INSTRUMENTS[instrument].label} library.`,
+        song: publicFeaturedSong(duplicate, { administrator: true }),
+      });
+    }
+
+    const now = new Date().toISOString();
+    const songId = id('featured_song');
+    const maximumOrder = req.db.featuredSongs.reduce(
+      (maximum, song) => Math.max(maximum, featuredSongOrder(song)),
+      0,
+    );
+    const requestedOrder = Number(req.body.sortOrder);
+    const sortOrder = Number.isFinite(requestedOrder)
+      ? Math.max(-100000, Math.min(100000, Math.round(requestedOrder)))
+      : maximumOrder + 10;
+    storedKey = artifactKey('featured-songs', `${songId}-${filename}`);
+    await ARTIFACT_STORE.putBuffer(
+      storedKey,
+      bytes,
+      format === 'JSON' ? 'application/json' : 'audio/midi',
+    );
+
+    const song = {
+      id: songId,
+      title,
+      artist,
+      instrument,
+      format,
+      filename,
+      assetPath: storedKey,
+      size: bytes.length,
+      sha256,
+      sortOrder,
+      active: req.body.active !== false,
+      rightsConfirmed: true,
+      createdBy: req.user.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    req.db.featuredSongs.push(song);
+    try {
+      await writeDb(req.db);
+    } catch (error) {
+      await safeRemoveArtifact(storedKey);
+      storedKey = '';
+      throw error;
+    }
+    storedKey = '';
+    return res.status(201).json({ song: publicFeaturedSong(song, { administrator: true }) });
+  } catch (error) {
+    if (storedKey) await safeRemoveArtifact(storedKey);
+    if (!error.status && /invalid|must contain|smaller than|filename|file type/i.test(error.message || '')) {
+      error.status = 400;
+    }
+    return next(error);
+  }
+});
+
+app.patch('/api/admin/featured-songs/:songId', requireAuth, requireAdmin, async (req, res) => {
+  const song = req.db.featuredSongs.find((candidate) => candidate.id === req.params.songId);
+  if (!song) return res.status(404).json({ error: 'Available song not found.' });
+  if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
+    const title = String(req.body.title || '').trim().slice(0, 160);
+    if (!title) return res.status(400).json({ error: 'Song title cannot be empty.' });
+    song.title = title;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'artist')) {
+    song.artist = String(req.body.artist || '').trim().slice(0, 120);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'instrument')) {
+    const instrument = String(req.body.instrument || '').trim().toLowerCase();
+    if (!INSTRUMENTS[instrument]) return res.status(400).json({ error: 'Choose a supported instrument.' });
+    const duplicate = req.db.featuredSongs.find((candidate) => (
+      candidate.id !== song.id
+      && candidate.instrument === instrument
+      && candidate.sha256 === song.sha256
+    ));
+    if (duplicate) {
+      return res.status(409).json({ error: `${duplicate.title} already uses this file in the ${INSTRUMENTS[instrument].label} library.` });
+    }
+    song.instrument = instrument;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'active')) song.active = req.body.active === true;
+  if (Object.prototype.hasOwnProperty.call(req.body, 'sortOrder')) {
+    const sortOrder = Number(req.body.sortOrder);
+    if (!Number.isFinite(sortOrder)) return res.status(400).json({ error: 'Display order must be a number.' });
+    song.sortOrder = Math.max(-100000, Math.min(100000, Math.round(sortOrder)));
+  }
+  song.updatedAt = new Date().toISOString();
+  await writeDb(req.db);
+  return res.json({ song: publicFeaturedSong(song, { administrator: true }) });
+});
+
+app.delete('/api/admin/featured-songs/:songId', requireAuth, requireAdmin, async (req, res, next) => {
+  const index = req.db.featuredSongs.findIndex((candidate) => candidate.id === req.params.songId);
+  if (index < 0) return res.status(404).json({ error: 'Available song not found.' });
+  const [song] = req.db.featuredSongs.splice(index, 1);
+  try {
+    await writeDb(req.db);
+    await safeRemoveArtifact(song.assetPath).catch((error) => {
+      console.error('Deleted available-song artifact could not be removed:', error);
+    });
+    return res.json({ ok: true, song: publicFeaturedSong(song, { administrator: true }) });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.get('/api/health/state', async (req, res) => {
@@ -8734,6 +8911,39 @@ function publicTeacherReview(review, db, viewerId = null) {
       avatarUrl: author?.avatarUrl || '',
     },
   };
+}
+
+function featuredSongOrder(song) {
+  const value = Number(song?.sortOrder);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function compareFeaturedSongs(left, right) {
+  return featuredSongOrder(left) - featuredSongOrder(right)
+    || String(left.title || '').localeCompare(String(right.title || ''))
+    || String(left.id || '').localeCompare(String(right.id || ''));
+}
+
+function publicFeaturedSong(song, { administrator = false } = {}) {
+  const record = {
+    id: song.id,
+    title: song.title,
+    artist: song.artist || '',
+    instrument: song.instrument,
+    format: song.format,
+    filename: song.filename,
+    size: Number(song.size || 0),
+    sortOrder: featuredSongOrder(song),
+    createdAt: song.createdAt,
+    updatedAt: song.updatedAt || song.createdAt,
+    downloadPath: `/api/featured-songs/${encodeURIComponent(song.id)}/download`,
+  };
+  if (administrator) {
+    record.active = song.active !== false;
+    record.rightsConfirmed = Boolean(song.rightsConfirmed);
+    record.createdBy = song.createdBy || '';
+  }
+  return record;
 }
 
 function findHumanLesson(db, meetingId) {

@@ -1152,8 +1152,12 @@ export function normalizeSong(
   return {
     libraryId:
       song.libraryId ||
+      (song.featuredSongId ? `featured:${song.featuredSongId}` : undefined) ||
       (song.personalSongId ? `personal:${song.personalSongId}` : undefined) ||
       `${song.libraryType || 'song'}:${song.title || 'Untitled Song'}:${song.composer || song.artist || 'Unknown'}`,
+
+    featuredSongId:
+      song.featuredSongId,
 
     personalSongId:
       song.personalSongId,

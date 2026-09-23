@@ -5783,6 +5783,10 @@ details[open] > summary {
   color: var(--muted);
   font-weight: 850;
 }
+.route-loading > .route-loading-progress { width: min(560px, 100%); }
+.route-loading .task-progress-track > span { transition-duration: 1.1s; }
+.route-loading .task-progress-track > span::after { animation-duration: 2.8s; }
+.route-recovery-loading { min-height: 48vh; }
 
 .model-lab-history {
   margin-top: 18px;

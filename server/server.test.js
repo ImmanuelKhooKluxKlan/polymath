@@ -449,6 +449,71 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   const adminToken = adminRegistration.data.token;
   const adminFriendId = adminRegistration.data.user.friend_id;
 
+  const featuredSongPayload = {
+    title: 'Admin Library Song',
+    composer: 'Test Composer',
+    notes: [{ note: 'C4', time: 0, duration: 0.5, velocity: 0.8 }],
+  };
+  const rejectedFeaturedSong = await api('/api/admin/featured-songs', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      filename: 'admin-library-song.json',
+      instrument: 'piano',
+      contentBase64: Buffer.from(JSON.stringify(featuredSongPayload)).toString('base64'),
+      rightsConfirmed: false,
+    },
+  });
+  assert.equal(rejectedFeaturedSong.status, 400);
+
+  const featuredSongUpload = await api('/api/admin/featured-songs', {
+    method: 'POST',
+    token: adminToken,
+    body: {
+      filename: 'admin-library-song.json',
+      title: featuredSongPayload.title,
+      artist: featuredSongPayload.composer,
+      instrument: 'piano',
+      contentBase64: Buffer.from(JSON.stringify(featuredSongPayload)).toString('base64'),
+      rightsConfirmed: true,
+      active: true,
+    },
+  });
+  assert.equal(featuredSongUpload.status, 201);
+  assert.equal(featuredSongUpload.data.song.instrument, 'piano');
+  assert.equal(featuredSongUpload.data.song.active, true);
+  assert.equal(Object.hasOwn(featuredSongUpload.data.song, 'assetPath'), false);
+  const featuredSongId = featuredSongUpload.data.song.id;
+
+  const publicFeaturedSongs = await api('/api/featured-songs?instrument=piano');
+  assert.equal(publicFeaturedSongs.status, 200);
+  assert.equal(publicFeaturedSongs.data.songs.length, 1);
+  assert.equal(publicFeaturedSongs.data.songs[0].title, featuredSongPayload.title);
+  assert.equal(Object.hasOwn(publicFeaturedSongs.data.songs[0], 'active'), false);
+  const featuredSongDownload = await api(`/api/featured-songs/${featuredSongId}/download`);
+  assert.equal(featuredSongDownload.status, 200);
+  assert.equal(featuredSongDownload.data.title, featuredSongPayload.title);
+
+  const hiddenFeaturedSong = await api(`/api/admin/featured-songs/${featuredSongId}`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { active: false },
+  });
+  assert.equal(hiddenFeaturedSong.status, 200);
+  assert.equal(hiddenFeaturedSong.data.song.active, false);
+  const publicSongsAfterHide = await api('/api/featured-songs');
+  assert.equal(publicSongsAfterHide.data.songs.length, 0);
+  const hiddenSongDownload = await api(`/api/featured-songs/${featuredSongId}/download`);
+  assert.equal(hiddenSongDownload.status, 404);
+
+  const restoredFeaturedSong = await api(`/api/admin/featured-songs/${featuredSongId}`, {
+    method: 'PATCH',
+    token: adminToken,
+    body: { active: true, sortOrder: 20 },
+  });
+  assert.equal(restoredFeaturedSong.status, 200);
+  assert.equal(restoredFeaturedSong.data.song.sortOrder, 20);
+
   const siteEditor = await api('/api/admin/site-configuration', { token: adminToken });
   assert.equal(siteEditor.status, 200);
   const siteDraft = structuredClone(siteEditor.data.configuration);
@@ -506,6 +571,19 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.match(userRegistration.data.user.friend_id, /^user_[a-f0-9]{5}$/);
   const userToken = userRegistration.data.token;
   const userId = userRegistration.data.user.user_id;
+
+  const customerFeaturedSongEditor = await api('/api/admin/featured-songs', { token: userToken });
+  assert.equal(customerFeaturedSongEditor.status, 403);
+  const adminFeaturedSongs = await api('/api/admin/featured-songs', { token: adminToken });
+  assert.equal(adminFeaturedSongs.status, 200);
+  assert.equal(adminFeaturedSongs.data.songs[0].id, featuredSongId);
+  const deletedFeaturedSong = await api(`/api/admin/featured-songs/${featuredSongId}`, {
+    method: 'DELETE',
+    token: adminToken,
+  });
+  assert.equal(deletedFeaturedSong.status, 200);
+  const publicSongsAfterDelete = await api('/api/featured-songs');
+  assert.equal(publicSongsAfterDelete.data.songs.length, 0);
 
   const customerSiteEditor = await api('/api/admin/site-configuration', { token: userToken });
   assert.equal(customerSiteEditor.status, 403);

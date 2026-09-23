@@ -10,6 +10,18 @@ import {
 import { normalizeSong } from '../../src/engine/scheduler.js';
 import { parseSongText } from '../../src/utils/songParser.js';
 
+test('featured library identity survives piano normalization', () => {
+  const song = normalizeSong({
+    title: 'Administrator song',
+    featuredSongId: 'featured_song_123',
+    libraryType: 'free',
+    notes: [{ note: 'C4', time: 0, duration: 0.5 }],
+  });
+
+  assert.equal(song.featuredSongId, 'featured_song_123');
+  assert.equal(song.libraryId, 'featured:featured_song_123');
+});
+
 test('compact piano range preserves the score and folds only notes below A1', () => {
   const song = normalizeSong({
     title: 'Compact register fixture',

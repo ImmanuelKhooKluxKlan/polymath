@@ -6,12 +6,14 @@ import { validateTeacherGlbFile } from '../utils/teacherModel.js';
 import ModelLabPage from './ModelLabPage.jsx';
 import SubscriptionCatalogAdmin from '../components/SubscriptionCatalogAdmin.jsx';
 import SiteControlCenter from '../components/SiteControlCenter.jsx';
+import FeaturedSongAdmin from '../components/FeaturedSongAdmin.jsx';
 import { campaignShareUrl } from '../engine/artistCampaign.js';
 
 const ADMIN_SECTIONS = [
   ['overview', 'Overview', 'Health, revenue, and storage', 'Start'],
   ['growth', 'Growth', 'Activation, sharing, subscriptions, retention, and transcription reliability', 'Start'],
   ['site-builder', 'Site & navigation', 'Rename, arrange, preview, and publish sections', 'Website'],
+  ['song-library', 'Available songs', 'Add and organise free songs for each instrument', 'Website'],
   ['devices', 'Device preview', 'Preview, test, and review responsive pages', 'Website'],
   ['subscriptions', 'Subscriptions', 'Categories, prices, features, and access', 'Business'],
   ['teacher-marketplace', 'Human teachers', 'Directory access, rates, reviews, and platform fees', 'Business'],
@@ -1420,6 +1422,11 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       {activeSection === 'site-builder' && (
         <section className='admin-workspace'>
           <SiteControlCenter />
+        </section>
+      )}
+      {activeSection === 'song-library' && (
+        <section className='admin-workspace'>
+          <FeaturedSongAdmin />
         </section>
       )}
       {activeSection === 'subscriptions' && (

@@ -10,6 +10,7 @@ import { ensembleAudio } from '../engine/ensembleEngine.js';
 import { getSongDuration, normalizeSong } from '../engine/scheduler.js';
 import { parseUploadedSongFile } from '../utils/songParser.js';
 import { apiRequest, fetchProtectedFile } from '../services/api.js';
+import { fetchFeaturedSongFile } from '../services/featuredSongs.js';
 import { analyzeLearningSections } from '../utils/learningSections.js';
 import { downloadSongJson } from '../utils/exporters.js';
 import { LIVE_PRODUCT_FEATURES } from '../config/liveProduct.js';
@@ -168,7 +169,7 @@ function formatTime(seconds) {
   return `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
 
-export default function EnsemblePage({ user, setUser, onNavigate, personalSongs = [], onPersonalSongSaved }) {
+export default function EnsemblePage({ user, setUser, onNavigate, personalSongs = [], featuredSongs = [], onPersonalSongSaved }) {
   const [instrument, setInstrument] = useState('fiddle');
   const [song, setSong] = useState(() => demoSongFor('fiddle'));
   const [isCustomSong, setIsCustomSong] = useState(false);
@@ -215,17 +216,25 @@ export default function EnsemblePage({ user, setUser, onNavigate, personalSongs 
     ...librarySongs.filter((item) => item.instrument === instrument).map((item) => item.song),
   ], [instrument, librarySongs]);
   const songChoices = useMemo(() => {
-    const localSongs = song.personalSongId || availableSongs.some((candidate) => candidate === song)
+    const localSongs = song.personalSongId || song.featuredSongId || availableSongs.some((candidate) => candidate === song)
       ? availableSongs
       : [song, ...availableSongs];
     return [
       ...localSongs
-        .filter((candidate) => !candidate.personalSongId)
+        .filter((candidate) => !candidate.personalSongId && !candidate.featuredSongId)
         .map((candidate, index) => ({
           id: `local:${candidate.libraryId || `${candidate.title}:${candidate.composer || ''}:${index}`}`,
           label: candidate.composer ? `${candidate.title} (${candidate.composer})` : candidate.title,
           searchText: `${candidate.title} ${candidate.artist || candidate.composer || ''}`,
           song: candidate,
+        })),
+      ...featuredSongs
+        .filter((candidate) => candidate.instrument === instrument)
+        .map((candidate) => ({
+          id: `featured:${candidate.id}`,
+          label: candidate.artist ? `${candidate.title} (${candidate.artist})` : candidate.title,
+          searchText: `${candidate.title} ${candidate.artist || ''}`,
+          featuredSong: candidate,
         })),
       ...personalSongs.map((candidate) => ({
         id: `personal:${candidate.id}`,
@@ -234,8 +243,10 @@ export default function EnsemblePage({ user, setUser, onNavigate, personalSongs 
         personalSong: candidate,
       })),
     ];
-  }, [availableSongs, personalSongs, song]);
-  const selectedSongChoice = song.personalSongId
+  }, [availableSongs, featuredSongs, instrument, personalSongs, song]);
+  const selectedSongChoice = song.featuredSongId
+    ? `featured:${song.featuredSongId}`
+    : song.personalSongId
     ? `personal:${song.personalSongId}`
     : songChoices.find((choice) => choice.song === song)?.id || songChoices[0]?.id || '';
 
@@ -484,9 +495,37 @@ export default function EnsemblePage({ user, setUser, onNavigate, personalSongs 
     }
   }
 
+  async function loadFeaturedEnsembleSong(featuredSong) {
+    if (!featuredSong?.id || loadingPersonalSongId) return;
+    const loadingId = `featured:${featuredSong.id}`;
+    setLoadingPersonalSongId(loadingId);
+    setPersonalSongStatus('Loading available song...');
+    try {
+      const file = await fetchFeaturedSongFile(featuredSong);
+      const parsed = await parseUploadedSongFile(file);
+      if (!parsed.notes?.length) throw new Error('This song does not contain notes for this instrument studio.');
+      await loadReadySheet(file, {
+        prepared: {
+          ...parsed,
+          title: featuredSong.title || parsed.title,
+          composer: featuredSong.artist || parsed.composer,
+          featuredSongId: featuredSong.id,
+          libraryId: loadingId,
+          libraryType: 'free',
+        },
+      });
+      setPersonalSongStatus('Available song ready.');
+    } catch (error) {
+      setPersonalSongStatus(error.message || 'The available song could not be loaded.');
+    } finally {
+      setLoadingPersonalSongId('');
+    }
+  }
+
   function chooseSong(value) {
     const choice = songChoices.find((candidate) => candidate.id === value);
-    if (choice?.personalSong) loadPersonalEnsembleSong(choice.personalSong);
+    if (choice?.featuredSong) loadFeaturedEnsembleSong(choice.featuredSong);
+    else if (choice?.personalSong) loadPersonalEnsembleSong(choice.personalSong);
     else if (choice?.song) {
       stopPlayback();
       setSong(choice.song);
