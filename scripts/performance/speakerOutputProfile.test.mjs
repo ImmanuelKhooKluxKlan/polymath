@@ -14,19 +14,22 @@ import {
   tonePresetForSpeaker,
 } from '../../src/engine/speakerOutputProfile.js';
 
-test('automatic output keeps full-range desktop sound and protects small devices', () => {
+test('production output restores the same September 18 piano on every device', () => {
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'desktop', performanceTier: 'full',
   }), 'full-range');
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'desktop', performanceTier: 'full', portableSpeakerHint: true,
-  }), 'small-speaker');
+  }), 'full-range');
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'phone', performanceTier: 'balanced',
-  }), 'small-speaker');
+  }), 'full-range');
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'desktop', performanceTier: 'lite',
-  }), 'small-speaker');
+  }), 'full-range');
+  assert.equal(resolveSpeakerOutputProfile('small', {
+    deviceClass: 'phone', performanceTier: 'lite',
+  }), 'full-range');
   assert.equal(resolveSpeakerOutputProfile('full', {
     deviceClass: 'phone', performanceTier: 'lite',
   }), 'full-range');

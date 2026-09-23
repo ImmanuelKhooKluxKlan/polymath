@@ -2,9 +2,7 @@ const OUTPUT_PROFILE_FULL_RANGE = 'full-range';
 const OUTPUT_PROFILE_SMALL_SPEAKER = 'small-speaker';
 
 export const SPEAKER_OUTPUT_MODE_LABELS = Object.freeze({
-  auto: 'Automatic (recommended)',
-  small: 'Phone / laptop speakers',
-  full: 'Headphones / full-range speakers',
+  auto: 'Original piano balance',
 });
 
 export function normalizeSpeakerOutputMode(value, fallback = 'auto') {
@@ -15,22 +13,14 @@ export function normalizeSpeakerOutputMode(value, fallback = 'auto') {
 
 export function resolveSpeakerOutputProfile(
   mode = 'auto',
-  {
-    deviceClass = 'desktop',
-    performanceTier = 'full',
-    portableSpeakerHint = false,
-  } = {},
+  _device = {},
 ) {
-  const normalized = normalizeSpeakerOutputMode(mode);
-  if (normalized === 'small') return OUTPUT_PROFILE_SMALL_SPEAKER;
-  if (normalized === 'full') return OUTPUT_PROFILE_FULL_RANGE;
-
-  return deviceClass === 'phone'
-    || deviceClass === 'tablet'
-    || performanceTier === 'lite'
-    || portableSpeakerHint
-    ? OUTPUT_PROFILE_SMALL_SPEAKER
-    : OUTPUT_PROFILE_FULL_RANGE;
+  // Restore the listener-approved September 18 playback path (7691438).
+  // The compact-speaker experiment made phones and battery-powered laptops
+  // use a materially different piano. Until it is validated with recordings
+  // from real devices, every device receives the same full-range piano path.
+  normalizeSpeakerOutputMode(mode);
+  return OUTPUT_PROFILE_FULL_RANGE;
 }
 
 /**

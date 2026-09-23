@@ -2835,17 +2835,29 @@ class PianoAudioEngine {
         0.98
       );
 
-    const attackCalibrationGain = pianoKeyCalibrationGain(
-      samples[0].info.sampleMidi,
-      this.speakerOutputProfile,
-      'attack'
-    );
+    // The September 18 listener-approved engine played the normalized Iowa
+    // samples directly. Per-key calibration was introduced later as part of
+    // the compact-speaker experiment and changed the balance on real phones.
+    // Keep it available for future lab work, but do not alter production's
+    // restored full-range path.
+    const useExperimentalCompactCalibration =
+      this.speakerOutputProfile === 'small-speaker';
 
-    const bodyCalibrationGain = pianoKeyCalibrationGain(
-      samples[0].info.sampleMidi,
-      this.speakerOutputProfile,
-      'body'
-    );
+    const attackCalibrationGain = useExperimentalCompactCalibration
+      ? pianoKeyCalibrationGain(
+        samples[0].info.sampleMidi,
+        this.speakerOutputProfile,
+        'attack'
+      )
+      : 1;
+
+    const bodyCalibrationGain = useExperimentalCompactCalibration
+      ? pianoKeyCalibrationGain(
+        samples[0].info.sampleMidi,
+        this.speakerOutputProfile,
+        'body'
+      )
+      : 1;
 
     const calibratedAttackGain = finalGain * attackCalibrationGain;
     const calibratedBodyGain = finalGain * bodyCalibrationGain;
@@ -4236,7 +4248,9 @@ class PianoAudioEngine {
       speakerOutputProfile: this.speakerOutputProfile,
       voiceHeadroom: this.currentVoiceHeadroom,
       compactPeakProtection: this.speakerOutputProfile === 'small-speaker',
-      pianoKeyCalibration: PIANO_KEY_CALIBRATION.version,
+      pianoKeyCalibration: this.speakerOutputProfile === 'small-speaker'
+        ? PIANO_KEY_CALIBRATION.version
+        : 'disabled-original-7691438',
       availableSampleZones: this.sampleMidis.length,
       targetSampleZones: this.targetSampleMidis.length,
       loadingMetrics: this.getLoadingMetrics(),
