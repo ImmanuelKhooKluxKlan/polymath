@@ -75,7 +75,16 @@ async function mapConcurrent(items, worker) {
 async function configureCors(client) {
   const origins = String(
     process.env.INSTRUMENT_ALLOWED_ORIGINS
-      || 'https://polymathmusician67.com,http://localhost:5173,http://127.0.0.1:5173',
+      || [
+        'https://polymathmusician67.com',
+        'https://www.polymathmusician67.com',
+        'https://polymath-musician.pages.dev',
+        'https://scaling-preview.polymath-musician.pages.dev',
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+      ].join(','),
   )
     .split(',')
     .map((origin) => origin.trim())
