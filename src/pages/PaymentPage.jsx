@@ -26,7 +26,7 @@ const FALLBACK_CATEGORIES = [
 
 const FEATURES = {
   chill: [
-    'Everything in the Chilling studio',
+    'Piano, guitar, and supported instrument studios',
     'Unlimited JSON and MIDI ready-to-play uploads',
     '10 shared PDF or audio translations every month',
     'Extra translations for 0.5 Mcoin each',
@@ -34,8 +34,6 @@ const FEATURES = {
   musician: [
     'Everything included in Chill',
     '20 shared PDF or audio translations every month',
-    'Full Learn mode across supported instruments',
-    'Band creation, joining, rehearsal, and collaboration',
     'Extra translations for 0.5 Mcoin each',
   ],
 };

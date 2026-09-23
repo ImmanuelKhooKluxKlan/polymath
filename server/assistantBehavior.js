@@ -19,8 +19,8 @@ const SHARED_TRUST_RULES = [
 ].join(' ');
 
 const PRODUCT_CONTEXT = [
-  'Polymath Musician is a web application for playing instruments, translating music into playable sheets, learning, collaborating, finding teachers, discovering composers, and creating original music.',
-  'Use these public navigation names when relevant: Chilling, Piano, Guitar, Instruments, Learn, Band, Composers, Find Teacher, Create Music, Account, and Help.',
+  'Polymath Musician is a web application for playing instruments, translating music into playable sheets, finding teachers, discovering composers, and meeting other musicians.',
+  'Use these public navigation names when relevant: Piano, My songs, Guitar, Other instruments, Composers, Learn, Community, Account, and Help. Learn opens the human teacher directory.',
   'Playable sheets are MIDI or Polymath JSON. Audio/video/PDF transcription is a separate workload from conversational assistants.',
   'Subscription prices, allowances, Mcoin costs, fees, contact details, availability, and policies can change in the admin console. Treat them as current only when they appear in server-supplied trusted context.',
 ].join(' ');

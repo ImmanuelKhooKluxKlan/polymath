@@ -14,6 +14,7 @@ const ALLOWED_ENTITLEMENTS = Object.freeze([
 ]);
 
 const ALLOWED_ENTITLEMENT_KEYS = new Set(ALLOWED_ENTITLEMENTS.map((item) => item.key));
+const HIDDEN_PUBLIC_CATEGORY_SLUGS = new Set(['create-music']);
 
 const DEFAULT_CREATOR_CATEGORY = Object.freeze({
   id: 'category-create-music',
@@ -31,7 +32,7 @@ const DEFAULT_CREATOR_CATEGORY = Object.freeze({
 
 const BASE_FEATURES = Object.freeze({
   chill: [
-    'Everything in the Chilling studio',
+    'Piano, guitar, and supported instrument studios',
     'Unlimited JSON and MIDI ready-to-play uploads',
     '10 shared PDF or audio translations every month',
     'Extra translations for 0.5 Mcoin each',
@@ -39,8 +40,6 @@ const BASE_FEATURES = Object.freeze({
   musician: [
     'Everything included in Chill',
     '20 shared PDF or audio translations every month',
-    'Full Learn mode across supported instruments',
-    'Band creation, rehearsal, and collaboration',
     'Extra translations for 0.5 Mcoin each',
   ],
 });
@@ -163,7 +162,7 @@ function decorateBaseProduct(product) {
       ? [
           `${Number(product.seats || 0).toLocaleString()} individual accounts`,
           'Every member receives Musician abilities',
-          'Learn, Band, and monthly translations',
+          'Supported instrument studios and monthly translations',
           'Private access code with seat controls',
         ]
       : BASE_FEATURES[tier] || [],
@@ -182,11 +181,15 @@ function listPublicCatalog(db, baseProducts) {
     { id: 'individual', slug: 'individual', name: 'Individual', description: 'For one musician.', audience: 'individual', sortOrder: 10 },
     { id: 'institution', slug: 'institution', name: 'Institution', description: 'For classes, cohorts, and schools.', audience: 'institution', sortOrder: 20 },
     ...db.subscriptionCategories
-      .filter((item) => item.status === 'published')
+      .filter((item) => item.status === 'published' && !HIDDEN_PUBLIC_CATEGORY_SLUGS.has(item.slug))
       .map(publicCategory),
   ].sort((left, right) => left.sortOrder - right.sortOrder);
   const customProducts = db.subscriptionPlans
-    .filter((plan) => plan.status === 'published')
+    .filter((plan) => {
+      if (plan.status !== 'published') return false;
+      const category = categoryById(db, plan.categoryId);
+      return !HIDDEN_PUBLIC_CATEGORY_SLUGS.has(category?.slug);
+    })
     .map((plan) => publicCustomProduct(plan, categoryById(db, plan.categoryId)))
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
   const products = [

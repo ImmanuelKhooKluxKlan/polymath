@@ -22,6 +22,9 @@ test('site configuration exposes editable labels without exposing administrator 
   const publicResult = publicSiteConfiguration(db);
   assert.equal(publicResult.brand.name, 'Polymath');
   assert.equal(publicResult.navigation.find((item) => item.id === 'your-songs').access, 'signed-in');
+  assert.equal(publicResult.navigation.find((item) => item.id === 'find-teacher').label, 'Learn');
+  assert.equal(publicResult.navigation.find((item) => item.id === 'band').visible, false);
+  assert.equal(publicResult.navigation.find((item) => item.id === 'create-music').visible, false);
   assert.equal(Object.hasOwn(publicResult, 'updatedBy'), false);
   assert.equal(Object.hasOwn(publicResult.navigation[0], 'path'), false);
 });

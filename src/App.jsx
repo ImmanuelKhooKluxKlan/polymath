@@ -69,6 +69,7 @@ import {
   DEFAULT_SITE_CONFIGURATION,
   normalizePublicSiteConfiguration,
 } from './config/siteConfiguration.js';
+import { LIVE_PRODUCT_FEATURES, resolveLivePage } from './config/liveProduct.js';
 
 const AUDIO_LOOKAHEAD_SECONDS = 0.18;
 const AUDIO_SCHEDULER_INTERVAL_MS = 25;
@@ -86,14 +87,10 @@ const TeacherMarketplacePage = lazy(() => import('./pages/TeacherMarketplacePage
 const MessagesPage = lazy(() => import('./pages/MessagesPage.jsx'));
 const CommunityPage = lazy(() => import('./pages/CommunityPage.jsx'));
 const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
-const BandPage = lazy(() => import('./pages/BandPage.jsx'));
 const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
 const AdminDatabasePage = lazy(() => import('./pages/AdminDatabasePage.jsx'));
 const ChatBossPage = lazy(() => import('./pages/ChatBossPage.jsx'));
 const ModelLabPage = lazy(() => import('./pages/ModelLabPage.jsx'));
-const TeacherProjectionPage = lazy(() => import('./pages/TeacherProjectionPage.jsx'));
-const TeacherArPage = lazy(() => import('./pages/TeacherArPage.jsx'));
-const CreateMusicPage = lazy(() => import('./pages/CreateMusicPage.jsx'));
 
 function readRoute() {
   const redirectParams = new URLSearchParams(window.location.search);
@@ -110,8 +107,17 @@ function readRoute() {
   }
 
   const raw = window.location.hash.replace(/^#/, '') || 'studio';
-  const [page, query = ''] = raw.split('?');
-  return { page: page || 'studio', params: new URLSearchParams(query) };
+  const [requestedPage, query = ''] = raw.split('?');
+  const page = resolveLivePage(requestedPage);
+  if (page !== requestedPage) {
+    const normalizedHash = `${page}${query ? `?${query}` : ''}`;
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${window.location.search}#${normalizedHash}`,
+    );
+  }
+  return { page, params: new URLSearchParams(query) };
 }
 
 function isTypingTarget(target) {
@@ -358,7 +364,9 @@ export default function App() {
     songId: songLibraryId(song),
     report: learningReport,
   }), [learningProgress, song, learningReport]);
-  const sharedLearnRequest = route.page === 'studio' && route.params.get('try') === 'learn';
+  const sharedLearnRequest = LIVE_PRODUCT_FEATURES.instrumentLearning
+    && route.page === 'studio'
+    && route.params.get('try') === 'learn';
   const campaignSlug = sharedLearnRequest ? String(route.params.get('campaign') || '').trim().toLowerCase() : '';
   const campaignAdminPreview = Boolean(campaignSlug && route.params.get('adminPreview') === '1');
   const campaignReferral = campaignSlug ? String(route.params.get('ref') || '').trim().toUpperCase() : '';
@@ -751,7 +759,8 @@ export default function App() {
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
     });
-    window.location.hash = `${page}${query.size ? `?${query.toString()}` : ''}`;
+    const livePage = resolveLivePage(page);
+    window.location.hash = `${livePage}${query.size ? `?${query.toString()}` : ''}`;
   }
 
   function refreshActiveNotes() {
@@ -1746,22 +1755,6 @@ export default function App() {
     void listenToLearningRange(range);
   }, [teacherDemonstration]);
 
-  if (route.page === 'teacher-projection') {
-    return (
-      <Suspense fallback={<div className="projection-route-loading">Preparing teacher display…</div>}>
-        <TeacherProjectionPage params={route.params} />
-      </Suspense>
-    );
-  }
-
-  if (route.page === 'teacher-ar') {
-    return (
-      <Suspense fallback={<div className="projection-route-loading">Preparing AR studio…</div>}>
-        <TeacherArPage params={route.params} />
-      </Suspense>
-    );
-  }
-
   function changeLearningLevel(levelId) {
     const level = learningLevelById(levelId);
     stopPlayback();
@@ -1817,7 +1810,6 @@ export default function App() {
     if (user?.mustChangePassword && route.page !== 'account') {
       return <AccountPage user={user} setUser={setUser} onNavigate={navigate} />;
     }
-    if (route.page === 'create-music') return <CreateMusicPage user={user} onNavigate={navigate} />;
     if (route.page === 'guitar') return (
       <GuitarPage
         user={user}
@@ -1836,19 +1828,6 @@ export default function App() {
         onPersonalSongSaved={rememberPersonalSong}
       />
     );
-    if (route.page === 'band') {
-      if (!user?.admin && !user?.access?.band) {
-        return (
-          <PaymentPage
-            user={user}
-            setUser={setUser}
-            productId="polymath-musician-monthly"
-            onNavigate={navigate}
-          />
-        );
-      }
-      return <BandPage user={user} setUser={setUser} onNavigate={navigate} />;
-    }
     if (route.page === 'published-songs') return <MarketplacePage user={user} setUser={setUser} onNavigate={navigate} />;
     if (route.page === 'community') return <CommunityPage user={user} onNavigate={navigate} />;
     if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} onNavigate={navigate} />;
@@ -1882,6 +1861,7 @@ export default function App() {
     return (
       <section className={`studio-page ${teachingMode === 'learn' ? 'is-learning-journey' : ''}`}>
         <PianoLearnJourney
+          learningEnabled={LIVE_PRODUCT_FEATURES.instrumentLearning}
           mode={teachingMode}
           locked={!activeCampaign && !hasFullLearnAccess}
           onUpgrade={() => {
@@ -2108,7 +2088,7 @@ export default function App() {
         <aside className="orientation-recommendation" role="dialog" aria-label="Landscape orientation recommendation">
           <div className="orientation-phone-icon" aria-hidden="true"><span /></div>
           <div>
-            <strong>Sideways is recommended for learning</strong>
+            <strong>Sideways is recommended for playing</strong>
             <p>Turn your phone or tablet sideways so the piano, falling notes, guitar strings, and timing lanes have more width than height.</p>
           </div>
           <button

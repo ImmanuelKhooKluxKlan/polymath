@@ -39,7 +39,8 @@ test('administrator-created plans remain drafts until checkout is configured', (
   const product = resolveProduct(db, {}, plan.id);
   assert.equal(product.price, '12.99');
   assert.equal(product.checkoutConfigured, true);
-  assert.equal(listPublicCatalog(db, {}).products[0].categorySlug, 'create-music');
+  assert.equal(listPublicCatalog(db, {}).products.length, 0);
+  assert.equal(listPublicCatalog(db, {}).categories.some((item) => item.slug === 'create-music'), false);
 });
 
 test('custom access is additive and sold pricing cannot mutate', () => {

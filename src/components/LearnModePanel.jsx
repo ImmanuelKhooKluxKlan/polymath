@@ -10,7 +10,7 @@ export default function LearnModePanel({
   return (
     <section className={`learn-mode-panel ${mode === 'learn' ? 'is-learning' : ''}`}>
       <div className="mode-switch" role="group" aria-label="Teaching mode">
-        <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => onModeChange('regular')}>Chilling</button>
+        <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => onModeChange('regular')}>Play</button>
         <button
           type="button"
           className={mode === 'learn' ? 'active' : ''}

@@ -98,7 +98,24 @@ function outcomeComparison(outcome) {
   return `${outcome.skillLabel}: ${outcome.score}% · ${outcome.improvement > 0 ? '+' : ''}${outcome.improvement} points from your previous attempt.`;
 }
 
+function PianoStudioStart({ onChooseMusic }) {
+  return (
+    <div className="piano-core-start">
+      <div>
+        <p className="eyebrow">Start here</p>
+        <h1>Play the song you love.</h1>
+        <p>Bring a song or choose one that is ready. Polymath turns it into playable piano.</p>
+      </div>
+      <div className="piano-core-start-actions">
+        <button type="button" className="primary" onClick={() => onChooseMusic?.('upload')}>Upload my song</button>
+        <button type="button" className="ghost" onClick={() => onChooseMusic?.('available')}>Choose a ready song</button>
+      </div>
+    </div>
+  );
+}
+
 export default function PianoLearnJourney({
+  learningEnabled = true,
   mode,
   locked = false,
   onUpgrade,
@@ -231,6 +248,14 @@ export default function PianoLearnJourney({
     window.setTimeout(() => onFocusPlayer?.(), 100);
   }
 
+  if (!learningEnabled) {
+    return (
+      <section ref={panelRef} className="piano-learn-journey" aria-label="Piano studio">
+        <PianoStudioStart onChooseMusic={onChooseMusic} />
+      </section>
+    );
+  }
+
   if (campaignStatus) {
     return (
       <ArtistChallengeExperience
@@ -262,24 +287,14 @@ export default function PianoLearnJourney({
       aria-label="Piano journey"
     >
       <div className="mode-switch learn-journey-mode" role="group" aria-label="Piano mode">
-        <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => switchMode('regular')}>Chilling</button>
+        <button type="button" className={mode === 'regular' ? 'active' : ''} onClick={() => switchMode('regular')}>Play</button>
         <button type="button" className={mode === 'learn' ? 'active' : ''} onClick={() => switchMode('learn')}>
-          {locked ? 'Try Learn' : 'Learn'}
+          Learn
         </button>
       </div>
 
       {mode === 'regular' && (
-        <div className="piano-core-start">
-          <div>
-            <p className="eyebrow">Start here</p>
-            <h1>Play the song you love.</h1>
-            <p>Bring a song or choose one that is ready. Polymath turns it into playable piano.</p>
-          </div>
-          <div className="piano-core-start-actions">
-            <button type="button" className="primary" onClick={() => onChooseMusic?.('upload')}>Upload my song</button>
-            <button type="button" className="ghost" onClick={() => onChooseMusic?.('available')}>Choose a ready song</button>
-          </div>
-        </div>
+        <PianoStudioStart onChooseMusic={onChooseMusic} />
       )}
 
       {mode === 'learn' && locked && !freePreviewOpen && (

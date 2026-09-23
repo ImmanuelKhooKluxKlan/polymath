@@ -12,6 +12,7 @@ import { parseUploadedSongFile } from '../utils/songParser.js';
 import { apiRequest, fetchProtectedFile } from '../services/api.js';
 import { analyzeLearningSections } from '../utils/learningSections.js';
 import { downloadSongJson } from '../utils/exporters.js';
+import { LIVE_PRODUCT_FEATURES } from '../config/liveProduct.js';
 
 const LOOKAHEAD_SECONDS = 0.16;
 const SCHEDULER_INTERVAL_MS = 25;
@@ -538,7 +539,7 @@ export default function EnsemblePage({ user, setUser, onNavigate, personalSongs 
         ))}
       </div>
 
-      <LearnModePanel
+      {LIVE_PRODUCT_FEATURES.instrumentLearning && <LearnModePanel
         mode={teachingMode}
         locked={!user?.admin && !user?.access?.learn}
         onUpgrade={() => onNavigate('payment', { productId: 'polymath-musician-monthly' })}
@@ -555,7 +556,7 @@ export default function EnsemblePage({ user, setUser, onNavigate, personalSongs 
         onRepeatChange={setRepeatSection}
         preferredSeconds={preferredSectionSeconds}
         onPreferredSecondsChange={(value) => setPreferredSectionSeconds(clamp(value || 15, 5, 60))}
-      />
+      />}
 
       <div className="ensemble-layout">
         <aside className="ensemble-control-card">

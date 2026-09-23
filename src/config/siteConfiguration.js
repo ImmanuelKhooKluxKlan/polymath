@@ -1,3 +1,5 @@
+import { applyLiveNavigationPolicy } from './liveProduct.js';
+
 export const DEFAULT_SITE_CONFIGURATION = Object.freeze({
   revision: 1,
   brand: Object.freeze({ name: 'Polymath', suffix: 'Musician' }),
@@ -5,12 +7,12 @@ export const DEFAULT_SITE_CONFIGURATION = Object.freeze({
   navigation: Object.freeze([
     Object.freeze({ id: 'studio', label: 'Piano', group: 'primary', order: 10, visible: true, access: 'public' }),
     Object.freeze({ id: 'your-songs', label: 'My songs', group: 'primary', order: 20, visible: true, access: 'signed-in' }),
-    Object.freeze({ id: 'create-music', label: 'Create Music', group: 'more', order: 30, visible: true, access: 'public' }),
+    Object.freeze({ id: 'create-music', label: 'Create Music', group: 'more', order: 30, visible: false, access: 'public' }),
     Object.freeze({ id: 'guitar', label: 'Guitar', group: 'more', order: 40, visible: true, access: 'public' }),
     Object.freeze({ id: 'ensemble', label: 'Other instruments', group: 'more', order: 50, visible: true, access: 'public' }),
     Object.freeze({ id: 'published-songs', label: 'Composers', group: 'more', order: 60, visible: true, access: 'public' }),
-    Object.freeze({ id: 'find-teacher', label: 'Find Teacher', group: 'more', order: 70, visible: true, access: 'public' }),
-    Object.freeze({ id: 'band', label: 'Band', group: 'more', order: 80, visible: true, access: 'public' }),
+    Object.freeze({ id: 'find-teacher', label: 'Learn', group: 'more', order: 70, visible: true, access: 'public' }),
+    Object.freeze({ id: 'band', label: 'Band', group: 'more', order: 80, visible: false, access: 'public' }),
     Object.freeze({ id: 'community', label: 'Community', group: 'more', order: 90, visible: true, access: 'public' }),
   ]),
 });
@@ -37,16 +39,16 @@ export function normalizePublicSiteConfiguration(raw) {
       text: String(announcement.text || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 180),
       tone: ['info', 'success', 'warning'].includes(announcement.tone) ? announcement.tone : 'info',
     },
-    navigation: DEFAULT_SITE_CONFIGURATION.navigation.map((fallback) => {
+    navigation: applyLiveNavigationPolicy(DEFAULT_SITE_CONFIGURATION.navigation.map((fallback) => {
       const item = rawById.get(fallback.id) || {};
       return {
         id: fallback.id,
         label: cleanLabel(item.label, fallback.label),
         group: ['primary', 'more'].includes(item.group) ? item.group : fallback.group,
         order: Number.isFinite(Number(item.order)) ? Math.max(0, Math.min(1000, Math.floor(Number(item.order)))) : fallback.order,
-        visible: item.visible !== false,
+        visible: fallback.visible !== false && item.visible !== false,
         access: item.access === 'signed-in' || fallback.access === 'signed-in' ? 'signed-in' : 'public',
       };
-    }).sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)),
+    }).sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))),
   };
 }
