@@ -179,6 +179,22 @@ async function inspectPage(cdp, sessionId, viewport) {
           ...descriptor(element),
           fontSize: getComputedStyle(element).fontSize,
         }));
+      const controlMetric = (element) => {
+        if (!element || !visible(element)) return null;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return {
+          ...descriptor(element),
+          width: Math.round(rect.width * 10) / 10,
+          height: Math.round(rect.height * 10) / 10,
+          fontSize: Number.parseFloat(style.fontSize),
+          padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+        };
+      };
+      const landscapeButtonReference = controlMetric(document.querySelector('.piano-core-start-actions button'));
+      const playbackButtons = [...document.querySelectorAll('.transport-dock .transport-button-group button, .guitar-transport-dock .transport-button-group button')]
+        .map(controlMetric)
+        .filter(Boolean);
       return {
         viewport: [viewportWidth, viewportHeight],
         page: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
@@ -187,6 +203,8 @@ async function inspectPage(cdp, sessionId, viewport) {
         outsideViewport,
         oversizedControls,
         largeText,
+        landscapeButtonReference,
+        playbackButtons,
       };
     })()`,
     returnByValue: true,
@@ -236,6 +254,22 @@ async function main() {
           path.join(outputRoot, `${viewport.id}-${label}.png`),
           Buffer.from(screenshot.data, 'base64'),
         );
+        if (viewport.width > viewport.height && viewport.height <= 600 && (route === 'studio' || route === 'guitar')) {
+          const dockSelector = route === 'studio' ? '.transport-dock' : '.guitar-transport-dock';
+          await cdp.send('Runtime.evaluate', {
+            expression: `document.querySelector('${dockSelector}')?.scrollIntoView({ block: 'center' })`,
+          }, sessionId);
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          const controlsScreenshot = await cdp.send('Page.captureScreenshot', {
+            format: 'png',
+            fromSurface: true,
+            captureBeyondViewport: false,
+          }, sessionId);
+          fs.writeFileSync(
+            path.join(outputRoot, `${viewport.id}-${label}-playback-controls.png`),
+            Buffer.from(controlsScreenshot.data, 'base64'),
+          );
+        }
         await cdp.send('Target.closeTarget', { targetId });
       }
     }

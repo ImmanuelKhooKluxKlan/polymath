@@ -11561,6 +11561,71 @@ body.projection-output-active {
   .community-gate { gap: 7px; padding-top: 20px; }
   .community-gate-mark { width: 52px; height: 52px; border-radius: 17px; font-size: 1.45rem; }
   .community-gate > button { min-height: 40px; padding: 8px 11px; font-size: 0.75rem; }
+
+  /* Match the compact Upload my song control in the short landscape layout.
+     Landscape phones are often wider than the regular 720px phone breakpoint,
+     so playback controls need their own short-edge sizing. */
+  .transport-dock,
+  .guitar-transport-dock {
+    gap: 7px;
+    padding: 8px;
+    border-radius: 14px;
+  }
+
+  .transport-button-group {
+    gap: 6px;
+    width: 100%;
+  }
+
+  .transport-dock .transport-button-group {
+    display: grid;
+    grid-template-columns: 1.12fr repeat(3, 0.9fr) 1fr;
+  }
+
+  .guitar-transport-dock .transport-button-group {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .transport-button-group button {
+    min-width: 0;
+    min-height: 36px;
+    padding: 7px 8px;
+    font-size: 0.7rem;
+    line-height: 1.15;
+  }
+
+  .transport-main,
+  .seek-jump,
+  .transport-dock .key-notes-toggle { min-width: 0; }
+
+  .dock-speed {
+    gap: 3px;
+    font-size: 0.7rem;
+    line-height: 1.15;
+  }
+
+  .pedal-button {
+    min-width: 104px;
+    min-height: 36px;
+    gap: 1px;
+    padding: 5px 8px;
+    border-radius: 11px;
+    font-size: 0.7rem;
+    line-height: 1.05;
+  }
+
+  .pedal-button small { font-size: 0.6rem; }
+
+  .dock-progress {
+    grid-template-columns: 34px minmax(0, 1fr) 34px;
+    gap: 6px;
+  }
+
+  .timeline-time {
+    min-width: 0;
+    font-size: 0.65rem;
+  }
 }
 
 @media (max-width: 650px) and (max-height: 600px) and (orientation: landscape) {
