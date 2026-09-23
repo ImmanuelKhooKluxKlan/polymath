@@ -10,7 +10,6 @@ import {
 } from './noteMath.js';
 import { getInitialPerformanceTier, normalizePerformanceTier } from './devicePerformance.js';
 import {
-  PIANO_KEY_CALIBRATION,
   pianoCompactSourceChannel,
   pianoKeyCalibrationGain,
 } from './pianoKeyCalibration.js';
@@ -23,6 +22,7 @@ import {
   speakerPolyphonyHeadroom,
   speakerRegisterGain,
   speakerSampleGainCompensation,
+  speakerVirtualBassProfile,
   speakerVoiceProfile,
   tonePresetForSpeaker,
 } from './speakerOutputProfile.js';
@@ -38,9 +38,9 @@ const MIN_AUTOPLAY_NOTE_SECONDS = 0.035;
 const STOP_ALL_RELEASE_SECONDS = 0.055;
 const MIN_KEYBOARD_RELEASE_SECONDS = 0.22;
 const MAX_RELEASE_SECONDS = 3.2;
-const MAX_POLYPHONY = 96;
-const BALANCED_MAX_POLYPHONY = 64;
-const LITE_MAX_POLYPHONY = 36;
+const MAX_POLYPHONY = 88;
+const BALANCED_MAX_POLYPHONY = 48;
+const LITE_MAX_POLYPHONY = 28;
 const MAX_PENDING_VOICES = 128;
 
 const COMPACT_SOFT_CEILING_CURVE = (() => {
@@ -707,6 +707,9 @@ class PianoAudioEngine {
     this.analysisCache =
       new Map();
 
+    this.virtualBassWaves =
+      new Map();
+
     this.performanceTier =
       getInitialPerformanceTier();
 
@@ -869,11 +872,21 @@ class PianoAudioEngine {
         window.AudioContext ||
         window.webkitAudioContext;
 
-      this.context =
-        new AudioContextClass({
-          latencyHint: 'interactive',
-        });
+      // Weak devices need a slightly larger render buffer to avoid the tiny
+      // gaps and crackles that sound like missing keys. Full devices retain
+      // the lowest-latency path for live manual playing.
+      const latencyHint = this.performanceTier === 'full'
+        ? 'interactive'
+        : 'balanced';
+      try {
+        this.context = new AudioContextClass({ latencyHint });
+      } catch {
+        // Older WebKit builds can reject constructor options even though they
+        // otherwise implement Web Audio correctly.
+        this.context = new AudioContextClass();
+      }
 
+      this.virtualBassWaves.clear();
       this.buildMasterChain();
     }
 
@@ -1308,10 +1321,9 @@ class PianoAudioEngine {
     const now =
       this.context.currentTime;
 
-    // Iowa's stereo microphones differ by as much as 13.5 dB and frequently
-    // oppose in phase. Compact sample voices select one safe microphone
-    // upstream; this one-channel master then makes the result dual-mono before
-    // it reaches asymmetric phone speakers. Full-range output stays stereo.
+    // Preserve the Iowa recordings' stereo field. Earlier compact rendering
+    // selected a single microphone channel, which changed the instrument and
+    // made some notes collapse unpredictably on real devices.
     this.masterInput.channelCountMode = preset.monoOutput ? 'explicit' : 'max';
     this.masterInput.channelCount = preset.monoOutput ? 1 : 2;
     this.masterInput.channelInterpretation = 'speakers';
@@ -2527,6 +2539,17 @@ class PianoAudioEngine {
       voice
     );
 
+    // Auxiliary oscillators are not part of voice.sources, so a naturally
+    // ending piano sample must stop them explicitly instead of leaving silent
+    // graph work alive until their safety timeout.
+    for (const { osc } of voice.fallbackNodes || []) {
+      try {
+        osc.stop();
+      } catch {
+        // It may already have reached a scheduled stop time.
+      }
+    }
+
     for (const node of voice.graphNodes || []) {
       try {
         node.disconnect();
@@ -2615,6 +2638,25 @@ class PianoAudioEngine {
       -0.42,
       0.42
     );
+  }
+
+  getVirtualBassWave(harmonics = []) {
+    const normalized = harmonics
+      .map((value) => Math.max(1, Math.round(Number(value) || 1)))
+      .slice(0, 3);
+    const key = normalized.join(':');
+    if (this.virtualBassWaves.has(key)) return this.virtualBassWaves.get(key);
+
+    const size = Math.max(2, ...normalized) + 1;
+    const real = new Float32Array(size);
+    const imaginary = new Float32Array(size);
+    const weights = [1, 0.58, 0.32];
+    normalized.forEach((harmonic, index) => {
+      imaginary[harmonic] = weights[index] || 0;
+    });
+    const wave = this.context.createPeriodicWave(real, imaginary);
+    this.virtualBassWaves.set(key, wave);
+    return wave;
   }
 
   connectVoiceOutput(outputNode, voice) {
@@ -2839,13 +2881,13 @@ class PianoAudioEngine {
         0.98
       );
 
-    // The September 18 listener-approved engine played the normalized Iowa
+    // The listener-approved early-September engine played the normalized Iowa
     // samples directly. Per-key calibration was introduced later as part of
     // the compact-speaker experiment and changed the balance on real phones.
     // Keep it available for future lab work, but do not alter production's
     // restored full-range path.
     const useExperimentalCompactCalibration =
-      this.speakerOutputProfile === 'small-speaker';
+      outputVoiceProfile.usePerKeyCalibration === true;
 
     const attackCalibrationGain = useExperimentalCompactCalibration
       ? pianoKeyCalibrationGain(
@@ -2934,14 +2976,14 @@ class PianoAudioEngine {
           );
 
         // The Iowa files are stereo microphone recordings. Fifty of the 88
-        // keys have negatively correlated channels; folding L+R to mono loses
-        // as much as 13.2 dB and is why individual keys disappeared on phones
-        // while sounding normal on a stereo desktop. Compact output selects a
-        // measured microphone channel first, then safely copies that mono
-        // signal to both device speakers. Full-range output remains stereo.
+        // keys have negatively correlated channels; folding L+R to mono can
+        // lose 13.2 dB. The production compact path therefore preserves both
+        // microphones. The gated single-channel branch remains available only
+        // for a future measured profile and is deliberately off today.
         let compactChannelSplitter = null;
         if (
           this.speakerOutputProfile === 'small-speaker'
+          && outputVoiceProfile.phaseSafeMono === true
           && sample.buffer.numberOfChannels > 1
         ) {
           compactChannelSplitter = this.context.createChannelSplitter(
@@ -3014,6 +3056,63 @@ class PianoAudioEngine {
         );
       }
     );
+
+    const virtualBassProfile = speakerVirtualBassProfile(
+      requestedMidi,
+      this.speakerOutputProfile
+    );
+    if (virtualBassProfile.enabled) {
+      const oscillator = this.context.createOscillator();
+      const virtualBassFilter = this.context.createBiquadFilter();
+      const virtualBassGain = this.context.createGain();
+      const fundamental = noteToFrequency(note);
+      const virtualAmount = Math.max(
+        MIN_GAIN,
+        virtualBassProfile.gain * (0.72 + (0.28 * velocity))
+      );
+
+      oscillator.setPeriodicWave(
+        this.getVirtualBassWave(virtualBassProfile.harmonics)
+      );
+      oscillator.frequency.setValueAtTime(fundamental, startAt);
+
+      virtualBassFilter.type = 'lowpass';
+      virtualBassFilter.frequency.setValueAtTime(
+        virtualBassProfile.lowPassFrequency,
+        startAt
+      );
+      virtualBassFilter.Q.setValueAtTime(0.58, startAt);
+
+      virtualBassGain.gain.setValueAtTime(MIN_GAIN, Math.max(
+        this.context.currentTime,
+        startAt - 0.002
+      ));
+      virtualBassGain.gain.exponentialRampToValueAtTime(
+        virtualAmount,
+        startAt + 0.012
+      );
+      virtualBassGain.gain.exponentialRampToValueAtTime(
+        Math.max(MIN_GAIN, virtualAmount * 0.42),
+        startAt + 0.34
+      );
+
+      oscillator.connect(virtualBassFilter);
+      virtualBassFilter.connect(virtualBassGain);
+      virtualBassGain.connect(highPass);
+      oscillator.start(startAt);
+      oscillator.stop(startAt + 30);
+
+      voice.fallbackNodes.push({
+        osc: oscillator,
+        gain: virtualBassGain,
+      });
+      this.registerVoiceNodes(
+        voice,
+        oscillator,
+        virtualBassFilter,
+        virtualBassGain
+      );
+    }
 
     highPass.connect(body);
 
@@ -4251,10 +4350,13 @@ class PianoAudioEngine {
       speakerOutputMode: this.speakerOutputMode,
       speakerOutputProfile: this.speakerOutputProfile,
       voiceHeadroom: this.currentVoiceHeadroom,
-      compactPeakProtection: this.speakerOutputProfile === 'small-speaker',
-      pianoKeyCalibration: this.speakerOutputProfile === 'small-speaker'
-        ? PIANO_KEY_CALIBRATION.version
-        : 'disabled-early-september-aaeee7c',
+      outputLatencySeconds: Number(this.context?.outputLatency) || null,
+      baseLatencySeconds: Number(this.context?.baseLatency) || null,
+      compactPeakProtection: false,
+      pianoKeyCalibration: 'disabled-early-september-aaeee7c',
+      virtualBass: this.speakerOutputProfile === 'small-speaker'
+        ? 'missing-fundamental-v2'
+        : 'disabled',
       availableSampleZones: this.sampleMidis.length,
       targetSampleZones: this.targetSampleMidis.length,
       loadingMetrics: this.getLoadingMetrics(),

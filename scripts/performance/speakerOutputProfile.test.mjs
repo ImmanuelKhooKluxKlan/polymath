@@ -11,26 +11,27 @@ import {
   speakerPolyphonyHeadroom,
   speakerRegisterGain,
   speakerSampleGainCompensation,
+  speakerVirtualBassProfile,
   speakerVoiceProfile,
   tonePresetForSpeaker,
 } from '../../src/engine/speakerOutputProfile.js';
 
-test('production output restores the same early-September piano on every device', () => {
+test('automatic output adapts phones and portable computers without changing desktops', () => {
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'desktop', performanceTier: 'full',
   }), 'full-range');
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'desktop', performanceTier: 'full', portableSpeakerHint: true,
-  }), 'full-range');
+  }), 'small-speaker');
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'phone', performanceTier: 'balanced',
-  }), 'full-range');
+  }), 'small-speaker');
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'desktop', performanceTier: 'lite',
   }), 'full-range');
   assert.equal(resolveSpeakerOutputProfile('small', {
     deviceClass: 'phone', performanceTier: 'lite',
-  }), 'full-range');
+  }), 'small-speaker');
   assert.equal(resolveSpeakerOutputProfile('full', {
     deviceClass: 'phone', performanceTier: 'lite',
   }), 'full-range');
@@ -81,46 +82,57 @@ test('small-speaker register curve preserves body and progressively tames treble
   assert.equal(speakerRegisterGain(84, 'full-range'), 1);
   assert.ok(speakerRegisterGain(24, 'small-speaker') > speakerRegisterGain(48, 'small-speaker'));
   assert.ok(speakerRegisterGain(48, 'small-speaker') > 1);
-  assert.ok(speakerRegisterGain(60, 'small-speaker') < 1);
-  assert.ok(speakerRegisterGain(72, 'small-speaker') < speakerRegisterGain(60, 'small-speaker'));
+  assert.equal(speakerRegisterGain(60, 'small-speaker'), 1);
+  assert.equal(speakerRegisterGain(72, 'small-speaker'), 1);
   assert.ok(speakerRegisterGain(84, 'small-speaker') < speakerRegisterGain(72, 'small-speaker'));
+  assert.ok(speakerRegisterGain(108, 'small-speaker') >= 0.9);
 });
 
 test('small-speaker mix closes extreme arrangement gain gaps without changing full-range gain', () => {
   assert.equal(speakerPerformanceGain(0.25, 48, 'full-range'), 0.25);
   const compactBass = speakerPerformanceGain(0.25, 48, 'small-speaker');
   const compactTreble = speakerPerformanceGain(1.5, 76, 'small-speaker');
-  assert.ok(compactBass >= 0.74);
-  assert.ok(compactTreble <= 0.98);
+  assert.ok(compactBass >= 0.9);
+  assert.ok(compactTreble <= 1.2);
   assert.ok(compactTreble / compactBass < 1.6);
 });
 
-test('compact bass uses harmonics instead of wasteful raw sub-bass gain', () => {
+test('compact bass keeps the accepted sample balance and adds quiet audible partials', () => {
   assert.equal(speakerSampleGainCompensation(21, 'full-range'), 3.2);
-  assert.ok(speakerSampleGainCompensation(21, 'small-speaker') <= 1.72);
-  assert.ok(speakerSampleGainCompensation(21, 'small-speaker') > 1);
+  assert.equal(speakerSampleGainCompensation(21, 'small-speaker'), 3.2);
   assert.equal(speakerSampleGainCompensation(48, 'small-speaker'), 1);
   const lowBass = speakerVoiceProfile(21, 'small-speaker');
-  assert.ok(lowBass.harmonicDrive > 1.8);
-  assert.ok(lowBass.bodyFrequency >= 110 && lowBass.bodyFrequency <= 240);
+  assert.equal(lowBass.harmonicDrive, 1);
+  assert.equal(lowBass.phaseSafeMono, false);
+  assert.equal(lowBass.usePerKeyCalibration, false);
+  assert.ok(lowBass.bodyFrequency >= 130 && lowBass.bodyFrequency <= 260);
   assert.equal(speakerVoiceProfile(60, 'small-speaker').harmonicDrive, 1);
+
+  const virtualBass = speakerVirtualBassProfile(21, 'small-speaker');
+  const fundamental = 440 * (2 ** ((21 - 69) / 12));
+  assert.equal(virtualBass.enabled, true);
+  assert.equal(virtualBass.harmonics.length, 3);
+  assert.ok(virtualBass.harmonics.every((harmonic) => harmonic * fundamental >= 120));
+  assert.ok(virtualBass.gain > 0 && virtualBass.gain < 0.06);
+  assert.equal(speakerVirtualBassProfile(46, 'small-speaker').enabled, false);
+  assert.equal(speakerVirtualBassProfile(21, 'full-range').enabled, false);
 });
 
 test('compact chord headroom scales smoothly while full-range output remains untouched', () => {
   assert.equal(speakerPolyphonyHeadroom(36, 'full-range'), 1);
-  assert.equal(speakerPolyphonyHeadroom(3, 'small-speaker'), 1);
-  assert.ok(speakerPolyphonyHeadroom(10, 'small-speaker') < 0.85);
+  assert.equal(speakerPolyphonyHeadroom(8, 'small-speaker'), 1);
+  assert.ok(speakerPolyphonyHeadroom(10, 'small-speaker') > 0.98);
   assert.ok(speakerPolyphonyHeadroom(24, 'small-speaker') < speakerPolyphonyHeadroom(10, 'small-speaker'));
-  assert.ok(speakerPolyphonyHeadroom(64, 'small-speaker') >= 0.5);
+  assert.ok(speakerPolyphonyHeadroom(64, 'small-speaker') >= 0.8);
 });
 
-test('compact output separates musical roles before dynamics processing', () => {
-  assert.equal(speakerMixBus(84, 'accompaniment', 'small-speaker'), 'accompaniment');
-  assert.equal(speakerMixBus(48, 'melody', 'small-speaker'), 'melody');
+test('all notes share one continuous piano bus on compact output', () => {
+  assert.equal(speakerMixBus(84, 'accompaniment', 'small-speaker'), 'direct');
+  assert.equal(speakerMixBus(48, 'melody', 'small-speaker'), 'direct');
   assert.equal(speakerMixBus(48, '', 'small-speaker', 'manual'), 'direct');
   assert.equal(speakerMixBus(72, '', 'small-speaker', 'manual'), 'direct');
-  assert.equal(speakerMixBus(48, '', 'small-speaker'), 'accompaniment');
-  assert.equal(speakerMixBus(72, '', 'small-speaker'), 'melody');
+  assert.equal(speakerMixBus(48, '', 'small-speaker'), 'direct');
+  assert.equal(speakerMixBus(72, '', 'small-speaker'), 'direct');
   assert.equal(speakerMixBus(48, 'melody', 'full-range'), 'direct');
 });
 
@@ -128,7 +140,7 @@ test('small-speaker voices recover bass harmonics and de-harsh the upper registe
   const bass = speakerVoiceProfile(33, 'small-speaker');
   const treble = speakerVoiceProfile(84, 'small-speaker');
   assert.equal(bass.bodyType, 'peaking');
-  assert.ok(bass.bodyFrequency >= 110 && bass.bodyFrequency <= 240);
+  assert.ok(bass.bodyFrequency >= 130 && bass.bodyFrequency <= 260);
   assert.ok(bass.bodyGainOffset > 2);
   assert.ok(treble.hammerGainOffset < bass.hammerGainOffset);
   assert.ok(treble.airGainOffset < bass.airGainOffset);
@@ -148,17 +160,16 @@ test('small-speaker EQ moves energy from screech and sub-bass into audible body'
   };
   assert.equal(tonePresetForSpeaker(preset, 'full-range'), preset);
   const compact = tonePresetForSpeaker(preset, 'small-speaker');
-  assert.ok(compact.highPassFrequency > preset.highPassFrequency);
+  assert.equal(compact.highPassFrequency, preset.highPassFrequency);
   assert.ok(compact.lowShelfFrequency > preset.lowShelfFrequency);
   assert.ok(compact.lowShelfGain > preset.lowShelfGain);
   assert.ok(compact.presenceGain < preset.presenceGain);
   assert.ok(compact.airGain < preset.airGain);
   assert.ok(compact.wetGain < preset.wetGain);
-  assert.ok(compact.panWidth < 0.1);
-  assert.equal(compact.monoOutput, true);
-  assert.ok(compact.melodyBusGain < compact.accompanimentBusGain);
-  assert.ok(compact.melodyBusRatio > compact.accompanimentBusRatio);
+  assert.ok(compact.panWidth < 0.15);
+  assert.equal(compact.monoOutput, false);
+  assert.equal(compact.melodyBusGain, compact.accompanimentBusGain);
   assert.ok(compact.masterLevel <= 0.84);
-  assert.ok(compact.limiterThreshold <= -8);
-  assert.equal(compact.compactPeakProtection, true);
+  assert.ok(compact.limiterThreshold <= -4.5);
+  assert.equal(compact.compactPeakProtection, false);
 });
