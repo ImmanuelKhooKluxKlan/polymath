@@ -13,6 +13,10 @@ import GlobalTaskProgress from './components/GlobalTaskProgress.jsx';
 import TaskProgress from './components/TaskProgress.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
+import {
+  normalizeSpeakerOutputMode,
+  SPEAKER_OUTPUT_MODE_LABELS,
+} from './engine/speakerOutputProfile.js';
 import { campaignPlaybackRange, prepareCampaignSong } from './engine/artistCampaign.js';
 import {
   capTierForDevice,
@@ -185,6 +189,9 @@ export default function App() {
   const [speed, setSpeed] = useState(1);
   const [leadTime, setLeadTime] = useState(3.4);
   const [toneMode, setToneMode] = useState('pianella');
+  const [speakerOutputMode, setSpeakerOutputMode] = useState(() => (
+    normalizeSpeakerOutputMode(window.localStorage.getItem('polymath-speaker-output-v1'))
+  ));
   const [autoplayVolume, setAutoplayVolume] = useState(1);
   const [pedalDown, setPedalDown] = useState(false);
   const [showKeyNotes, setShowKeyNotes] = useState(true);
@@ -689,6 +696,14 @@ export default function App() {
   useEffect(() => {
     pianoAudio.setToneMode(toneMode);
   }, [toneMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem('polymath-speaker-output-v1', speakerOutputMode);
+    pianoAudio.setSpeakerOutputMode(speakerOutputMode, {
+      deviceClass,
+      performanceTier,
+    });
+  }, [speakerOutputMode, deviceClass, performanceTier]);
 
   useEffect(() => {
     if (route.page === 'studio') return;
@@ -1982,6 +1997,14 @@ export default function App() {
                   <select value={toneMode} onChange={(event) => setToneMode(event.target.value)}>
                     <option value="pianella">{TONE_MODE_LABELS.pianella}</option>
                     <option value="grand">{TONE_MODE_LABELS.grand}</option>
+                  </select>
+                </label>
+                <label className="field">
+                  Speaker balance
+                  <select value={speakerOutputMode} onChange={(event) => setSpeakerOutputMode(event.target.value)}>
+                    {Object.entries(SPEAKER_OUTPUT_MODE_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
                   </select>
                 </label>
                 <label className="field">

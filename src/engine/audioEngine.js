@@ -9,6 +9,12 @@ import {
   parseNote,
 } from './noteMath.js';
 import { getInitialPerformanceTier, normalizePerformanceTier } from './devicePerformance.js';
+import {
+  normalizeSpeakerOutputMode,
+  resolveSpeakerOutputProfile,
+  speakerRegisterGain,
+  tonePresetForSpeaker,
+} from './speakerOutputProfile.js';
 import { publicAssetUrl } from '../services/assetUrls.js';
 
 const IOWA_MF_BASE_URL = publicAssetUrl('samples/iowa-mf');
@@ -661,6 +667,18 @@ class PianoAudioEngine {
     this.performanceTier =
       getInitialPerformanceTier();
 
+    this.deviceClass = 'desktop';
+
+    this.speakerOutputMode = 'auto';
+
+    this.speakerOutputProfile = resolveSpeakerOutputProfile(
+      this.speakerOutputMode,
+      {
+        deviceClass: this.deviceClass,
+        performanceTier: this.performanceTier,
+      }
+    );
+
     this.mobilePerformanceMode =
       this.performanceTier !== 'full';
 
@@ -734,7 +752,30 @@ class PianoAudioEngine {
       ])].sort((a, b) => a - b);
     }
     this.backgroundPreloadGeneration += 1;
+    this.refreshSpeakerOutputProfile();
     return nextTier;
+  }
+
+  refreshSpeakerOutputProfile() {
+    const nextProfile = resolveSpeakerOutputProfile(
+      this.speakerOutputMode,
+      {
+        deviceClass: this.deviceClass,
+        performanceTier: this.performanceTier,
+      }
+    );
+
+    if (nextProfile === this.speakerOutputProfile) return nextProfile;
+    this.speakerOutputProfile = nextProfile;
+    if (this.context) this.applyTonePreset(this.toneMode);
+    return nextProfile;
+  }
+
+  setSpeakerOutputMode(mode = 'auto', options = {}) {
+    this.speakerOutputMode = normalizeSpeakerOutputMode(mode);
+    if (options.deviceClass) this.deviceClass = String(options.deviceClass);
+    this.refreshSpeakerOutputProfile();
+    return this.speakerOutputProfile;
   }
 
   activateSampleZone(info) {
@@ -1129,8 +1170,10 @@ class PianoAudioEngine {
       return;
     }
 
-    const preset =
-      readPreset(mode);
+    const preset = tonePresetForSpeaker(
+      readPreset(mode),
+      this.speakerOutputProfile
+    );
 
     const now =
       this.context.currentTime;
@@ -2496,6 +2539,10 @@ class PianoAudioEngine {
     const finalGain =
       clamp(
         registerGain *
+        speakerRegisterGain(
+          requestedMidi,
+          this.speakerOutputProfile
+        ) *
         velocityGain *
         (
           voice.performanceGain ||
@@ -2763,6 +2810,11 @@ class PianoAudioEngine {
       voice.midi = null;
     }
 
+    const outputRegisterGain = speakerRegisterGain(
+      voice.midi ?? 60,
+      this.speakerOutputProfile
+    );
+
     voice.startedAt =
       startAt;
 
@@ -2850,14 +2902,14 @@ class PianoAudioEngine {
 
     voiceGain.gain
       .exponentialRampToValueAtTime(
-        0.11 * velocity * performanceGain,
+        0.11 * velocity * performanceGain * outputRegisterGain,
 
         startAt + 0.012
       );
 
     voiceGain.gain
       .exponentialRampToValueAtTime(
-        0.046 * velocity * performanceGain,
+        0.046 * velocity * performanceGain * outputRegisterGain,
 
         startAt + 0.19
       );
@@ -2932,7 +2984,8 @@ class PianoAudioEngine {
               partial.gain *
               0.32 *
               velocity *
-              performanceGain,
+              performanceGain *
+              outputRegisterGain,
 
               startAt
             );
@@ -3874,6 +3927,8 @@ class PianoAudioEngine {
       maxPolyphony: this.maxPolyphony,
       mobilePerformanceMode: this.mobilePerformanceMode,
       performanceTier: this.performanceTier,
+      speakerOutputMode: this.speakerOutputMode,
+      speakerOutputProfile: this.speakerOutputProfile,
       availableSampleZones: this.sampleMidis.length,
       targetSampleZones: this.targetSampleMidis.length,
       loadingMetrics: this.getLoadingMetrics(),
