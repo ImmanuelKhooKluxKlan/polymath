@@ -23,6 +23,7 @@ import {
   speakerRegisterGain,
   speakerSampleGainCompensation,
   speakerVirtualBassProfile,
+  speakerVoiceGainCeiling,
   speakerVoiceProfile,
   tonePresetForSpeaker,
 } from './speakerOutputProfile.js';
@@ -2905,7 +2906,10 @@ class PianoAudioEngine {
         ),
 
         0.055,
-        0.98
+        speakerVoiceGainCeiling(
+          requestedMidi,
+          this.speakerOutputProfile
+        )
       );
 
     // The listener-approved early-September engine played the normalized Iowa
@@ -4377,6 +4381,9 @@ class PianoAudioEngine {
       performanceTier: this.performanceTier,
       speakerOutputMode: this.speakerOutputMode,
       speakerOutputProfile: this.speakerOutputProfile,
+      speakerBalanceVersion: this.speakerOutputProfile === 'small-speaker'
+        ? 'weak-device-left-hand-v3'
+        : 'full-range-early-september',
       voiceHeadroom: this.currentVoiceHeadroom,
       outputLatencySeconds: Number(this.context?.outputLatency) || null,
       baseLatencySeconds: Number(this.context?.baseLatency) || null,

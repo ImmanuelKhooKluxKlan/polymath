@@ -44,12 +44,16 @@ LOW_COMPENSATION = (
     (21, 3.2), (23, 3.1), (24, 2.5), (28, 2.25),
     (33, 1.9), (36, 1.65), (40, 1.3), (48, 1.0),
 )
+COMPACT_LOW_COMPENSATION = (
+    (21, 1.72), (24, 1.66), (28, 1.56), (33, 1.46),
+    (36, 1.36), (40, 1.22), (48, 1.0),
+)
 REGISTER_GAIN = (
     (21, 0.82), (36, 0.86), (60, 0.9),
     (72, 0.92), (96, 0.88), (108, 0.82),
 )
 COMPACT_REGISTER_GAIN = (
-    (21, 1.08), (33, 1.08), (48, 1.04), (60, 1.0),
+    (21, 2.0), (35, 2.0), (48, 1.58), (55, 1.25), (60, 1.1),
     (72, 1.0), (84, 0.96), (96, 0.92), (108, 0.9),
 )
 VIRTUAL_BASS_GAIN = (
@@ -182,7 +186,7 @@ def voice_filters(midi: int, compact: bool) -> list[tuple[str, float, float, flo
         harmonic_number = max(1, harmonic_number - 1)
         harmonic = fundamental * harmonic_number
 
-    highpass = 14 if midi < 36 else 18 if midi < 48 else 26
+    highpass = (70 if midi < 36 else 55 if midi < 48 else 26) if compact else (14 if midi < 36 else 18 if midi < 48 else 26)
     body_type = "peaking" if compact and midi < 60 else "lowshelf"
     body_frequency = harmonic if compact and midi < 60 else (128 if not compact and midi < 48 else 170)
     body_q = 0.9 if compact and midi < 60 else 0.7
@@ -264,7 +268,8 @@ def virtual_bass_audio(midi: int, sample_rate: int, frames: int) -> np.ndarray:
     amount = interpolate(VIRTUAL_BASS_GAIN, midi) * (0.72 + 0.28 * 0.8)
     envelope = np.full(frames, amount * 0.42, dtype=np.float64)
     attack_frames = max(1, round(sample_rate * 0.012))
-    decay_frames = max(attack_frames + 1, round(sample_rate * 0.34))
+    decay_frames = min(frames, max(attack_frames + 1, round(sample_rate * 0.34)))
+    attack_frames = min(attack_frames, decay_frames)
     envelope[:attack_frames] = np.linspace(1e-5, amount, attack_frames)
     envelope[attack_frames:decay_frames] = np.linspace(
         amount, amount * 0.42, decay_frames - attack_frames,
@@ -356,7 +361,7 @@ def audit() -> dict[str, object]:
             1.95,
         )
         base_gain = analysis_gain * interpolate(LOW_COMPENSATION, midi) * interpolate(REGISTER_GAIN, midi)
-        compact_source_gain = analysis_gain * interpolate(LOW_COMPENSATION, midi)
+        compact_source_gain = analysis_gain * interpolate(COMPACT_LOW_COMPENSATION, midi)
         attack_start = round(sample_rate * 0.02)
         attack_end = round(sample_rate * 0.25)
         body_end = round(sample_rate * 1.2)

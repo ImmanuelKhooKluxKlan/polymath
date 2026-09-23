@@ -12,6 +12,7 @@ import {
   speakerRegisterGain,
   speakerSampleGainCompensation,
   speakerVirtualBassProfile,
+  speakerVoiceGainCeiling,
   speakerVoiceProfile,
   tonePresetForSpeaker,
 } from '../../src/engine/speakerOutputProfile.js';
@@ -78,12 +79,14 @@ test('unlabelled scores receive a smooth upper-register lift without weakening b
   assert.ok(upper < 1.1);
 });
 
-test('small-speaker register curve preserves body and progressively tames treble', () => {
+test('small-speaker register curve restores the left hand and tapers smoothly', () => {
   assert.equal(speakerRegisterGain(84, 'full-range'), 1);
-  assert.ok(speakerRegisterGain(24, 'small-speaker') > speakerRegisterGain(48, 'small-speaker'));
-  assert.ok(speakerRegisterGain(48, 'small-speaker') > 1);
-  assert.equal(speakerRegisterGain(60, 'small-speaker'), 1);
+  assert.equal(speakerRegisterGain(33, 'small-speaker'), 2);
+  assert.equal(speakerRegisterGain(48, 'small-speaker'), 1.58);
+  assert.equal(speakerRegisterGain(60, 'small-speaker'), 1.1);
   assert.equal(speakerRegisterGain(72, 'small-speaker'), 1);
+  assert.ok(speakerRegisterGain(48, 'small-speaker') < speakerRegisterGain(35, 'small-speaker'));
+  assert.ok(speakerRegisterGain(55, 'small-speaker') < speakerRegisterGain(48, 'small-speaker'));
   assert.ok(speakerRegisterGain(84, 'small-speaker') < speakerRegisterGain(72, 'small-speaker'));
   assert.ok(speakerRegisterGain(108, 'small-speaker') >= 0.9);
 });
@@ -97,16 +100,22 @@ test('small-speaker mix closes extreme arrangement gain gaps without changing fu
   assert.ok(compactTreble / compactBass < 1.6);
 });
 
-test('compact bass keeps the accepted sample balance and adds quiet audible partials', () => {
+test('compact bass moves wasted fundamentals into audible left-hand support', () => {
   assert.equal(speakerSampleGainCompensation(21, 'full-range'), 3.2);
-  assert.equal(speakerSampleGainCompensation(21, 'small-speaker'), 3.2);
+  assert.equal(speakerSampleGainCompensation(21, 'small-speaker'), 1.72);
   assert.equal(speakerSampleGainCompensation(48, 'small-speaker'), 1);
   const lowBass = speakerVoiceProfile(21, 'small-speaker');
   assert.equal(lowBass.harmonicDrive, 1);
   assert.equal(lowBass.phaseSafeMono, false);
   assert.equal(lowBass.usePerKeyCalibration, false);
+  assert.equal(lowBass.highPassFrequency, 70);
   assert.ok(lowBass.bodyFrequency >= 130 && lowBass.bodyFrequency <= 260);
+  assert.equal(speakerVoiceProfile(40, 'small-speaker').highPassFrequency, 55);
   assert.equal(speakerVoiceProfile(60, 'small-speaker').harmonicDrive, 1);
+
+  assert.equal(speakerVoiceGainCeiling(33, 'full-range'), 0.98);
+  assert.equal(speakerVoiceGainCeiling(33, 'small-speaker'), 1.85);
+  assert.equal(speakerVoiceGainCeiling(60, 'small-speaker'), 0.98);
 
   const virtualBass = speakerVirtualBassProfile(21, 'small-speaker');
   const fundamental = 440 * (2 ** ((21 - 69) / 12));
@@ -157,6 +166,8 @@ test('small-speaker EQ moves energy from screech and sub-bass into audible body'
     dryGain: 0.8,
     wetGain: 0.2,
     resonanceGain: 0.064,
+    glueThreshold: -18,
+    glueRatio: 2.2,
   };
   assert.equal(tonePresetForSpeaker(preset, 'full-range'), preset);
   const compact = tonePresetForSpeaker(preset, 'small-speaker');
@@ -166,6 +177,8 @@ test('small-speaker EQ moves energy from screech and sub-bass into audible body'
   assert.ok(compact.presenceGain < preset.presenceGain);
   assert.ok(compact.airGain < preset.airGain);
   assert.ok(compact.wetGain < preset.wetGain);
+  assert.ok(compact.glueThreshold > preset.glueThreshold);
+  assert.ok(compact.glueRatio <= preset.glueRatio);
   assert.ok(compact.panWidth < 0.15);
   assert.equal(compact.monoOutput, false);
   assert.equal(compact.melodyBusGain, compact.accompanimentBusGain);

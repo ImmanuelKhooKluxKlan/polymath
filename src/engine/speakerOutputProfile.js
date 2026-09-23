@@ -110,10 +110,11 @@ export function speakerRegisterGain(midi, profile = OUTPUT_PROFILE_FULL_RANGE) {
   const key = Math.max(21, Math.min(108, Number(midi) || 60));
   return interpolate(
     [
-      [21, 1.08],
-      [33, 1.08],
-      [48, 1.04],
-      [60, 1],
+      [21, 2],
+      [35, 2],
+      [48, 1.58],
+      [55, 1.25],
+      [60, 1.1],
       [72, 1],
       [84, 0.96],
       [96, 0.92],
@@ -126,15 +127,32 @@ export function speakerRegisterGain(midi, profile = OUTPUT_PROFILE_FULL_RANGE) {
 /**
  * Gain applied before a piano sample enters its per-voice filters.
  *
- * Both paths keep the listener-approved sample compensation so switching
- * output mode cannot make the left hand disappear. The compact path adds a
- * separate, quiet upper-harmonic cue for fundamentals its speaker cannot emit.
+ * Full-range output keeps the listener-approved raw sample compensation. A
+ * compact speaker receives less inaudible fundamental energy before dynamics;
+ * the useful left-hand level is restored later with audible-register gain and
+ * a pitch-locked upper-harmonic cue. This prevents bass that a phone cannot
+ * emit from needlessly turning down the shared compressor.
  */
 export function speakerSampleGainCompensation(
   midi,
-  _profile = OUTPUT_PROFILE_FULL_RANGE,
+  profile = OUTPUT_PROFILE_FULL_RANGE,
 ) {
   const key = Math.max(21, Math.min(108, Number(midi) || 60));
+  if (profile === OUTPUT_PROFILE_SMALL_SPEAKER) {
+    return interpolate(
+      [
+        [21, 1.72],
+        [24, 1.66],
+        [28, 1.56],
+        [33, 1.46],
+        [36, 1.36],
+        [40, 1.22],
+        [48, 1],
+      ],
+      key,
+    );
+  }
+
   return interpolate(
     [
       [21, 3.2],
@@ -146,6 +164,24 @@ export function speakerSampleGainCompensation(
       [40, 1.3],
       [48, 1],
     ],
+    key,
+  );
+}
+
+/**
+ * A low note needs more post-sample gain on a tiny speaker, but the historical
+ * universal 0.98 ceiling silently cancelled that compensation. The ceiling is
+ * raised only where the compact curve needs it and returns smoothly to the
+ * established full-range limit by middle C.
+ */
+export function speakerVoiceGainCeiling(
+  midi,
+  profile = OUTPUT_PROFILE_FULL_RANGE,
+) {
+  if (profile !== OUTPUT_PROFILE_SMALL_SPEAKER) return 0.98;
+  const key = Math.max(21, Math.min(108, Number(midi) || 60));
+  return interpolate(
+    [[21, 1.85], [35, 1.85], [48, 1.35], [55, 1.1], [60, 0.98]],
     key,
   );
 }
@@ -249,7 +285,7 @@ export function speakerVoiceProfile(midi, profile = OUTPUT_PROFILE_FULL_RANGE) {
 
   return {
     compact: true,
-    highPassFrequency: key < 36 ? 14 : key < 48 ? 18 : 26,
+    highPassFrequency: key < 36 ? 70 : key < 48 ? 55 : 26,
     bodyType: key < 60 ? 'peaking' : 'lowshelf',
     bodyFrequency: key < 60 ? audibleHarmonic : 170,
     bodyQ: key < 60 ? 0.9 : 0.7,
@@ -309,11 +345,11 @@ export function tonePresetForSpeaker(preset, profile = OUTPUT_PROFILE_FULL_RANGE
     mudGain: (Number(preset.mudGain) || 0) + 0.5,
     presenceGain: (Number(preset.presenceGain) || 0) - 1.25,
     airGain: (Number(preset.airGain) || 0) - 1.1,
-    glueThreshold: Math.min(-20, Number(preset.glueThreshold) || -18),
+    glueThreshold: Math.max(-16, Number(preset.glueThreshold) || -15),
     glueKnee: Math.max(24, Number(preset.glueKnee) || 0),
-    glueRatio: Math.max(2.6, Number(preset.glueRatio) || 0),
-    glueAttack: Math.max(0.007, Number(preset.glueAttack) || 0),
-    glueRelease: Math.min(0.3, Number(preset.glueRelease) || 0.3),
+    glueRatio: Math.max(1.8, Math.min(2.2, Number(preset.glueRatio) || 2)),
+    glueAttack: Math.max(0.009, Number(preset.glueAttack) || 0),
+    glueRelease: Math.min(0.34, Number(preset.glueRelease) || 0.34),
     limiterThreshold: Math.min(-4.5, Number(preset.limiterThreshold) || -3),
     limiterKnee: Math.max(3, Number(preset.limiterKnee) || 0),
     limiterRatio: Math.max(14, Number(preset.limiterRatio) || 0),
