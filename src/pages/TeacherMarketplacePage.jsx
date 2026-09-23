@@ -40,6 +40,21 @@ const DEFAULT_MARKETPLACE = Object.freeze({
   checkoutAvailable: false,
 });
 
+const DEFAULT_LESSON_CONFIG = Object.freeze({
+  durationStepMinutes: 10,
+  callCostPerStepMcoins: 0.2,
+  breakoutRoomCostMcoins: 0.5,
+  minimumTransferMcoins: 30,
+});
+
+const SAVED_INVITE_KEY = 'polymath_human_lesson_invite';
+
+function localDateTimeValue(offsetMinutes = 30) {
+  const date = new Date(Date.now() + (offsetMinutes * 60_000));
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
+}
+
 function percentLabel(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
@@ -101,7 +116,7 @@ function formFromTeacher(teacher) {
   };
 }
 
-export default function TeacherMarketplacePage({ user, onNavigate }) {
+export default function TeacherMarketplacePage({ user, setUser, onNavigate }) {
   const [teachers, setTeachers] = useState([]);
   const [ownTeacher, setOwnTeacher] = useState(null);
   const [marketplace, setMarketplace] = useState(DEFAULT_MARKETPLACE);
@@ -113,6 +128,17 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
   const [reviewDrafts, setReviewDrafts] = useState({});
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
+  const [lessonTools, setLessonTools] = useState('');
+  const [lessons, setLessons] = useState([]);
+  const [lessonConfig, setLessonConfig] = useState(DEFAULT_LESSON_CONFIG);
+  const [contacts, setContacts] = useState([]);
+  const [lessonDraft, setLessonDraft] = useState({
+    title: 'Private music lesson', durationMinutes: 60, scheduledFor: localDateTimeValue(),
+  });
+  const [joinDraft, setJoinDraft] = useState({ meetingId: '', accessCode: '' });
+  const [inviteTargets, setInviteTargets] = useState({});
+  const [breakoutNames, setBreakoutNames] = useState({});
+  const [lessonSaving, setLessonSaving] = useState(false);
 
   async function loadTeachers() {
     try {
@@ -140,8 +166,28 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
     }
   }
 
+  async function loadLessonWorkspace() {
+    if (!user) {
+      setLessons([]);
+      setContacts([]);
+      return;
+    }
+    try {
+      const [lessonData, threadData] = await Promise.all([
+        apiRequest('/api/human-lessons'),
+        apiRequest('/api/messages/threads'),
+      ]);
+      setLessons(lessonData.meetings || []);
+      setLessonConfig({ ...DEFAULT_LESSON_CONFIG, ...(lessonData.config || {}) });
+      setContacts((threadData.threads || []).map((thread) => thread.otherUser).filter(Boolean));
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
   useEffect(() => { loadTeachers(); }, [user?.user_id]);
   useEffect(() => { loadOwnTeacher(); }, [user?.user_id]);
+  useEffect(() => { loadLessonWorkspace(); }, [user?.user_id]);
 
   const filteredTeachers = useMemo(() => teachers.filter((teacher) => {
     const text = [
@@ -264,6 +310,93 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
     }
   }
 
+  function openLessonTools(mode) {
+    if (!user) {
+      onNavigate('account', { next: 'find-teacher' });
+      return;
+    }
+    setLessonTools((current) => current === mode ? '' : mode);
+    window.setTimeout(() => document.getElementById('human-lesson-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  }
+
+  async function createLesson(event) {
+    event.preventDefault();
+    setLessonSaving(true);
+    setStatus('Creating private lesson…');
+    try {
+      const data = await apiRequest('/api/human-lessons', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...lessonDraft,
+          durationMinutes: Number(lessonDraft.durationMinutes),
+          scheduledFor: new Date(lessonDraft.scheduledFor).toISOString(),
+        }),
+      });
+      setLessons((current) => [data.meeting, ...current]);
+      setStatus('Lesson ready. Copy the credentials or send them through a private chat.');
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setLessonSaving(false);
+    }
+  }
+
+  function enterLesson(meetingId, accessCode = '', { autoJoin = false, isHost = false } = {}) {
+    window.sessionStorage.setItem(SAVED_INVITE_KEY, JSON.stringify({ meetingId, accessCode, autoJoin, isHost }));
+    onNavigate('lesson-room', { meetingId });
+  }
+
+  function joinLesson(event) {
+    event.preventDefault();
+    enterLesson(
+      joinDraft.meetingId.trim().toUpperCase(),
+      joinDraft.accessCode.trim().toUpperCase(),
+      { autoJoin: true },
+    );
+  }
+
+  async function sendLessonInvite(meeting) {
+    const toUserId = inviteTargets[meeting.id];
+    if (!toUserId) {
+      setStatus('Choose a private-chat contact first.');
+      return;
+    }
+    setLessonSaving(true);
+    try {
+      await apiRequest(`/api/human-lessons/${encodeURIComponent(meeting.meetingId)}/invitations`, {
+        method: 'POST', body: JSON.stringify({ toUserId }),
+      });
+      const contact = contacts.find((item) => item.user_id === toUserId);
+      setStatus(`Private invitation sent to ${contact?.name || 'your student'}.`);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setLessonSaving(false);
+    }
+  }
+
+  async function createBreakout(meeting) {
+    setLessonSaving(true);
+    try {
+      const data = await apiRequest(`/api/human-lessons/${encodeURIComponent(meeting.meetingId)}/breakouts`, {
+        method: 'POST', body: JSON.stringify({ name: breakoutNames[meeting.id] || '' }),
+      });
+      setLessons((current) => current.map((item) => item.id === meeting.id ? data.meeting : item));
+      setUser?.(data.user);
+      setBreakoutNames((current) => ({ ...current, [meeting.id]: '' }));
+      setStatus(`${data.breakout.roomName} created for ${data.chargedMcoins.toFixed(2)} Mcoins.`);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setLessonSaving(false);
+    }
+  }
+
+  const lessonQuote = Number((
+    (Number(lessonDraft.durationMinutes || 0) / lessonConfig.durationStepMinutes)
+    * lessonConfig.callCostPerStepMcoins
+  ).toFixed(2));
+
   return (
     <section className="page-shell teacher-marketplace-page">
       <header className="teacher-marketplace-heading">
@@ -272,10 +405,105 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
           <h1>Find a teacher</h1>
           <p>Choose a teacher, chat privately, and learn at your pace.</p>
         </div>
-        <button className="primary" type="button" disabled={!ownTeacher && !marketplace.applicationsEnabled} onClick={openTeacherEditor}>
-          {ownTeacher ? 'Edit teacher profile' : marketplace.applicationsEnabled ? 'Teach on Polymath' : 'Teacher signup paused'}
-        </button>
+        <div className="teacher-heading-actions">
+          <button className="ghost" type="button" onClick={() => openLessonTools('join')}>Join lesson</button>
+          {ownTeacher && <button className="primary" type="button" onClick={() => openLessonTools('host')}>Host lesson</button>}
+          <button className={ownTeacher ? 'ghost' : 'primary'} type="button" disabled={!ownTeacher && !marketplace.applicationsEnabled} onClick={openTeacherEditor}>
+            {ownTeacher ? 'Edit profile' : marketplace.applicationsEnabled ? 'Teach on Polymath' : 'Teacher signup paused'}
+          </button>
+        </div>
       </header>
+
+      {lessonTools && (
+        <section id="human-lesson-workspace" className="human-lesson-workspace">
+          <header>
+            <div>
+              <p className="eyebrow">Private video lessons</p>
+              <h2>{lessonTools === 'host' ? 'Host a lesson' : 'Join a lesson'}</h2>
+              <p>{lessonTools === 'host' ? 'Create the room, then invite students privately.' : 'Use the private meeting ID and password your teacher sent.'}</p>
+            </div>
+            <button className="ghost" type="button" onClick={() => setLessonTools('')}>Close</button>
+          </header>
+
+          {lessonTools === 'join' && (
+            <div className="lesson-join-layout">
+              <form className="lesson-join-form" onSubmit={joinLesson}>
+                <label className="field">Meeting ID<input value={joinDraft.meetingId} onChange={(event) => setJoinDraft({ ...joinDraft, meetingId: event.target.value.toUpperCase() })} placeholder="PM-ABCD-2345" autoCapitalize="characters" required /></label>
+                <label className="field">Password<input value={joinDraft.accessCode} onChange={(event) => setJoinDraft({ ...joinDraft, accessCode: event.target.value.toUpperCase() })} placeholder="ABCD-2345" autoCapitalize="characters" required /></label>
+                <button className="primary" type="submit">Enter private lesson</button>
+              </form>
+              <div className="invited-lesson-list">
+                <strong>Your invitations</strong>
+                {lessons.filter((meeting) => !meeting.isHost).map((meeting) => (
+                  <article key={meeting.id}>
+                    <span><b>{meeting.title}</b><small>{new Date(meeting.scheduledFor).toLocaleString()} · {meeting.durationMinutes} min</small></span>
+                    <button className="ghost" type="button" onClick={() => onNavigate('messages', { userId: meeting.host?.user_id, name: meeting.host?.name || 'Teacher', context: 'teacher' })}>Open invite</button>
+                  </article>
+                ))}
+                {!lessons.some((meeting) => !meeting.isHost) && <p className="muted">Meeting invitations appear in your private chats.</p>}
+              </div>
+            </div>
+          )}
+
+          {lessonTools === 'host' && ownTeacher && (
+            <>
+              <form className="lesson-host-form" onSubmit={createLesson}>
+                <label className="field">Lesson name<input maxLength="100" value={lessonDraft.title} onChange={(event) => setLessonDraft({ ...lessonDraft, title: event.target.value })} required /></label>
+                <label className="field">Starts<input type="datetime-local" value={lessonDraft.scheduledFor} onChange={(event) => setLessonDraft({ ...lessonDraft, scheduledFor: event.target.value })} required /></label>
+                <label className="field">Minutes
+                  <input type="number" min={lessonConfig.durationStepMinutes} max="720" step={lessonConfig.durationStepMinutes} value={lessonDraft.durationMinutes} onChange={(event) => setLessonDraft({ ...lessonDraft, durationMinutes: event.target.value })} required />
+                  <small>Use 10-minute intervals.</small>
+                </label>
+                <div className="lesson-duration-presets" aria-label="Common lesson durations">
+                  {[30, 60, 90].map((minutes) => <button key={minutes} className={Number(lessonDraft.durationMinutes) === minutes ? 'selected' : ''} type="button" onClick={() => setLessonDraft({ ...lessonDraft, durationMinutes: minutes })}>{minutes} min</button>)}
+                </div>
+                <div className="lesson-cost-quote"><span>Call fee when you start</span><strong>{lessonQuote.toFixed(2)} Mcoins</strong><small>{lessonConfig.callCostPerStepMcoins} Mcoin per {lessonConfig.durationStepMinutes} minutes</small></div>
+                <button className="primary" type="submit" disabled={lessonSaving}>{lessonSaving ? 'Creating…' : 'Create private room'}</button>
+              </form>
+
+              <div className="hosted-lesson-list">
+                {lessons.filter((meeting) => meeting.isHost).map((meeting) => (
+                  <details className="hosted-lesson-card" key={meeting.id} open={meeting.status === 'active'}>
+                    <summary><span><strong>{meeting.title}</strong><small>{new Date(meeting.scheduledFor).toLocaleString()} · {meeting.durationMinutes} min</small></span><b>{titleCase(meeting.status)}</b></summary>
+                    <div className="lesson-credential-grid">
+                      <span><small>Meeting ID</small><strong>{meeting.meetingId}</strong></span>
+                      <span><small>Password</small><strong>{meeting.accessCode}</strong></span>
+                    </div>
+                    <div className="hosted-lesson-actions">
+                      <button className="primary" type="button" disabled={['ended', 'cancelled'].includes(meeting.status)} onClick={() => enterLesson(meeting.meetingId, '', { autoJoin: true, isHost: true })}>Start / rejoin</button>
+                      <select aria-label={`Student to invite to ${meeting.title}`} value={inviteTargets[meeting.id] || ''} onChange={(event) => setInviteTargets({ ...inviteTargets, [meeting.id]: event.target.value })}>
+                        <option value="">Choose private-chat contact</option>
+                        {contacts.map((contact) => <option key={contact.user_id} value={contact.user_id}>{contact.name || 'Polymath member'}</option>)}
+                      </select>
+                      <button className="ghost" type="button" disabled={lessonSaving || !contacts.length} onClick={() => sendLessonInvite(meeting)}>Send private invite</button>
+                    </div>
+                    {!contacts.length && <small className="lesson-contact-hint">Start a private chat with a student first, then they appear here.</small>}
+
+                    <section className="breakout-manager">
+                      <header><span><strong>Breakout rooms</strong><small>{lessonConfig.breakoutRoomCostMcoins} Mcoin each</small></span></header>
+                      {(meeting.breakouts || []).map((breakout) => (
+                        <article key={breakout.id}>
+                          <span><b>{breakout.roomName}</b><small>{breakout.meetingId} · {breakout.accessCode}</small></span>
+                          <select aria-label={`Student for ${breakout.roomName}`} value={inviteTargets[breakout.id] || ''} onChange={(event) => setInviteTargets({ ...inviteTargets, [breakout.id]: event.target.value })}>
+                            <option value="">Choose student</option>
+                            {contacts.map((contact) => <option key={contact.user_id} value={contact.user_id}>{contact.name || 'Polymath member'}</option>)}
+                          </select>
+                          <button className="ghost" type="button" disabled={lessonSaving || !contacts.length} onClick={() => sendLessonInvite(breakout)}>Invite</button>
+                        </article>
+                      ))}
+                      <div className="breakout-create-row">
+                        <input maxLength="60" aria-label="New breakout room name" placeholder={`Breakout ${(meeting.breakouts || []).length + 1}`} value={breakoutNames[meeting.id] || ''} onChange={(event) => setBreakoutNames({ ...breakoutNames, [meeting.id]: event.target.value })} />
+                        <button className="ghost" type="button" disabled={lessonSaving || ['ended', 'cancelled'].includes(meeting.status)} onClick={() => createBreakout(meeting)}>Add · {lessonConfig.breakoutRoomCostMcoins} Mcoin</button>
+                      </div>
+                    </section>
+                  </details>
+                ))}
+                {!lessons.some((meeting) => meeting.isHost) && <p className="muted">Your created lessons will appear here.</p>}
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       {showTeacherForm && (
         <form id="teacher-profile-editor" className="teacher-profile-editor" onSubmit={saveTeacherProfile}>
@@ -448,7 +676,8 @@ export default function TeacherMarketplacePage({ user, onNavigate }) {
           <span><small>Later cash-out fee</small><strong>{percentLabel(marketplace.withdrawalFeePercent)}%</strong></span>
         </div>
         <p>The Polymath teacher fee applies only to lesson payments processed through Polymath. It is a platform fee, not a government tax. Government taxes or payment-processor charges may be separate.</p>
-        {!marketplace.checkoutAvailable && <p>Right now, Find a Teacher provides discovery and private chat only. Polymath does not collect a lesson payment from this directory yet.</p>}
+        <p>Virtual-room infrastructure costs {lessonConfig.callCostPerStepMcoins} Mcoin per {lessonConfig.durationStepMinutes} minutes and each breakout room costs {lessonConfig.breakoutRoomCostMcoins} Mcoin. Teachers are charged only when they start the main room; student-to-teacher transfers are separate.</p>
+        {!marketplace.checkoutAvailable && <p>Teachers arrange their lesson price directly with students. Polymath does not automatically deduct the teacher’s advertised hourly rate.</p>}
         {marketplace.notice && <p className="teacher-marketplace-custom-notice">{marketplace.notice}</p>}
       </aside>
       {status && <p className="form-status floating-status">{status}</p>}

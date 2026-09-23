@@ -11,6 +11,7 @@ import PianoTeacherStudio from './components/PianoTeacherStudio.jsx';
 import SupportAssistant from './components/SupportAssistant.jsx';
 import GlobalTaskProgress from './components/GlobalTaskProgress.jsx';
 import TaskProgress from './components/TaskProgress.jsx';
+import RouteErrorBoundary from './components/RouteErrorBoundary.jsx';
 import { loadFeaturedSongs, sampleSongs } from './data/sampleSongs.js';
 import { pianoAudio, TONE_MODE_LABELS } from './engine/audioEngine.js';
 import {
@@ -85,6 +86,7 @@ const EnsemblePage = lazy(() => import('./pages/EnsemblePage.jsx'));
 const MarketplacePage = lazy(() => import('./pages/MarketplacePage.jsx'));
 const TeacherMarketplacePage = lazy(() => import('./pages/TeacherMarketplacePage.jsx'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage.jsx'));
+const HumanLessonRoomPage = lazy(() => import('./pages/HumanLessonRoomPage.jsx'));
 const CommunityPage = lazy(() => import('./pages/CommunityPage.jsx'));
 const PaymentPage = lazy(() => import('./pages/PaymentPage.jsx'));
 const YourSongsPage = lazy(() => import('./pages/YourSongsPage.jsx'));
@@ -1830,11 +1832,12 @@ export default function App() {
     );
     if (route.page === 'published-songs') return <MarketplacePage user={user} setUser={setUser} onNavigate={navigate} />;
     if (route.page === 'community') return <CommunityPage user={user} onNavigate={navigate} />;
-    if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} onNavigate={navigate} />;
+    if (route.page === 'find-teacher') return <TeacherMarketplacePage user={user} setUser={setUser} onNavigate={navigate} />;
     if (route.page === 'your-songs') return <YourSongsPage user={user} onNavigate={navigate} />;
     if (route.page === 'admin-database') return <AdminDatabasePage user={user} onNavigate={navigate} />;
     if (route.page === 'chat-boss') return <ChatBossPage user={user} onNavigate={navigate} />;
-    if (route.page === 'messages') return <MessagesPage user={user} initialUser={messageUserId ? { user_id: messageUserId, name: messageName } : null} context={route.params.get('context')} onNavigate={navigate} />;
+    if (route.page === 'messages') return <MessagesPage user={user} setUser={setUser} initialUser={messageUserId ? { user_id: messageUserId, name: messageName } : null} context={route.params.get('context')} onNavigate={navigate} />;
+    if (route.page === 'lesson-room') return <HumanLessonRoomPage user={user} setUser={setUser} meetingId={route.params.get('meetingId') || ''} onNavigate={navigate} />;
     if (route.page === 'account') return (
       <AccountPage
         user={user}
@@ -2105,9 +2108,11 @@ export default function App() {
         {!campaignSlug && <HeaderActions user={user} onNavigate={navigate} route={route.page} />}
       </div>
       <main className="app-shell">
-        <Suspense fallback={<div className="route-loading"><TaskProgress compact label="Opening this section…" ariaLabel="Section loading progress" /></div>}>
-          {content}
-        </Suspense>
+        <RouteErrorBoundary routeKey={`${route.page}?${route.params.toString()}`} onNavigate={navigate}>
+          <Suspense fallback={<div className="route-loading"><TaskProgress compact label="Opening this section…" ariaLabel="Section loading progress" /></div>}>
+            {content}
+          </Suspense>
+        </RouteErrorBoundary>
       </main>
       {user && <SupportAssistant user={user} />}
     </div>

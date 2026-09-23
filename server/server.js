@@ -104,6 +104,31 @@ const {
   sanitizeLearningAttempt,
   trimUserLearningAttempts,
 } = require('./learningProgress');
+const {
+  BREAKOUT_ROOM_COST_MCOINS,
+  HumanLessonError,
+  LESSON_COST_PER_STEP_MCOINS,
+  LESSON_DURATION_STEP_MINUTES,
+  MINIMUM_CHAT_TRANSFER_MCOINS,
+  accessCodeMatches,
+  cleanLessonTitle,
+  cleanRoomName,
+  createAccessCode,
+  createMeetingCode,
+  effectiveMeetingStatus,
+  hashAccessCode,
+  lessonCallCost,
+  meetingExpiresAt,
+  normalizeClientRequestId: normalizeHumanLessonRequestId,
+  normalizeLessonDuration,
+  normalizeScheduledFor,
+  normalizeTransferAmount,
+  openAccessCode,
+  participantIsActive,
+  roundMcoins: roundHumanLessonMcoins,
+  sealAccessCode,
+  trimLessonSignals,
+} = require('./humanLessons');
 require('dotenv').config({
   path: path.join(__dirname, '.env'),
 });
@@ -232,6 +257,12 @@ const MEDIA_TRANSCRIPTION_POOL = createTaskPool(BACKGROUND_JOB_CONCURRENCY);
 const SCORE_TRANSLATION_POOL = createTaskPool(Math.min(2, BACKGROUND_JOB_CONCURRENCY));
 const PRODUCT_EVENT_REQUEST_WINDOWS = new Map();
 const LOGIN_RATE_LIMITER = createLoginRateLimiter(process.env);
+const HUMAN_LESSON_CREDENTIAL_SECRET = String(
+  process.env.LESSON_MEETING_SECRET
+  || process.env.DIRECT_UPLOAD_SIGNING_SECRET
+  || process.env.REGISTRATION_OTP_SECRET
+  || 'polymath-local-human-lesson-credentials',
+).trim();
 
 const WITHDRAWAL_FEE_RATE = 0.25;
 const MARKETPLACE_FEE_RATE = 0.25;
@@ -607,6 +638,11 @@ function ensureStorage() {
       communityReports: [],
       teacherProfiles: [],
       teacherReviews: [],
+      humanLessonMeetings: [],
+      humanLessonInvitations: [],
+      humanLessonParticipants: [],
+      humanLessonSignals: [],
+      mcoinTransfers: [],
       virtualTeacherCharacters: [],
       virtualLessonSessions: [],
       learningAttempts: [],
@@ -692,6 +728,11 @@ function normalizeDb(db) {
     'communityReports',
     'teacherProfiles',
     'teacherReviews',
+    'humanLessonMeetings',
+    'humanLessonInvitations',
+    'humanLessonParticipants',
+    'humanLessonSignals',
+    'mcoinTransfers',
     'virtualTeacherCharacters',
     'virtualLessonSessions',
     'learningAttempts',
@@ -5679,6 +5720,338 @@ app.post('/api/teachers/:teacherProfileId/reviews', requireAuth, async (req, res
   });
 });
 
+app.get('/api/human-lessons/config', requireAuth, async (req, res) => {
+  res.json({
+    durationStepMinutes: LESSON_DURATION_STEP_MINUTES,
+    callCostPerStepMcoins: LESSON_COST_PER_STEP_MCOINS,
+    breakoutRoomCostMcoins: BREAKOUT_ROOM_COST_MCOINS,
+    minimumTransferMcoins: MINIMUM_CHAT_TRANSFER_MCOINS,
+  });
+});
+
+app.get('/api/human-lessons', requireAuth, async (req, res) => {
+  const accessibleIds = new Set(
+    req.db.humanLessonInvitations
+      .filter((invite) => invite.toUserId === req.user.id)
+      .map((invite) => invite.meetingRecordId),
+  );
+  const meetings = req.db.humanLessonMeetings
+    .filter((meeting) => meeting.kind !== 'breakout')
+    .filter((meeting) => meeting.hostUserId === req.user.id || accessibleIds.has(meeting.id))
+    .sort((left, right) => String(right.scheduledFor).localeCompare(String(left.scheduledFor)))
+    .map((meeting) => publicHumanLesson(meeting, req.db, req.user.id));
+  res.json({
+    meetings,
+    config: {
+      durationStepMinutes: LESSON_DURATION_STEP_MINUTES,
+      callCostPerStepMcoins: LESSON_COST_PER_STEP_MCOINS,
+      breakoutRoomCostMcoins: BREAKOUT_ROOM_COST_MCOINS,
+      minimumTransferMcoins: MINIMUM_CHAT_TRANSFER_MCOINS,
+    },
+    user: safeUser(req.user),
+  });
+});
+
+app.post('/api/human-lessons', requireAuth, async (req, res, next) => {
+  try {
+    const teacher = req.db.teacherProfiles.find((profile) => profile.userId === req.user.id);
+    if (!teacher) {
+      return res.status(403).json({
+        error: 'Create your teacher profile before hosting a virtual lesson.',
+        code: 'TEACHER_PROFILE_REQUIRED',
+      });
+    }
+    if (!teacher.lessonModes?.includes('online')) {
+      return res.status(403).json({
+        error: 'Add online lessons to your teacher profile before hosting a virtual lesson.',
+        code: 'ONLINE_TEACHING_REQUIRED',
+      });
+    }
+    const durationMinutes = normalizeLessonDuration(req.body?.durationMinutes);
+    const scheduledFor = normalizeScheduledFor(req.body?.scheduledFor);
+    const meeting = createHumanLessonRecord(req.db, {
+      hostUserId: req.user.id,
+      title: req.body?.title,
+      durationMinutes,
+      scheduledFor,
+    });
+    await writeDb(req.db);
+    return res.status(201).json({
+      meeting: publicHumanLesson(meeting, req.db, req.user.id),
+      message: `Lesson ready. Your wallet is charged only when you start it.`,
+      user: safeUser(req.user),
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/human-lessons/join', requireAuth, async (req, res, next) => {
+  try {
+    const meeting = findHumanLesson(req.db, req.body?.meetingId);
+    if (!meeting) return res.status(404).json({ error: 'Meeting ID not found.', code: 'MEETING_NOT_FOUND' });
+    const parent = meeting.parentMeetingId ? findHumanLesson(req.db, meeting.parentMeetingId) : null;
+    const timedMeeting = parent || meeting;
+    const status = effectiveMeetingStatus(timedMeeting);
+    if (['ended', 'cancelled'].includes(status)) {
+      return res.status(410).json({ error: 'This lesson has ended.', code: 'LESSON_ENDED' });
+    }
+    const isHost = meeting.hostUserId === req.user.id;
+    if (!isHost && !accessCodeMatches(req.body?.accessCode, meeting.accessCodeSalt, meeting.accessCodeHash)) {
+      return res.status(403).json({ error: 'The meeting ID or password is incorrect.', code: 'LESSON_CREDENTIALS_INVALID' });
+    }
+    if (meeting.kind === 'breakout' && effectiveMeetingStatus(parent) !== 'active') {
+      return res.status(409).json({ error: 'The main lesson must be started before this breakout room opens.', code: 'LESSON_NOT_STARTED' });
+    }
+    const now = new Date();
+    let chargedMcoins = 0;
+    if (isHost && meeting.kind !== 'breakout' && status === 'ready') {
+      chargedMcoins = chargeHumanLessonCost(
+        req.db,
+        req.user,
+        meeting.quotedCallCostMcoins,
+        'human_lesson_call',
+        `${meeting.title}; ${meeting.durationMinutes} minutes`,
+      );
+      meeting.chargedMcoins = chargedMcoins;
+      meeting.startedAt = now.toISOString();
+      meeting.expiresAt = meetingExpiresAt({ ...meeting, startedAt: now.toISOString() });
+      meeting.status = 'active';
+    }
+    ensureHumanLessonParticipant(req.db, meeting, req.user.id, now);
+    await writeDb(req.db);
+    return res.json({
+      meeting: publicHumanLesson(meeting, req.db, req.user.id, { includeParticipants: true }),
+      chargedMcoins,
+      waitingForHost: !isHost && effectiveMeetingStatus(timedMeeting) === 'ready',
+      user: safeUser(req.user),
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/human-lessons/:meetingId/invitations', requireAuth, async (req, res, next) => {
+  try {
+    const meeting = findHumanLesson(req.db, req.params.meetingId);
+    if (!meeting) return res.status(404).json({ error: 'Lesson not found.', code: 'MEETING_NOT_FOUND' });
+    if (meeting.hostUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Only the lesson host can send invitations.', code: 'LESSON_HOST_REQUIRED' });
+    }
+    if (['ended', 'cancelled'].includes(effectiveMeetingStatus(meeting))) {
+      return res.status(409).json({ error: 'This lesson has already ended.', code: 'LESSON_ENDED' });
+    }
+    const toUserId = String(req.body?.toUserId || '').trim();
+    const recipient = req.db.users.find((user) => user.id === toUserId);
+    if (!recipient || recipient.id === req.user.id) {
+      return res.status(400).json({ error: 'Choose another Polymath member to invite.', code: 'INVALID_INVITEE' });
+    }
+    const now = new Date().toISOString();
+    let invitation = humanLessonInvitation(req.db, meeting.id, recipient.id);
+    if (invitation) {
+      invitation.sentAt = now;
+      invitation.revokedAt = null;
+    } else {
+      invitation = {
+        id: id('lesson-invite'),
+        meetingRecordId: meeting.id,
+        fromUserId: req.user.id,
+        toUserId: recipient.id,
+        sentAt: now,
+        revokedAt: null,
+      };
+      req.db.humanLessonInvitations.push(invitation);
+    }
+    const accessCode = humanLessonAccessCode(meeting);
+    const roomLabel = meeting.kind === 'breakout' ? meeting.roomName : meeting.title;
+    const message = {
+      id: id('message'),
+      fromUserId: req.user.id,
+      toUserId: recipient.id,
+      kind: 'lesson-invite',
+      text: `${req.user.name} invited you to ${roomLabel}. Meeting ID: ${meeting.meetingId}. Password: ${accessCode}.`,
+      lessonInvite: {
+        invitationId: invitation.id,
+        meetingId: meeting.meetingId,
+        accessCode,
+        title: meeting.title,
+        roomName: meeting.roomName || '',
+        kind: meeting.kind || 'main',
+        scheduledFor: meeting.scheduledFor,
+        durationMinutes: Number(meeting.durationMinutes || 0),
+      },
+      createdAt: now,
+    };
+    req.db.messages.push(message);
+    await writeDb(req.db);
+    return res.status(201).json({ invitation, message });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.post('/api/human-lessons/:meetingId/breakouts', requireAuth, async (req, res, next) => {
+  try {
+    const meeting = findHumanLesson(req.db, req.params.meetingId);
+    if (!meeting || meeting.kind === 'breakout') {
+      return res.status(404).json({ error: 'Main lesson not found.', code: 'MEETING_NOT_FOUND' });
+    }
+    if (meeting.hostUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Only the lesson host can create breakout rooms.', code: 'LESSON_HOST_REQUIRED' });
+    }
+    if (['ended', 'cancelled'].includes(effectiveMeetingStatus(meeting))) {
+      return res.status(409).json({ error: 'This lesson has already ended.', code: 'LESSON_ENDED' });
+    }
+    const existingCount = req.db.humanLessonMeetings.filter((item) => item.parentMeetingId === meeting.id).length;
+    const roomName = cleanRoomName(req.body?.name, `Breakout ${existingCount + 1}`);
+    const chargedMcoins = chargeHumanLessonCost(
+      req.db,
+      req.user,
+      BREAKOUT_ROOM_COST_MCOINS,
+      'human_lesson_breakout',
+      `${meeting.title}; ${roomName}`,
+    );
+    const breakout = createHumanLessonRecord(req.db, {
+      hostUserId: req.user.id,
+      title: meeting.title,
+      roomName,
+      durationMinutes: meeting.durationMinutes,
+      scheduledFor: meeting.scheduledFor,
+      kind: 'breakout',
+      parentMeetingId: meeting.id,
+    });
+    breakout.chargedMcoins = chargedMcoins;
+    await writeDb(req.db);
+    return res.status(201).json({
+      breakout: publicHumanLesson(breakout, req.db, req.user.id),
+      meeting: publicHumanLesson(meeting, req.db, req.user.id),
+      chargedMcoins,
+      user: safeUser(req.user),
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+app.get('/api/human-lessons/:meetingId/room-state', requireAuth, async (req, res) => {
+  const meeting = findHumanLesson(req.db, req.params.meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Lesson not found.', code: 'MEETING_NOT_FOUND' });
+  if (!canAccessHumanLesson(req.db, meeting, req.user.id)) {
+    return res.status(403).json({ error: 'Join this private lesson before opening the room.', code: 'LESSON_JOIN_REQUIRED' });
+  }
+  const after = Number.isFinite(new Date(req.query.after || 0).getTime())
+    ? new Date(req.query.after || 0).getTime()
+    : 0;
+  const signals = req.db.humanLessonSignals
+    .filter((signal) => signal.meetingRecordId === meeting.id)
+    .filter((signal) => signal.toUserId === req.user.id)
+    .filter((signal) => signal.fromUserId !== req.user.id)
+    .filter((signal) => new Date(signal.createdAt).getTime() > after)
+    .slice(-200);
+  let iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+  if (process.env.WEBRTC_ICE_SERVERS_JSON) {
+    try {
+      const configured = JSON.parse(process.env.WEBRTC_ICE_SERVERS_JSON);
+      if (Array.isArray(configured) && configured.length) iceServers = configured;
+    } catch (error) {
+      console.error('WEBRTC_ICE_SERVERS_JSON is invalid:', error.message);
+    }
+  }
+  return res.json({
+    meeting: publicHumanLesson(meeting, req.db, req.user.id, { includeParticipants: true }),
+    signals,
+    cursor: signals.at(-1)?.createdAt || new Date().toISOString(),
+    iceServers,
+  });
+});
+
+app.post('/api/human-lessons/:meetingId/heartbeat', requireAuth, async (req, res) => {
+  const meeting = findHumanLesson(req.db, req.params.meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Lesson not found.', code: 'MEETING_NOT_FOUND' });
+  const participant = humanLessonParticipant(req.db, meeting.id, req.user.id);
+  if (!participant || participant.leftAt) {
+    return res.status(403).json({ error: 'Join this private lesson first.', code: 'LESSON_JOIN_REQUIRED' });
+  }
+  if (['ended', 'cancelled'].includes(effectiveMeetingStatus(meeting.parentMeetingId ? findHumanLesson(req.db, meeting.parentMeetingId) : meeting))) {
+    return res.status(410).json({ error: 'This lesson has ended.', code: 'LESSON_ENDED' });
+  }
+  participant.lastSeenAt = new Date().toISOString();
+  await writeDb(req.db);
+  return res.json({ ok: true });
+});
+
+app.post('/api/human-lessons/:meetingId/signals', requireAuth, async (req, res) => {
+  const meeting = findHumanLesson(req.db, req.params.meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Lesson not found.', code: 'MEETING_NOT_FOUND' });
+  const participant = humanLessonParticipant(req.db, meeting.id, req.user.id);
+  if (!participant || participant.leftAt) {
+    return res.status(403).json({ error: 'Join this private lesson first.', code: 'LESSON_JOIN_REQUIRED' });
+  }
+  const toUserId = String(req.body?.toUserId || '').trim();
+  const target = humanLessonParticipant(req.db, meeting.id, toUserId);
+  if (!target || target.leftAt || toUserId === req.user.id) {
+    return res.status(400).json({ error: 'Choose an active lesson participant.', code: 'INVALID_SIGNAL_TARGET' });
+  }
+  const kind = String(req.body?.kind || '').trim().toLowerCase();
+  if (!['offer', 'answer', 'candidate'].includes(kind)) {
+    return res.status(400).json({ error: 'Unsupported call signal.', code: 'INVALID_SIGNAL' });
+  }
+  const payload = req.body?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || JSON.stringify(payload).length > 50_000) {
+    return res.status(400).json({ error: 'The call signal is invalid or too large.', code: 'INVALID_SIGNAL' });
+  }
+  req.db.humanLessonSignals = trimLessonSignals(req.db.humanLessonSignals);
+  const signal = {
+    id: id('lesson-signal'),
+    meetingRecordId: meeting.id,
+    fromUserId: req.user.id,
+    toUserId,
+    kind,
+    payload,
+    createdAt: new Date().toISOString(),
+  };
+  req.db.humanLessonSignals.push(signal);
+  await writeDb(req.db);
+  return res.status(201).json({ signalId: signal.id });
+});
+
+app.post('/api/human-lessons/:meetingId/leave', requireAuth, async (req, res) => {
+  const meeting = findHumanLesson(req.db, req.params.meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Lesson not found.', code: 'MEETING_NOT_FOUND' });
+  const participant = humanLessonParticipant(req.db, meeting.id, req.user.id);
+  if (participant) participant.leftAt = new Date().toISOString();
+  await writeDb(req.db);
+  return res.json({ ok: true });
+});
+
+app.post('/api/human-lessons/:meetingId/end', requireAuth, async (req, res) => {
+  const meeting = findHumanLesson(req.db, req.params.meetingId);
+  if (!meeting || meeting.kind === 'breakout') return res.status(404).json({ error: 'Main lesson not found.', code: 'MEETING_NOT_FOUND' });
+  if (meeting.hostUserId !== req.user.id) {
+    return res.status(403).json({ error: 'Only the host can end this lesson.', code: 'LESSON_HOST_REQUIRED' });
+  }
+  const now = new Date().toISOString();
+  meeting.status = meeting.startedAt ? 'ended' : 'cancelled';
+  meeting.endedAt = now;
+  req.db.humanLessonMeetings
+    .filter((candidate) => candidate.parentMeetingId === meeting.id)
+    .forEach((breakout) => {
+      breakout.status = 'ended';
+      breakout.endedAt = now;
+    });
+  req.db.humanLessonParticipants
+    .filter((participant) => participant.meetingRecordId === meeting.id
+      || req.db.humanLessonMeetings.some((candidate) => (
+        candidate.parentMeetingId === meeting.id && candidate.id === participant.meetingRecordId
+      )))
+    .forEach((participant) => { participant.leftAt = now; });
+  await writeDb(req.db);
+  return res.json({ meeting: publicHumanLesson(meeting, req.db, req.user.id) });
+});
+
 app.get('/api/listings', async (req, res) => {
   const db = await readDb();
   const viewer = authUser(req, db);
@@ -6688,6 +7061,87 @@ app.get('/api/messages/:otherUserId', requireAuth, async (req, res) => {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const other = req.db.users.find((user) => user.id === otherId);
   res.json({ messages, otherUser: other ? { user_id: other.id, name: other.name } : null });
+});
+
+app.post('/api/messages/transfers', requireAuth, async (req, res, next) => {
+  try {
+    const toUserId = String(req.body?.toUserId || '').trim();
+    const recipient = req.db.users.find((user) => user.id === toUserId && user.id !== 'platform');
+    if (!recipient) return res.status(404).json({ error: 'Recipient not found.', code: 'TRANSFER_RECIPIENT_NOT_FOUND' });
+    if (recipient.id === req.user.id) {
+      return res.status(400).json({ error: 'You cannot transfer Mcoins to yourself.', code: 'TRANSFER_TO_SELF' });
+    }
+    const amountMcoins = normalizeTransferAmount(req.body?.amountMcoins);
+    const clientRequestId = normalizeHumanLessonRequestId(req.body?.clientRequestId);
+    if (!clientRequestId) {
+      return res.status(400).json({ error: 'A transfer request ID is required.', code: 'TRANSFER_REQUEST_ID_REQUIRED' });
+    }
+    const duplicate = req.db.mcoinTransfers.find((transfer) => (
+      transfer.fromUserId === req.user.id && transfer.clientRequestId === clientRequestId
+    ));
+    if (duplicate) {
+      const message = req.db.messages.find((item) => item.transferId === duplicate.id) || null;
+      return res.json({ transfer: duplicate, message, user: safeUser(req.user), duplicate: true });
+    }
+    const unlimitedSender = hasUnlimitedMcoins(req.user);
+    if (!unlimitedSender && Number(req.user.mcoins || 0) < amountMcoins) {
+      return res.status(402).json({
+        error: `You need ${amountMcoins.toFixed(2)} Mcoins. Your wallet has ${Number(req.user.mcoins || 0).toFixed(2)}.`,
+        code: 'INSUFFICIENT_MCOINS',
+      });
+    }
+    if (!unlimitedSender) req.user.mcoins = roundHumanLessonMcoins(Number(req.user.mcoins || 0) - amountMcoins);
+    recipient.mcoins = roundHumanLessonMcoins(Number(recipient.mcoins || 0) + amountMcoins);
+    const cashoutEligible = !unlimitedSender;
+    if (cashoutEligible) {
+      recipient.withdrawableMcoins = roundHumanLessonMcoins(
+        Number(recipient.withdrawableMcoins || 0) + amountMcoins,
+      );
+    }
+    const now = new Date().toISOString();
+    const transfer = {
+      id: id('mcoin-transfer'),
+      clientRequestId,
+      fromUserId: req.user.id,
+      toUserId: recipient.id,
+      amountMcoins,
+      cashoutEligible,
+      createdAt: now,
+    };
+    req.db.mcoinTransfers.push(transfer);
+    addLedger(
+      req.db,
+      req.user.id,
+      unlimitedSender ? 0 : -amountMcoins,
+      unlimitedSender ? 'admin_chat_transfer' : 'chat_transfer_sent',
+      `Sent ${amountMcoins.toFixed(2)} Mcoins to ${recipient.name}`,
+    );
+    addLedger(
+      req.db,
+      recipient.id,
+      amountMcoins,
+      'chat_transfer_received',
+      `Received ${amountMcoins.toFixed(2)} Mcoins from ${req.user.name}${cashoutEligible ? '' : '; promotional credit is not cash-out eligible'}`,
+    );
+    const message = {
+      id: id('message'),
+      fromUserId: req.user.id,
+      toUserId: recipient.id,
+      kind: 'mcoin-transfer',
+      transferId: transfer.id,
+      transfer: {
+        amountMcoins,
+        cashoutEligible,
+      },
+      text: `Sent ${amountMcoins.toFixed(2)} Mcoins.`,
+      createdAt: now,
+    };
+    req.db.messages.push(message);
+    await writeDb(req.db);
+    return res.status(201).json({ transfer, message, user: safeUser(req.user), duplicate: false });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.post('/api/messages', requireAuth, async (req, res) => {
@@ -8282,6 +8736,178 @@ function publicTeacherReview(review, db, viewerId = null) {
   };
 }
 
+function findHumanLesson(db, meetingId) {
+  const requested = String(meetingId || '').trim().toUpperCase();
+  return db.humanLessonMeetings.find((meeting) => (
+    String(meeting.id) === String(meetingId)
+    || String(meeting.meetingId || '').toUpperCase() === requested
+  )) || null;
+}
+
+function humanLessonUser(user) {
+  return user ? {
+    user_id: user.id,
+    name: user.name || 'Polymath member',
+    avatarUrl: user.avatarUrl || '',
+  } : null;
+}
+
+function humanLessonInvitation(db, meetingRecordId, userId) {
+  return db.humanLessonInvitations.find((invite) => (
+    invite.meetingRecordId === meetingRecordId && invite.toUserId === userId
+  )) || null;
+}
+
+function humanLessonParticipant(db, meetingRecordId, userId) {
+  return db.humanLessonParticipants.find((participant) => (
+    participant.meetingRecordId === meetingRecordId && participant.userId === userId
+  )) || null;
+}
+
+function canAccessHumanLesson(db, meeting, userId) {
+  return Boolean(meeting && userId && (
+    meeting.hostUserId === userId
+    || humanLessonInvitation(db, meeting.id, userId)
+    || humanLessonParticipant(db, meeting.id, userId)
+  ));
+}
+
+function humanLessonAccessCode(meeting) {
+  return openAccessCode(meeting.accessCodeEnvelope, HUMAN_LESSON_CREDENTIAL_SECRET);
+}
+
+function publicHumanLesson(meeting, db, viewerId, { includeParticipants = false } = {}) {
+  const parent = meeting.parentMeetingId
+    ? db.humanLessonMeetings.find((candidate) => candidate.id === meeting.parentMeetingId)
+    : null;
+  const host = db.users.find((user) => user.id === meeting.hostUserId);
+  const isHost = viewerId === meeting.hostUserId;
+  const invitation = viewerId ? humanLessonInvitation(db, meeting.id, viewerId) : null;
+  const status = effectiveMeetingStatus(parent || meeting);
+  const expiresAt = meetingExpiresAt(meeting, parent);
+  const result = {
+    id: meeting.id,
+    meetingId: meeting.meetingId,
+    title: meeting.title,
+    roomName: meeting.roomName || '',
+    kind: meeting.kind || 'main',
+    parentMeetingId: meeting.parentMeetingId || null,
+    parentPublicMeetingId: parent?.meetingId || null,
+    durationMinutes: Number(parent?.durationMinutes || meeting.durationMinutes || 0),
+    scheduledFor: parent?.scheduledFor || meeting.scheduledFor,
+    startedAt: parent?.startedAt || meeting.startedAt || null,
+    expiresAt,
+    endedAt: parent?.endedAt || meeting.endedAt || null,
+    status,
+    quotedCallCostMcoins: Number(parent?.quotedCallCostMcoins ?? meeting.quotedCallCostMcoins ?? 0),
+    chargedMcoins: Number(parent?.chargedMcoins ?? meeting.chargedMcoins ?? 0),
+    breakoutCostMcoins: BREAKOUT_ROOM_COST_MCOINS,
+    host: humanLessonUser(host),
+    isHost,
+    invited: Boolean(invitation),
+    joined: Boolean(viewerId && humanLessonParticipant(db, meeting.id, viewerId)),
+    createdAt: meeting.createdAt,
+  };
+  if (isHost) {
+    result.accessCode = humanLessonAccessCode(meeting);
+    result.breakouts = db.humanLessonMeetings
+      .filter((candidate) => candidate.parentMeetingId === meeting.id)
+      .map((candidate) => publicHumanLesson(candidate, db, viewerId));
+  }
+  if (includeParticipants) {
+    const now = Date.now();
+    result.participants = db.humanLessonParticipants
+      .filter((participant) => participant.meetingRecordId === meeting.id && participantIsActive(participant, now))
+      .map((participant) => ({
+        ...humanLessonUser(db.users.find((user) => user.id === participant.userId)),
+        joinedAt: participant.joinedAt,
+        isHost: participant.userId === meeting.hostUserId,
+      }));
+  }
+  return result;
+}
+
+function chargeHumanLessonCost(db, user, amountMcoins, type, detail) {
+  const amount = roundHumanLessonMcoins(amountMcoins);
+  if (amount <= 0 || hasUnlimitedMcoins(user)) {
+    addLedger(db, user.id, 0, `admin_${type}`, `${detail}; unlimited administrator wallet`);
+    return 0;
+  }
+  if (Number(user.mcoins || 0) < amount) {
+    throw new HumanLessonError(
+      `You need ${amount.toFixed(2)} Mcoins. Your wallet has ${Number(user.mcoins || 0).toFixed(2)}.`,
+      402,
+      'INSUFFICIENT_MCOINS',
+    );
+  }
+  user.mcoins = roundHumanLessonMcoins(Number(user.mcoins || 0) - amount);
+  addLedger(db, user.id, -amount, type, detail);
+  const platform = db.users.find((candidate) => candidate.id === 'platform');
+  if (platform) {
+    platform.mcoins = roundHumanLessonMcoins(Number(platform.mcoins || 0) + amount);
+    addLedger(db, platform.id, amount, `${type}_revenue`, detail);
+  }
+  return amount;
+}
+
+function createHumanLessonRecord(db, {
+  hostUserId,
+  title,
+  roomName = '',
+  durationMinutes,
+  scheduledFor,
+  kind = 'main',
+  parentMeetingId = null,
+  now = new Date(),
+}) {
+  const existingCodes = new Set(db.humanLessonMeetings.map((meeting) => meeting.meetingId));
+  const meetingId = createMeetingCode(existingCodes);
+  const accessCode = createAccessCode();
+  const credentials = hashAccessCode(accessCode);
+  const record = {
+    id: id(kind === 'breakout' ? 'lesson-breakout' : 'human-lesson'),
+    meetingId,
+    hostUserId,
+    title: cleanLessonTitle(title),
+    roomName: kind === 'breakout' ? cleanRoomName(roomName) : '',
+    kind,
+    parentMeetingId,
+    durationMinutes,
+    scheduledFor,
+    quotedCallCostMcoins: kind === 'main' ? lessonCallCost(durationMinutes) : 0,
+    chargedMcoins: 0,
+    accessCodeSalt: credentials.salt,
+    accessCodeHash: credentials.hash,
+    accessCodeEnvelope: sealAccessCode(accessCode, HUMAN_LESSON_CREDENTIAL_SECRET),
+    status: 'ready',
+    startedAt: null,
+    expiresAt: null,
+    endedAt: null,
+    createdAt: now.toISOString(),
+  };
+  db.humanLessonMeetings.push(record);
+  return record;
+}
+
+function ensureHumanLessonParticipant(db, meeting, userId, now = new Date()) {
+  let participant = humanLessonParticipant(db, meeting.id, userId);
+  if (participant) {
+    participant.lastSeenAt = now.toISOString();
+    participant.leftAt = null;
+    return participant;
+  }
+  participant = {
+    id: id('lesson-participant'),
+    meetingRecordId: meeting.id,
+    userId,
+    joinedAt: now.toISOString(),
+    lastSeenAt: now.toISOString(),
+    leftAt: null,
+  };
+  db.humanLessonParticipants.push(participant);
+  return participant;
+}
+
 function cleanStringList(value, { maximum = 8, allowed = null } = {}) {
   const entries = Array.isArray(value) ? value : [];
   return [...new Set(entries
@@ -9321,9 +9947,11 @@ app.use((error, req, res, next) => {
     });
   }
   if (res.headersSent) return next(error);
-  console.error('Request failed:', error);
-  return res.status(Number(error.status || 500)).json({
-    error: Number(error.status) < 500 ? error.message : 'The server could not complete this request.',
+  const status = Number(error.status || 500);
+  if (status >= 500) console.error('Request failed:', error);
+  return res.status(status).json({
+    error: status < 500 ? error.message : 'The server could not complete this request.',
+    ...(error.code ? { code: error.code } : {}),
   });
 });
 
