@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   PIANO_KEY_CALIBRATION,
+  pianoCompactSourceChannel,
   pianoKeyCalibrationDb,
   pianoKeyCalibrationGain,
 } from '../../src/engine/pianoKeyCalibration.js';
@@ -36,31 +37,31 @@ const FULL_BODY_REFERENCE_DB = [
 ];
 
 const COMPACT_ATTACK_REFERENCE_DB = [
-  -27.626, -27.29, -26.944, -23.221, -26.033, -22.736, -23.625, -25.678,
-  -23.535, -18.545, -22.31, -24.967, -25.519, -24.719, -22.563, -18.156,
-  -21.728, -20.112, -19.587, -21.779, -21.923, -27.273, -27.256, -27.936,
-  -24.939, -24.821, -24.276, -24.437, -24.481, -26.099, -24.362, -21.545,
-  -27.405, -27.033, -27.679, -29.095, -31.051, -32.218, -30.182, -31.887,
-  -28.776, -28.08, -28.43, -30.52, -27.61, -27.95, -24.808, -27.927,
-  -28.662, -33.221, -24.135, -28.693, -29.403, -31.109, -27.36, -23.535,
-  -24.862, -26.728, -39.975, -33.791, -31.668, -31.892, -32.172, -35.167,
-  -40.702, -35.19, -32.352, -28.719, -34.984, -38.77, -41.128, -34.785,
-  -44.462, -38.779, -44.524, -46.976, -44.727, -48.075, -51.92, -48.6,
-  -50.145, -41.379, -52.727, -51.488, -50.66, -52.869, -50.49, -52.417,
+  -24.407, -24.028, -23.751, -18.871, -20.501, -19.058, -19.142, -23.71,
+  -20.264, -15.391, -19.552, -20.033, -21.59, -22.067, -19.977, -14.949,
+  -15.68, -17.994, -15.012, -16.076, -19.421, -23.706, -22.298, -22.537,
+  -20.974, -20.505, -20.833, -20.06, -20.611, -22.348, -19.98, -18.369,
+  -25.835, -22.357, -21.651, -21.198, -26.172, -22.835, -23.572, -25.261,
+  -25.402, -21.682, -24.862, -26.81, -24.896, -23.875, -23.483, -22.132,
+  -23.209, -23.276, -20.759, -20.305, -24.878, -27.897, -25.276, -20.152,
+  -23.259, -22.795, -25.044, -28.423, -26.034, -23.705, -29.492, -29.016,
+  -34.635, -27.817, -29.069, -26.88, -27.534, -30.859, -35.996, -30.755,
+  -37.287, -33.901, -40.024, -43.416, -40.977, -45.956, -44.559, -43.021,
+  -47.437, -37.397, -47.528, -46.902, -46.247, -47.725, -46.693, -47.979,
 ];
 
 const COMPACT_BODY_REFERENCE_DB = [
-  -30.855, -30.589, -30.343, -26.467, -29.359, -25.96, -26.55, -28.205,
-  -28.204, -25.102, -30.011, -28.875, -29.585, -30.214, -29.349, -22.854,
-  -28.34, -25.346, -27.895, -27.278, -28.785, -36.891, -35.182, -34.245,
-  -31.236, -31.658, -31.731, -31.023, -30.472, -35.032, -35.097, -34.354,
-  -33.822, -33.808, -36.255, -38.324, -41.419, -42.196, -41.486, -41.865,
-  -41.554, -37.518, -39.06, -40.627, -40.404, -40.748, -35.234, -40.438,
-  -39.453, -43.869, -42.618, -42.632, -41.15, -43.941, -41.087, -38.4,
-  -43.399, -38.261, -52.812, -42.697, -45.172, -47.198, -46.053, -46.638,
-  -49.339, -48.958, -43.165, -47.256, -46.197, -53.732, -52.546, -49.735,
-  -58.65, -63.652, -63.025, -58.777, -59.479, -69.011, -73.357, -67.975,
-  -71.88, -65.712, -77.444, -72.441, -76.863, -78.365, -78.826, -80.002,
+  -27.487, -27.292, -27.067, -22.181, -23.698, -21.735, -21.484, -25.462,
+  -24.339, -22.868, -27.021, -23.975, -25.156, -27.353, -27.337, -19.473,
+  -22.361, -22.82, -23.334, -22.497, -25.49, -32.207, -29.987, -28.561,
+  -27.781, -26.875, -27.499, -27.545, -27.306, -32.515, -31.047, -30.361,
+  -32.25, -30.88, -30.503, -31.733, -37.969, -34.19, -35.561, -36.025,
+  -37.014, -31.41, -34.279, -36.829, -35.654, -35.27, -33.685, -34.347,
+  -35.327, -35.366, -39.154, -34.379, -37.207, -42.352, -38.232, -36.528,
+  -40.489, -33.743, -40.912, -37.343, -38.823, -40.873, -41.853, -44.017,
+  -45.758, -40.286, -38.461, -47.716, -39.114, -46.248, -45.212, -45.573,
+  -48.817, -58.01, -53.759, -54.861, -56.057, -63.959, -60.853, -60.198,
+  -62.608, -55.975, -71.541, -70.859, -72.229, -75.297, -74.536, -77.372,
 ];
 
 function calibratedLevels(reference, profile, phase) {
@@ -74,6 +75,7 @@ function maximumAdjacentJump(values) {
 }
 
 test('the envelope calibration covers every key on an 88-key piano', () => {
+  assert.equal(PIANO_KEY_CALIBRATION.version, 'iowa-mf-88-phase-safe-envelope-v3');
   assert.equal(PIANO_KEY_CALIBRATION.keyCount, 88);
   for (const values of [
     PIANO_KEY_CALIBRATION.fullRangeAttackDb,
@@ -81,6 +83,10 @@ test('the envelope calibration covers every key on an 88-key piano', () => {
     PIANO_KEY_CALIBRATION.compactAttackDb,
     PIANO_KEY_CALIBRATION.compactBodyDb,
   ]) assert.equal(values.length, 88);
+  assert.equal(PIANO_KEY_CALIBRATION.compactSourceChannel.length, 88);
+  assert.ok(PIANO_KEY_CALIBRATION.compactSourceChannel.every((channel) => channel === 0 || channel === 1));
+  assert.equal(pianoCompactSourceChannel(79), 0, 'G5 uses the phase-safe left microphone');
+  assert.equal(pianoCompactSourceChannel(86), 1, 'D6 uses the phase-safe right microphone');
   assert.equal(pianoKeyCalibrationDb(20), pianoKeyCalibrationDb(21));
   assert.equal(pianoKeyCalibrationDb(109), pianoKeyCalibrationDb(108));
   assert.ok(Number.isFinite(pianoKeyCalibrationGain(60, 'full-range', 'body')));
@@ -97,8 +103,8 @@ test('full-range attack and body remain continuous between neighboring keys', ()
 test('compact attack and body remain continuous between neighboring keys', () => {
   const attack = calibratedLevels(COMPACT_ATTACK_REFERENCE_DB, 'small-speaker', 'attack');
   const body = calibratedLevels(COMPACT_BODY_REFERENCE_DB, 'small-speaker', 'body');
-  assert.ok(maximumAdjacentJump(attack) <= 1.3);
-  assert.ok(maximumAdjacentJump(body) <= 1.91);
+  assert.ok(maximumAdjacentJump(attack) <= 1.42);
+  assert.ok(maximumAdjacentJump(body) <= 1.86);
   assert.ok(body[87] < body[39] - 20, 'the compact curve remains acoustic, not flat');
 });
 

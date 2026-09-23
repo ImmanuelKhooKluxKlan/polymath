@@ -2,10 +2,16 @@
 """Audit and derive the 88-key perceptual loudness calibration.
 
 This utility models the linear part of the browser piano signal chain:
-sample analysis, register gains, per-voice EQ, master EQ, dual-mono compact
+sample analysis, register gains, per-voice EQ, master EQ, phase-safe compact
 output, A-weighting, and a conservative compact-speaker response. Reverb and
 dynamic compressors are intentionally excluded because this audit measures one
 isolated reference strike at a time.
+
+The Iowa recordings are stereo microphone captures, not level-matched stereo
+masters. Many keys have large channel imbalance and 50/88 have negative
+left/right correlation. A normal mono sum therefore makes some keys disappear
+on phones. Compact output deliberately chooses the more useful microphone
+channel for each source recording before producing dual-mono output.
 """
 
 from __future__ import annotations
@@ -228,6 +234,46 @@ def weighted_level_db(audio: np.ndarray, sample_rate: int, midi: int, compact: b
     return 20 * math.log10(max(rms * ratio, 1e-30))
 
 
+def compact_channel_levels(
+    attack: np.ndarray,
+    body: np.ndarray,
+    sample_rate: int,
+    midi: int,
+) -> list[tuple[float, float, float]]:
+    """Return attack/body/combined phone-band level for every microphone."""
+    levels: list[tuple[float, float, float]] = []
+    for channel in range(attack.shape[1]):
+        attack_db = weighted_level_db(attack[:, channel], sample_rate, midi, True)
+        body_db = weighted_level_db(body[:, channel], sample_rate, midi, True)
+        # Attacks carry note intelligibility on a phone, while the body still
+        # needs enough weight to prevent the key sounding clipped or broken.
+        combined_db = (0.62 * attack_db) + (0.38 * body_db)
+        levels.append((attack_db, body_db, combined_db))
+    return levels
+
+
+def stereo_diagnostics(audio: np.ndarray) -> dict[str, float]:
+    """Measure what a conventional L+R mono fold-down would lose."""
+    if audio.shape[1] < 2:
+        return {
+            "correlation": 1.0,
+            "channelImbalanceDb": 0.0,
+            "monoCollapseLossDb": 0.0,
+        }
+    left = audio[:, 0]
+    right = audio[:, 1]
+    left_rms = math.sqrt(np.mean(left * left))
+    right_rms = math.sqrt(np.mean(right * right))
+    stereo_rms = math.sqrt((np.mean(left * left) + np.mean(right * right)) / 2)
+    mono_rms = math.sqrt(np.mean(((left + right) / 2) ** 2))
+    correlation = float(np.corrcoef(left, right)[0, 1])
+    return {
+        "correlation": correlation,
+        "channelImbalanceDb": abs(20 * math.log10(max(left_rms, 1e-30) / max(right_rms, 1e-30))),
+        "monoCollapseLossDb": 20 * math.log10(max(mono_rms, 1e-30) / max(stereo_rms, 1e-30)),
+    }
+
+
 def smooth_target(levels: np.ndarray) -> np.ndarray:
     median = np.asarray([
         np.median(levels[max(0, index - 6):min(len(levels), index + 7)])
@@ -283,8 +329,12 @@ def audit() -> dict[str, object]:
         base_gain = analysis_gain * interpolate(LOW_COMPENSATION, midi) * interpolate(REGISTER_GAIN, midi)
         attack = audio[round(sample_rate * 0.02):round(sample_rate * 0.25)]
         body = audio[round(sample_rate * 0.25):round(sample_rate * 1.2)]
-        mono_attack = np.mean(attack, axis=1)
-        mono_body = np.mean(body, axis=1)
+        compact_levels = compact_channel_levels(attack, body, sample_rate, midi)
+        compact_channel = max(
+            range(len(compact_levels)),
+            key=lambda channel: compact_levels[channel][2],
+        )
+        diagnostics = stereo_diagnostics(analysis)
         compact_gain = interpolate(COMPACT_REGISTER_GAIN, midi)
         rows.append({
             "midi": midi,
@@ -292,15 +342,23 @@ def audit() -> dict[str, object]:
             "peak": peak * base_gain,
             "full_attack": weighted_level_db(attack, sample_rate, midi, False) + 20 * math.log10(base_gain),
             "full_body": weighted_level_db(body, sample_rate, midi, False) + 20 * math.log10(base_gain),
-            "compact_attack": weighted_level_db(mono_attack, sample_rate, midi, True) + 20 * math.log10(base_gain * compact_gain),
-            "compact_body": weighted_level_db(mono_body, sample_rate, midi, True) + 20 * math.log10(base_gain * compact_gain),
+            "compact_channel": compact_channel,
+            "compact_attack": compact_levels[compact_channel][0] + 20 * math.log10(base_gain * compact_gain),
+            "compact_body": compact_levels[compact_channel][1] + 20 * math.log10(base_gain * compact_gain),
             "compact_peak": peak * base_gain * compact_gain,
+            **diagnostics,
         })
 
     result: dict[str, object] = {
         "sampleSetSha256": sample_set_checksum(paths),
         "keys": len(rows),
         "notes": [row["note"] for row in rows],
+        "compactSourceChannel": [row["compact_channel"] for row in rows],
+        "stereoDiagnostics": {
+            "negativeCorrelationKeys": sum(row["correlation"] < 0 for row in rows),
+            "worstMonoCollapseLossDb": round(min(row["monoCollapseLossDb"] for row in rows), 3),
+            "maximumChannelImbalanceDb": round(max(row["channelImbalanceDb"] for row in rows), 3),
+        },
     }
     for field in ("full_attack", "full_body", "compact_attack", "compact_body"):
         levels = np.asarray([row[field] for row in rows], dtype=np.float64)
@@ -328,6 +386,13 @@ def main() -> None:
         print(json.dumps(result, indent=2))
         return
     print(f"keys={result['keys']} source={result['sampleSetSha256']}")
+    stereo = result["stereoDiagnostics"]
+    print(
+        f"stereo: negative-correlation={stereo['negativeCorrelationKeys']} "
+        f"worst-mono-loss={stereo['worstMonoCollapseLossDb']:.3f} dB "
+        f"maximum-channel-imbalance={stereo['maximumChannelImbalanceDb']:.3f} dB"
+    )
+    print(f"COMPACT_SOURCE_CHANNEL = {json.dumps(result['compactSourceChannel'])}")
     for field in ("full_attack", "full_body", "compact_attack", "compact_body"):
         metrics = result[field]
         print(

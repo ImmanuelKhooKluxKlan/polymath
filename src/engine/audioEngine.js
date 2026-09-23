@@ -9,7 +9,11 @@ import {
   parseNote,
 } from './noteMath.js';
 import { getInitialPerformanceTier, normalizePerformanceTier } from './devicePerformance.js';
-import { PIANO_KEY_CALIBRATION, pianoKeyCalibrationGain } from './pianoKeyCalibration.js';
+import {
+  PIANO_KEY_CALIBRATION,
+  pianoCompactSourceChannel,
+  pianoKeyCalibrationGain,
+} from './pianoKeyCalibration.js';
 import {
   inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
@@ -341,8 +345,13 @@ function sampleMidisForTier(tier) {
   ));
 }
 
+// Keep the first playable phone piano stable across the whole A0-C8 range.
+// Six-semitone zones cap pitch shifting at three semitones while adding only
+// about 6.5 MB over the old ten-zone startup set. The previous set omitted both
+// ends of the keyboard and shifted some notes by an octave.
 const STARTUP_SAMPLE_ANCHORS = Object.freeze([
-  33, 40, 48, 55, 60, 67, 76, 84, 91, 96,
+  21, 27, 33, 39, 45, 51, 57, 60, 63,
+  69, 75, 81, 87, 93, 99, 105, 108,
 ]);
 
 function startupSampleMidisForTier(tier, targetMidis = sampleMidisForTier(tier)) {
@@ -1242,10 +1251,10 @@ class PianoAudioEngine {
     const now =
       this.context.currentTime;
 
-    // Iowa's stereo samples differ by as much as ~9 dB between channels on
-    // some keys. Built-in phone speakers are also physically asymmetric. A
-    // one-channel master makes compact output dual-mono before it reaches the
-    // device, while full-range output keeps the original stereo piano image.
+    // Iowa's stereo microphones differ by as much as 13.5 dB and frequently
+    // oppose in phase. Compact sample voices select one safe microphone
+    // upstream; this one-channel master then makes the result dual-mono before
+    // it reaches asymmetric phone speakers. Full-range output stays stereo.
     this.masterInput.channelCountMode = preset.monoOutput ? 'explicit' : 'max';
     this.masterInput.channelCount = preset.monoOutput ? 1 : 2;
     this.masterInput.channelInterpretation = 'speakers';
@@ -1587,25 +1596,12 @@ class PianoAudioEngine {
       return this.preloadPromise;
     }
 
-    const coreStart =
-      parseNote('A1').midi;
-
-    const coreEnd =
-      parseNote('C7').midi;
-
     const samples = [];
 
     for (
       const midi of
       AVAILABLE_SAMPLE_MIDIS
     ) {
-      if (
-        midi < coreStart ||
-        midi > coreEnd
-      ) {
-        continue;
-      }
-
       const info =
         buildSamplePlan(midi, this.sampleMidis);
 
@@ -2815,9 +2811,34 @@ class PianoAudioEngine {
             requestedMidi
           );
 
-        source.connect(
-          sourceGain
-        );
+        // The Iowa files are stereo microphone recordings. Fifty of the 88
+        // keys have negatively correlated channels; folding L+R to mono loses
+        // as much as 13.2 dB and is why individual keys disappeared on phones
+        // while sounding normal on a stereo desktop. Compact output selects a
+        // measured microphone channel first, then safely copies that mono
+        // signal to both device speakers. Full-range output remains stereo.
+        let compactChannelSplitter = null;
+        if (
+          this.speakerOutputProfile === 'small-speaker'
+          && sample.buffer.numberOfChannels > 1
+        ) {
+          compactChannelSplitter = this.context.createChannelSplitter(
+            sample.buffer.numberOfChannels
+          );
+          source.connect(compactChannelSplitter);
+          compactChannelSplitter.connect(
+            sourceGain,
+            Math.min(
+              sample.buffer.numberOfChannels - 1,
+              pianoCompactSourceChannel(sample.info.sampleMidi)
+            ),
+            0
+          );
+        } else {
+          source.connect(
+            sourceGain
+          );
+        }
 
         sourceGain.connect(
           highPass
@@ -2838,7 +2859,8 @@ class PianoAudioEngine {
         this.registerVoiceNodes(
           voice,
           source,
-          sourceGain
+          sourceGain,
+          compactChannelSplitter
         );
 
         source.onended = () => {

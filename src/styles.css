@@ -7449,6 +7449,16 @@ details[open] > summary {
   scroll-margin-top: 76px;
 }
 
+.piano-learn-journey.is-core-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.piano-learn-journey.is-core-only .piano-core-start {
+  grid-column: 1 / -1;
+  width: 100%;
+  border-left: 0;
+}
+
 .learn-journey-mode {
   align-self: start;
   margin: 12px 0 12px 12px;
@@ -11015,4 +11025,139 @@ body.projection-output-active {
   .campaign-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .campaign-funnel-details > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .campaign-gate { flex: initial; }
+}
+
+/* Compact, one-decision-at-a-time controls on phones. Keep every tap target at
+   least 44px, but do not turn a short label into a full-height feature card. */
+@media (max-width: 720px) {
+  .studio-grid {
+    gap: 12px;
+  }
+
+  .control-panel,
+  .uploader-card,
+  .guitar-control-panel,
+  .guitar-upload-card,
+  .ensemble-upload-card {
+    gap: 10px;
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .music-choice-trigger {
+    min-height: 48px;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 13px;
+  }
+
+  .music-choice-copy {
+    gap: 2px;
+  }
+
+  .music-choice-copy strong {
+    font-size: clamp(0.8rem, 3.45vw, 0.9rem);
+    line-height: 1.18;
+  }
+
+  .music-choice-copy small {
+    font-size: clamp(0.66rem, 2.8vw, 0.74rem);
+  }
+
+  .music-choice-chevron {
+    width: 25px;
+    height: 25px;
+    font-size: 1rem;
+  }
+
+  .music-choice-content {
+    gap: 10px;
+    padding-top: 10px;
+  }
+
+  .music-upload-panel,
+  .ready-upload-section,
+  .translation-panel {
+    gap: 10px;
+  }
+
+  .upload-choice-prompt {
+    font-size: 0.74rem;
+  }
+
+  .uploader-card .upload-mode-grid,
+  .guitar-upload-card .upload-mode-grid,
+  .ensemble-upload-card .upload-mode-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .uploader-card .upload-mode-grid > button,
+  .uploader-card .upload-mode-option,
+  .guitar-upload-card .upload-mode-grid > button,
+  .guitar-upload-card .upload-mode-option,
+  .ensemble-upload-card .upload-mode-grid > button,
+  .ensemble-upload-card .upload-mode-option {
+    min-height: 48px;
+    gap: 2px;
+    padding: 8px 11px;
+    border-radius: 12px;
+    text-align: left;
+  }
+
+  .upload-mode-grid strong {
+    font-size: clamp(0.76rem, 3.2vw, 0.84rem);
+    line-height: 1.2;
+  }
+
+  .upload-mode-grid small {
+    font-size: clamp(0.64rem, 2.7vw, 0.72rem);
+    line-height: 1.25;
+  }
+
+  .upload-active-mode {
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 12px;
+  }
+
+  .upload-active-mode .ghost {
+    min-height: 44px;
+    padding: 7px 10px;
+  }
+}
+
+/* A sideways phone has enough width for three concise upload choices. This
+   avoids a tall stack consuming the screen before the keyboard is visible. */
+@media (max-width: 950px) and (max-height: 600px) and (orientation: landscape) {
+  .control-panel,
+  .uploader-card,
+  .guitar-control-panel,
+  .guitar-upload-card,
+  .ensemble-upload-card {
+    padding: 8px;
+  }
+
+  .music-choice-trigger {
+    min-height: 44px;
+    padding-block: 7px;
+  }
+
+  .uploader-card .upload-mode-grid,
+  .guitar-upload-card .upload-mode-grid,
+  .ensemble-upload-card .upload-mode-grid,
+  .music-upload-panel:not(.compact-panel) .upload-mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .uploader-card .upload-mode-grid > button,
+  .uploader-card .upload-mode-option,
+  .guitar-upload-card .upload-mode-grid > button,
+  .guitar-upload-card .upload-mode-option,
+  .ensemble-upload-card .upload-mode-grid > button,
+  .ensemble-upload-card .upload-mode-option {
+    min-height: 46px;
+    padding: 7px 8px;
+    text-align: center;
+  }
 }

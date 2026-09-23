@@ -250,7 +250,7 @@ export default function PianoLearnJourney({
 
   if (!learningEnabled) {
     return (
-      <section ref={panelRef} className="piano-learn-journey" aria-label="Piano studio">
+      <section ref={panelRef} className="piano-learn-journey is-core-only" aria-label="Piano studio">
         <PianoStudioStart onChooseMusic={onChooseMusic} />
       </section>
     );
