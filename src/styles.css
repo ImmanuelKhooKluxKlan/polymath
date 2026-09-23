@@ -11305,3 +11305,264 @@ body.projection-output-active {
   .lesson-call-controls { width: calc(100% - 16px); }
   .lesson-call-controls button { flex: 1 1 95px; min-width: 0; }
 }
+
+/* Responsive density pass: preserve comfortable touch targets while keeping
+   compact screens focused on the next useful action. */
+@media (max-width: 720px) {
+  .page-shell,
+  .teacher-marketplace-page,
+  .composers-page { gap: 14px; }
+
+  .teacher-marketplace-heading {
+    gap: 14px;
+    padding: 18px;
+    border-radius: 20px;
+  }
+
+  .teacher-marketplace-heading h1 {
+    margin: 2px 0 6px;
+    font-size: clamp(1.75rem, 8.2vw, 2rem);
+    line-height: 1.02;
+  }
+
+  .teacher-marketplace-heading p:not(.eyebrow) {
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+
+  .teacher-heading-actions { gap: 7px; }
+  .teacher-heading-actions button {
+    min-height: 44px;
+    padding: 8px 10px;
+    font-size: clamp(0.72rem, 3.3vw, 0.82rem);
+    line-height: 1.2;
+  }
+
+  .teacher-filter-bar {
+    gap: 8px;
+    padding: 10px;
+    border-radius: 17px;
+  }
+
+  .teacher-filter-bar input,
+  .teacher-filter-bar select { min-height: 44px; padding: 9px 11px; }
+
+  .composers-heading h1 { font-size: clamp(1.8rem, 8.5vw, 2.1rem); }
+  .publish-button {
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    line-height: 1.2;
+  }
+
+  .composer-browser-bar {
+    gap: 7px;
+    padding: 9px;
+    border-radius: 16px;
+  }
+
+  .composer-browser-bar input,
+  .composer-browser-bar select { min-height: 44px; padding: 9px 11px; }
+
+  .subscription-page .page-heading h1 { font-size: clamp(1.75rem, 8.4vw, 2.05rem); }
+  .subscription-page .page-heading > p:last-child {
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+  .subscription-plan-card { gap: 17px; padding: 18px; border-radius: 19px; }
+  .subscription-plan-card h2 { font-size: 1.65rem; }
+  .subscription-price strong { font-size: 2.15rem; }
+  .subscription-plan-card ul { gap: 10px; }
+  .subscription-plan-card li { font-size: 0.84rem; line-height: 1.42; }
+
+  .ensemble-instrument-grid {
+    gap: 7px;
+    padding-bottom: 3px;
+  }
+
+  .ensemble-instrument-grid button {
+    flex-basis: 124px;
+    min-height: 86px;
+    align-content: center;
+    gap: 5px;
+    padding: 9px 10px;
+    border-radius: 16px;
+  }
+
+  .ensemble-instrument-grid button > .instrument-icon {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 2px;
+  }
+
+  .ensemble-instrument-grid button strong {
+    font-size: 0.72rem;
+    line-height: 1.2;
+  }
+
+  .account-card,
+  .wallet-card,
+  .checkout-card,
+  .schema-card { padding: 18px; border-radius: 20px; }
+}
+
+/* Tablets and half-screen windows should use a compact instrument rail rather
+   than a multi-row wall of feature cards. */
+@media (min-width: 721px) and (max-width: 1100px) {
+  .app-shell { padding: 18px; }
+  .page-shell { gap: 16px; }
+
+  .page-heading h1,
+  .teacher-marketplace-heading h1,
+  .composers-heading h1 {
+    font-size: clamp(2rem, 4.2vw, 2.65rem);
+    line-height: 1.04;
+  }
+
+  .ensemble-instrument-grid {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 5px;
+    scroll-snap-type: x proximity;
+  }
+
+  .ensemble-instrument-grid button {
+    flex: 0 0 clamp(138px, 19vw, 174px);
+    min-height: 88px;
+    align-content: center;
+    gap: 5px;
+    padding: 10px 11px;
+    border-radius: 16px;
+    scroll-snap-align: start;
+  }
+
+  .ensemble-instrument-grid button > .instrument-icon {
+    width: 29px;
+    height: 29px;
+    margin-bottom: 2px;
+  }
+
+  .ensemble-instrument-grid button small { display: none; }
+  .ensemble-instrument-grid button strong { font-size: 0.76rem; line-height: 1.2; }
+}
+
+/* Sideways phones have very little vertical space. Typography scales by the
+   short edge here; width-based desktop clamps otherwise make headings huge. */
+@media (max-width: 950px) and (max-height: 600px) and (orientation: landscape) {
+  .app-shell { padding: 10px 14px 20px; }
+  .page-shell,
+  .teacher-marketplace-page,
+  .composers-page { gap: 10px; }
+
+  .page-heading,
+  .subscription-heading { max-width: none; }
+
+  .page-heading h1,
+  .hero h1,
+  .teacher-marketplace-heading h1,
+  .composers-heading h1,
+  .ensemble-page .page-heading h1 {
+    margin: 0 0 5px;
+    font-size: clamp(1.55rem, 4.2vw, 1.9rem);
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+  }
+
+  .page-heading > p:last-child,
+  .page-heading div > p:last-child,
+  .teacher-marketplace-heading p:not(.eyebrow) {
+    margin: 0;
+    font-size: 0.76rem;
+    line-height: 1.38;
+  }
+
+  .eyebrow { margin-bottom: 4px; font-size: 0.58rem; letter-spacing: 0.16em; }
+
+  .teacher-marketplace-heading {
+    align-items: center;
+    gap: 12px;
+    padding: 13px 15px;
+    border-radius: 18px;
+  }
+
+  .teacher-heading-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  .teacher-heading-actions button,
+  .publish-button {
+    width: auto;
+    min-height: 40px;
+    padding: 7px 10px;
+    font-size: 0.7rem;
+  }
+
+  .teacher-filter-bar {
+    grid-template-columns: minmax(180px, 1.15fr) repeat(3, minmax(120px, 0.85fr));
+    gap: 7px;
+    padding: 8px;
+    border-radius: 15px;
+  }
+
+  .teacher-filter-bar input,
+  .teacher-filter-bar select { min-height: 40px; padding: 7px 9px; font-size: 0.76rem; }
+
+  .subscription-audience { margin-block: 9px 12px; }
+  .subscription-page .page-heading h1 { font-size: clamp(1.6rem, 4.4vw, 1.9rem); }
+  .subscription-page .page-heading > p:last-child { font-size: 0.75rem; }
+
+  .composers-heading { gap: 10px; }
+  .composer-browser-bar {
+    grid-template-columns: minmax(190px, 1.2fr) repeat(2, minmax(130px, 0.8fr));
+    gap: 7px;
+    padding: 8px;
+    border-radius: 15px;
+  }
+  .composer-browser-bar input,
+  .composer-browser-bar select { min-height: 40px; padding: 7px 9px; font-size: 0.76rem; }
+
+  .ensemble-page > .page-heading { margin-bottom: 0; }
+  .ensemble-page > .split-heading { display: block; }
+  .ensemble-page > .split-heading > div:first-child > p:last-child {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .ensemble-page > .page-heading .teacher-trust-card { display: none; }
+  .ensemble-instrument-grid { gap: 6px; }
+  .ensemble-instrument-grid button {
+    flex-basis: 116px;
+    min-height: 68px;
+    grid-template-columns: 25px minmax(0, 1fr);
+    align-items: center;
+    align-content: center;
+    padding: 7px 8px;
+    border-radius: 13px;
+  }
+  .ensemble-instrument-grid button > .instrument-icon {
+    width: 25px;
+    height: 25px;
+    margin: 0;
+  }
+  .ensemble-instrument-grid button strong { font-size: 0.66rem; }
+  .ensemble-instrument-grid button small { display: none; }
+
+  .account-card,
+  .wallet-card,
+  .checkout-card,
+  .schema-card { gap: 11px; padding: 14px; border-radius: 17px; }
+
+  .community-gate { gap: 7px; padding-top: 20px; }
+  .community-gate-mark { width: 52px; height: 52px; border-radius: 17px; font-size: 1.45rem; }
+  .community-gate > button { min-height: 40px; padding: 8px 11px; font-size: 0.75rem; }
+}
+
+@media (max-width: 650px) and (max-height: 600px) and (orientation: landscape) {
+  .teacher-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

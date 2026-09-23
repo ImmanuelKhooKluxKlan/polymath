@@ -23,6 +23,7 @@
     "test:teacher-animation": "node --test scripts/performance/teacherSpeechAnimation.test.mjs",
     "qa:teacher-hands": "node scripts/qa/captureTeacherHands.mjs",
     "qa:artist-campaign": "npm run build && node scripts/qa/captureArtistCampaign.mjs",
+    "qa:responsive": "node scripts/qa/auditResponsiveUi.mjs",
     "test:learning-coach": "node --test scripts/performance/learningCoach.test.mjs",
     "test:guitar-voicing": "node --test scripts/performance/guitarVoicing.test.mjs",
     "test:auth-phone": "node --test scripts/auth/phoneNumbers.test.mjs",
