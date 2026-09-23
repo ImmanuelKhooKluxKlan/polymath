@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
+  productionPerformanceGain,
   resolveSpeakerOutputProfile,
   speakerMixBus,
   speakerPerformanceGain,
@@ -14,7 +15,7 @@ import {
   tonePresetForSpeaker,
 } from '../../src/engine/speakerOutputProfile.js';
 
-test('production output restores the same September 18 piano on every device', () => {
+test('production output restores the same early-September piano on every device', () => {
   assert.equal(resolveSpeakerOutputProfile('auto', {
     deviceClass: 'desktop', performanceTier: 'full',
   }), 'full-range');
@@ -45,6 +46,13 @@ test('portable speaker hint catches phones, batteries, and compact laptop displa
   assert.equal(inferPortableSpeakerHint({
     deviceClass: 'desktop', screenWidth: 2560, screenHeight: 1440,
   }), false);
+});
+
+test('melody emphasis never makes the left-hand accompaniment quieter', () => {
+  assert.equal(productionPerformanceGain(0.88), 1);
+  assert.equal(productionPerformanceGain(1), 1);
+  assert.ok(Math.abs(productionPerformanceGain(1.12) - 1.18) < 1e-9);
+  assert.equal(productionPerformanceGain(1.5), 1.3);
 });
 
 test('small-speaker register curve preserves body and progressively tames treble', () => {

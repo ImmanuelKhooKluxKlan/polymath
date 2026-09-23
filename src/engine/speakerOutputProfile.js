@@ -2,7 +2,7 @@ const OUTPUT_PROFILE_FULL_RANGE = 'full-range';
 const OUTPUT_PROFILE_SMALL_SPEAKER = 'small-speaker';
 
 export const SPEAKER_OUTPUT_MODE_LABELS = Object.freeze({
-  auto: 'Original piano balance',
+  auto: 'Early September piano balance',
 });
 
 export function normalizeSpeakerOutputMode(value, fallback = 'auto') {
@@ -15,7 +15,7 @@ export function resolveSpeakerOutputProfile(
   mode = 'auto',
   _device = {},
 ) {
-  // Restore the listener-approved September 18 playback path (7691438).
+  // Restore the early-September playback path (aaeee7c).
   // The compact-speaker experiment made phones and battery-powered laptops
   // use a materially different piano. Until it is validated with recordings
   // from real devices, every device receives the same full-range piano path.
@@ -57,6 +57,18 @@ function interpolate(points, value) {
     }
   }
   return points[points.length - 1][1];
+}
+
+/**
+ * Production melody emphasis layered over the early-September piano engine.
+ * Accompaniment is never attenuated; positive authored melody emphasis is
+ * widened gently so vocals remain clear without changing manual key balance.
+ */
+export function productionPerformanceGain(value) {
+  const authored = Math.max(0.25, Math.min(1.5, Number(value) || 1));
+  return authored > 1
+    ? Math.max(1, Math.min(1.3, 1 + ((authored - 1) * 1.5)))
+    : 1;
 }
 
 /**

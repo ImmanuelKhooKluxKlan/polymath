@@ -17,9 +17,9 @@ import {
 import {
   inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
+  productionPerformanceGain,
   resolveSpeakerOutputProfile,
   speakerMixBus,
-  speakerPerformanceGain,
   speakerPolyphonyHeadroom,
   speakerRegisterGain,
   speakerSampleGainCompensation,
@@ -103,10 +103,10 @@ const TONE_PRESETS = {
 
     presenceFrequency: 2500,
     presenceQ: 0.82,
-    presenceGain: 0.68,
+    presenceGain: 0.95,
 
     airFrequency: 7800,
-    airGain: 0.28,
+    airGain: 0.38,
 
     glueThreshold: -18,
     glueKnee: 24,
@@ -150,11 +150,11 @@ const TONE_PRESETS = {
     velocityGainFloor: 0.38,
     velocityPower: 0.9,
 
-    sampleAttackSeconds: 0.008,
+    sampleAttackSeconds: 0.006,
 
     bodyBoost: 0.22,
     hammerSoft: -0.55,
-    hammerHard: 0.52,
+    hammerHard: 0.82,
     highAirGain: -0.12,
   },
 
@@ -380,13 +380,11 @@ function sampleMidisForTier(tier) {
   ));
 }
 
-// Keep the first playable phone piano stable across the whole A0-C8 range.
-// Six-semitone zones cap pitch shifting at three semitones while adding only
-// about 6.5 MB over the old ten-zone startup set. The previous set omitted both
-// ends of the keyboard and shifted some notes by an octave.
+// Restore the compact sample map used by the early-September production
+// piano (aaeee7c). It is intentionally kept as the listening baseline while
+// the newer per-device sample map remains in the lab.
 const STARTUP_SAMPLE_ANCHORS = Object.freeze([
-  21, 27, 33, 39, 45, 51, 57, 60, 63,
-  69, 75, 81, 87, 93, 99, 105, 108,
+  33, 40, 48, 55, 60, 67, 76, 84, 91, 96,
 ]);
 
 function startupSampleMidisForTier(tier, targetMidis = sampleMidisForTier(tier)) {
@@ -2249,12 +2247,13 @@ class PianoAudioEngine {
       preset
         .retriggerReleaseSeconds;
 
-    // Keep musical balance separate from MIDI velocity. Velocity selects the
-    // hammer character; performanceGain changes only the finished voice level.
-    voice.performanceGain = speakerPerformanceGain(
-      options.performanceGain,
-      normalizedMidi,
-      this.speakerOutputProfile
+    // Keep the early-September sample/tone engine, but preserve the useful
+    // melody cue without making accompaniment quieter. A v003 melody gain of
+    // 1.12 becomes 1.18; an accompaniment gain below 1 is restored to 1.
+    // Manual keyboard strikes remain exactly 1 so the physical key sweep is
+    // an honest test of the restored sample set.
+    voice.performanceGain = productionPerformanceGain(
+      options.performanceGain
     );
 
     voice.arrangementRole = String(
@@ -4250,7 +4249,7 @@ class PianoAudioEngine {
       compactPeakProtection: this.speakerOutputProfile === 'small-speaker',
       pianoKeyCalibration: this.speakerOutputProfile === 'small-speaker'
         ? PIANO_KEY_CALIBRATION.version
-        : 'disabled-original-7691438',
+        : 'disabled-early-september-aaeee7c',
       availableSampleZones: this.sampleMidis.length,
       targetSampleZones: this.targetSampleMidis.length,
       loadingMetrics: this.getLoadingMetrics(),
