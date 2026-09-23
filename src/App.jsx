@@ -1613,6 +1613,8 @@ export default function App() {
             retriggerReleaseSeconds: event.retriggerReleaseSeconds,
             releaseSeconds: event.releaseSeconds,
             performanceGain: event.performanceGain,
+            arrangementRole: event.arrangementRole,
+            hand: event.hand,
           });
         }
         scheduleVisualStrike(event, delaySeconds, visualDuration, runId);

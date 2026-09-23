@@ -13,6 +13,7 @@ import {
   inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
   resolveSpeakerOutputProfile,
+  speakerMixBus,
   speakerPerformanceGain,
   speakerRegisterGain,
   speakerVoiceProfile,
@@ -645,6 +646,13 @@ class PianoAudioEngine {
     this.wetGain = null;
     this.resonanceGain = null;
 
+    this.accompanimentBusInput = null;
+    this.accompanimentBusCompressor = null;
+    this.accompanimentBusGain = null;
+    this.melodyBusInput = null;
+    this.melodyBusCompressor = null;
+    this.melodyBusGain = null;
+
     this.reverb = null;
     this.resonance = null;
 
@@ -1080,6 +1088,24 @@ class PianoAudioEngine {
     this.dryGain =
       context.createGain();
 
+    this.accompanimentBusInput =
+      context.createGain();
+
+    this.accompanimentBusCompressor =
+      context.createDynamicsCompressor();
+
+    this.accompanimentBusGain =
+      context.createGain();
+
+    this.melodyBusInput =
+      context.createGain();
+
+    this.melodyBusCompressor =
+      context.createDynamicsCompressor();
+
+    this.melodyBusGain =
+      context.createGain();
+
     this.wetGain =
       context.createGain();
 
@@ -1094,6 +1120,30 @@ class PianoAudioEngine {
 
     this.dryGain.connect(
       this.masterInput
+    );
+
+    this.accompanimentBusInput.connect(
+      this.accompanimentBusCompressor
+    );
+
+    this.accompanimentBusCompressor.connect(
+      this.accompanimentBusGain
+    );
+
+    this.accompanimentBusGain.connect(
+      this.dryGain
+    );
+
+    this.melodyBusInput.connect(
+      this.melodyBusCompressor
+    );
+
+    this.melodyBusCompressor.connect(
+      this.melodyBusGain
+    );
+
+    this.melodyBusGain.connect(
+      this.dryGain
     );
 
     this.reverb.connect(
@@ -1190,6 +1240,86 @@ class PianoAudioEngine {
 
     const now =
       this.context.currentTime;
+
+    // Iowa's stereo samples differ by as much as ~9 dB between channels on
+    // some keys. Built-in phone speakers are also physically asymmetric. A
+    // one-channel master makes compact output dual-mono before it reaches the
+    // device, while full-range output keeps the original stereo piano image.
+    this.masterInput.channelCountMode = preset.monoOutput ? 'explicit' : 'max';
+    this.masterInput.channelCount = preset.monoOutput ? 1 : 2;
+    this.masterInput.channelInterpretation = 'speakers';
+
+    this.setParam(
+      this.accompanimentBusGain.gain,
+      preset.accompanimentBusGain ?? 1,
+      now
+    );
+
+    this.setParam(
+      this.accompanimentBusCompressor.threshold,
+      preset.accompanimentBusThreshold ?? 0,
+      now
+    );
+
+    this.setParam(
+      this.accompanimentBusCompressor.knee,
+      preset.accompanimentBusKnee ?? 0,
+      now
+    );
+
+    this.setParam(
+      this.accompanimentBusCompressor.ratio,
+      preset.accompanimentBusRatio ?? 1,
+      now
+    );
+
+    this.setParam(
+      this.accompanimentBusCompressor.attack,
+      preset.accompanimentBusAttack ?? 0.003,
+      now
+    );
+
+    this.setParam(
+      this.accompanimentBusCompressor.release,
+      preset.accompanimentBusRelease ?? 0.25,
+      now
+    );
+
+    this.setParam(
+      this.melodyBusGain.gain,
+      preset.melodyBusGain ?? 1,
+      now
+    );
+
+    this.setParam(
+      this.melodyBusCompressor.threshold,
+      preset.melodyBusThreshold ?? 0,
+      now
+    );
+
+    this.setParam(
+      this.melodyBusCompressor.knee,
+      preset.melodyBusKnee ?? 0,
+      now
+    );
+
+    this.setParam(
+      this.melodyBusCompressor.ratio,
+      preset.melodyBusRatio ?? 1,
+      now
+    );
+
+    this.setParam(
+      this.melodyBusCompressor.attack,
+      preset.melodyBusAttack ?? 0.003,
+      now
+    );
+
+    this.setParam(
+      this.melodyBusCompressor.release,
+      preset.melodyBusRelease ?? 0.25,
+      now
+    );
 
     this.setParam(
       this.master.gain,
@@ -2057,6 +2187,10 @@ class PianoAudioEngine {
       this.speakerOutputProfile
     );
 
+    voice.arrangementRole = String(
+      options.arrangementRole || options.hand || ''
+    );
+
     this.trackVoice(
       normalizedNote,
       voice
@@ -2344,10 +2478,10 @@ class PianoAudioEngine {
   }
 
   panForMidi(midi) {
-    const preset =
-      readPreset(
-        this.toneMode
-      );
+    const preset = tonePresetForSpeaker(
+      readPreset(this.toneMode),
+      this.speakerOutputProfile
+    );
 
     const center =
       (
@@ -2375,6 +2509,28 @@ class PianoAudioEngine {
       -0.42,
       0.42
     );
+  }
+
+  connectVoiceOutput(outputNode, voice) {
+    const mixBus = speakerMixBus(
+      voice?.midi,
+      voice?.arrangementRole,
+      this.speakerOutputProfile
+    );
+
+    if (mixBus === 'accompaniment') {
+      outputNode.connect(this.accompanimentBusInput);
+    } else if (mixBus === 'melody') {
+      outputNode.connect(this.melodyBusInput);
+    } else {
+      outputNode.connect(this.dryGain);
+    }
+
+    outputNode.connect(this.wetInput);
+
+    if (!this.mobilePerformanceMode && this.speakerOutputProfile === 'full-range') {
+      outputNode.connect(this.resonanceInput);
+    }
   }
 
   startSampleVoice(
@@ -2706,33 +2862,9 @@ class PianoAudioEngine {
         panNode
       );
 
-      panNode.connect(
-        this.dryGain
-      );
-
-      panNode.connect(
-        this.wetInput
-      );
-
-      if (!this.mobilePerformanceMode) {
-        panNode.connect(
-          this.resonanceInput
-        );
-      }
+      this.connectVoiceOutput(panNode, voice);
     } else {
-      voiceGain.connect(
-        this.dryGain
-      );
-
-      voiceGain.connect(
-        this.wetInput
-      );
-
-      if (!this.mobilePerformanceMode) {
-        voiceGain.connect(
-          this.resonanceInput
-        );
-      }
+      this.connectVoiceOutput(voiceGain, voice);
     }
 
     voice.voiceGain =
@@ -3083,19 +3215,7 @@ class PianoAudioEngine {
       voiceGain
     );
 
-    voiceGain.connect(
-      this.dryGain
-    );
-
-    voiceGain.connect(
-      this.wetInput
-    );
-
-    if (!this.mobilePerformanceMode) {
-      voiceGain.connect(
-        this.resonanceInput
-      );
-    }
+    this.connectVoiceOutput(voiceGain, voice);
 
     this.registerVoiceNodes(
       voice,

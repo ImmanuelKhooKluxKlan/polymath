@@ -5,6 +5,7 @@ import {
   inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
   resolveSpeakerOutputProfile,
+  speakerMixBus,
   speakerPerformanceGain,
   speakerRegisterGain,
   speakerVoiceProfile,
@@ -59,6 +60,14 @@ test('small-speaker mix closes extreme arrangement gain gaps without changing fu
   assert.ok(compactTreble / compactBass < 1.6);
 });
 
+test('compact output separates musical roles before dynamics processing', () => {
+  assert.equal(speakerMixBus(84, 'accompaniment', 'small-speaker'), 'accompaniment');
+  assert.equal(speakerMixBus(48, 'melody', 'small-speaker'), 'melody');
+  assert.equal(speakerMixBus(48, '', 'small-speaker'), 'accompaniment');
+  assert.equal(speakerMixBus(72, '', 'small-speaker'), 'melody');
+  assert.equal(speakerMixBus(48, 'melody', 'full-range'), 'direct');
+});
+
 test('small-speaker voices recover bass harmonics and de-harsh the upper register', () => {
   const bass = speakerVoiceProfile(33, 'small-speaker');
   const treble = speakerVoiceProfile(84, 'small-speaker');
@@ -90,4 +99,7 @@ test('small-speaker EQ moves energy from screech and sub-bass into audible body'
   assert.ok(compact.airGain < preset.airGain);
   assert.ok(compact.wetGain < preset.wetGain);
   assert.ok(compact.panWidth < 0.1);
+  assert.equal(compact.monoOutput, true);
+  assert.ok(compact.melodyBusGain < compact.accompanimentBusGain);
+  assert.ok(compact.melodyBusRatio > compact.accompanimentBusRatio);
 });

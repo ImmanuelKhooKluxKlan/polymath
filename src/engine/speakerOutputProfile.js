@@ -116,6 +116,23 @@ export function speakerPerformanceGain(
 }
 
 /**
+ * Keep the musical stems on separate compact-speaker compressors. Role labels
+ * win when the arranger supplied them; plain MIDI uploads fall back to middle
+ * C so they still receive deterministic treatment.
+ */
+export function speakerMixBus(
+  midi,
+  arrangementRole = '',
+  profile = OUTPUT_PROFILE_FULL_RANGE,
+) {
+  if (profile !== OUTPUT_PROFILE_SMALL_SPEAKER) return 'direct';
+  const role = String(arrangementRole || '').trim().toLowerCase();
+  if (/melody|lead|vocal|right/.test(role)) return 'melody';
+  if (/accompaniment|harmony|bass|left|support/.test(role)) return 'accompaniment';
+  return Number(midi) >= 60 ? 'melody' : 'accompaniment';
+}
+
+/**
  * Per-voice EQ for a real piano sample on compact speakers. For bass notes we
  * boost an existing upper harmonic between 185 and 370 Hz instead of wasting
  * headroom on a fundamental the speaker cannot reproduce. For treble notes we
@@ -184,6 +201,19 @@ export function tonePresetForSpeaker(preset, profile = OUTPUT_PROFILE_FULL_RANGE
     wetGain: Math.min(0.075, Number(preset.wetGain) || 0),
     resonanceGain: Math.min(0.012, Number(preset.resonanceGain) || 0),
     panWidth: Math.min(0.075, Number(preset.panWidth) || 0),
+    monoOutput: true,
+    accompanimentBusGain: 1.06,
+    accompanimentBusThreshold: -22,
+    accompanimentBusKnee: 28,
+    accompanimentBusRatio: 2.6,
+    accompanimentBusAttack: 0.012,
+    accompanimentBusRelease: 0.24,
+    melodyBusGain: 0.86,
+    melodyBusThreshold: -27,
+    melodyBusKnee: 26,
+    melodyBusRatio: 4.2,
+    melodyBusAttack: 0.004,
+    melodyBusRelease: 0.18,
   };
 }
 
