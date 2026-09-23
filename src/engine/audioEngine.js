@@ -747,7 +747,7 @@ class PianoAudioEngine {
           : MAX_POLYPHONY;
 
     this.sampleFailures =
-      new Set();
+      new Map();
 
     this.warmupStarted =
       false;
@@ -759,6 +759,9 @@ class PianoAudioEngine {
       null;
 
     this.preloadLoaded =
+      0;
+
+    this.preloadSucceeded =
       0;
 
     this.preloadTotal =
@@ -1634,7 +1637,11 @@ class PianoAudioEngine {
 
     const runWarmup =
       () =>
-        this.preloadCoreSamples();
+        this.preloadCoreSamples().catch(() => {
+          // The visible keyboard preparation flow reports the error and owns
+          // the retry button; an idle warm-up must not create an unhandled
+          // promise rejection in the meantime.
+        });
 
     if (
       'requestIdleCallback' in
@@ -1667,6 +1674,7 @@ class PianoAudioEngine {
     const reportProgress = () => {
       this.preloadProgressListener?.({
         loaded: this.preloadLoaded,
+        succeeded: this.preloadSucceeded,
         total: this.preloadTotal,
         percent: this.preloadTotal
           ? Math.round((this.preloadLoaded / this.preloadTotal) * 100)
@@ -1694,6 +1702,7 @@ class PianoAudioEngine {
     }
 
     this.preloadLoaded = 0;
+    this.preloadSucceeded = 0;
     this.preloadTotal = samples.length;
     reportProgress();
 
@@ -1703,7 +1712,8 @@ class PianoAudioEngine {
         const index = nextIndex;
         nextIndex += 1;
         try {
-          await this.loadSampleByInfo(samples[index]);
+          const loaded = await this.loadSampleByInfo(samples[index]);
+          if (loaded) this.preloadSucceeded += 1;
         } catch {
           // A missing recording can still use the built-in synth fallback.
         } finally {
@@ -1718,7 +1728,17 @@ class PianoAudioEngine {
       : Math.min(4, samples.length);
     this.preloadPromise = Promise
       .all(Array.from({ length: concurrency }, () => worker()))
-      .then(() => undefined);
+      .then(() => {
+        if (samples.length > 0 && this.preloadSucceeded === 0) {
+          throw new Error('The real piano recordings could not be loaded. Check the connection and try again.');
+        }
+      })
+      .catch((error) => {
+        // A rejected preload must be retryable from the visible Try keyboard
+        // again button; never pin a failed promise for the lifetime of a tab.
+        this.preloadPromise = null;
+        throw error;
+      });
 
     return this.preloadPromise;
   }
@@ -2033,13 +2053,13 @@ class PianoAudioEngine {
   async loadSampleByInfo(
     info
   ) {
-    if (
-      this.sampleFailures.has(
-        info.cacheKey
-      )
-    ) {
+    const now = Date.now();
+    const previousFailure = this.sampleFailures.get(info.cacheKey);
+    if (previousFailure?.retryAfter > now) {
       return null;
     }
+    const previousAttempts = Number(previousFailure?.attempts) || 0;
+    this.sampleFailures.delete(info.cacheKey);
 
     if (
       !this.bufferCache.has(
@@ -2066,9 +2086,11 @@ class PianoAudioEngine {
             }
           }
 
-          this.sampleFailures.add(
-            info.cacheKey
-          );
+          const attempts = previousAttempts + 1;
+          this.sampleFailures.set(info.cacheKey, {
+            attempts,
+            retryAfter: Date.now() + Math.min(30000, 1500 * (2 ** (attempts - 1))),
+          });
 
           if (
             !this
@@ -2078,7 +2100,7 @@ class PianoAudioEngine {
               true;
 
             console.warn(
-              'Polymath Musician: Iowa samples missing. Run `npm run acquire:iowa-88`, then restart the dev server. Temporary synth fallback is playing.'
+              'Polymath Musician: a real piano recording could not be loaded. The app will retry it automatically.'
             );
           }
 
@@ -2102,8 +2124,13 @@ class PianoAudioEngine {
       );
 
     if (!buffer) {
+      // Do not cache a null result forever. The failure map supplies a short
+      // exponential cooldown, after which the next key/preload can try again.
+      this.bufferCache.delete(info.cacheKey);
       return null;
     }
+
+    this.sampleFailures.delete(info.cacheKey);
 
     const analysisKey =
       `${info.cacheKey}:${info.requestedMidi}`;
@@ -4343,6 +4370,7 @@ class PianoAudioEngine {
       pendingVoices: voices.filter((voice) => !voice.started).length,
       loadedSamples: this.bufferCache.size,
       analyzedSamples: this.analysisCache.size,
+      failedSamplesWaitingToRetry: this.sampleFailures.size,
       contextState: this.context?.state || 'not-created',
       maxPolyphony: this.maxPolyphony,
       mobilePerformanceMode: this.mobilePerformanceMode,
