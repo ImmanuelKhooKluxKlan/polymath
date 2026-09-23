@@ -29,6 +29,21 @@ test('compact piano range preserves the score and folds only notes below A1', ()
   assert.equal(foldMidiIntoPianellaRange(60), 60);
 });
 
+test('browser scheduling preserves explicit melody and accompaniment roles', () => {
+  const song = normalizeSong({
+    title: 'Role preservation fixture',
+    notes: [
+      { note: 'C3', time: 0, duration: 0.5, arrangementRole: 'accompaniment' },
+      { note: 'G4', time: 0, duration: 0.5, arrangementRole: 'melody' },
+    ],
+  });
+
+  assert.deepEqual(
+    song.notes.map((note) => note.arrangementRole),
+    ['accompaniment', 'melody'],
+  );
+});
+
 test('range detection keeps mid and upper notes in their authored octaves', () => {
   const source = {
     notes: [

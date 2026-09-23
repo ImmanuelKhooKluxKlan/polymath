@@ -49,10 +49,32 @@ test('portable speaker hint catches phones, batteries, and compact laptop displa
 });
 
 test('melody emphasis never makes the left-hand accompaniment quieter', () => {
-  assert.equal(productionPerformanceGain(0.88), 1);
-  assert.equal(productionPerformanceGain(1), 1);
-  assert.ok(Math.abs(productionPerformanceGain(1.12) - 1.18) < 1e-9);
-  assert.equal(productionPerformanceGain(1.5), 1.3);
+  const melody = productionPerformanceGain(1.12, {
+    midi: 72, role: 'melody', source: 'autoplay',
+  });
+  const accompaniment = productionPerformanceGain(0.88, {
+    midi: 43, role: 'accompaniment', source: 'autoplay',
+  });
+  assert.ok(Math.abs(melody - (10 ** (1.5 / 20))) < 1e-9);
+  assert.equal(accompaniment, 1);
+  assert.ok(melody > accompaniment);
+  assert.ok(melody / accompaniment < 1.2);
+  assert.equal(productionPerformanceGain(1.5, {
+    midi: 72, role: 'melody', source: 'autoplay',
+  }), 1.24);
+  assert.equal(productionPerformanceGain(1.5, {
+    midi: 84, role: 'melody', source: 'manual',
+  }), 1);
+});
+
+test('unlabelled scores receive a smooth upper-register lift without weakening bass', () => {
+  const bass = productionPerformanceGain(1, { midi: 43, source: 'autoplay' });
+  const middle = productionPerformanceGain(1, { midi: 60, source: 'autoplay' });
+  const upper = productionPerformanceGain(1, { midi: 84, source: 'autoplay' });
+  assert.equal(bass, 1);
+  assert.ok(middle > bass);
+  assert.ok(upper > middle);
+  assert.ok(upper < 1.1);
 });
 
 test('small-speaker register curve preserves body and progressively tames treble', () => {

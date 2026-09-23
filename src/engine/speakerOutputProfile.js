@@ -64,11 +64,31 @@ function interpolate(points, value) {
  * Accompaniment is never attenuated; positive authored melody emphasis is
  * widened gently so vocals remain clear without changing manual key balance.
  */
-export function productionPerformanceGain(value) {
+export function productionPerformanceGain(
+  value,
+  { midi = 60, role = '', source = '' } = {},
+) {
+  if (String(source).trim().toLowerCase() === 'manual') return 1;
+
   const authored = Math.max(0.25, Math.min(1.5, Number(value) || 1));
-  return authored > 1
-    ? Math.max(1, Math.min(1.3, 1 + ((authored - 1) * 1.5)))
-    : 1;
+  const normalizedRole = String(role).trim().toLowerCase();
+  const melodyLead = 10 ** (1.5 / 20);
+
+  if (/melody|lead|vocal|right/.test(normalizedRole)) {
+    return Math.min(1.24, Math.max(melodyLead, authored));
+  }
+
+  if (/accompaniment|harmony|bass|left|support/.test(normalizedRole)) {
+    return Math.min(1.05, Math.max(1, authored));
+  }
+
+  // Older MIDI/JSON files may not contain roles. Give their upper register a
+  // smooth maximum +0.75 dB lift rather than creating a hard middle-C step.
+  const key = Math.max(21, Math.min(108, Number(midi) || 60));
+  const upperAmount = Math.max(0, Math.min(1, (key - 55) / (84 - 55)));
+  const upperRegisterGain = 1 + (((10 ** (0.75 / 20)) - 1) * upperAmount);
+  const positiveAuthoredGain = Math.min(melodyLead, Math.max(1, authored));
+  return Math.max(upperRegisterGain, positiveAuthoredGain);
 }
 
 /**

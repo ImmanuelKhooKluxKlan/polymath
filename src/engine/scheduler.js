@@ -1019,6 +1019,12 @@ export function normalizeSong(
           scoreRole:
             note.scoreRole,
 
+          // Preserve the arranger's musical role through browser scheduling.
+          // Playback uses this label for a controlled melody lead; dropping it
+          // here previously forced the engine to guess from pitch alone.
+          arrangementRole:
+            note.arrangementRole || note.scoreRole || '',
+
           originalNote:
             note.original_note ||
             note.originalNote ||

@@ -2248,12 +2248,17 @@ class PianoAudioEngine {
         .retriggerReleaseSeconds;
 
     // Keep the early-September sample/tone engine, but preserve the useful
-    // melody cue without making accompaniment quieter. A v003 melody gain of
-    // 1.12 becomes 1.18; an accompaniment gain below 1 is restored to 1.
+    // melody cue without making accompaniment quieter. Explicit melody gets
+    // a controlled +1.5 dB lead; accompaniment is never reduced below 1.
     // Manual keyboard strikes remain exactly 1 so the physical key sweep is
     // an honest test of the restored sample set.
     voice.performanceGain = productionPerformanceGain(
-      options.performanceGain
+      options.performanceGain,
+      {
+        midi: normalizedMidi,
+        role: options.arrangementRole || options.hand,
+        source: options.source,
+      }
     );
 
     voice.arrangementRole = String(
