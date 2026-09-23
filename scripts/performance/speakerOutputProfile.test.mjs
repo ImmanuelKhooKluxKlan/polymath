@@ -63,6 +63,8 @@ test('small-speaker mix closes extreme arrangement gain gaps without changing fu
 test('compact output separates musical roles before dynamics processing', () => {
   assert.equal(speakerMixBus(84, 'accompaniment', 'small-speaker'), 'accompaniment');
   assert.equal(speakerMixBus(48, 'melody', 'small-speaker'), 'melody');
+  assert.equal(speakerMixBus(48, '', 'small-speaker', 'manual'), 'direct');
+  assert.equal(speakerMixBus(72, '', 'small-speaker', 'manual'), 'direct');
   assert.equal(speakerMixBus(48, '', 'small-speaker'), 'accompaniment');
   assert.equal(speakerMixBus(72, '', 'small-speaker'), 'melody');
   assert.equal(speakerMixBus(48, 'melody', 'full-range'), 'direct');

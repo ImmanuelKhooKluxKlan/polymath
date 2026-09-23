@@ -124,8 +124,15 @@ export function speakerMixBus(
   midi,
   arrangementRole = '',
   profile = OUTPUT_PROFILE_FULL_RANGE,
+  source = '',
 ) {
   if (profile !== OUTPUT_PROFILE_SMALL_SPEAKER) return 'direct';
+
+  // A person sweeping across the keyboard must hear one continuous piano.
+  // Stem buses intentionally have different dynamics and levels, so routing
+  // unlabelled manual notes by middle C would create an artificial step there.
+  if (String(source || '').trim().toLowerCase() === 'manual') return 'direct';
+
   const role = String(arrangementRole || '').trim().toLowerCase();
   if (/melody|lead|vocal|right/.test(role)) return 'melody';
   if (/accompaniment|harmony|bass|left|support/.test(role)) return 'accompaniment';

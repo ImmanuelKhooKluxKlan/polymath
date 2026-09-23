@@ -9,6 +9,7 @@ import {
   parseNote,
 } from './noteMath.js';
 import { getInitialPerformanceTier, normalizePerformanceTier } from './devicePerformance.js';
+import { PIANO_KEY_CALIBRATION, pianoKeyCalibrationGain } from './pianoKeyCalibration.js';
 import {
   inferPortableSpeakerHint,
   normalizeSpeakerOutputMode,
@@ -2515,7 +2516,8 @@ class PianoAudioEngine {
     const mixBus = speakerMixBus(
       voice?.midi,
       voice?.arrangementRole,
-      this.speakerOutputProfile
+      this.speakerOutputProfile,
+      voice?.source
     );
 
     if (mixBus === 'accompaniment') {
@@ -2732,8 +2734,23 @@ class PianoAudioEngine {
         0.98
       );
 
+    const attackCalibrationGain = pianoKeyCalibrationGain(
+      samples[0].info.sampleMidi,
+      this.speakerOutputProfile,
+      'attack'
+    );
+
+    const bodyCalibrationGain = pianoKeyCalibrationGain(
+      samples[0].info.sampleMidi,
+      this.speakerOutputProfile,
+      'body'
+    );
+
+    const calibratedAttackGain = finalGain * attackCalibrationGain;
+    const calibratedBodyGain = finalGain * bodyCalibrationGain;
+
     voice.finalGain =
-      finalGain;
+      calibratedBodyGain;
 
     this.registerVoiceNodes(
       voice,
@@ -2759,7 +2776,7 @@ class PianoAudioEngine {
 
     voiceGain.gain
       .exponentialRampToValueAtTime(
-        finalGain,
+        calibratedAttackGain,
 
         startAt +
         (
@@ -2767,6 +2784,12 @@ class PianoAudioEngine {
             .sampleAttackSeconds ??
           SAMPLE_FADE_SECONDS
         )
+      );
+
+    voiceGain.gain
+      .exponentialRampToValueAtTime(
+        calibratedBodyGain,
+        startAt + 0.25
       );
 
     samples.forEach(
@@ -4072,6 +4095,7 @@ class PianoAudioEngine {
       performanceTier: this.performanceTier,
       speakerOutputMode: this.speakerOutputMode,
       speakerOutputProfile: this.speakerOutputProfile,
+      pianoKeyCalibration: PIANO_KEY_CALIBRATION.version,
       availableSampleZones: this.sampleMidis.length,
       targetSampleZones: this.targetSampleMidis.length,
       loadingMetrics: this.getLoadingMetrics(),
