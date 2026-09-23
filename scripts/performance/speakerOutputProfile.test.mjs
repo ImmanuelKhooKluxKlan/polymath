@@ -7,7 +7,9 @@ import {
   resolveSpeakerOutputProfile,
   speakerMixBus,
   speakerPerformanceGain,
+  speakerPolyphonyHeadroom,
   speakerRegisterGain,
+  speakerSampleGainCompensation,
   speakerVoiceProfile,
   tonePresetForSpeaker,
 } from '../../src/engine/speakerOutputProfile.js';
@@ -55,9 +57,28 @@ test('small-speaker mix closes extreme arrangement gain gaps without changing fu
   assert.equal(speakerPerformanceGain(0.25, 48, 'full-range'), 0.25);
   const compactBass = speakerPerformanceGain(0.25, 48, 'small-speaker');
   const compactTreble = speakerPerformanceGain(1.5, 76, 'small-speaker');
-  assert.ok(compactBass >= 0.7);
-  assert.ok(compactTreble <= 1.1);
+  assert.ok(compactBass >= 0.74);
+  assert.ok(compactTreble <= 0.98);
   assert.ok(compactTreble / compactBass < 1.6);
+});
+
+test('compact bass uses harmonics instead of wasteful raw sub-bass gain', () => {
+  assert.equal(speakerSampleGainCompensation(21, 'full-range'), 3.2);
+  assert.ok(speakerSampleGainCompensation(21, 'small-speaker') <= 1.72);
+  assert.ok(speakerSampleGainCompensation(21, 'small-speaker') > 1);
+  assert.equal(speakerSampleGainCompensation(48, 'small-speaker'), 1);
+  const lowBass = speakerVoiceProfile(21, 'small-speaker');
+  assert.ok(lowBass.harmonicDrive > 1.8);
+  assert.ok(lowBass.bodyFrequency >= 110 && lowBass.bodyFrequency <= 240);
+  assert.equal(speakerVoiceProfile(60, 'small-speaker').harmonicDrive, 1);
+});
+
+test('compact chord headroom scales smoothly while full-range output remains untouched', () => {
+  assert.equal(speakerPolyphonyHeadroom(36, 'full-range'), 1);
+  assert.equal(speakerPolyphonyHeadroom(3, 'small-speaker'), 1);
+  assert.ok(speakerPolyphonyHeadroom(10, 'small-speaker') < 0.85);
+  assert.ok(speakerPolyphonyHeadroom(24, 'small-speaker') < speakerPolyphonyHeadroom(10, 'small-speaker'));
+  assert.ok(speakerPolyphonyHeadroom(64, 'small-speaker') >= 0.5);
 });
 
 test('compact output separates musical roles before dynamics processing', () => {
@@ -74,7 +95,7 @@ test('small-speaker voices recover bass harmonics and de-harsh the upper registe
   const bass = speakerVoiceProfile(33, 'small-speaker');
   const treble = speakerVoiceProfile(84, 'small-speaker');
   assert.equal(bass.bodyType, 'peaking');
-  assert.ok(bass.bodyFrequency >= 185 && bass.bodyFrequency <= 370);
+  assert.ok(bass.bodyFrequency >= 110 && bass.bodyFrequency <= 240);
   assert.ok(bass.bodyGainOffset > 2);
   assert.ok(treble.hammerGainOffset < bass.hammerGainOffset);
   assert.ok(treble.airGainOffset < bass.airGainOffset);
@@ -104,4 +125,7 @@ test('small-speaker EQ moves energy from screech and sub-bass into audible body'
   assert.equal(compact.monoOutput, true);
   assert.ok(compact.melodyBusGain < compact.accompanimentBusGain);
   assert.ok(compact.melodyBusRatio > compact.accompanimentBusRatio);
+  assert.ok(compact.masterLevel <= 0.84);
+  assert.ok(compact.limiterThreshold <= -8);
+  assert.equal(compact.compactPeakProtection, true);
 });

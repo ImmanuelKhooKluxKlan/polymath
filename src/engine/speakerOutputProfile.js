@@ -81,19 +81,88 @@ export function speakerRegisterGain(midi, profile = OUTPUT_PROFILE_FULL_RANGE) {
   const key = Math.max(21, Math.min(108, Number(midi) || 60));
   return interpolate(
     [
-      [21, 1.28],
-      [24, 1.3],
+      [21, 1.26],
+      [24, 1.28],
       [33, 1.24],
       [36, 1.2],
-      [48, 1.1],
-      [55, 1.04],
-      [60, 0.96],
-      [72, 0.8],
-      [84, 0.7],
-      [96, 0.64],
-      [108, 0.6],
+      [48, 1.08],
+      [55, 1],
+      [60, 0.9],
+      [72, 0.72],
+      [84, 0.61],
+      [96, 0.54],
+      [108, 0.5],
     ],
     key,
+  );
+}
+
+/**
+ * Gain applied before a piano sample enters its per-voice filters.
+ *
+ * Full-range output keeps the established acoustic compensation. Compact
+ * output deliberately uses much less raw sub-bass gain: a phone cannot turn
+ * that energy into sound, and the unused energy only drives its limiter. The
+ * missing pitch is restored later with quiet upper harmonics instead.
+ */
+export function speakerSampleGainCompensation(
+  midi,
+  profile = OUTPUT_PROFILE_FULL_RANGE,
+) {
+  const key = Math.max(21, Math.min(108, Number(midi) || 60));
+  if (profile === OUTPUT_PROFILE_SMALL_SPEAKER) {
+    return interpolate(
+      [
+        [21, 1.72],
+        [24, 1.66],
+        [28, 1.56],
+        [33, 1.46],
+        [36, 1.36],
+        [40, 1.22],
+        [48, 1],
+      ],
+      key,
+    );
+  }
+
+  return interpolate(
+    [
+      [21, 3.2],
+      [23, 3.1],
+      [24, 2.5],
+      [28, 2.25],
+      [33, 1.9],
+      [36, 1.65],
+      [40, 1.3],
+      [48, 1],
+    ],
+    key,
+  );
+}
+
+/**
+ * Dense chords need progressively more shared headroom on a phone. This gain
+ * is placed before the master EQ and follows every active/releasing voice, so
+ * one loud chord cannot force the device amplifier into audible crackle.
+ */
+export function speakerPolyphonyHeadroom(
+  voiceCount,
+  profile = OUTPUT_PROFILE_FULL_RANGE,
+) {
+  if (profile !== OUTPUT_PROFILE_SMALL_SPEAKER) return 1;
+  const count = Math.max(0, Number(voiceCount) || 0);
+  return interpolate(
+    [
+      [0, 1],
+      [3, 1],
+      [6, 0.91],
+      [10, 0.82],
+      [16, 0.72],
+      [24, 0.64],
+      [36, 0.58],
+      [64, 0.5],
+    ],
+    count,
   );
 }
 
@@ -110,9 +179,9 @@ export function speakerPerformanceGain(
 ) {
   const gain = Math.max(0.25, Math.min(1.5, Number(value) || 1));
   if (profile !== OUTPUT_PROFILE_SMALL_SPEAKER) return gain;
-  const compressed = 1 + ((gain - 1) * 0.44);
-  const maximum = Number(midi) >= 60 ? 1.1 : 1.16;
-  return Math.max(0.7, Math.min(maximum, compressed));
+  const compressed = 1 + ((gain - 1) * 0.36);
+  const maximum = Number(midi) >= 60 ? 0.98 : 1.08;
+  return Math.max(0.74, Math.min(maximum, compressed));
 }
 
 /**
@@ -157,25 +226,32 @@ export function speakerVoiceProfile(midi, profile = OUTPUT_PROFILE_FULL_RANGE) {
       bodyGainOffset: 0,
       hammerGainOffset: 0,
       airGainOffset: 0,
+      harmonicDrive: 1,
     });
   }
 
   const fundamental = 440 * (2 ** ((key - 69) / 12));
-  let audibleHarmonic = fundamental;
-  while (audibleHarmonic < 185) audibleHarmonic *= 2;
-  while (audibleHarmonic > 370) audibleHarmonic /= 2;
+  let harmonicNumber = 1;
+  while (fundamental * harmonicNumber < 110) harmonicNumber += 2;
+  let audibleHarmonic = fundamental * harmonicNumber;
+  while (audibleHarmonic > 240 && harmonicNumber > 1) {
+    harmonicNumber = Math.max(1, harmonicNumber - 2);
+    audibleHarmonic = fundamental * harmonicNumber;
+  }
   const bassAmount = Math.max(0, Math.min(1, (60 - key) / 24));
   const trebleAmount = Math.max(0, Math.min(1, (key - 60) / 36));
+  const harmonicAmount = Math.max(0, Math.min(1, (52 - key) / 24));
 
   return {
     compact: true,
-    highPassFrequency: key < 48 ? 40 : 30,
+    highPassFrequency: key < 36 ? 45 : key < 48 ? 38 : 30,
     bodyType: key < 60 ? 'peaking' : 'lowshelf',
     bodyFrequency: key < 60 ? audibleHarmonic : 170,
-    bodyQ: key < 60 ? 0.72 : 0.7,
-    bodyGainOffset: key < 60 ? 1.1 + (3.3 * bassAmount) : -0.35 * trebleAmount,
-    hammerGainOffset: -0.45 - (3.1 * trebleAmount),
-    airGainOffset: -0.3 - (2.4 * trebleAmount),
+    bodyQ: key < 60 ? 0.82 : 0.7,
+    bodyGainOffset: key < 60 ? 1.4 + (4.4 * bassAmount) : -0.5 * trebleAmount,
+    hammerGainOffset: -0.65 - (3.7 * trebleAmount),
+    airGainOffset: -0.5 - (3 * trebleAmount),
+    harmonicDrive: harmonicAmount > 0 ? 1.15 + (0.85 * harmonicAmount) : 1,
   };
 }
 
@@ -189,38 +265,44 @@ export function tonePresetForSpeaker(preset, profile = OUTPUT_PROFILE_FULL_RANGE
   if (profile !== OUTPUT_PROFILE_SMALL_SPEAKER) return preset;
   return {
     ...preset,
-    masterLevel: Math.max(0.88, Math.min(0.94, Number(preset.masterLevel) || 0.9)),
-    inputGain: Math.max(1, Math.min(1.06, Number(preset.inputGain) || 1)),
-    highPassFrequency: Math.max(38, Number(preset.highPassFrequency) || 0),
-    lowShelfFrequency: Math.max(210, Number(preset.lowShelfFrequency) || 0),
-    lowShelfGain: (Number(preset.lowShelfGain) || 0) + 1.8,
-    mudFrequency: 480,
+    masterLevel: Math.max(0.8, Math.min(0.84, Number(preset.masterLevel) || 0.82)),
+    inputGain: Math.max(0.92, Math.min(0.96, Number(preset.inputGain) || 0.94)),
+    highPassFrequency: Math.max(42, Number(preset.highPassFrequency) || 0),
+    lowShelfFrequency: Math.max(180, Number(preset.lowShelfFrequency) || 0),
+    lowShelfGain: (Number(preset.lowShelfGain) || 0) + 1.2,
+    mudFrequency: 420,
     mudQ: 0.72,
-    mudGain: Math.max(0.25, (Number(preset.mudGain) || 0) + 1.5),
-    presenceGain: (Number(preset.presenceGain) || 0) - 3.6,
-    airGain: (Number(preset.airGain) || 0) - 2.8,
-    glueThreshold: Math.min(-20, Number(preset.glueThreshold) || -18),
+    mudGain: Math.max(0.1, (Number(preset.mudGain) || 0) + 1.15),
+    presenceGain: (Number(preset.presenceGain) || 0) - 4.6,
+    airGain: (Number(preset.airGain) || 0) - 4,
+    glueThreshold: Math.min(-23, Number(preset.glueThreshold) || -18),
     glueKnee: Math.max(26, Number(preset.glueKnee) || 0),
-    glueRatio: Math.max(2.8, Number(preset.glueRatio) || 0),
+    glueRatio: Math.max(3.2, Number(preset.glueRatio) || 0),
     glueAttack: Math.max(0.009, Number(preset.glueAttack) || 0),
-    glueRelease: Math.min(0.28, Number(preset.glueRelease) || 0.28),
-    dryGain: Math.min(0.95, Math.max(0.9, Number(preset.dryGain) || 0.9)),
-    wetGain: Math.min(0.075, Number(preset.wetGain) || 0),
-    resonanceGain: Math.min(0.012, Number(preset.resonanceGain) || 0),
-    panWidth: Math.min(0.075, Number(preset.panWidth) || 0),
+    glueRelease: Math.min(0.24, Number(preset.glueRelease) || 0.24),
+    limiterThreshold: Math.min(-8, Number(preset.limiterThreshold) || -3),
+    limiterKnee: Math.max(6, Number(preset.limiterKnee) || 0),
+    limiterRatio: Math.max(16, Number(preset.limiterRatio) || 0),
+    limiterAttack: Math.min(0.001, Number(preset.limiterAttack) || 0.001),
+    limiterRelease: Math.max(0.11, Number(preset.limiterRelease) || 0.11),
+    dryGain: Math.min(0.94, Math.max(0.9, Number(preset.dryGain) || 0.92)),
+    wetGain: Math.min(0.05, Number(preset.wetGain) || 0),
+    resonanceGain: Math.min(0.008, Number(preset.resonanceGain) || 0),
+    panWidth: Math.min(0.04, Number(preset.panWidth) || 0),
     monoOutput: true,
-    accompanimentBusGain: 1.06,
-    accompanimentBusThreshold: -22,
+    compactPeakProtection: true,
+    accompanimentBusGain: 1.08,
+    accompanimentBusThreshold: -24,
     accompanimentBusKnee: 28,
-    accompanimentBusRatio: 2.6,
+    accompanimentBusRatio: 2.8,
     accompanimentBusAttack: 0.012,
     accompanimentBusRelease: 0.24,
-    melodyBusGain: 0.86,
-    melodyBusThreshold: -27,
+    melodyBusGain: 0.74,
+    melodyBusThreshold: -30,
     melodyBusKnee: 26,
-    melodyBusRatio: 4.2,
-    melodyBusAttack: 0.004,
-    melodyBusRelease: 0.18,
+    melodyBusRatio: 5,
+    melodyBusAttack: 0.002,
+    melodyBusRelease: 0.15,
   };
 }
 

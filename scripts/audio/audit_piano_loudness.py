@@ -43,14 +43,18 @@ LOW_COMPENSATION = (
     (21, 3.2), (23, 3.1), (24, 2.5), (28, 2.25),
     (33, 1.9), (36, 1.65), (40, 1.3), (48, 1.0),
 )
+COMPACT_LOW_COMPENSATION = (
+    (21, 1.72), (24, 1.66), (28, 1.56), (33, 1.46),
+    (36, 1.36), (40, 1.22), (48, 1.0),
+)
 REGISTER_GAIN = (
     (21, 0.82), (36, 0.86), (60, 0.9),
     (72, 0.92), (96, 0.88), (108, 0.82),
 )
 COMPACT_REGISTER_GAIN = (
-    (21, 1.28), (24, 1.3), (33, 1.24), (36, 1.2),
-    (48, 1.1), (55, 1.04), (60, 0.96), (72, 0.8),
-    (84, 0.7), (96, 0.64), (108, 0.6),
+    (21, 1.26), (24, 1.28), (33, 1.24), (36, 1.2),
+    (48, 1.08), (55, 1.0), (60, 0.9), (72, 0.72),
+    (84, 0.61), (96, 0.54), (108, 0.5),
 )
 
 
@@ -171,23 +175,25 @@ def voice_filters(midi: int, compact: bool) -> list[tuple[str, float, float, flo
     bass_amount = max(0.0, min(1.0, (60 - midi) / 24))
     treble_amount = max(0.0, min(1.0, (midi - 60) / 36))
     fundamental = 440 * (2 ** ((midi - 69) / 12))
-    harmonic = fundamental
-    while harmonic < 185:
-        harmonic *= 2
-    while harmonic > 370:
-        harmonic /= 2
+    harmonic_number = 1
+    while fundamental * harmonic_number < 110:
+        harmonic_number += 2
+    harmonic = fundamental * harmonic_number
+    while harmonic > 240 and harmonic_number > 1:
+        harmonic_number = max(1, harmonic_number - 2)
+        harmonic = fundamental * harmonic_number
 
-    highpass = (40 if midi < 48 else 30) if compact else (14 if midi < 36 else 18 if midi < 48 else 26)
+    highpass = (45 if midi < 36 else 38 if midi < 48 else 30) if compact else (14 if midi < 36 else 18 if midi < 48 else 26)
     body_type = "peaking" if compact and midi < 60 else "lowshelf"
     body_frequency = harmonic if compact and midi < 60 else (128 if not compact and midi < 48 else 170)
-    body_q = 0.72 if compact and midi < 60 else 0.7
+    body_q = 0.82 if compact and midi < 60 else 0.7
     body_gain = (0.72 if midi < 40 else 0.24 if midi < 58 else -0.12) + 0.22
     hammer_offset = 0.0
     air_offset = 0.0
     if compact:
-        body_gain += 1.1 + 3.3 * bass_amount if midi < 60 else -0.35 * treble_amount
-        hammer_offset = -0.45 - 3.1 * treble_amount
-        air_offset = -0.3 - 2.4 * treble_amount
+        body_gain += 1.4 + 4.4 * bass_amount if midi < 60 else -0.5 * treble_amount
+        hammer_offset = -0.65 - 3.7 * treble_amount
+        air_offset = -0.5 - 3.0 * treble_amount
 
     return [
         ("highpass", highpass, 0.6, 0.0),
@@ -200,11 +206,11 @@ def voice_filters(midi: int, compact: bool) -> list[tuple[str, float, float, flo
 def master_filters(compact: bool) -> list[tuple[str, float, float, float]]:
     if compact:
         return [
-            ("highpass", 38, 0.7, 0.0),
-            ("lowshelf", 210, 0.707, 2.65),
-            ("peaking", 480, 0.72, 0.45),
-            ("peaking", 2500, 0.82, -2.92),
-            ("highshelf", 7800, 0.707, -2.52),
+            ("highpass", 42, 0.7, 0.0),
+            ("lowshelf", 180, 0.707, 2.05),
+            ("peaking", 420, 0.72, 0.1),
+            ("peaking", 2500, 0.82, -3.92),
+            ("highshelf", 7800, 0.707, -3.72),
         ]
     return [
         ("highpass", 25, 0.7, 0.0),
@@ -239,12 +245,22 @@ def compact_channel_levels(
     body: np.ndarray,
     sample_rate: int,
     midi: int,
+    source_gain: float,
 ) -> list[tuple[float, float, float]]:
     """Return attack/body/combined phone-band level for every microphone."""
     levels: list[tuple[float, float, float]] = []
+    harmonic_amount = max(0.0, min(1.0, (52 - midi) / 24))
+    drive = 1.15 + 0.85 * harmonic_amount if harmonic_amount > 0 else 1.0
+
+    def prepare(values: np.ndarray) -> np.ndarray:
+        amplified = values * source_gain
+        if drive <= 1:
+            return amplified
+        return np.tanh(drive * np.clip(amplified, -1, 1)) / drive
+
     for channel in range(attack.shape[1]):
-        attack_db = weighted_level_db(attack[:, channel], sample_rate, midi, True)
-        body_db = weighted_level_db(body[:, channel], sample_rate, midi, True)
+        attack_db = weighted_level_db(prepare(attack[:, channel]), sample_rate, midi, True)
+        body_db = weighted_level_db(prepare(body[:, channel]), sample_rate, midi, True)
         # Attacks carry note intelligibility on a phone, while the body still
         # needs enough weight to prevent the key sounding clipped or broken.
         combined_db = (0.62 * attack_db) + (0.38 * body_db)
@@ -287,7 +303,7 @@ def smooth_target(levels: np.ndarray) -> np.ndarray:
     # The short upper strings genuinely lose body faster than bass strings.
     # Keep that physical decay, but remove discontinuities large enough to make
     # one neighboring key sound like a different instrument.
-    maximum_step_db = 1.9
+    maximum_step_db = 1.5
     for _ in range(8):
         for index in range(1, len(median)):
             median[index] = np.clip(
@@ -327,15 +343,25 @@ def audit() -> dict[str, object]:
             1.95,
         )
         base_gain = analysis_gain * interpolate(LOW_COMPENSATION, midi) * interpolate(REGISTER_GAIN, midi)
+        compact_source_gain = analysis_gain * interpolate(COMPACT_LOW_COMPENSATION, midi)
         attack = audio[round(sample_rate * 0.02):round(sample_rate * 0.25)]
         body = audio[round(sample_rate * 0.25):round(sample_rate * 1.2)]
-        compact_levels = compact_channel_levels(attack, body, sample_rate, midi)
+        compact_levels = compact_channel_levels(
+            attack, body, sample_rate, midi, compact_source_gain,
+        )
         compact_channel = max(
             range(len(compact_levels)),
             key=lambda channel: compact_levels[channel][2],
         )
         diagnostics = stereo_diagnostics(analysis)
-        compact_gain = interpolate(COMPACT_REGISTER_GAIN, midi)
+        compact_gain = interpolate(REGISTER_GAIN, midi) * interpolate(COMPACT_REGISTER_GAIN, midi)
+        harmonic_amount = max(0.0, min(1.0, (52 - midi) / 24))
+        harmonic_drive = 1.15 + 0.85 * harmonic_amount if harmonic_amount > 0 else 1.0
+        compact_channel_audio = analysis[:, compact_channel] * compact_source_gain
+        if harmonic_drive > 1:
+            compact_channel_audio = np.tanh(
+                harmonic_drive * np.clip(compact_channel_audio, -1, 1)
+            ) / harmonic_drive
         rows.append({
             "midi": midi,
             "note": path.stem,
@@ -343,9 +369,9 @@ def audit() -> dict[str, object]:
             "full_attack": weighted_level_db(attack, sample_rate, midi, False) + 20 * math.log10(base_gain),
             "full_body": weighted_level_db(body, sample_rate, midi, False) + 20 * math.log10(base_gain),
             "compact_channel": compact_channel,
-            "compact_attack": compact_levels[compact_channel][0] + 20 * math.log10(base_gain * compact_gain),
-            "compact_body": compact_levels[compact_channel][1] + 20 * math.log10(base_gain * compact_gain),
-            "compact_peak": peak * base_gain * compact_gain,
+            "compact_attack": compact_levels[compact_channel][0] + 20 * math.log10(compact_gain),
+            "compact_body": compact_levels[compact_channel][1] + 20 * math.log10(compact_gain),
+            "compact_peak": float(np.max(np.abs(compact_channel_audio))) * compact_gain,
             **diagnostics,
         })
 

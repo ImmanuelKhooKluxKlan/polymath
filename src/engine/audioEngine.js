@@ -20,7 +20,9 @@ import {
   resolveSpeakerOutputProfile,
   speakerMixBus,
   speakerPerformanceGain,
+  speakerPolyphonyHeadroom,
   speakerRegisterGain,
+  speakerSampleGainCompensation,
   speakerVoiceProfile,
   tonePresetForSpeaker,
 } from './speakerOutputProfile.js';
@@ -40,6 +42,39 @@ const MAX_POLYPHONY = 96;
 const BALANCED_MAX_POLYPHONY = 64;
 const LITE_MAX_POLYPHONY = 36;
 const MAX_PENDING_VOICES = 128;
+
+const COMPACT_SOFT_CEILING_CURVE = (() => {
+  const curve = new Float32Array(4097);
+  const knee = 0.78;
+  const range = 0.2;
+  for (let index = 0; index < curve.length; index += 1) {
+    const value = (index / (curve.length - 1)) * 2 - 1;
+    const amount = Math.abs(value);
+    const limited = amount <= knee
+      ? amount
+      : knee + range * Math.tanh((amount - knee) / range);
+    curve[index] = Math.sign(value) * limited;
+  }
+  return curve;
+})();
+
+const BASS_HARMONIC_CURVES = new Map();
+
+function bassHarmonicCurve(drive) {
+  const normalizedDrive = Math.round(Math.max(1, Number(drive) || 1) * 20) / 20;
+  if (!BASS_HARMONIC_CURVES.has(normalizedDrive)) {
+    const curve = new Float32Array(2049);
+    for (let index = 0; index < curve.length; index += 1) {
+      const value = (index / (curve.length - 1)) * 2 - 1;
+      // Unity slope around silence preserves soft piano detail. Larger bass
+      // peaks compress smoothly and create quiet odd harmonics that a phone
+      // can reproduce even when it cannot reproduce the fundamental.
+      curve[index] = Math.tanh(normalizedDrive * value) / normalizedDrive;
+    }
+    BASS_HARMONIC_CURVES.set(normalizedDrive, curve);
+  }
+  return BASS_HARMONIC_CURVES.get(normalizedDrive);
+}
 
 export const TONE_MODE_LABELS = {
   pianella: 'Polymath Musician render',
@@ -495,22 +530,6 @@ function targetRmsForMidi(midi) {
   );
 }
 
-function lowRegisterCompensation(midi) {
-  return interpolate(
-    [
-      [21, 3.2],
-      [23, 3.1],
-      [24, 2.5],
-      [28, 2.25],
-      [33, 1.9],
-      [36, 1.65],
-      [40, 1.3],
-      [48, 1],
-    ],
-    midi
-  );
-}
-
 function analyzeSample(
   buffer,
   requestedMidi
@@ -642,6 +661,7 @@ class PianoAudioEngine {
 
     this.master = null;
     this.masterInput = null;
+    this.voiceHeadroom = null;
 
     this.highPass = null;
     this.warmth = null;
@@ -651,6 +671,10 @@ class PianoAudioEngine {
 
     this.glue = null;
     this.limiter = null;
+    this.safetyBypass = null;
+    this.safetyClipper = null;
+    this.safetyClipperGain = null;
+    this.currentVoiceHeadroom = 1;
 
     this.dryGain = null;
     this.wetGain = null;
@@ -1057,6 +1081,9 @@ class PianoAudioEngine {
     this.masterInput =
       context.createGain();
 
+    this.voiceHeadroom =
+      context.createGain();
+
     this.highPass =
       context.createBiquadFilter();
 
@@ -1094,6 +1121,18 @@ class PianoAudioEngine {
     this.limiter =
       context
         .createDynamicsCompressor();
+
+    this.safetyBypass =
+      context.createGain();
+
+    this.safetyClipper =
+      context.createWaveShaper();
+
+    this.safetyClipperGain =
+      context.createGain();
+
+    this.safetyClipper.curve = COMPACT_SOFT_CEILING_CURVE;
+    this.safetyClipper.oversample = '4x';
 
     this.dryGain =
       context.createGain();
@@ -1173,6 +1212,10 @@ class PianoAudioEngine {
     );
 
     this.masterInput.connect(
+      this.voiceHeadroom
+    );
+
+    this.voiceHeadroom.connect(
       this.highPass
     );
 
@@ -1201,6 +1244,22 @@ class PianoAudioEngine {
     );
 
     this.limiter.connect(
+      this.safetyBypass
+    );
+
+    this.safetyBypass.connect(
+      this.master
+    );
+
+    this.limiter.connect(
+      this.safetyClipper
+    );
+
+    this.safetyClipper.connect(
+      this.safetyClipperGain
+    );
+
+    this.safetyClipperGain.connect(
       this.master
     );
 
@@ -1342,6 +1401,20 @@ class PianoAudioEngine {
       preset.inputGain,
       now
     );
+
+    this.setParam(
+      this.safetyBypass.gain,
+      preset.compactPeakProtection ? 0 : 1,
+      now
+    );
+
+    this.setParam(
+      this.safetyClipperGain.gain,
+      preset.compactPeakProtection ? 1 : 0,
+      now
+    );
+
+    this.updateVoiceHeadroom(true);
 
     this.setParam(
       this.highPass.frequency,
@@ -2375,6 +2448,38 @@ class PianoAudioEngine {
     );
 
     this.enforcePolyphonyLimit();
+    this.updateVoiceHeadroom();
+  }
+
+  updateVoiceHeadroom(immediate = false) {
+    if (!this.context || !this.voiceHeadroom) return;
+    const voiceCount = this.getAllVoices().filter((voice) => !voice.cleanedUp).length;
+    const target = speakerPolyphonyHeadroom(
+      voiceCount,
+      this.speakerOutputProfile
+    );
+    const param = this.voiceHeadroom.gain;
+    const now = this.context.currentTime;
+    try {
+      if (typeof param.cancelAndHoldAtTime === 'function') {
+        param.cancelAndHoldAtTime(now);
+      } else {
+        param.cancelScheduledValues(now);
+        param.setValueAtTime(Math.max(MIN_GAIN, Number(param.value) || 1), now);
+      }
+      if (immediate) {
+        param.setValueAtTime(target, now);
+      } else {
+        param.setTargetAtTime(
+          target,
+          now,
+          target < this.currentVoiceHeadroom ? 0.012 : 0.12
+        );
+      }
+    } catch {
+      param.value = target;
+    }
+    this.currentVoiceHeadroom = target;
   }
 
   getAllVoices() {
@@ -2807,8 +2912,9 @@ class PianoAudioEngine {
 
         sourceGain.gain.value =
           sample.analysis.gain *
-          lowRegisterCompensation(
-            requestedMidi
+          speakerSampleGainCompensation(
+            requestedMidi,
+            this.speakerOutputProfile
           );
 
         // The Iowa files are stereo microphone recordings. Fifty of the 88
@@ -2840,9 +2946,18 @@ class PianoAudioEngine {
           );
         }
 
-        sourceGain.connect(
-          highPass
-        );
+        let compactHarmonicShaper = null;
+        if (outputVoiceProfile.harmonicDrive > 1) {
+          compactHarmonicShaper = this.context.createWaveShaper();
+          compactHarmonicShaper.curve = bassHarmonicCurve(
+            outputVoiceProfile.harmonicDrive
+          );
+          compactHarmonicShaper.oversample = '2x';
+          sourceGain.connect(compactHarmonicShaper);
+          compactHarmonicShaper.connect(highPass);
+        } else {
+          sourceGain.connect(highPass);
+        }
 
         try {
           source.start(
@@ -2860,6 +2975,7 @@ class PianoAudioEngine {
           voice,
           source,
           sourceGain,
+          compactHarmonicShaper,
           compactChannelSplitter
         );
 
@@ -4073,6 +4189,7 @@ class PianoAudioEngine {
     this.cleanupVoiceGraph(
       voice
     );
+    this.updateVoiceHeadroom();
   }
 
   stopAll(options = {}) {
@@ -4117,6 +4234,8 @@ class PianoAudioEngine {
       performanceTier: this.performanceTier,
       speakerOutputMode: this.speakerOutputMode,
       speakerOutputProfile: this.speakerOutputProfile,
+      voiceHeadroom: this.currentVoiceHeadroom,
+      compactPeakProtection: this.speakerOutputProfile === 'small-speaker',
       pianoKeyCalibration: PIANO_KEY_CALIBRATION.version,
       availableSampleZones: this.sampleMidis.length,
       targetSampleZones: this.targetSampleMidis.length,
