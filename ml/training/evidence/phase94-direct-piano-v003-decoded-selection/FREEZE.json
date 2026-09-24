@@ -1,0 +1,21 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-v003-decoded-selection-control",
+  "frozenAt": "2026-09-19T10:07:32Z",
+  "plan": "ml/training/configs/phase94-direct-piano-decoded-selection-v003.json",
+  "planSha256": "2e45665c4090a15930227a055e0555d404155eaac111fc56bfa0a1e1b2031b26",
+  "baseCheckpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+  "trainManifestSha256": "0b3f61eb84370e55dd9345039f1b9b094a118ec38659a1922bd54300e69b1f12",
+  "validationManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+  "trainerSha256": "7ef5c65d51ed6702b08593b2651acea5895381c3c3bd8caea8e32fa432a5cb20",
+  "evaluatorSha256": "3584efd9cdf676f3f27f2de4622358a607e36aab96f41ada1da162d14ae2b7ba",
+  "timelineRescorerSha256": "bda1d0b0d14467dea38d39b7f5657c8ecabbd4aff1da197700e744386b094452",
+  "podRunnerSha256": "81c365407884df8ef9a0b28a28c27905fee8c41b90901699dedcd8088ce0b4c1",
+  "fullValidationGate": "ml/training/evidence/phase94-direct-piano-v003-decoded-selection/FULL_VALIDATION_GATE.json",
+  "fullValidationGateSha256": "3c43fa28e25c781942b2d5520c310bb32ec56fbf90b6ef52987c797bbe528435",
+  "principalVariable": "checkpoint-selection-policy",
+  "predictedSelectedOptimizerStep": 90,
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "commercialUseAllowed": false
+}

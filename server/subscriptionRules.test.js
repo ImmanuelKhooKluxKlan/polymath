@@ -170,7 +170,10 @@ test('promotion codes and Friend IDs can lock a signup subscription discount', (
   subscriptionRules.applySignupLuckyCode(db, user, codeResult.claim);
   assert.deepEqual(subscriptionRules.subscriptionPriceForUser(
     subscriptionRules.products['polymath-musician-monthly'], user,
-  ), { price: '7.50', discountPercent: 50, luckyCode: 'JAN50' });
+  ), {
+    price: '7.50', discountPercent: 50, luckyCode: 'JAN50', promotionId: 'promo-jan',
+    affiliateUserId: null, affiliateRewardMcoins: 0,
+  });
 
   const referred = { id: 'new-2', mcoins: 0 };
   db.users.push(referred);

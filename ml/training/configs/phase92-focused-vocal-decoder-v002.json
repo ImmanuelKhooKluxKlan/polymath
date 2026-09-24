@@ -1,0 +1,9 @@
+{
+  "minimum_input_notes_per_second": 0.0,
+  "reject_pass_below_minimum_input_density": true,
+  "retain_unmatched_primary_when_applied": true,
+  "decode_all_candidates_after_acceptance": true,
+  "maximum_unanchored_polyphony": 8,
+  "upper_candidate_preference": 0.1,
+  "jump_penalty_per_semitone": 0.06
+}

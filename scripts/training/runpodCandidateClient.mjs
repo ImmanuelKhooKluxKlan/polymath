@@ -52,6 +52,12 @@ async function main() {
     throw new Error('--timeout-minutes must be between 1 and 720');
   }
   const timeoutMs = timeoutMinutes * 60 * 1000;
+  const resultDestination = args.result ? path.resolve(args.result) : '';
+  const writeResult = async (record) => {
+    if (!resultDestination) return;
+    await fs.mkdir(path.dirname(resultDestination), { recursive: true });
+    await fs.writeFile(resultDestination, `${JSON.stringify(record, null, 2)}\n`);
+  };
   const requestTimeoutSeconds = Number(args['request-timeout-seconds'] || 30);
   if (!Number.isFinite(requestTimeoutSeconds) || requestTimeoutSeconds < 5 || requestTimeoutSeconds > 120) {
     throw new Error('--request-timeout-seconds must be between 5 and 120');
@@ -125,12 +131,22 @@ async function main() {
   });
   if (!submitted.id) throw new Error('RunPod did not return a training job id');
   process.stdout.write(`JOB_ID=${submitted.id}\n`);
+  await writeResult({
+    jobId: submitted.id,
+    submittedAt: new Date().toISOString(),
+    status: submitted.status || 'IN_QUEUE',
+    endpointId: endpoint,
+    action: 'train_piano_candidate',
+    datasetId: args.dataset,
+    version: args.version,
+    baseVersion,
+  });
 
   const deadline = Date.now() + timeoutMs;
   let previous = '';
   while (Date.now() < deadline) {
     const status = await request(`/status/${encodeURIComponent(submitted.id)}`);
-    const message = `${status.status || 'UNKNOWN'} ${status.output?.progress || ''}`.trim();
+    const message = `${status.status || 'UNKNOWN'} ${status.progress || status.output?.progress || ''}`.trim();
     if (message !== previous) {
       process.stdout.write(`${message}\n`);
       previous = message;
@@ -141,11 +157,7 @@ async function main() {
         completedAt: new Date().toISOString(),
         ...status.output,
       };
-      if (args.result) {
-        const destination = path.resolve(args.result);
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.writeFile(destination, `${JSON.stringify(record, null, 2)}\n`);
-      }
+      await writeResult(record);
       process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
       return;
     }

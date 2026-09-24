@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-sealed-exam-preflight-v1",
+  "checkedAtUtc": "2026-09-21T03:06:44Z",
+  "status": "PASS",
+  "candidateVersion": "phase94-overlap-release-preserving-v003",
+  "planSha256": "cb8ec5000cc63c726354f3cdcf8dc28da08aee177492400dfa3c85c05c7801aa",
+  "testSongs": 8,
+  "testPeople": 4,
+  "individualPersonOverlapAcrossSplits": 0,
+  "selectedSourceAudioAndMidiPairsPresent": 0,
+  "preparedTestRecords": 0,
+  "preparedTestAudioFiles": 0,
+  "labelsRead": false,
+  "blindMappingInspected": false,
+  "predictionsLocked": false,
+  "sealedTestOpened": false,
+  "productionPromotionAllowed": false,
+  "finding": "The eight-song selection and all code/config hashes match the frozen plan. No selected test audio or MIDI pair is present, the prepared test JSONL is empty, and no test content was parsed."
+}

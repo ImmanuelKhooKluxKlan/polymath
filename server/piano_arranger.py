@@ -4907,11 +4907,17 @@ def arrange_payload(
     *,
     allow_pure_piano_density_override: bool = True,
 ) -> dict[str, Any]:
-    source_notes = [
-        normalized
-        for note in payload.get("notes", [])
-        if (normalized := normalize_source_note(note)) is not None
-    ]
+    source_notes: list[dict[str, Any]] = []
+    for source_index, note in enumerate(payload.get("notes", [])):
+        normalized = normalize_source_note(note)
+        if normalized is None:
+            continue
+        # Preserve the immutable position from the raw transcription.  This is
+        # provenance metadata: it lets leakage-safe audits trace an arranged
+        # event back to the exact model event without fuzzy pitch/time joins.
+        # An explicit upstream sourceIndex remains authoritative.
+        normalized.setdefault("sourceIndex", source_index)
+        source_notes.append(normalized)
     if not source_notes:
         raise ValueError("No notes inside the real 88-key piano range were available to arrange.")
 

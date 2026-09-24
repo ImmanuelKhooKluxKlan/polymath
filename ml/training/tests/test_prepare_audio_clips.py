@@ -39,6 +39,10 @@ class PrepareAudioClipsTests(unittest.TestCase):
                 prepared["audioClip"],
                 "/runpod-volume/training/phase-2-v001/audio/train/song-00001.wav",
             )
+            self.assertEqual(
+                Path(prepared["localAudioSource"]),
+                (output / "audio" / "train" / "song-00001.wav").resolve(),
+            )
             self.assertTrue((output / "audio" / "train" / "song-00001.wav").is_file())
 
 

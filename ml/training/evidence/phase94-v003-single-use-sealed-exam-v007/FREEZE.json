@@ -1,0 +1,23 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-v003-single-use-sealed-exam-v007",
+  "frozenAt": "2026-09-21T03:07:17Z",
+  "plan": "ml/training/configs/phase94-v003-single-use-sealed-exam-v007.json",
+  "planSha256": "cb8ec5000cc63c726354f3cdcf8dc28da08aee177492400dfa3c85c05c7801aa",
+  "preflightSha256": "64611b564f08285014d2b21f28546e9712f0dd5abb6dab827eec3af2e7a574dc",
+  "selectionManifestSha256": "f2cc2eb447c1736d42b44d2ae0ee8049799966564cdc4ee04f2c23d64c09873d",
+  "checkpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+  "sealedGateSha256": "9486c2af687d9dc46c8df73577e199db66a2bebecb35a9372ac6f215a632746d",
+  "developmentResultSha256": "0173455eed4b714527b352d95e58764d89b6a29f57e3aea4b22707c0b5850bac",
+  "openedTransferPreListeningSha256": "3dff448cd6e1a046b48674a66203043baf837c56fd3791a933f89181cfca139f",
+  "openedTransferStructuralResultSha256": "d236035acf3d2a47cd59a0e4d41a1dd0b7397f211438c7d5c3a5062956d8ce9c",
+  "mappingCommitment": "37e0f17695be601e13b5a3bbd03794be4650264257dc5bed8acfea8ffedee514",
+  "blindVerdictRequiredBeforeAudio": true,
+  "predictionsRequiredBeforeLabels": true,
+  "microF1_100msMinimum": 0.9,
+  "songBootstrapLower95_100msMinimum": 0.9,
+  "thresholdChangesAllowed": false,
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "commercialUseAllowed": false
+}

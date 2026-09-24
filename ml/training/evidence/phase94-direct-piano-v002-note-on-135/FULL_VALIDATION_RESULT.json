@@ -1,0 +1,106 @@
+{
+  "schema": "polymath-candidate-gate-result-v1",
+  "candidateVersion": "phase94-v002-note-on-135",
+  "evaluatedAt": "2026-09-19T13:24:00Z",
+  "comparison": {
+    "baseline": "phase94-v001d-control",
+    "candidate": "phase94-v002-note-on-135",
+    "clips": 247,
+    "songs": 6,
+    "comparisonSha256": "daa956076e925b6c4b70c96471a8d367febb871f8ab7fa9cd4e4393cdc54e8b8",
+    "comparisonLogSha256": "a779e41e8f527bf4b7351591db1a22eefd7ff278fb0e58b0339418ac9ad245c8",
+    "baselineStitchedSha256": "0d6755974f122be81fb520e17161989ce5fa5e3aa4da2681a13fd118576a3b4c",
+    "candidateStitchedSha256": "69a2195dd36af73bd1466ec1b77dc85355b2fe64abbdbbe5cec19213ffeedd2e",
+    "changeAttributionSha256": "da123a1b17e121e31cd550c879290e2686b33ee86b3a81aea99f6eb062cbadcd"
+  },
+  "continuousSongMetrics": {
+    "baseline": {
+      "microF1_50ms": 0.841035,
+      "precision100ms": 0.919981,
+      "recall100ms": 0.902431,
+      "microF1_100ms": 0.911122,
+      "microF1_250ms": 0.925366,
+      "songBootstrapLower95_100ms": 0.898536,
+      "onsetAndOffsetF1_100ms": 0.347489,
+      "frameF1_20ms": 0.562257,
+      "cutOffNotes": 656,
+      "overlongNotes": 985,
+      "rapidRetriggers": 57
+    },
+    "candidate": {
+      "microF1_50ms": 0.840916,
+      "precision100ms": 0.920300,
+      "recall100ms": 0.903292,
+      "microF1_100ms": 0.911717,
+      "microF1_250ms": 0.925221,
+      "songBootstrapLower95_100ms": 0.899542,
+      "onsetAndOffsetF1_100ms": 0.346983,
+      "frameF1_20ms": 0.561436,
+      "cutOffNotes": 667,
+      "overlongNotes": 989,
+      "rapidRetriggers": 57
+    },
+    "candidateMinusBaseline": {
+      "microF1_50ms": -0.000119,
+      "precision100ms": 0.000319,
+      "recall100ms": 0.000861,
+      "microF1_100ms": 0.000595,
+      "microF1_250ms": -0.000145,
+      "songBootstrapLower95_100ms": 0.001006,
+      "onsetAndOffsetF1_100ms": -0.000506,
+      "frameF1_20ms": -0.000821,
+      "cutOffNotes": 11,
+      "overlongNotes": 4,
+      "rapidRetriggers": 0,
+      "worstPerSongMicroF1_100ms": -0.000619
+    }
+  },
+  "versusImmutableOriginal": {
+    "originalMicroF1_100ms": 0.909711,
+    "candidateMicroF1_100ms": 0.911717,
+    "microF1Delta100ms": 0.002006,
+    "originalPrecision100ms": 0.918275,
+    "candidatePrecision100ms": 0.920300,
+    "originalRecall100ms": 0.901305,
+    "candidateRecall100ms": 0.903292,
+    "originalSongBootstrapLower95_100ms": 0.897980,
+    "candidateSongBootstrapLower95_100ms": 0.899542,
+    "onsetAndOffsetF1Delta": 0.003744,
+    "frameF1Delta": 0.002790,
+    "cutOffNoteDelta": -2,
+    "overlongNoteDelta": 12,
+    "rapidRetriggerDelta": 2,
+    "researchGatePassed": true,
+    "certificationPassed": false,
+    "gateDiagnosticSha256": "120358bc7a72b898c2004617df27aedd5f6e9c7f3e5ff63da8365b11dd202509"
+  },
+  "preFrozenChecks": {
+    "strictExactPitchOnset100msMicroF1DeltaMinimum": true,
+    "strictExactPitchOnset100msRecallDeltaMinimum": true,
+    "maximumOnsetAndOffsetF1Regression": true,
+    "maximumFrameF1Regression": true,
+    "maximumCutOffNoteIncrease": true,
+    "maximumOverlongNoteIncrease": true,
+    "maximumRapidRetriggerIncrease": true,
+    "maximumPerSongOnsetF1Regression": true
+  },
+  "gatePassed": true,
+  "certified90PercentAcrossSongs": false,
+  "certificationShortfall": {
+    "metric": "complete-song bootstrap lower 95% bound at strict 100 ms exact-pitch onset",
+    "observed": 0.899542,
+    "required": 0.900000,
+    "shortfall": 0.000458
+  },
+  "changeAttribution100ms": {
+    "recoveredReferenceNotes": 22,
+    "regressedReferenceNotes": 9,
+    "netMatchChange": 13,
+    "falsePositiveChange": -4,
+    "finding": "Uniform note-on weighting produced a small net gain in short, medium/dense notes but did not improve the very-low-velocity failure band."
+  },
+  "decision": "retain-as-research-candidate",
+  "productionPromotionAllowed": false,
+  "sealedTestOpened": false,
+  "rightsClearedForCommercialUse": false
+}

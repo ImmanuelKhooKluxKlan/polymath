@@ -1,0 +1,21 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-overlap-release-preserving-v003",
+  "frozenAt": "2026-09-20T17:15:00Z",
+  "plan": "ml/training/configs/phase94-overlap-release-preserving-v003.json",
+  "planSha256": "ff0ab8a4ebce5bdc289d2eaa93bc68febaeafa91675c8b624a933a75743b6ec1",
+  "searchCodeSha256": "2c0d0cad13dcc6529e91be59b852df339fbfe0e03cf44197755fa0ead3ec6abb",
+  "searchTestSha256": "ace6e99c8923d6aeac0c48792053d78cbfbe221a5a374181cda865fbe3d30dc6",
+  "primaryEvaluationSha256": "712ddebefe167bc4b7774fc2dd37fe6c3103420242e22388269048f5d38a4247",
+  "overlapEvaluationSha256": "6fea08ddab7b10f57f4545e9989b190548206cb270c91c0255395fb96b53baa6",
+  "primaryManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+  "overlapManifestSha256": "e972e56aeaad4613386023feb3cab69994c6369feac0a0797ad48a7a610f5bd9",
+  "baselineTimelineSha256": "aa43b7ad3e520660451b916fbfaddaf5755cefa6fb5530c739083d1a9612a499",
+  "fullValidationGateSha256": "3c43fa28e25c781942b2d5520c310bb32ec56fbf90b6ef52987c797bbe528435",
+  "replacementRadiusSeconds": [0.10, 0.15, 0.25, 0.40, 0.60, 0.80],
+  "onsetMatchToleranceSeconds": 0.10,
+  "selectionPolicy": "filter by full research safety gate, then rank onset quality",
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "commercialUseAllowed": false
+}

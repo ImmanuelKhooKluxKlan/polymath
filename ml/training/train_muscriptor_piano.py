@@ -1,9 +1,10 @@
 """Conservative supervised fine-tuning for a MuScriptor-compatible piano checkpoint.
 
-This adapter intentionally trains only the final transformer block and output
-head first. It defaults to an audit-only dry run and refuses to overwrite a
-checkpoint. Use it on a CUDA RunPod after the reviewed dataset quality gate has
-passed; never point ``--out`` at ``models/original``.
+This adapter intentionally trains only a requested number of final transformer
+blocks plus the output head (zero blocks means head-only). It defaults to an
+audit-only dry run and refuses to overwrite a checkpoint. Use it on a CUDA
+RunPod after the reviewed dataset quality gate has passed; never point
+``--out`` at ``models/original``.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import shutil
@@ -38,6 +40,13 @@ class TrainingError(RuntimeError):
     """Raised before any optimizer update when a safety invariant fails."""
 
 
+def deterministic_seed(label: str) -> int:
+    """Map the human-readable run seed to a stable 32-bit RNG seed."""
+
+    digest = hashlib.sha256(str(label).encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big", signed=False)
+
+
 def conditioning_group(instrument: str, mode: str) -> str | None:
     """Return the exact MuScriptor text condition used for a training clip.
 
@@ -61,17 +70,20 @@ def target_token_weights(
     timing_weight: float = 1.15,
     note_off_weight: float = 1.25,
     eos_weight: float = 1.20,
+    note_on_weight: float = 1.0,
 ) -> list[float]:
-    """Give timing/stopping mistakes more influence without changing clip scale.
+    """Rebalance onset, timing, and stopping errors without changing clip scale.
 
     MuScriptor represents both note-on and note-off keys with the same pitch
     token; the preceding velocity state says which one it is.  Weighting the
     off-state pitch as well as its velocity token specifically targets chopped
-    or stuck durations.  We normalize to mean 1 so this changes *which* errors
-    matter inside a clip, not the clip's overall learning rate.
+    or stuck durations.  The optional on-state weight applies to both its state
+    token and subsequent pitches, allowing a recall-focused experiment without
+    conflating onset and release events.  We normalize to mean 1 so this changes
+    *which* errors matter inside a clip, not the clip's overall learning rate.
     """
 
-    if min(timing_weight, note_off_weight, eos_weight) <= 0:
+    if min(timing_weight, note_off_weight, eos_weight, note_on_weight) <= 0:
         raise TrainingError("Token-loss weights must be positive")
     velocity_state: int | None = None
     weights: list[float] = []
@@ -86,8 +98,11 @@ def target_token_weights(
             weight = note_off_weight
         elif token == VELOCITY_BASE + 1:
             velocity_state = 1
+            weight = note_on_weight
         elif PITCH_BASE <= token < VELOCITY_BASE and velocity_state == 0:
             weight = note_off_weight
+        elif PITCH_BASE <= token < VELOCITY_BASE and velocity_state == 1:
+            weight = note_on_weight
         elif token == TIE_ID:
             weight = timing_weight
         weights.append(weight)
@@ -202,20 +217,64 @@ def load_audio_clip(path: Path, device: str):
 
 
 def configure_trainable_parameters(model, train_last_layers: int) -> list[Any]:
-    if train_last_layers < 1:
-        raise TrainingError("At least one final transformer layer must be trainable")
+    if train_last_layers < 0:
+        raise TrainingError("The number of trainable final transformer layers cannot be negative")
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     layers = model.transformer.layers
     if train_last_layers > len(layers):
         raise TrainingError(f"Checkpoint has only {len(layers)} transformer layers")
-    for layer in layers[-train_last_layers:]:
-        for parameter in layer.parameters():
-            parameter.requires_grad_(True)
+    if train_last_layers:
+        for layer in layers[-train_last_layers:]:
+            for parameter in layer.parameters():
+                parameter.requires_grad_(True)
     for module in (model.out_norm, model.linear):
         for parameter in module.parameters():
             parameter.requires_grad_(True)
     return [parameter for parameter in model.parameters() if parameter.requires_grad]
+
+
+def should_run_periodic_validation(optimizer_step: int, interval_steps: int) -> bool:
+    """Return whether this optimizer update is a requested safety checkpoint.
+
+    ``interval_steps=0`` preserves the original epoch-only behaviour.  The
+    interval counts optimizer updates rather than clips, so changing gradient
+    accumulation does not silently multiply the number of model changes made
+    between decoded-note checks.
+    """
+
+    if interval_steps < 0:
+        raise TrainingError("Validation interval steps cannot be negative")
+    return interval_steps > 0 and optimizer_step > 0 and optimizer_step % interval_steps == 0
+
+
+def decoded_selection_rank(
+    metrics: dict[str, Any],
+    validation_loss: float,
+) -> tuple[float, float, float, float, float]:
+    """Rank safe checkpoints by decoded music quality, then token loss.
+
+    Teacher-forced loss remains an eligibility gate, but it is only a proxy for
+    the product output.  Once a checkpoint passes the decoded safety gate, the
+    strict 100 ms note F1 and recall select the winner.  The 250 ms values and
+    lower validation loss break exact ties deterministically.
+    """
+
+    try:
+        at_100 = metrics["100ms"]
+        at_250 = metrics["250ms"]
+        values = (
+            float(at_100["microF1"]),
+            float(at_100["recall"]),
+            float(at_250["microF1"]),
+            float(at_250["recall"]),
+            -float(validation_loss),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise TrainingError("Decoded checkpoint metrics are incomplete") from exc
+    if not all(math.isfinite(value) for value in values):
+        raise TrainingError("Decoded checkpoint metrics must be finite")
+    return values
 
 
 def summarize_weight_delta(
@@ -284,6 +343,7 @@ def clip_loss(
     timing_weight: float = 1.15,
     note_off_weight: float = 1.25,
     eos_weight: float = 1.20,
+    note_on_weight: float = 1.0,
     conditioning_mode: str = "instrument",
 ):
     import torch
@@ -319,7 +379,13 @@ def clip_loss(
         reduction="none",
     )
     weights = torch.tensor(
-        target_token_weights(tokens, timing_weight, note_off_weight, eos_weight),
+        target_token_weights(
+            tokens,
+            timing_weight,
+            note_off_weight,
+            eos_weight,
+            note_on_weight,
+        ),
         dtype=per_token_loss.dtype,
         device=device,
     )
@@ -355,6 +421,61 @@ def evaluate_loss(
     return sum(losses) / max(1, len(losses))
 
 
+def load_cached_decoded_metrics(
+    evaluation_path: Path,
+    records: list[dict[str, Any]],
+    *,
+    base_checkpoint: Path,
+    validation_manifest: Path,
+    instruments: tuple[str, ...],
+) -> dict[str, Any]:
+    """Reuse an immutable full-validation decode for a selected safety panel."""
+
+    from ml.training.evaluate_checkpoint import evaluate_decoded_predictions
+
+    if not evaluation_path.is_file():
+        raise TrainingError(f"Cached baseline evaluation does not exist: {evaluation_path}")
+    try:
+        payload = json.loads(evaluation_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TrainingError(f"Cached baseline evaluation is unreadable: {evaluation_path}") from exc
+    if payload.get("schema") != "polymath-checkpoint-evaluation-v1":
+        raise TrainingError("Cached baseline evaluation has an unexpected schema")
+    if Path(str(payload.get("checkpoint") or "")).resolve() != base_checkpoint.resolve():
+        raise TrainingError("Cached baseline evaluation belongs to a different checkpoint")
+    if Path(str(payload.get("validationManifest") or "")).resolve() != validation_manifest.resolve():
+        raise TrainingError("Cached baseline evaluation belongs to a different validation manifest")
+    if tuple(payload.get("instrumentConstraint") or ()) != instruments:
+        raise TrainingError("Cached baseline evaluation used a different instrument constraint")
+    decoded = (payload.get("metrics") or {}).get("decodedClips")
+    if not isinstance(decoded, list):
+        raise TrainingError("Cached baseline evaluation does not contain raw decoded clips")
+    by_clip: dict[str, dict[str, Any]] = {}
+    for item in decoded:
+        if not isinstance(item, dict) or not str(item.get("clipId") or ""):
+            raise TrainingError("Cached baseline evaluation contains an invalid clip entry")
+        clip_id = str(item["clipId"])
+        if clip_id in by_clip:
+            raise TrainingError(f"Cached baseline evaluation repeats clip {clip_id}")
+        by_clip[clip_id] = item
+
+    predictions: list[list[dict[str, Any]]] = []
+    for record in records:
+        clip_id = str(record.get("clipId") or "")
+        item = by_clip.get(clip_id)
+        if item is None:
+            raise TrainingError(f"Cached baseline evaluation is missing clip {clip_id}")
+        if str(item.get("songId") or "unknown") != str(record.get("songId") or "unknown"):
+            raise TrainingError(f"Cached baseline song mismatch for clip {clip_id}")
+        if abs(float(item.get("sourceStart") or 0) - float(record.get("sourceStart") or 0)) > 1e-6:
+            raise TrainingError(f"Cached baseline timing mismatch for clip {clip_id}")
+        notes = item.get("notes")
+        if not isinstance(notes, list):
+            raise TrainingError(f"Cached baseline notes are missing for clip {clip_id}")
+        predictions.append(notes)
+    return evaluate_decoded_predictions(records, predictions)
+
+
 def save_checkpoint(transcription, base: Path, output: Path, metadata: dict[str, Any]) -> None:
     from safetensors.torch import save_file
 
@@ -378,6 +499,10 @@ def save_checkpoint(transcription, base: Path, output: Path, metadata: dict[str,
 
 
 def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
+    # Set cuBLAS determinism before importing/initializing CUDA in this process.
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+    import numpy as np
     import torch
     from muscriptor import TranscriptionModel
     from ml.training.decoded_checkpoint_gate import (
@@ -385,6 +510,17 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         select_decoded_gate_records,
     )
     from ml.training.evaluate_checkpoint import evaluate_loaded_transcription
+
+    numeric_seed = deterministic_seed(args.seed)
+    random.seed(numeric_seed)
+    np.random.seed(numeric_seed)
+    torch.manual_seed(numeric_seed)
+    torch.cuda.manual_seed_all(numeric_seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.use_deterministic_algorithms(True)
 
     if not torch.cuda.is_available():
         raise TrainingError("CUDA GPU is required for the 1.3B checkpoint")
@@ -419,6 +555,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             f"Only {train_audit['songs']} training songs; minimum is {args.minimum_train_songs}. "
             "Do not overfit the foundation checkpoint to a handful of songs."
         )
+    if args.gradient_accumulation < 1:
+        raise TrainingError("Gradient accumulation must be at least one")
+    validation_interval_steps = int(getattr(args, "validation_interval_steps", 0))
+    if validation_interval_steps < 0:
+        raise TrainingError("Validation interval steps cannot be negative")
 
     device = "cuda"
     transcription = TranscriptionModel.load_model(args.base, device=device)
@@ -457,51 +598,50 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     )
     if progress_callback:
         progress_callback(
-            f"Decoding baseline safety panel: {len(decoded_gate_records)} clips across "
+            f"Preparing baseline safety panel: {len(decoded_gate_records)} clips across "
             f"{len({str(row.get('songId') or 'unknown') for row in decoded_gate_records})} songs",
         )
-    baseline_decoded_metrics = evaluate_loaded_transcription(
-        transcription,
-        decoded_gate_records,
-        progress_callback,
-        decoded_instruments,
-    )
-    best_validation_loss = baseline_validation_loss
+    cached_baseline_evaluation = getattr(args, "baseline_decoded_evaluation", None)
+    if cached_baseline_evaluation:
+        baseline_decoded_metrics = load_cached_decoded_metrics(
+            Path(cached_baseline_evaluation),
+            decoded_gate_records,
+            base_checkpoint=args.base,
+            validation_manifest=args.validation_manifest,
+            instruments=tuple(decoded_instruments or ()),
+        )
+        baseline_decoded_source = str(Path(cached_baseline_evaluation))
+        if progress_callback:
+            progress_callback("Reused the frozen full-validation baseline decode")
+    else:
+        baseline_decoded_metrics = evaluate_loaded_transcription(
+            transcription,
+            decoded_gate_records,
+            progress_callback,
+            decoded_instruments,
+        )
+        baseline_decoded_source = "decoded-live"
+    selected_validation_loss = baseline_validation_loss
+    lowest_validation_loss = baseline_validation_loss
     best_decoded_metrics = None
+    best_selection_rank = None
+    best_checkpoint_index = None
     best_state = None
     epoch_decisions: list[dict[str, Any]] = []
+    checkpoint_decisions: list[dict[str, Any]] = []
     step = 0
+    optimizer_step = 0
     accumulated = 0
-    optimizer.zero_grad(set_to_none=True)
-    for epoch in range(args.epochs):
-        transcription._model.train()
-        epoch_records = list(train_records)
-        random.Random(f"{args.seed}:{epoch}").shuffle(epoch_records)
-        for record in epoch_records:
-            with torch.autocast(device_type="cuda", dtype=dtype):
-                loss = clip_loss(
-                    transcription,
-                    record,
-                    device,
-                    apply_example_weight=True,
-                    timing_weight=args.timing_token_weight,
-                    note_off_weight=args.note_off_token_weight,
-                    eos_weight=args.eos_token_weight,
-                    conditioning_mode=conditioning_mode,
-                ) / args.gradient_accumulation
-            loss.backward()
-            step += 1
-            accumulated += 1
-            if accumulated == args.gradient_accumulation:
-                torch.nn.utils.clip_grad_norm_(parameters, args.gradient_clip_norm)
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-                accumulated = 0
-        if accumulated:
-            torch.nn.utils.clip_grad_norm_(parameters, args.gradient_clip_norm)
-            optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
-            accumulated = 0
+    last_validation_optimizer_step = -1
+
+    def assess_candidate(epoch_number: int, trigger: str) -> dict[str, Any]:
+        """Evaluate one reversible snapshot against loss and decoded-note gates."""
+
+        nonlocal selected_validation_loss, lowest_validation_loss
+        nonlocal best_decoded_metrics, best_selection_rank, best_checkpoint_index
+        nonlocal best_state
+        nonlocal last_validation_optimizer_step
+
         validation_loss = evaluate_loss(
             transcription,
             validation_records,
@@ -510,18 +650,24 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             conditioning_mode,
         )
         decision: dict[str, Any] = {
-            "epoch": epoch + 1,
+            "checkpointIndex": len(checkpoint_decisions) + 1,
+            "epoch": epoch_number,
+            "optimizerStep": optimizer_step,
+            "trigger": trigger,
             "validationLoss": validation_loss,
-            "lossImprovedVersusBestEligible": validation_loss < best_validation_loss,
+            "lossImprovedVersusBaseline": validation_loss < baseline_validation_loss,
         }
+        lowest_validation_loss = min(lowest_validation_loss, validation_loss)
         if progress_callback:
             progress_callback(
-                f"Epoch {epoch + 1}/{args.epochs}; validation loss {validation_loss:.6f}",
+                f"Epoch {epoch_number}/{args.epochs}; optimizer step {optimizer_step}; "
+                f"validation loss {validation_loss:.6f}",
             )
-        if validation_loss < best_validation_loss:
+        if validation_loss < baseline_validation_loss:
             if progress_callback:
                 progress_callback(
-                    f"Epoch {epoch + 1}: loss improved; decoding the multi-song safety panel",
+                    f"Checkpoint {decision['checkpointIndex']}: loss improved; "
+                    "decoding the multi-song safety panel",
                 )
             candidate_decoded_metrics = evaluate_loaded_transcription(
                 transcription,
@@ -545,26 +691,96 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             decision["decodedGate"] = gate
             if gate["passed"]:
                 decision["eligible"] = True
-                best_validation_loss = validation_loss
-                best_decoded_metrics = candidate_decoded_metrics
-                best_state = {
-                    name: parameter.detach().cpu().clone()
-                    for name, parameter in transcription._model.state_dict().items()
-                    if name in trainable_names
-                }
+                rank = decoded_selection_rank(candidate_decoded_metrics, validation_loss)
+                decision["selectionRank"] = list(rank)
+                decision["becameSelectionLeader"] = (
+                    best_selection_rank is None or rank > best_selection_rank
+                )
+                if decision["becameSelectionLeader"]:
+                    best_selection_rank = rank
+                    best_checkpoint_index = decision["checkpointIndex"]
+                    selected_validation_loss = validation_loss
+                    best_decoded_metrics = candidate_decoded_metrics
+                    best_state = {
+                        name: parameter.detach().cpu().clone()
+                        for name, parameter in transcription._model.state_dict().items()
+                        if name in trainable_names
+                    }
             else:
                 decision["eligible"] = False
+                decision["becameSelectionLeader"] = False
                 decision["rejectionReason"] = "decoded-note safety gate failed"
         else:
             decision["eligible"] = False
-            decision["rejectionReason"] = "validation loss did not beat the best eligible checkpoint"
-        epoch_decisions.append(decision)
+            decision["becameSelectionLeader"] = False
+            decision["rejectionReason"] = (
+                "validation loss did not beat the immutable baseline"
+            )
+        checkpoint_decisions.append(decision)
+        if trigger == "epoch-end":
+            epoch_decisions.append(decision)
+        last_validation_optimizer_step = optimizer_step
         print(json.dumps(decision), flush=True)
+        transcription._model.train()
+        return decision
+
+    optimizer.zero_grad(set_to_none=True)
+    for epoch in range(args.epochs):
+        transcription._model.train()
+        epoch_records = list(train_records)
+        random.Random(f"{args.seed}:{epoch}").shuffle(epoch_records)
+        for record in epoch_records:
+            with torch.autocast(device_type="cuda", dtype=dtype):
+                loss = clip_loss(
+                    transcription,
+                    record,
+                    device,
+                    apply_example_weight=True,
+                    timing_weight=args.timing_token_weight,
+                    note_off_weight=args.note_off_token_weight,
+                    eos_weight=args.eos_token_weight,
+                    note_on_weight=args.note_on_token_weight,
+                    conditioning_mode=conditioning_mode,
+                ) / args.gradient_accumulation
+            loss.backward()
+            step += 1
+            accumulated += 1
+            if accumulated == args.gradient_accumulation:
+                torch.nn.utils.clip_grad_norm_(parameters, args.gradient_clip_norm)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+                accumulated = 0
+                optimizer_step += 1
+                if should_run_periodic_validation(
+                    optimizer_step, validation_interval_steps
+                ):
+                    assess_candidate(epoch + 1, "optimizer-interval")
+        if accumulated:
+            torch.nn.utils.clip_grad_norm_(parameters, args.gradient_clip_norm)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            accumulated = 0
+            optimizer_step += 1
+            if should_run_periodic_validation(
+                optimizer_step, validation_interval_steps
+            ):
+                assess_candidate(epoch + 1, "optimizer-interval")
+        if last_validation_optimizer_step != optimizer_step:
+            assess_candidate(epoch + 1, "epoch-end")
+        elif checkpoint_decisions and (
+            not epoch_decisions or epoch_decisions[-1] is not checkpoint_decisions[-1]
+        ):
+            # The periodic checkpoint happened exactly on the final update of
+            # this epoch. Reuse it as the epoch summary without decoding twice.
+            epoch_decisions.append(checkpoint_decisions[-1])
     if best_state is None:
         raise TrainingError(
-            "No epoch improved validation loss while passing decoded multi-song note gates; "
+            "No evaluated checkpoint improved validation loss while passing decoded "
+            "multi-song note gates; "
             "no candidate checkpoint was written"
         )
+    for decision in checkpoint_decisions:
+        decision["selected"] = decision["checkpointIndex"] == best_checkpoint_index
     transcription._model.load_state_dict(best_state, strict=False)
     weight_delta = summarize_weight_delta(
         transcription._model,
@@ -584,14 +800,39 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "trainLastLayers": args.train_last_layers,
         "learningRate": args.learning_rate,
         "timingTokenWeight": args.timing_token_weight,
+        "noteOnTokenWeight": args.note_on_token_weight,
         "noteOffTokenWeight": args.note_off_token_weight,
         "eosTokenWeight": args.eos_token_weight,
         "epochs": args.epochs,
+        "validationIntervalSteps": validation_interval_steps,
+        "optimizerSteps": optimizer_step,
         "seed": args.seed,
+        "reproducibility": {
+            "numericSeed": numeric_seed,
+            "torchVersion": str(torch.__version__),
+            "cudaRuntimeVersion": str(torch.version.cuda),
+            "gpu": torch.cuda.get_device_name(0),
+            "cublasWorkspaceConfig": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+            "deterministicAlgorithms": True,
+            "cudnnBenchmark": False,
+            "cudnnDeterministic": True,
+            "allowTf32": False,
+        },
         "baselineValidationLoss": baseline_validation_loss,
-        "bestValidationLoss": best_validation_loss,
+        "bestValidationLoss": selected_validation_loss,
+        "selectedValidationLoss": selected_validation_loss,
+        "lowestObservedValidationLoss": lowest_validation_loss,
         "decodedCheckpointSelection": {
-            "schema": "polymath-decoded-checkpoint-selection-v1",
+            "schema": "polymath-decoded-checkpoint-selection-v2",
+            "ranking": [
+                "100ms.microF1",
+                "100ms.recall",
+                "250ms.microF1",
+                "250ms.recall",
+                "negativeValidationLoss",
+            ],
+            "selectedCheckpointIndex": best_checkpoint_index,
+            "selectedRank": list(best_selection_rank) if best_selection_rank else None,
             "clipsPerSong": decoded_gate_clips_per_song,
             "records": [
                 {
@@ -603,9 +844,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                 for record in decoded_gate_records
             ],
             "instrumentConstraint": list(decoded_instruments or ()),
+            "baselineDecodedSource": baseline_decoded_source,
             "baseline": baseline_decoded_metrics,
             "bestCandidate": best_decoded_metrics,
             "epochDecisions": epoch_decisions,
+            "checkpointDecisions": checkpoint_decisions,
         },
         "weightDelta": weight_delta,
         "commercialUseAllowed": False,
@@ -621,6 +864,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-manifest", type=Path, required=True)
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--baseline-decoded-evaluation",
+        type=Path,
+        help="Reuse raw original predictions from a matching frozen full-validation evaluation.",
+    )
     parser.add_argument("--execute", action="store_true", help="Allow optimizer updates; otherwise audit only")
     parser.add_argument("--rights-acknowledgement", default="")
     parser.add_argument("--minimum-train-songs", type=int, default=20)
@@ -630,7 +878,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--gradient-clip-norm", type=float, default=1.0)
+    parser.add_argument(
+        "--validation-interval-steps",
+        type=int,
+        default=0,
+        help=(
+            "Run frozen loss and decoded-note gates every N optimizer updates; "
+            "zero keeps epoch-only validation."
+        ),
+    )
     parser.add_argument("--timing-token-weight", type=float, default=1.15)
+    parser.add_argument("--note-on-token-weight", type=float, default=1.0)
     parser.add_argument("--note-off-token-weight", type=float, default=1.25)
     parser.add_argument("--eos-token-weight", type=float, default=1.20)
     parser.add_argument(
@@ -659,6 +917,8 @@ def main() -> None:
     args.validation_manifest = args.validation_manifest.resolve()
     args.base = args.base.resolve()
     args.out = args.out.resolve()
+    if args.baseline_decoded_evaluation:
+        args.baseline_decoded_evaluation = args.baseline_decoded_evaluation.resolve()
     train_records = read_jsonl(args.train_manifest)
     validation_records = read_jsonl(args.validation_manifest)
     audit = {

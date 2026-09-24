@@ -1,0 +1,61 @@
+{
+  "schema": "polymath-unlabeled-transfer-safety-evidence-v1",
+  "candidateVersion": "phase94-opened-transfer-structural-audit-v006",
+  "artifacts": {
+    "planSha256": "326cc72984594de9d15480867405f62d28925ffb364beb41065e81e9169942e1",
+    "freezeSha256": "ae9c7b30419333758b37dac078aed3f26dc82809addce9b49fbd7286301399fa",
+    "auditCodeSha256": "dd960db8c19daa83ac2f912eb376c9844b0149034b54d1ad1697ffcb8d27a62e",
+    "auditResultSha256": "e0e8acb5c54b3949637c05316b02de725cdfe8ac3accb1757bfccf61bd2b4d67",
+    "primaryPlayableSha256": "0db3214ff836f1e2e04ee41013d2966857dd604f0038fdf6f533cdb77c5a3ee9",
+    "candidatePlayableSha256": "8e8db3672e0beb67652ecc0ccb383997956bac7be799c5be33f8698555bbcc91",
+    "mappingCommitment": "37e0f17695be601e13b5a3bbd03794be4650264257dc5bed8acfea8ffedee514"
+  },
+  "noteComparison": {
+    "primaryNotes": 836,
+    "candidateNotes": 867,
+    "candidateNoteCountRatio": 1.037081,
+    "unchangedPairs": 723,
+    "movedPairs": 70,
+    "removedPrimary": 43,
+    "addedCandidate": 74,
+    "changedOnsetBoundaryViolations": 0,
+    "maximumPairedOnsetShiftSeconds": 0.1,
+    "p95PairedOnsetShiftSeconds": 0.1,
+    "maximumPairedReleaseShiftSeconds": 0.05,
+    "p95PairedReleaseShiftSeconds": 0.05
+  },
+  "performanceSafety": {
+    "primaryRapidRetriggers75ms": 0,
+    "candidateRapidRetriggers75ms": 0,
+    "rapidRetriggers75msPer1000Increase": 0.0,
+    "primaryRapidRetriggers100ms": 1,
+    "candidateRapidRetriggers100ms": 1,
+    "primaryDurationP95Seconds": 2.4,
+    "candidateDurationP95Seconds": 2.397,
+    "durationP95Ratio": 0.99875,
+    "primaryNotesLongerThan2Seconds": 66,
+    "candidateNotesLongerThan2Seconds": 72,
+    "primaryMaximumDurationSeconds": 2.48,
+    "candidateMaximumDurationSeconds": 2.48
+  },
+  "renderSafety": {
+    "absoluteRmsDifferenceDb": 0.169054,
+    "peakA": 0.36203,
+    "peakB": 0.36203,
+    "clippedSamplesA": 0,
+    "clippedSamplesB": 0,
+    "durationMismatchFrames": 0
+  },
+  "gate": {
+    "structuralSafetyGatePassed": true,
+    "failedChecks": []
+  },
+  "finding": "All 187 change records (70 moved pairs, 43 removals, and 74 additions) are confined to the frozen 0.60-second boundary region. The decoder preserves rapid-retrigger counts, duration P95, maximum hold length, render duration, and peak headroom; the blinded renders differ by only 0.169054 dB RMS and neither clips.",
+  "decision": "pass-structural-transfer-safety-and-await-blind-listener-verdict",
+  "blindMappingInspected": false,
+  "listenerVerdictRecorded": false,
+  "labelsPresent": false,
+  "accuracyEvidenceAllowed": false,
+  "sealedTestOpened": false,
+  "productionPromotionAllowed": false
+}

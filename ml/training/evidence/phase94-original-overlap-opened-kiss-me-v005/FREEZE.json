@@ -1,0 +1,21 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-original-overlap-opened-kiss-me-v005",
+  "frozenAt": "2026-09-21T02:15:33Z",
+  "plan": "ml/training/configs/phase94-original-overlap-opened-kiss-me-v005.json",
+  "planSha256": "8fa18b10f88673896744e96363f71eee3b1411cfe2808a65bd65b464edb07352",
+  "checkpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+  "developmentWinnerResultSha256": "0173455eed4b714527b352d95e58764d89b6a29f57e3aea4b22707c0b5850bac",
+  "inferencePackReceiptSha256": "0930434a5efa1e0f2aed3ace601a0ef16a7c25ebc11874225d6f384c573c2288",
+  "primaryManifestSha256": "7f135cfcedece257c00b8dc3abba97fe33d42d06f7ec0c344e90b478ebbd452f",
+  "overlapManifestSha256": "8a647b1bbf6567f9e4b73f90ff6f4f84b40d9b2f80d4cd7a6a4c037c3d88ed1b",
+  "fixedRadiusSeconds": 0.6,
+  "onsetMatchToleranceSeconds": 0.1,
+  "maximumGpuDecodedClips": 80,
+  "retuningAllowed": false,
+  "labelsPresent": false,
+  "accuracyEvidenceAllowed": false,
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "commercialUseAllowed": false
+}

@@ -18,6 +18,17 @@
 .catalog-status { display: inline-flex; align-items: center; width: max-content; padding: 5px 8px; border-radius: 999px; color: #cec9e5; background: rgba(150,140,180,.14); font-size: .61rem; font-weight: 850; text-transform: uppercase; }
 .catalog-status.published { color: #8ff0cc; background: rgba(38,170,126,.14); }
 .catalog-status.archived { color: #f5adb8; background: rgba(190,67,89,.13); }
+.catalog-core-pricing { display: grid; gap: 13px; padding: clamp(16px,2.5vw,24px); border: 1px solid var(--line); border-radius: 20px; background: rgba(99,82,201,.055); }
+.catalog-core-pricing > header { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.catalog-core-pricing > header h3 { margin: 3px 0 0; }
+.catalog-core-pricing > header > p { max-width: 540px; margin: 0; color: var(--muted); font-size: .72rem; line-height: 1.5; }
+.catalog-core-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.catalog-core-grid > article { display: grid; align-content: start; gap: 11px; min-width: 0; padding: 15px; border: 1px solid rgba(150,140,220,.16); border-radius: 15px; background: rgba(255,255,255,.045); }
+.catalog-core-grid > article > header { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.catalog-core-grid > article > header div { display: grid; gap: 2px; min-width: 0; }
+.catalog-core-grid > article > header span { color: var(--muted); font-size: .67rem; text-transform: capitalize; }
+.catalog-core-grid > article > header b { padding: 4px 7px; border-radius: 999px; color: #e6c266; background: rgba(226,179,72,.1); font-size: .58rem; text-transform: uppercase; }
+.catalog-core-grid .primary { width: 100%; }
 .catalog-plan-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 11px; }
 .catalog-plan-grid > article { display: grid; align-content: start; gap: 13px; min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.05); }
 .catalog-plan-grid > article.archived { opacity: .65; }
@@ -46,6 +57,7 @@
 .catalog-admin-status { position: sticky; bottom: 12px; z-index: 5; }
 @media (max-width: 940px) {
   .catalog-admin-layout { grid-template-columns: 1fr; }
+  .catalog-core-grid { grid-template-columns: 1fr; }
   .catalog-plan-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 620px) {
@@ -55,5 +67,6 @@
   .catalog-list article { grid-template-columns: minmax(0,1fr) auto; }
   .catalog-list article button { grid-column: 1 / -1; width: 100%; }
   .catalog-editor > header { align-items: stretch; flex-direction: column; }
+  .catalog-core-pricing > header { align-items: stretch; flex-direction: column; }
   .catalog-safety-note { grid-template-columns: 1fr; }
 }

@@ -87,6 +87,15 @@ def load_arranger(repo_root: Path):
     return arrange_payload
 
 
+def load_production_pipeline(repo_root: Path):
+    server_path = str(repo_root / "server")
+    if server_path not in sys.path:
+        sys.path.insert(0, server_path)
+    from piano_arranger_pipeline import run_pipeline
+
+    return run_pipeline
+
+
 def flattened_metrics(metrics: dict[str, Any]) -> dict[str, float]:
     output: dict[str, float] = {}
     for tolerance in (50, 100, 250):
@@ -196,10 +205,84 @@ def ranking_key(row: dict[str, Any]) -> tuple[float, ...]:
     )
 
 
+def subset_trial(row: dict[str, Any], song_ids: set[str]) -> dict[str, Any]:
+    selected = [
+        song for song_id, song in row["songs"].items() if song_id in song_ids
+    ]
+    baseline = {
+        name: round(
+            weighted_average(
+                [
+                    (float(song["baselineFlattened"][name]), float(song["weight"]))
+                    for song in selected
+                ]
+            ),
+            6,
+        )
+        for name in selected[0]["baselineFlattened"]
+    }
+    candidate = {
+        name: round(
+            weighted_average(
+                [
+                    (float(song["candidateFlattened"][name]), float(song["weight"]))
+                    for song in selected
+                ]
+            ),
+            6,
+        )
+        for name in selected[0]["candidateFlattened"]
+    }
+    deltas = {
+        name: round(candidate[name] - value, 6) for name, value in baseline.items()
+    }
+    trusted_regressions = [
+        song_id
+        for song_id, song in row["songs"].items()
+        if song_id in song_ids
+        and float(song["weight"]) >= 0.75
+        and (
+            float(song["candidateFlattened"]["exactF1_100ms"])
+            - float(song["baselineFlattened"]["exactF1_100ms"])
+        )
+        < -0.01
+    ]
+    gates = promotion_gates(baseline, candidate, trusted_regressions)
+    return {
+        "policy": row["policy"],
+        "passedAllGates": all(gates.values()),
+        "passedGateCount": sum(gates.values()),
+        "failedGates": [name for name, passed in gates.items() if not passed],
+        "baseline": baseline,
+        "candidate": candidate,
+        "deltas": deltas,
+        "songs": row["songs"],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--arranger-profile", type=Path, required=True)
+    parser.add_argument(
+        "--pipeline",
+        choices=("arranger", "production-v003"),
+        default="arranger",
+        help="Render candidates through the legacy arranger or the complete current v003 pipeline.",
+    )
+    parser.add_argument("--recovery-profile", type=Path)
+    parser.add_argument("--register-profile", type=Path)
+    parser.add_argument(
+        "--melody-decoder-config",
+        type=Path,
+        help="Optional focused-vocal melody decoder profile applied after a pass is accepted.",
+    )
+    parser.add_argument("--decoder-maximum-unanchored-polyphony", type=parse_grid)
+    parser.add_argument("--decoder-upper-candidate-preferences", type=parse_grid)
+    parser.add_argument("--decoder-jump-penalties", type=parse_grid)
+    parser.add_argument("--decoder-decode-all-candidates", type=parse_booleans)
+    parser.add_argument("--decoder-retain-unmatched-primary", type=parse_booleans)
+    parser.add_argument("--decoder-minimum-input-notes-per-second", type=parse_grid)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--support-scopes", type=parse_choices, default=("primary-pitched",)
@@ -224,6 +307,88 @@ def main() -> None:
     manifest = load_json(manifest_path)
     style_profile = load_json(profile_path)
     arrange_payload = load_arranger(repo_root)
+    run_pipeline = None
+    recovery_profile_path = None
+    register_profile_path = None
+    recovery_profile = None
+    register_profile = None
+    melody_decoder_path = (
+        args.melody_decoder_config.resolve() if args.melody_decoder_config else None
+    )
+    melody_decoder = None
+    if melody_decoder_path:
+        melody_decoder = load_json(melody_decoder_path)
+        melody_decoder["enabled"] = True
+    decoder_variants: list[dict[str, Any] | None] = [None]
+    if melody_decoder is not None:
+        polyphony_grid = args.decoder_maximum_unanchored_polyphony or (
+            float(melody_decoder.get("maximum_unanchored_polyphony", 3)),
+        )
+        upper_grid = args.decoder_upper_candidate_preferences or (
+            float(melody_decoder.get("upper_candidate_preference", 0.0)),
+        )
+        jump_grid = args.decoder_jump_penalties or (
+            float(melody_decoder.get("jump_penalty_per_semitone", 0.08)),
+        )
+        decode_all_grid = args.decoder_decode_all_candidates or (
+            bool(melody_decoder.get("decode_all_candidates_after_acceptance", False)),
+        )
+        recover_primary_grid = args.decoder_retain_unmatched_primary or (
+            bool(melody_decoder.get("retain_unmatched_primary_when_applied", True)),
+        )
+        minimum_density_grid = args.decoder_minimum_input_notes_per_second or (
+            float(melody_decoder.get("minimum_input_notes_per_second", 0.0)),
+        )
+        decoder_variants = []
+        for (
+            maximum_polyphony,
+            upper_preference,
+            jump_penalty,
+            decode_all,
+            recover_primary,
+            minimum_density,
+        ) in itertools.product(
+            polyphony_grid,
+            upper_grid,
+            jump_grid,
+            decode_all_grid,
+            recover_primary_grid,
+            minimum_density_grid,
+        ):
+            variant = copy.deepcopy(melody_decoder)
+            variant["maximum_unanchored_polyphony"] = int(round(maximum_polyphony))
+            variant["upper_candidate_preference"] = float(upper_preference)
+            variant["jump_penalty_per_semitone"] = float(jump_penalty)
+            variant["decode_all_candidates_after_acceptance"] = bool(decode_all)
+            variant["retain_unmatched_primary_when_applied"] = bool(recover_primary)
+            variant["minimum_input_notes_per_second"] = float(minimum_density)
+            decoder_variants.append(variant)
+    if args.pipeline == "production-v003":
+        recovery_profile_path = (
+            args.recovery_profile
+            or repo_root / "server" / "models" / "piano-arranger" / "raw-support-selector-v001.json"
+        ).resolve()
+        register_profile_path = (
+            args.register_profile
+            or repo_root / "server" / "models" / "piano-arranger" / "adaptive-register-v003.json"
+        ).resolve()
+        recovery_profile = load_json(recovery_profile_path)
+        register_profile = load_json(register_profile_path)
+        run_pipeline = load_production_pipeline(repo_root)
+
+    def render(source: dict[str, Any]) -> dict[str, Any]:
+        if run_pipeline is None:
+            return arrange_payload(
+                source, "full", style_profile=copy.deepcopy(style_profile)
+            )
+        output, _diagnostics = run_pipeline(
+            source,
+            "full",
+            copy.deepcopy(style_profile),
+            copy.deepcopy(recovery_profile),
+            copy.deepcopy(register_profile),
+        )
+        return output
     prepared: list[dict[str, Any]] = []
     for pair in manifest.get("pairs") or []:
         pair_id = str(pair["id"])
@@ -279,11 +444,20 @@ def main() -> None:
             args.support_tolerances,
             args.minimum_support_ratios,
             args.retain_unmatched_primary,
+            decoder_variants,
         )
     )
     rows: list[dict[str, Any]] = []
     best_artifacts: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
-    for scope, pitch_mode, tolerance, minimum_ratio, retain_primary in combinations:
+    render_cache: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
+    for (
+        scope,
+        pitch_mode,
+        tolerance,
+        minimum_ratio,
+        retain_primary,
+        decoder_variant,
+    ) in combinations:
         song_rows: dict[str, Any] = {}
         candidate_metrics: list[tuple[float, dict[str, Any]]] = []
         artifacts: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
@@ -300,14 +474,27 @@ def main() -> None:
                 support_tolerance_seconds=tolerance,
                 minimum_pass_support_ratio=minimum_ratio,
                 retain_unmatched_primary=retain_primary,
+                focused_melody_decoder=copy.deepcopy(decoder_variant),
             )
-            arranged = arrange_payload(
-                fused, "full", style_profile=copy.deepcopy(style_profile)
-            )
-            metrics = evaluate(
-                item["reference"],
-                notes_inside_ranges(normalize_notes(arranged), item["ranges"]),
-            )
+            note_fingerprint = hashlib.sha256(
+                json.dumps(
+                    fused.get("notes") or [],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            cache_key = (item["id"], note_fingerprint)
+            cached = render_cache.get(cache_key)
+            if cached is None:
+                arranged = render(copy.deepcopy(fused))
+                metrics = evaluate(
+                    item["reference"],
+                    notes_inside_ranges(normalize_notes(arranged), item["ranges"]),
+                )
+                render_cache[cache_key] = (arranged, metrics)
+            else:
+                arranged, metrics = cached
             weight = item["weight"]
             candidate_metrics.append((weight, metrics))
             exact_delta = (
@@ -327,6 +514,8 @@ def main() -> None:
                 "pitchClassF1_250ms": metrics["pitchClassOnset250ms"]["f1"],
                 "pitchClassRecall_250ms": metrics["pitchClassOnset250ms"]["recall"],
                 "physicalSevereCutoffRate": metrics["physicalDuration"]["severeCutoffRate"],
+                "baselineFlattened": flattened_metrics(item["baselineMetrics"]),
+                "candidateFlattened": flattened_metrics(metrics),
             }
             artifacts[item["id"]] = (fused, arranged)
         candidate_aggregate = aggregate_song_metrics(candidate_metrics)
@@ -345,6 +534,7 @@ def main() -> None:
                 "supportToleranceSeconds": tolerance,
                 "minimumPassSupportRatio": minimum_ratio,
                 "retainUnmatchedPrimary": retain_primary,
+                "focusedMelodyDecoder": copy.deepcopy(decoder_variant),
             },
             "passedAllGates": all(gates.values()),
             "passedGateCount": sum(gates.values()),
@@ -358,6 +548,93 @@ def main() -> None:
             best_artifacts = artifacts
 
     rows.sort(key=ranking_key, reverse=True)
+    song_ids = [item["id"] for item in prepared]
+    folds: list[dict[str, Any]] = []
+    for holdout_id in song_ids:
+        training_ids = set(song_ids) - {holdout_id}
+        fold_trials = [subset_trial(row, training_ids) for row in rows]
+        fold_trials.sort(key=ranking_key, reverse=True)
+        winner = fold_trials[0]
+        heldout = winner["songs"][holdout_id]
+        heldout_baseline = heldout["baselineFlattened"]
+        heldout_candidate = heldout["candidateFlattened"]
+        heldout_deltas = {
+            name: round(
+                float(heldout_candidate[name]) - float(heldout_baseline[name]), 6
+            )
+            for name in heldout_baseline
+        }
+        folds.append(
+            {
+                "holdoutSong": holdout_id,
+                "trainingSongs": sorted(training_ids),
+                "selectedPolicy": winner["policy"],
+                "trainingPassedAllGates": winner["passedAllGates"],
+                "trainingFailedGates": winner["failedGates"],
+                "trainingDeltas": winner["deltas"],
+                "heldout": {
+                    "focusedPassApplied": heldout["focusedPassApplied"],
+                    "focusedSupportRatio": heldout["focusedSupportRatio"],
+                    "focusedNotesInserted": heldout["focusedNotesInserted"],
+                    "baseline": heldout_baseline,
+                    "candidate": heldout_candidate,
+                    "deltas": heldout_deltas,
+                },
+            }
+        )
+
+    loso_baseline = {
+        name: round(
+            weighted_average(
+                [
+                    (
+                        float(fold["heldout"]["baseline"][name]),
+                        float(next(item["weight"] for item in prepared if item["id"] == fold["holdoutSong"])),
+                    )
+                    for fold in folds
+                ]
+            ),
+            6,
+        )
+        for name in folds[0]["heldout"]["baseline"]
+    }
+    loso_candidate = {
+        name: round(
+            weighted_average(
+                [
+                    (
+                        float(fold["heldout"]["candidate"][name]),
+                        float(next(item["weight"] for item in prepared if item["id"] == fold["holdoutSong"])),
+                    )
+                    for fold in folds
+                ]
+            ),
+            6,
+        )
+        for name in folds[0]["heldout"]["candidate"]
+    }
+    loso_deltas = {
+        name: round(loso_candidate[name] - value, 6)
+        for name, value in loso_baseline.items()
+    }
+    loso_nonregressing = all(
+        float(fold["heldout"]["deltas"]["exactF1_100ms"]) >= -0.005
+        for fold in folds
+    )
+    loso_gates = promotion_gates(
+        loso_baseline,
+        loso_candidate,
+        [
+            fold["holdoutSong"]
+            for fold in folds
+            if float(fold["heldout"]["deltas"]["exactF1_100ms"]) < -0.01
+        ],
+    )
+    loso_decision = (
+        "CANDIDATE_FOR_NEW_SEALED_HOLDOUT"
+        if all(loso_gates.values()) and loso_nonregressing
+        else "REJECT_NO_WHOLE_SONG_TRANSFER"
+    )
     best = rows[0]
     # Recompute the winning artifacts after sorting. This avoids depending on
     # incidental grid traversal order and makes the saved policy reproducible.
@@ -375,12 +652,13 @@ def main() -> None:
             support_tolerance_seconds=winner["supportToleranceSeconds"],
             minimum_pass_support_ratio=winner["minimumPassSupportRatio"],
             retain_unmatched_primary=winner["retainUnmatchedPrimary"],
+            focused_melody_decoder=copy.deepcopy(
+                winner.get("focusedMelodyDecoder")
+            ),
         )
         best_artifacts[item["id"]] = (
             fused,
-            arrange_payload(
-                fused, "full", style_profile=copy.deepcopy(style_profile)
-            ),
+            render(fused),
         )
     for pair_id, (fused, arranged) in best_artifacts.items():
         atomic_json(output_dir / "best-fused" / f"{pair_id}.json", fused)
@@ -392,9 +670,32 @@ def main() -> None:
         "manifestSha256": sha256_file(manifest_path),
         "arrangerProfile": str(profile_path),
         "arrangerProfileSha256": sha256_file(profile_path),
+        "pipeline": args.pipeline,
+        "recoveryProfile": str(recovery_profile_path) if recovery_profile_path else None,
+        "recoveryProfileSha256": (
+            sha256_file(recovery_profile_path) if recovery_profile_path else None
+        ),
+        "registerProfile": str(register_profile_path) if register_profile_path else None,
+        "registerProfileSha256": (
+            sha256_file(register_profile_path) if register_profile_path else None
+        ),
+        "melodyDecoderProfile": str(melody_decoder_path) if melody_decoder_path else None,
+        "melodyDecoderProfileSha256": (
+            sha256_file(melody_decoder_path) if melody_decoder_path else None
+        ),
         "trialCount": len(rows),
+        "uniqueRenderedSongCandidates": len(render_cache),
         "baseline": baseline_aggregate,
         "best": best,
+        "wholeSongLeaveOneOut": {
+            "decision": loso_decision,
+            "allHeldoutExact100WithinHalfPoint": loso_nonregressing,
+            "gates": loso_gates,
+            "baseline": loso_baseline,
+            "candidate": loso_candidate,
+            "deltas": loso_deltas,
+            "folds": folds,
+        },
         "leaderboard": rows[: max(1, min(args.top_k, len(rows)))],
     }
     atomic_json(output_dir / "best-policy.json", winner)
@@ -407,6 +708,8 @@ def main() -> None:
                 "bestPolicy": winner,
                 "bestDeltas": best["deltas"],
                 "failedGates": best["failedGates"],
+                "leaveOneSongOutDecision": loso_decision,
+                "leaveOneSongOutDeltas": loso_deltas,
                 "output": str(output_dir),
             },
             indent=2,

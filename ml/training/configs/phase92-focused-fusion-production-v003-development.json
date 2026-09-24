@@ -1,0 +1,43 @@
+{
+  "schema": "polymath-focused-fusion-policy-manifest-v1",
+  "purpose": "Development-only search for a focused-vocal pass that improves the complete production-v003 piano pipeline. Every target has already been opened; none may certify the 90-percent claim.",
+  "commercialUseAllowed": false,
+  "pairs": [
+    {
+      "id": "kiss-me",
+      "primary": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/fresh-production-replay/kiss-me-postprocessed-full.json",
+      "focused": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/kiss-vocals-phase46-v007-raw.json",
+      "target": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/kiss-me-pianella-trusted-000-150.json",
+      "alignmentReport": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/kiss-me-trusted-reference-000-150/alignment-to-fresh-raw-seeded-v2/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/focused-fusion-search-v001/baseline/kiss-me.json",
+      "weight": 1.0
+    },
+    {
+      "id": "back-to-december",
+      "primary": "D:/Polymath Training/phase-35-kiss-me-authored-register-2026-09-15/loso-production-sources-a1-c8/back-to-december.json",
+      "focused": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/back-vocals-phase46-v007-raw.json",
+      "target": "C:/Users/admin/Documents/Polymath Training/phase-5-route-specific-piano-2026-09-02/normalized-targets/back-to-december.json",
+      "alignmentReport": "C:/Users/admin/Documents/Polymath Training/phase-8-honest-holdout-2026-09-10/audio-alignments/back-to-december-tight250/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/focused-fusion-search-v001/baseline/back-to-december.json",
+      "weight": 0.85
+    },
+    {
+      "id": "cruel-summer",
+      "primary": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/transcriptions/cruel-summer-original-postprocessed-full.json",
+      "focused": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/cruel-vocals-phase46-v007-raw.json",
+      "target": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/transcriptions/cruel-summer-pianella-raw-reference.json",
+      "alignmentReport": "D:/Polymath Training/phase-38-cruel-summer-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v003/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/focused-fusion-search-v001/baseline/cruel-summer.json",
+      "weight": 0.9
+    },
+    {
+      "id": "we-are-never-getting-back-together",
+      "primary": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-original-postprocessed-full.json",
+      "focused": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-vocals-phase46-v007-raw.json",
+      "target": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-pianella-raw-reference.json",
+      "alignmentReport": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/focused-fusion-search-v001/baseline/we-are-never-getting-back-together.json",
+      "weight": 1.0
+    }
+  ]
+}

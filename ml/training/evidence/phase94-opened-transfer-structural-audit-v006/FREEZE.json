@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-opened-transfer-structural-audit-v006",
+  "frozenAt": "2026-09-21T02:36:10Z",
+  "plan": "ml/training/configs/phase94-opened-transfer-structural-audit-v006.json",
+  "planSha256": "326cc72984594de9d15480867405f62d28925ffb364beb41065e81e9169942e1",
+  "auditCodeSha256": "dd960db8c19daa83ac2f912eb376c9844b0149034b54d1ad1697ffcb8d27a62e",
+  "primaryPlayableSha256": "0db3214ff836f1e2e04ee41013d2966857dd604f0038fdf6f533cdb77c5a3ee9",
+  "candidatePlayableSha256": "8e8db3672e0beb67652ecc0ccb383997956bac7be799c5be33f8698555bbcc91",
+  "audioRenderManifestSha256": "f02c9306eecd0b5a87cdb73d8777a81c1291b98ccfb844c0fc791498481c3adf",
+  "mappingCommitment": "37e0f17695be601e13b5a3bbd03794be4650264257dc5bed8acfea8ffedee514",
+  "blindMappingInspected": false,
+  "noteLevelDifferencesInspected": false,
+  "thresholdChangesAllowed": false,
+  "labelsPresent": false,
+  "accuracyEvidenceAllowed": false,
+  "sealedTestOpened": false,
+  "productionPromotionAllowed": false
+}

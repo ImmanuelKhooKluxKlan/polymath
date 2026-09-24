@@ -1,0 +1,21 @@
+{
+  "schema": "polymath-direct-piano-candidate-freeze-v1",
+  "candidateVersion": "phase94-v001",
+  "frozenAt": "2026-09-19T07:08:00Z",
+  "candidatePlanSha256": "a8663cc43f4cf788fb799ba1e927536ed0ba8914743fbd4359aa3bb444177b5b",
+  "trainerSha256": "e09577d2bb3f3349f9fadffa32ce87fb2db1fc76b392755700ce35ef6046b7e1",
+  "evaluatorSha256": "c7d8db2ae1cad245216f6aba4c0fb53e9ca55ec49da9579519642778ba34ecea",
+  "selectionManifestSha256": "f2cc2eb447c1736d42b44d2ae0ee8049799966564cdc4ee04f2c23d64c09873d",
+  "trainManifestSha256": "0b3f61eb84370e55dd9345039f1b9b094a118ec38659a1922bd54300e69b1f12",
+  "validationManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+  "baseCheckpoint": "/workspace/models/original/model.safetensors",
+  "baseCheckpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+  "baseCheckpointBytes": 5465642136,
+  "candidateOutput": "/workspace/models/muscriptor-tester/phase94-v001",
+  "sealedTestSongs": 8,
+  "sealedTestMaterialized": false,
+  "sealedTestOpened": false,
+  "foundationTrainingOverlap": "unknown",
+  "commercialUseAllowed": false,
+  "productionCheckpointUnchanged": true
+}

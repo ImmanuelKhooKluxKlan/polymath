@@ -1,0 +1,60 @@
+{
+  "schema": "polymath-overlap-release-preserving-experiment-plan-v1",
+  "candidateVersion": "phase94-overlap-release-preserving-v003",
+  "status": "frozen-before-execution",
+  "frozenAt": "2026-09-20T17:15:00Z",
+  "supersedes": "phase94-overlap-boundary-decoder-v002",
+  "objective": "Retain the shifted pass's boundary-onset gain without inheriting its excess overlong releases.",
+  "motivation": {
+    "source": "phase94-overlap-boundary-decoder-v002 frozen winner",
+    "winnerRadiusSeconds": 0.60,
+    "microF1_100ms": 0.913561,
+    "songBootstrapLower95_100ms": 0.902543,
+    "baselineOverlongPer1000Matched": 71.801279,
+    "candidateOverlongPer1000Matched": 80.996202,
+    "maximumAllowedIncrease": 2.0,
+    "failedCheck": "overlong_rate"
+  },
+  "immutableInputs": {
+    "primaryEvaluationSha256": "712ddebefe167bc4b7774fc2dd37fe6c3103420242e22388269048f5d38a4247",
+    "overlapEvaluationSha256": "6fea08ddab7b10f57f4545e9989b190548206cb270c91c0255395fb96b53baa6",
+    "primaryManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+    "overlapManifestSha256": "e972e56aeaad4613386023feb3cab69994c6369feac0a0797ad48a7a610f5bd9",
+    "baselineTimelineSha256": "aa43b7ad3e520660451b916fbfaddaf5755cefa6fb5530c739083d1a9612a499",
+    "fullValidationGateSha256": "3c43fa28e25c781942b2d5520c310bb32ec56fbf90b6ef52987c797bbe528435"
+  },
+  "inferencePolicy": {
+    "primaryWindowSeconds": 5.0,
+    "overlapOffsetSeconds": 2.5,
+    "replacementRadiusSeconds": [0.10, 0.15, 0.25, 0.40, 0.60, 0.80],
+    "sameInstrumentAndPitchRequired": true,
+    "onsetMatchToleranceSeconds": 0.10,
+    "pairing": "deterministic nearest-onset one-to-one",
+    "matchedShiftedNoteDuration": "primary absolute release minus shifted onset",
+    "matchedReleaseBeforeShiftedOnsetFallback": "retain primary duration",
+    "unmatchedShiftedNoteDuration": "retain shifted duration",
+    "minimumDurationSeconds": 0.01,
+    "referenceLabelsUsedAtInference": false
+  },
+  "selection": {
+    "firstFilter": "every check in the frozen complete research safety gate must pass",
+    "rankingAfterSafety": [
+      "continuousSong.100ms.microF1",
+      "continuousSong.100ms.recall",
+      "continuousSong.250ms.microF1"
+    ],
+    "noSafeCandidate": "reject the experiment without a winner",
+    "certificationCheck": "complete-song bootstrap lower 95% bound at 100 ms must be at least 0.90"
+  },
+  "code": {
+    "searchSha256": "2c0d0cad13dcc6529e91be59b852df339fbfe0e03cf44197755fa0ead3ec6abb",
+    "testSha256": "ace6e99c8923d6aeac0c48792053d78cbfbe221a5a374181cda865fbe3d30dc6"
+  },
+  "evidenceBoundary": {
+    "dataset": "opened six-song Phase 94 validation only",
+    "sealedTestOpened": false,
+    "productionCheckpointChanged": false,
+    "commercialUseAllowed": false,
+    "note": "This is a response to a known development failure. It can select the next frozen pipeline but cannot itself prove sealed transfer."
+  }
+}

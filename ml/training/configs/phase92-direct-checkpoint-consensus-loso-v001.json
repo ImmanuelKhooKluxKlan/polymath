@@ -1,0 +1,73 @@
+{
+  "schema": "polymath-checkpoint-consensus-loso-manifest-v1",
+  "id": "phase92-direct-checkpoint-consensus-loso-v001",
+  "purpose": "Test whether original, phase46-v007, and phase46-v017 checkpoint agreement can improve direct-piano event/onset accuracy without target access at inference.",
+  "search": {
+    "matchRadiusSeconds": [0.06, 0.1, 0.14, 0.18],
+    "onsetBlend": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "requireBothForOnset": [true, false],
+    "addCorroboratedMissing": [false, true],
+    "corroborationRadiusSeconds": [0.04, 0.08, 0.12],
+    "incumbentExclusionRadiusSeconds": [0.08, 0.12, 0.18]
+  },
+  "eventSelectorSearch": {
+    "clusterRadiusSeconds": [0.1, 0.14, 0.18],
+    "l2": [0.1, 1.0, 10.0],
+    "switchMargin": [0.0, 0.05, 0.1, 0.2, 1.0],
+    "additionThreshold": [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  },
+  "songs": [
+    {
+      "id": "schubert",
+      "reference": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/target/schubert-impromptu-op90-no4-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "candidateEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "variants": {
+        "incumbent": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-schubert-source-only-calibration.json",
+        "checkpointA": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/schubert-phase46-v007.json",
+        "checkpointB": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/schubert-phase46-v017.json"
+      }
+    },
+    {
+      "id": "chopin",
+      "reference": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/target/chopin-etude-op10-no9-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "candidateEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "variants": {
+        "incumbent": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-chopin-final-blind.json",
+        "checkpointA": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/chopin-phase46-v007.json",
+        "checkpointB": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/chopin-phase46-v017.json"
+      }
+    },
+    {
+      "id": "rachmaninoff",
+      "reference": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/target/rachmaninoff-prelude-op32-no12-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "candidateEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "variants": {
+        "incumbent": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-rachmaninoff-final-blind.json",
+        "checkpointA": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/rachmaninoff-phase46-v007.json",
+        "checkpointB": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/rachmaninoff-phase46-v017.json"
+      }
+    },
+    {
+      "id": "debussy",
+      "reference": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/target/debussy-etude-no7-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "candidateEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/alignment/alignment-report.json",
+      "variants": {
+        "incumbent": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-debussy-untouched-blind.json",
+        "checkpointA": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/debussy-phase46-v007.json",
+        "checkpointB": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/direct-checkpoint-complement-v001/arranged/debussy-phase46-v017.json"
+      }
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "schema": "polymath-phase94-full-validation-result-v1",
+  "candidateVersion": "phase94-v003-decoded-selection-control",
+  "evaluatedAt": "2026-09-19T14:20:00Z",
+  "selection": {
+    "policy": "decoded quality after loss eligibility",
+    "selectedCheckpointIndex": 1,
+    "selectedOptimizerStep": 90,
+    "selectedValidationLoss": 1.2794280730278387,
+    "lowestObservedValidationLoss": 1.2758349366033608,
+    "lowestLossOptimizerStep": 358,
+    "finding": "The lowest-loss final step decoded notes worse than the step-90 checkpoint; decoded-quality selection prevented the old trainer from saving the wrong state."
+  },
+  "artifacts": {
+    "baseCheckpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+    "candidateCheckpointSha256": "04728534430931c2f8bd4dd18224157b65f96f3a62d56056635a53b9b50344ea",
+    "trainingMetadataSha256": "cfd1fb1719348b2886c2b9b7aab014771de6822bf4d1980080654b8e7803d864",
+    "trainingLogSha256": "33eebd1de4dbb4fb0094da4dfe53a3719ff412df3b05c029889694b17b52a422",
+    "fullEvaluationSha256": "51264933c4e02474b5f3582879ec8dc0b2384bd642ad0aaf8a57ab04b27c6d23",
+    "fullEvaluationLogSha256": "7889dfe6c11de495d0fae7770e2896a7f298663453cb92883df938919a2e0c0e",
+    "stitchedTimelineSha256": "f41b65b3cdd711cec0e12ec41b47b4bf00e3f899c497dd60b304ddc7aeb2fe00",
+    "originalComparisonSha256": "93adc49bab108949c7a7951974b8f38e04b83af830dd127ce1783fd6c52ba140",
+    "changeAttributionSha256": "d5f5c0175257116d534c8d2914e6b061c62bb933b932e794f49120e9fe734fbc",
+    "gateResultSha256": "16b9699bd3b2c8791f8fc63052966dbb7eafdd98f4bbe6187a69e478814a4a33"
+  },
+  "continuousSongMetrics": {
+    "candidate": {
+      "microF1_50ms": 0.839632,
+      "precision100ms": 0.918263,
+      "recall100ms": 0.901901,
+      "microF1_100ms": 0.910008,
+      "microF1_250ms": 0.923910,
+      "songBootstrapLower95_100ms": 0.898224,
+      "onsetAndOffsetF1_100ms": 0.344595,
+      "frameF1_20ms": 0.558605,
+      "cutOffNotes": 671,
+      "overlongNotes": 982,
+      "rapidRetriggers": 57
+    },
+    "candidateMinusImmutableOriginal": {
+      "microF1_50ms": 0.000922,
+      "precision100ms": -0.000012,
+      "recall100ms": 0.000596,
+      "microF1_100ms": 0.000297,
+      "microF1_250ms": -0.000108,
+      "songBootstrapLower95_100ms": 0.000244,
+      "onsetAndOffsetF1_100ms": 0.001356,
+      "frameF1_20ms": -0.000041,
+      "cutOffNotes": 2,
+      "overlongNotes": 5,
+      "rapidRetriggers": 2,
+      "worstPerSongMicroF1_100ms": -0.000745
+    },
+    "candidateMinusV002": {
+      "microF1_50ms": -0.001284,
+      "precision100ms": -0.002037,
+      "recall100ms": -0.001391,
+      "microF1_100ms": -0.001709,
+      "microF1_250ms": -0.001311,
+      "songBootstrapLower95_100ms": -0.001318,
+      "onsetAndOffsetF1_100ms": -0.002388,
+      "frameF1_20ms": -0.002831,
+      "cutOffNotes": 4,
+      "overlongNotes": -7,
+      "rapidRetriggers": 0
+    }
+  },
+  "changeAttribution100msVersusOriginal": {
+    "recoveredReferenceNotes": 19,
+    "regressedReferenceNotes": 10,
+    "netMatchChange": 9,
+    "falsePositiveChange": 1
+  },
+  "gate": {
+    "researchGatePassed": true,
+    "failedChecks": [],
+    "certificationPassed": false,
+    "certificationMetric": "complete-song bootstrap lower 95% bound at strict 100 ms exact-pitch onset",
+    "observed": 0.898224,
+    "required": 0.900000,
+    "shortfall": 0.001776
+  },
+  "decision": "retain-as-checkpoint-selection-evidence; v002-remains-research-leader",
+  "productionPromotionAllowed": false,
+  "sealedTestOpened": false,
+  "rightsClearedForCommercialUse": false
+}

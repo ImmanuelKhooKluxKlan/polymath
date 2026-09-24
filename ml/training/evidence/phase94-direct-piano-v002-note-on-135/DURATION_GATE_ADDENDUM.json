@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-candidate-gate-addendum-v1",
+  "candidateVersion": "phase94-v002-note-on-135",
+  "frozenAt": "2026-09-19T09:04:15Z",
+  "frozenBeforeCandidateTraining": true,
+  "comparison": "phase94-v002-note-on-135 versus phase94-v001d-control on all 247 validation clips rescored as continuous songs",
+  "required": {
+    "strictExactPitchOnset100msMicroF1DeltaMinimum": 0.0,
+    "strictExactPitchOnset100msRecallDeltaMinimum": 0.0,
+    "maximumOnsetAndOffsetF1Regression": 0.002,
+    "maximumFrameF1Regression": 0.002,
+    "maximumCutOffNoteIncrease": 25,
+    "maximumOverlongNoteIncrease": 25,
+    "maximumRapidRetriggerIncrease": 5,
+    "maximumPerSongOnsetF1Regression": 0.01
+  },
+  "interpretation": "The recall hypothesis is rejected if it improves note onsets by materially degrading releases, sustained frames, repeated keys, or any complete validation song. Passing remains research-only and still requires opened-song listening and sealed evaluation."
+}

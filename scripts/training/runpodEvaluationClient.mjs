@@ -25,7 +25,7 @@ async function loadEnvironment(filename) {
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   if (!args.dataset || !args.version) {
-    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--result result.json]');
+    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--baseline-version original] [--conditioning-mode instrument|unconditioned] [--endpoint-id id] [--timeout-minutes 60] [--result result.json]');
   }
   if (!/^[a-z0-9][a-z0-9-]{2,50}$/.test(args.dataset)) {
     throw new Error('--dataset must be 3-51 lowercase letters, digits, or hyphens, starting with a letter or digit');
@@ -34,9 +34,20 @@ async function main() {
     throw new Error('--version must look like phase1-v001');
   }
   await loadEnvironment(path.resolve('server/.env'));
-  const endpoint = String(process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || '').trim();
+  const endpoint = String(args['endpoint-id'] || process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || '').trim();
   const apiKey = String(process.env.RUNPOD_API_KEY || '').trim();
   if (!endpoint || !apiKey) throw new Error('RunPod endpoint or API key is missing');
+  const timeoutMinutes = Number(args['timeout-minutes'] || 60);
+  if (!Number.isFinite(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 720) {
+    throw new Error('--timeout-minutes must be between 1 and 720');
+  }
+  const timeoutMs = timeoutMinutes * 60 * 1000;
+  const resultDestination = args.result ? path.resolve(args.result) : '';
+  const writeResult = async (record) => {
+    if (!resultDestination) return;
+    await fs.mkdir(path.dirname(resultDestination), { recursive: true });
+    await fs.writeFile(resultDestination, `${JSON.stringify(record, null, 2)}\n`);
+  };
   const baseUrl = `https://api.runpod.ai/v2/${endpoint}`;
   const headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
   const request = async (pathname, options = {}) => {
@@ -57,28 +68,37 @@ async function main() {
         baseline_version: args['baseline-version'] || 'original',
         conditioning_mode: args['conditioning-mode'] || 'instrument',
       },
-      policy: { executionTimeout: 60 * 60 * 1000, ttl: 2 * 60 * 60 * 1000 },
+      policy: {
+        executionTimeout: timeoutMs,
+        ttl: Math.min(7 * 24 * 60 * 60 * 1000, Math.max(timeoutMs * 2, 2 * 60 * 60 * 1000)),
+      },
     }),
   });
   if (!submitted.id) throw new Error('RunPod did not return an evaluation job id');
   process.stdout.write(`JOB_ID=${submitted.id}\n`);
+  await writeResult({
+    jobId: submitted.id,
+    submittedAt: new Date().toISOString(),
+    status: submitted.status || 'IN_QUEUE',
+    endpointId: endpoint,
+    action: 'evaluate_piano_candidate',
+    datasetId: args.dataset,
+    version: args.version,
+    baselineVersion: args['baseline-version'] || 'original',
+  });
 
-  const deadline = Date.now() + 60 * 60 * 1000;
+  const deadline = Date.now() + timeoutMs;
   let previous = '';
   while (Date.now() < deadline) {
     const status = await request(`/status/${encodeURIComponent(submitted.id)}`);
-    const message = `${status.status || 'UNKNOWN'} ${status.output?.progress || ''}`.trim();
+    const message = `${status.status || 'UNKNOWN'} ${status.progress || status.output?.progress || ''}`.trim();
     if (message !== previous) {
       process.stdout.write(`${message}\n`);
       previous = message;
     }
     if (status.status === 'COMPLETED') {
       const record = { jobId: submitted.id, completedAt: new Date().toISOString(), ...status.output };
-      if (args.result) {
-        const destination = path.resolve(args.result);
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.writeFile(destination, `${JSON.stringify(record, null, 2)}\n`);
-      }
+      await writeResult(record);
       process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
       return;
     }
@@ -96,7 +116,7 @@ async function main() {
     }
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
-  throw new Error('RunPod evaluation exceeded the one-hour client deadline');
+  throw new Error(`RunPod evaluation exceeded the ${timeoutMinutes}-minute client deadline`);
 }
 
 main().catch((error) => {

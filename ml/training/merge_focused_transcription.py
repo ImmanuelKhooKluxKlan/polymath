@@ -264,7 +264,13 @@ def fuse_focused_transcription(
             decoder_config = {
                 key: value
                 for key, value in focused_melody_decoder.items()
-                if key not in {"enabled", "decode_all_candidates_after_acceptance"}
+                if key
+                not in {
+                    "enabled",
+                    "decode_all_candidates_after_acceptance",
+                    "reject_pass_below_minimum_input_density",
+                    "retain_unmatched_primary_when_applied",
+                }
             }
             decoder_input = supported_focused
             activation_span = max(primary_duration, 1.0)
@@ -278,83 +284,110 @@ def fuse_focused_transcription(
                     "decode_all_candidates_after_acceptance", False
                 )
             )
-            if (
-                decode_all_candidates
-                and activation_density >= minimum_decoder_density
-            ):
-                decoder_input = focused_candidates
-                # The activation decision was made from corroborated evidence,
-                # not the larger candidate set. Avoid applying the density gate
-                # a second time to a different population.
-                decoder_config["minimum_input_notes_per_second"] = 0.0
-            supported_focused, melody_decoder_diagnostics = (
-                decode_focused_vocal_melody(
-                    decoder_input,
-                    primary_notes,
-                    config=decoder_config,
+            reject_sparse_pass = bool(
+                focused_melody_decoder.get(
+                    "reject_pass_below_minimum_input_density", False
                 )
             )
-            melody_decoder_diagnostics["activationNotes"] = len(
-                supported_for_scope(effective_support_scope)
-            )
-            melody_decoder_diagnostics["activationNotesPerSecond"] = round(
-                activation_density, 6
-            )
-            melody_decoder_diagnostics["activationMinimumNotesPerSecond"] = round(
-                minimum_decoder_density, 6
-            )
-            melody_decoder_diagnostics[
-                "decodedAllFocusedCandidatesAfterAcceptance"
-            ] = decoder_input is focused_candidates
-            if (
-                melody_decoder_diagnostics.get("applied")
-                and focused_melody_decoder.get(
-                    "retain_unmatched_primary_when_applied", True
-                )
-            ):
-                recovered_primary: list[dict[str, Any]] = []
-                anchors_overriding_candidates = 0
-                for source_anchor in sorted(
-                    primary_targets,
-                    key=lambda note: (float(note["time"]), note_pitch_key(note, "exact")),
+            if reject_sparse_pass and activation_density < minimum_decoder_density:
+                pass_accepted = False
+                retained_primary_targets = primary_targets
+                supported_focused = []
+                melody_decoder_diagnostics = {
+                    "schema": "polymath-focused-vocal-melody-decoder-v1",
+                    "applied": False,
+                    "focusedPassRejected": True,
+                    "rejectionReason": "corroborated focused evidence is too sparse",
+                    "activationNotes": len(
+                        supported_for_scope(effective_support_scope)
+                    ),
+                    "activationNotesPerSecond": round(activation_density, 6),
+                    "activationMinimumNotesPerSecond": round(
+                        minimum_decoder_density, 6
+                    ),
+                    "decodedAllFocusedCandidatesAfterAcceptance": False,
+                }
+            else:
+                if (
+                    decode_all_candidates
+                    and activation_density >= minimum_decoder_density
                 ):
-                    anchor = copy.deepcopy(source_anchor)
-                    onset = float(anchor["time"])
-                    nearby = [
-                        (index, note)
-                        for index, note in enumerate(supported_focused)
-                        if abs(float(note["time"]) - onset)
-                        <= support_tolerance_seconds
-                    ]
-                    if any(
-                        note_pitch_key(note, "exact")
-                        == note_pitch_key(anchor, "exact")
-                        for _index, note in nearby
-                    ):
-                        continue
-                    if nearby:
-                        replace_index, _replaced = min(
-                            nearby,
-                            key=lambda item: (
-                                abs(float(item[1]["time"]) - onset),
-                                abs(
-                                    note_pitch_key(item[1], "exact")
-                                    - note_pitch_key(anchor, "exact")
-                                ),
-                            ),
-                        )
-                        supported_focused.pop(replace_index)
-                        anchors_overriding_candidates += 1
-                    anchor["focusedMelodyDecoded"] = True
-                    anchor["focusedMelodyAnchorRecovered"] = True
-                    recovered_primary.append(anchor)
-                retained_primary_targets = recovered_primary
-                melody_decoder_diagnostics["primaryAnchorNotesRecovered"] = len(
-                    recovered_primary
+                    decoder_input = focused_candidates
+                    # The activation decision was made from corroborated evidence,
+                    # not the larger candidate set. Avoid applying the density gate
+                    # a second time to a different population.
+                    decoder_config["minimum_input_notes_per_second"] = 0.0
+                supported_focused, melody_decoder_diagnostics = (
+                    decode_focused_vocal_melody(
+                        decoder_input,
+                        primary_notes,
+                        config=decoder_config,
+                    )
+                )
+                melody_decoder_diagnostics["activationNotes"] = len(
+                    supported_for_scope(effective_support_scope)
+                )
+                melody_decoder_diagnostics["activationNotesPerSecond"] = round(
+                    activation_density, 6
+                )
+                melody_decoder_diagnostics["activationMinimumNotesPerSecond"] = round(
+                    minimum_decoder_density, 6
                 )
                 melody_decoder_diagnostics[
-                    "primaryAnchorsOverridingFocusedCandidates"
-                ] = anchors_overriding_candidates
+                    "decodedAllFocusedCandidatesAfterAcceptance"
+                ] = decoder_input is focused_candidates
+                if (
+                    melody_decoder_diagnostics.get("applied")
+                    and focused_melody_decoder.get(
+                        "retain_unmatched_primary_when_applied", True
+                    )
+                ):
+                    recovered_primary: list[dict[str, Any]] = []
+                    anchors_overriding_candidates = 0
+                    for source_anchor in sorted(
+                        primary_targets,
+                        key=lambda note: (
+                            float(note["time"]),
+                            note_pitch_key(note, "exact"),
+                        ),
+                    ):
+                        anchor = copy.deepcopy(source_anchor)
+                        onset = float(anchor["time"])
+                        nearby = [
+                            (index, note)
+                            for index, note in enumerate(supported_focused)
+                            if abs(float(note["time"]) - onset)
+                            <= support_tolerance_seconds
+                        ]
+                        if any(
+                            note_pitch_key(note, "exact")
+                            == note_pitch_key(anchor, "exact")
+                            for _index, note in nearby
+                        ):
+                            continue
+                        if nearby:
+                            replace_index, _replaced = min(
+                                nearby,
+                                key=lambda item: (
+                                    abs(float(item[1]["time"]) - onset),
+                                    abs(
+                                        note_pitch_key(item[1], "exact")
+                                        - note_pitch_key(anchor, "exact")
+                                    ),
+                                ),
+                            )
+                            supported_focused.pop(replace_index)
+                            anchors_overriding_candidates += 1
+                        anchor["focusedMelodyDecoded"] = True
+                        anchor["focusedMelodyAnchorRecovered"] = True
+                        recovered_primary.append(anchor)
+                    retained_primary_targets = recovered_primary
+                    melody_decoder_diagnostics["primaryAnchorNotesRecovered"] = len(
+                        recovered_primary
+                    )
+                    melody_decoder_diagnostics[
+                        "primaryAnchorsOverridingFocusedCandidates"
+                    ] = anchors_overriding_candidates
 
     output = copy.deepcopy(primary)
     if strategy == "corroborated-union" and not pass_accepted:

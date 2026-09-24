@@ -1,0 +1,16 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-overlap-boundary-decoder-v001",
+  "frozenAt": "2026-09-19T10:38:15Z",
+  "plan": "ml/training/configs/phase94-overlap-boundary-decoder-v001.json",
+  "planSha256": "bdc05605ce2ee87c1646a3e2e30258cbb7e35ee0e297361c9473e8fdd5ee5744",
+  "checkpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+  "primaryManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+  "overlapManifestSha256": "c75958b3dc73a8760ae99b34dabf685dd12f48ed52c22dba6ed5571a68adf46f",
+  "prepareCodeSha256": "ccd531154cd745941687f3f072846df92000f3baefe1e9a01a9cd8aa6c3fe747",
+  "searchCodeSha256": "dece61d39fe8f99b2c69c01da71177429e2855351a7b46fbc35fcd72f68326bf",
+  "replacementRadiusSeconds": [0.10, 0.15, 0.25, 0.40, 0.60, 0.80],
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "commercialUseAllowed": false
+}

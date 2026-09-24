@@ -2176,6 +2176,29 @@ class LearnedDurationTests(unittest.TestCase):
 
 
 class PianoArrangerTests(unittest.TestCase):
+    def test_preserves_raw_source_indices_as_provenance(self):
+        payload = {
+            "title": "Source provenance fixture",
+            "notes": [
+                note(48, 0.0, "acoustic_piano"),
+                note(10, 0.1, "acoustic_piano"),
+                note(64, 0.2, "acoustic_piano"),
+            ]
+            + [
+                note(52 + index % 12, 0.4 + index * 0.2, "acoustic_piano")
+                for index in range(24)
+            ],
+        }
+
+        result = arrange_payload(payload, "full")
+
+        self.assertEqual(result["notes"][0]["sourceIndex"], 0)
+        self.assertEqual(result["notes"][1]["sourceIndex"], 2)
+        self.assertEqual(
+            [item["sourceIndex"] for item in result["notes"]],
+            [0, 2, *range(3, 27)],
+        )
+
     def test_source_supported_cycle_preserves_octaves_and_varies_hand_texture(self):
         source = [
             note(midi, onset, "clean_electric_guitar", duration=0.15, velocity=0.62)

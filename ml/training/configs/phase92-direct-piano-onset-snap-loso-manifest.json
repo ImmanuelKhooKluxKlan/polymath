@@ -1,0 +1,47 @@
+{
+  "schema": "polymath-audio-onset-snap-loso-manifest-v1",
+  "purpose": "Inference-safe waveform-onset calibration on four already-opened MAESTRO development songs. Whole songs are held out during policy selection.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "schubert",
+      "reference": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/target/schubert-impromptu-op90-no4-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-schubert-source-only-calibration.json",
+      "candidateEndSeconds": 90.0,
+      "audio": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/source/schubert-impromptu-op90-no4-000-090.wav"
+    },
+    {
+      "id": "chopin",
+      "reference": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/target/chopin-etude-op10-no9-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-chopin-final-blind.json",
+      "candidateEndSeconds": 90.0,
+      "audio": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/source/chopin-etude-op10-no9-000-090.wav"
+    },
+    {
+      "id": "rachmaninoff",
+      "reference": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/target/rachmaninoff-prelude-op32-no12-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-rachmaninoff-final-blind.json",
+      "candidateEndSeconds": 90.0,
+      "audio": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/source/rachmaninoff-prelude-op32-no12-000-090.wav"
+    },
+    {
+      "id": "debussy",
+      "reference": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/target/debussy-etude-no7-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "alignment": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-direct-piano/maestro-debussy-untouched-blind.json",
+      "candidateEndSeconds": 90.0,
+      "audio": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/source/debussy-etude-no7-000-090.wav"
+    }
+  ]
+}

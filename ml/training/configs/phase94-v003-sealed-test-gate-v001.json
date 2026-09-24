@@ -1,0 +1,48 @@
+{
+  "schema": "polymath-phase94-full-validation-gate-v1",
+  "candidateVersion": "phase94-overlap-release-preserving-v003",
+  "frozenAt": "2026-09-21T03:04:47Z",
+  "scope": "Single-use eight-song individual-person-disjoint Phase 94 test. The immutable original checkpoint and the fixed 0.60-second release-preserving overlap candidate are decoded from the same audio before MIDI labels are authorized.",
+  "primaryMetric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+  "immutableOriginal": {
+    "checkpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+    "decodeTogetherWithCandidate": true,
+    "scoreBeforeCandidateComparison": true
+  },
+  "requiredChecks": {
+    "microF1_100msMustExceedOriginal": true,
+    "microF1_100msMinimum": 0.9,
+    "precision100msMaximumRegression": 0.001,
+    "recall100msMaximumRegression": 0.001,
+    "maximumPerSongF1Regression": 0.005,
+    "onsetAndOffsetF1MaximumRegression": 0.002,
+    "frameF1MaximumRegression": 0.002,
+    "cutOffPer1000MatchedMaximumIncrease": 2.0,
+    "overlongPer1000MatchedMaximumIncrease": 2.0,
+    "rapidRetriggersPer1000PredictedMaximumIncrease": 0.25
+  },
+  "certificationCheck": {
+    "songBootstrapLower95_100msMinimum": 0.9,
+    "failureMeaning": "The test is consumed and the candidate cannot support a broad 90-percent direct-piano transcription claim. Thresholds may not be relaxed after the result."
+  },
+  "custodyRequirements": [
+    "opened Kiss Me blind candidate preference recorded before mapping reveal",
+    "test audio materialized without MIDI labels",
+    "primary and overlap predictions hash-locked before MIDI authorization",
+    "candidate and immutable original scored against the same reference manifest",
+    "all eight test songs included exactly once",
+    "failed test permanently becomes opened development evidence"
+  ],
+  "claimBoundary": {
+    "route": "clean or piano-dominant audio to literal piano notes",
+    "doesNotCertify": [
+      "full commercial music mix to Pianella-style arrangement",
+      "foundation-corpus independence",
+      "commercial rights",
+      "public production readiness"
+    ]
+  },
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "commercialUseAllowed": false
+}

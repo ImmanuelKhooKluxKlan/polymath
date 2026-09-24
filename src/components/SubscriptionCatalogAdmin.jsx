@@ -30,7 +30,8 @@ function usd(value) {
 }
 
 export default function SubscriptionCatalogAdmin() {
-  const [catalog, setCatalog] = useState({ categories: [], plans: [], entitlementOptions: [] });
+  const [catalog, setCatalog] = useState({ categories: [], plans: [], corePlans: [], entitlementOptions: [] });
+  const [corePriceDrafts, setCorePriceDrafts] = useState({});
   const [view, setView] = useState('plans');
   const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY);
   const [planForm, setPlanForm] = useState(EMPTY_PLAN);
@@ -40,6 +41,11 @@ export default function SubscriptionCatalogAdmin() {
   async function loadCatalog() {
     const data = await apiRequest('/api/admin/subscription-catalog');
     setCatalog(data);
+    setCorePriceDrafts(Object.fromEntries((data.corePlans || []).map((plan) => [plan.id, {
+      price: plan.price,
+      paypalPlanId: plan.paypalPlanId || '',
+      upgradePaypalPlanId: plan.upgradePaypalPlanId || '',
+    }])));
     setPlanForm((current) => ({
       ...current,
       categoryId: data.categories.some((item) => item.id === current.categoryId)
@@ -47,6 +53,37 @@ export default function SubscriptionCatalogAdmin() {
         : data.categories[0]?.id || '',
     }));
     return data;
+  }
+
+  function updateCoreDraft(productId, field, value) {
+    setCorePriceDrafts((current) => ({
+      ...current,
+      [productId]: { ...current[productId], [field]: value },
+    }));
+  }
+
+  async function saveCorePrice(plan) {
+    const draft = corePriceDrafts[plan.id];
+    if (!draft) return;
+    setBusy(true);
+    setStatus(`Verifying ${plan.name} with PayPal...`);
+    try {
+      const data = await apiRequest(`/api/admin/subscription-products/${encodeURIComponent(plan.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          price: Number(draft.price),
+          currency: plan.currency,
+          paypalPlanId: draft.paypalPlanId,
+          upgradePaypalPlanId: draft.upgradePaypalPlanId,
+        }),
+      });
+      await loadCatalog();
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -189,6 +226,28 @@ export default function SubscriptionCatalogAdmin() {
 
       {view === 'plans' && (
         <>
+          <section className='catalog-core-pricing'>
+            <header>
+              <div><p className='eyebrow'>Live prices</p><h3>Built-in subscriptions</h3></div>
+              <p>Changes apply to future checkouts. The server verifies the matching PayPal plan before saving.</p>
+            </header>
+            <div className='catalog-core-grid'>
+              {(catalog.corePlans || []).map((plan) => {
+                const draft = corePriceDrafts[plan.id] || {};
+                return (
+                  <article key={plan.id}>
+                    <header><div><strong>{plan.name}</strong><span>{plan.categoryName} · {plan.interval.toLowerCase()}</span></div>{plan.priceEdited && <b>Edited</b>}</header>
+                    <label className='field'>Price (USD)<input type='number' min='0.01' max='1000000' step='0.01' value={draft.price ?? ''} onChange={(event) => updateCoreDraft(plan.id, 'price', event.target.value)} /></label>
+                    <label className='field'>PayPal plan ID<input value={draft.paypalPlanId ?? ''} placeholder='P-...' onChange={(event) => updateCoreDraft(plan.id, 'paypalPlanId', event.target.value)} /></label>
+                    {plan.tier === 'musician' && <label className='field'>Chill upgrade plan ID<input value={draft.upgradePaypalPlanId ?? ''} placeholder='P-...' onChange={(event) => updateCoreDraft(plan.id, 'upgradePaypalPlanId', event.target.value)} /><small>This plan must include the correct remaining-balance setup fee.</small></label>}
+                    <button type='button' className='primary' disabled={busy} onClick={() => saveCorePrice(plan)}>Verify and save price</button>
+                  </article>
+                );
+              })}
+            </div>
+            <div className='catalog-safety-note'><strong>Existing subscribers stay protected.</strong><span>A new price changes future sign-ups only. It never silently changes an existing PayPal billing agreement.</span></div>
+          </section>
+
           <div className='catalog-plan-grid'>
             {catalog.plans.map((plan) => (
               <article key={plan.id} className={plan.status === 'archived' ? 'archived' : ''}>

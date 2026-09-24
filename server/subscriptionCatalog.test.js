@@ -7,8 +7,10 @@ const {
   applyCustomProductAccess,
   createPlan,
   ensureSubscriptionCatalog,
+  listAdminCatalog,
   listPublicCatalog,
   resolveProduct,
+  updateBaseProductPrice,
   updatePlan,
 } = require('./subscriptionCatalog');
 
@@ -63,4 +65,24 @@ test('custom access is additive and sold pricing cannot mutate', () => {
     () => updatePlan(db, plan.id, { revision: 1, unitAmountCents: 1499 }, 'admin-1', [{ productId: plan.id }]),
     /keeps its original price/,
   );
+});
+
+test('administrator price overrides change built-in catalog and checkout resolution', () => {
+  const baseProducts = {
+    'polymath-chill-monthly': {
+      id: 'polymath-chill-monthly', name: 'Chill', kind: 'subscription', recurring: true,
+      price: '7.99', currency: 'USD', interval: 'MONTH', tier: 'chill',
+    },
+  };
+  const db = { subscriptionCategories: [], subscriptionPlans: [], subscriptionCatalogEvents: [] };
+  const override = updateBaseProductPrice(db, baseProducts, 'polymath-chill-monthly', {
+    price: '8.99',
+    paypalPlanId: 'P-CHILL-899',
+  }, 'admin-1');
+
+  assert.equal(override.unitAmountCents, 899);
+  assert.equal(resolveProduct(db, baseProducts, 'polymath-chill-monthly').price, '8.99');
+  assert.equal(listPublicCatalog(db, baseProducts).products[0].price, '8.99');
+  assert.equal(listAdminCatalog(db, baseProducts).corePlans[0].priceEdited, true);
+  assert.equal(listAdminCatalog(db, baseProducts).corePlans[0].paypalPlanId, 'P-CHILL-899');
 });

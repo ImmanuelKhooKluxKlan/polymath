@@ -1,0 +1,27 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-v001d-control",
+  "frozenAt": "2026-09-19T08:28:57Z",
+  "plan": {
+    "path": "ml/training/configs/phase94-direct-piano-deterministic-control-v001.json",
+    "sha256": "13a6603bae4280fb7d29d0e645e41281b00d47d4b107b5c15fbf2f118cc10098"
+  },
+  "code": {
+    "trainerPath": "ml/training/train_muscriptor_piano.py",
+    "trainerSha256": "338e6b86076e614a35bfe1a166a9bf1b12a77d3762ad8fa860d29a7f0fe92a4b",
+    "evaluatorPath": "ml/training/evaluate_checkpoint.py",
+    "evaluatorSha256": "c7d8db2ae1cad245216f6aba4c0fb53e9ca55ec49da9579519642778ba34ecea"
+  },
+  "tests": {
+    "command": "python -m pytest -q",
+    "passed": 590,
+    "subtestsPassed": 2
+  },
+  "immutableInputs": {
+    "baseCheckpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+    "trainManifestSha256": "0b3f61eb84370e55dd9345039f1b9b094a118ec38659a1922bd54300e69b1f12",
+    "validationManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2"
+  },
+  "sealedTestOpened": false,
+  "productionChanged": false
+}

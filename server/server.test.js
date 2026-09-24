@@ -831,6 +831,7 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   assert.equal(policyCompliantRegistration.status, 201);
   assert.equal(policyCompliantRegistration.data.user.mcoins, 25);
   const adultToken = policyCompliantRegistration.data.token;
+  const influencerUserId = policyCompliantRegistration.data.user.user_id;
 
   const promotionCreate = await api('/api/admin/promotions', {
     method: 'POST',
@@ -842,10 +843,14 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
       value: 50,
       maxRedemptions: 10,
       perUserLimit: 1,
+      affiliateUserId: influencerUserId,
+      affiliateRewardMcoins: 7.5,
     },
   });
   assert.equal(promotionCreate.status, 201);
   assert.equal(promotionCreate.data.promotion.code, 'TEST50');
+  assert.equal(promotionCreate.data.promotion.affiliate.userId, influencerUserId);
+  assert.equal(promotionCreate.data.promotion.affiliateRewardMcoins, 7.5);
 
   const freeMcoinVoucherBlocked = await api('/api/admin/promotions', {
     method: 'POST',
@@ -1216,9 +1221,12 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   const database = JSON.parse(fs.readFileSync(path.join(testDataDir, 'database.json'), 'utf8'));
   const customer = database.users.find((item) => item.id === userId);
   const policyCompliantUser = database.users.find((item) => item.email === 'adult@example.test');
+  const luckyUser = database.users.find((item) => item.email === 'lucky-adult@example.test');
   assert.ok(customer.passwordHash);
   assert.notEqual(customer.passwordHash, reset.data.temporaryPassword);
   assert.ok(policyCompliantUser.policyAcceptedAt);
+  assert.equal(luckyUser.luckyCodeClaim.affiliateUserId, influencerUserId);
+  assert.equal(luckyUser.luckyCodeClaim.affiliateRewardMcoins, 7.5);
   assert.equal(policyCompliantUser.birthDate, undefined);
   assert.ok(database.sessions.every((session) => session.tokenHash && !session.token));
   assert.equal(database.settings.minimumWithdrawalMcoins, 250);

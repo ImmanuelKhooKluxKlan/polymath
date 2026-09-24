@@ -1,0 +1,79 @@
+{
+  "schema": "polymath-overlap-release-preserving-result-v1",
+  "candidateVersion": "phase94-overlap-release-preserving-v003",
+  "evaluatedAt": "2026-09-20T17:17:00Z",
+  "artifacts": {
+    "planSha256": "ff0ab8a4ebce5bdc289d2eaa93bc68febaeafa91675c8b624a933a75743b6ec1",
+    "freezeSha256": "771c4dfdc3e60994ded6671dd4f2d01a3181965120a6be41e294e7d66cf5b715",
+    "searchCodeSha256": "2c0d0cad13dcc6529e91be59b852df339fbfe0e03cf44197755fa0ead3ec6abb",
+    "searchReportSha256": "b5c9418703fe03a13f0b29b7a01fb41811a8f5d59b6c95e353c90adedf94123b",
+    "winnerEvaluationSha256": "ef445634924a44198e33baf5533c2db8aff61c31374dc6a0ac6b66b9b3668757",
+    "winnerTimelineSha256": "9b4b282d37999e6f6085ba4c0e79cc82b3196757b98546e5e9120abeb701d5e8",
+    "winnerGateSha256": "1881ea0a68a7ae7dd919af3b9dd859edaa0faa4657a212fb53c44ecea27357ef"
+  },
+  "selection": {
+    "policy": "filter by complete research safety gate, then rank onset quality",
+    "safeCandidateCount": 4,
+    "testedCandidateCount": 6,
+    "winnerRadiusSeconds": 0.60,
+    "onsetMatchToleranceSeconds": 0.10,
+    "retunedAfterResult": false
+  },
+  "continuousSongMetrics": {
+    "microF1_50ms": 0.840063,
+    "precision100ms": 0.920314,
+    "recall100ms": 0.908061,
+    "microF1_100ms": 0.914147,
+    "microF1_250ms": 0.929417,
+    "songBootstrapLower95_100ms": 0.903087,
+    "onsetAndOffsetF1_100ms": 0.344147,
+    "frameF1_20ms": 0.564180,
+    "cutOffNotes": 670,
+    "overlongNotes": 1002,
+    "rapidRetriggers": 49
+  },
+  "candidateMinusImmutableOriginal": {
+    "microF1_50ms": 0.001353,
+    "precision100ms": 0.002039,
+    "recall100ms": 0.006756,
+    "microF1_100ms": 0.004436,
+    "microF1_250ms": 0.005399,
+    "songBootstrapLower95_100ms": 0.005107,
+    "onsetAndOffsetF1_100ms": 0.000908,
+    "frameF1_20ms": 0.005534,
+    "cutOffNotes": 1,
+    "overlongNotes": 25,
+    "rapidRetriggers": -6,
+    "worstPerSongMicroF1_100ms": -0.000232
+  },
+  "ratesPer1000": {
+    "cutOff": {
+      "baseline": 49.165871,
+      "candidate": 48.873003,
+      "change": -0.292868
+    },
+    "overlong": {
+      "baseline": 71.801279,
+      "candidate": 73.090670,
+      "change": 1.289391,
+      "maximumAllowedIncrease": 2.0
+    },
+    "rapidRetriggers": {
+      "baseline": 3.711702,
+      "candidate": 3.289474,
+      "change": -0.422228
+    }
+  },
+  "gate": {
+    "researchGatePassed": true,
+    "failedChecks": [],
+    "certificationPassed": true,
+    "certificationLower95Observed": 0.903087,
+    "certificationLower95Required": 0.900000
+  },
+  "finding": "Preserving the primary absolute release for same-pitch boundary matches retains the shifted pass's onset benefit while reducing overlong growth from 9.195 to 1.289 notes per 1000 matched. The frozen 0.60-second winner passes every onset, per-song, duration, frame, cutoff, overlong, and retrigger check.",
+  "decision": "freeze-as-development-winner-and-test-fixed-combination-with-v002",
+  "productionPromotionAllowed": false,
+  "sealedTestOpened": false,
+  "rightsClearedForCommercialUse": false
+}

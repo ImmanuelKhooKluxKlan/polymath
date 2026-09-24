@@ -1,0 +1,65 @@
+{
+  "schema": "polymath-transcription-accuracy-scorecard-manifest-v1",
+  "id": "phase93-v001-opened-direct-piano-regression",
+  "purpose": "Compare phase93-v001 against exact MIDI on four already-opened 90-second direct-piano pieces. Development/regression evidence only; it cannot certify the 90-percent claim.",
+  "commercialUseAllowed": false,
+  "objectives": {
+    "direct-piano-transcription": {
+      "exactPitchOnset100msF1": 0.9,
+      "pitchClassOnset250msF1": 0.95,
+      "physicalOnsetAndOffset250msF1": 0.85,
+      "maximumPhysicalSevereCutoffRate": 0.03,
+      "maximumRapidRetriggersPer1000Notes": 2.0
+    }
+  },
+  "songs": [
+    {
+      "id": "direct-schubert-phase93-v001",
+      "route": "direct-piano-transcription",
+      "evidenceRole": "opened-holdout-regression",
+      "reference": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/target/schubert-impromptu-op90-no4-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "source": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/schubert-phase93-v001.json",
+      "alignment": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/arranged/schubert-phase93-v001.json",
+      "candidateEndSeconds": 90.0
+    },
+    {
+      "id": "direct-chopin-phase93-v001",
+      "route": "direct-piano-transcription",
+      "evidenceRole": "opened-holdout-regression",
+      "reference": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/target/chopin-etude-op10-no9-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "source": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/chopin-phase93-v001.json",
+      "alignment": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/arranged/chopin-phase93-v001.json",
+      "candidateEndSeconds": 90.0
+    },
+    {
+      "id": "direct-rachmaninoff-phase93-v001",
+      "route": "direct-piano-transcription",
+      "evidenceRole": "opened-holdout-regression",
+      "reference": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/target/rachmaninoff-prelude-op32-no12-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "source": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/rachmaninoff-phase93-v001.json",
+      "alignment": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/arranged/rachmaninoff-phase93-v001.json",
+      "candidateEndSeconds": 90.0
+    },
+    {
+      "id": "direct-debussy-phase93-v001",
+      "route": "direct-piano-transcription",
+      "evidenceRole": "opened-holdout-regression",
+      "reference": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/target/debussy-etude-no7-000-090.json",
+      "referenceAlreadyAligned": true,
+      "referenceEndSeconds": 90.0,
+      "source": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/debussy-phase93-v001.json",
+      "alignment": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/alignment/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/arranged/debussy-phase93-v001.json",
+      "candidateEndSeconds": 90.0
+    }
+  ]
+}

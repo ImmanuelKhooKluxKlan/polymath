@@ -1,0 +1,22 @@
+{
+  "schema": "polymath-training-storage-incident-v1",
+  "candidateVersion": "phase94-v001",
+  "failedAt": "2026-09-19T07:56:41Z",
+  "stage": "final-checkpoint-serialization",
+  "error": "safetensors serialization failed with Disk quota exceeded (os error 122)",
+  "scientificRunCompletedBeforeFailure": true,
+  "checkpointWritten": false,
+  "originalCheckpointModified": false,
+  "partialCheckpointPresent": false,
+  "attemptLog": {
+    "remotePath": "/workspace/training-runs/phase94-v001/training-attempt1-quota-failed.log",
+    "localPath": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/training/phase94-v001-training-attempt1-quota-failed.log",
+    "sha256": "c946c8c9249b0dfa8b4c6b69e82c18eeed2e3c35ea7836f35b3b4ef69f17c8ae"
+  },
+  "recovery": {
+    "action": "Rerun the frozen command without changing model, data, seed, optimizer, loss, or selection settings.",
+    "onlyOperationalChange": "Write the recovered checkpoint to /root/phase94-v001-recovery on the Pod ephemeral disk instead of the quota-constrained network volume.",
+    "priorModelsDeleted": false,
+    "recoveryStarted": "2026-09-19T07:58:48Z"
+  }
+}

@@ -3,6 +3,7 @@ import unittest
 from ml.training.search_focused_fusion_policy import (
     aggregate_song_metrics,
     promotion_gates,
+    subset_trial,
 )
 
 
@@ -38,6 +39,30 @@ class FocusedFusionSearchTests(unittest.TestCase):
         gates = promotion_gates(baseline, candidate, [])
         self.assertTrue(gates["exactF1_100ms_improves"])
         self.assertFalse(gates["exactRecall_100ms_improves"])
+
+    def test_subset_trial_aggregates_values_instead_of_consuming_generator(self):
+        baseline = {
+            name: value
+            for name, value in aggregate_song_metrics([(1.0, metrics(0.2))]).items()
+        }
+        candidate = {
+            name: value
+            for name, value in aggregate_song_metrics([(1.0, metrics(0.3))]).items()
+        }
+        row = {
+            "policy": {"id": "fixture"},
+            "songs": {
+                "a": {
+                    "weight": 1.0,
+                    "baselineFlattened": baseline,
+                    "candidateFlattened": candidate,
+                }
+            },
+        }
+        result = subset_trial(row, {"a"})
+        self.assertEqual(result["baseline"]["exactF1_100ms"], 0.2)
+        self.assertEqual(result["candidate"]["exactF1_100ms"], 0.3)
+        self.assertEqual(result["deltas"]["exactF1_100ms"], 0.1)
 
 
 if __name__ == "__main__":

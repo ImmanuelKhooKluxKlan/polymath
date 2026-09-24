@@ -17,7 +17,7 @@ const ADMIN_SECTIONS = [
   ['devices', 'Device preview', 'Preview, test, and review responsive pages', 'Website'],
   ['subscriptions', 'Subscriptions', 'Categories, prices, features, and access', 'Business'],
   ['teacher-marketplace', 'Human teachers', 'Directory access, rates, reviews, and platform fees', 'Business'],
-  ['promotions', 'Discounts', 'Create percentage or fixed-Mcoin codes', 'Business'],
+  ['marketing', 'Marketing', 'Influencer vouchers, customer discounts, and conversion rewards', 'Business'],
   ['withdrawals', 'Payouts', 'Review pending cash-outs and platform outflow', 'Business'],
   ['users', 'Account manager', 'Search, Mcoins, access, and secure resets', 'Business'],
   ['piano-lab', 'Machine learning', 'Data, training, checkpoints, accuracy, and model tests', 'AI & operations'],
@@ -30,7 +30,8 @@ const ADMIN_SECTION_GROUPS = ['Start', 'Website', 'Business', 'AI & operations']
 
 function initialAdminSection() {
   const query = String(window.location.hash || '').split('?')[1] || '';
-  const requested = new URLSearchParams(query).get('section') || '';
+  const requestedValue = new URLSearchParams(query).get('section') || '';
+  const requested = requestedValue === 'promotions' ? 'marketing' : requestedValue;
   return ADMIN_SECTIONS.some(([id]) => id === requested) ? requested : 'overview';
 }
 
@@ -68,6 +69,7 @@ function loadPhoneReviews() {
 const EMPTY_PROMOTION = {
   code: '', name: '', kind: 'subscription_percent', value: 20, minimumSpendMcoins: 0,
   minimumAccountAgeDays: 0, maxRedemptions: 0, perUserLimit: 1, startsAt: '', expiresAt: '',
+  affiliateUserId: '', affiliateRewardMcoins: 0,
 };
 
 const EMPTY_ACCOUNT_MANAGER = {
@@ -186,6 +188,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [passwordReset, setPasswordReset] = useState({ userId: '', name: '', email: '', password: '', confirm: '' });
   const [issuedPassword, setIssuedPassword] = useState('');
   const [promotion, setPromotion] = useState(EMPTY_PROMOTION);
+  const [influencerSearch, setInfluencerSearch] = useState('');
   const [deviceId, setDeviceId] = useState('phone');
   const [previewRoute, setPreviewRoute] = useState('studio');
   const [landscape, setLandscape] = useState(false);
@@ -306,6 +309,19 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     });
   }, [database.rows, userSearch, userSort]);
   const selectedAccount = database.rows.find((row) => row.userId === accountManager.userId) || null;
+  const influencerCandidates = useMemo(() => {
+    const query = influencerSearch.trim();
+    return database.rows
+      .filter((row) => row.userId === promotion.affiliateUserId || !query || Number.isFinite(accountMatchRank(row, query)))
+      .sort((left, right) => {
+        if (query) {
+          const rank = accountMatchRank(left, query) - accountMatchRank(right, query);
+          if (rank) return rank;
+        }
+        return String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' });
+      })
+      .slice(0, 30);
+  }, [database.rows, influencerSearch, promotion.affiliateUserId]);
   const matchingAdminSections = useMemo(() => {
     const query = adminSearch.trim().toLowerCase();
     if (!query) return ADMIN_SECTIONS;
@@ -557,10 +573,12 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           minimumAccountAgeDays: Number(promotion.minimumAccountAgeDays),
           maxRedemptions: Number(promotion.maxRedemptions),
           perUserLimit: Number(promotion.perUserLimit),
+          affiliateRewardMcoins: Number(promotion.affiliateRewardMcoins),
         }),
       });
       setPromotions((current) => [data.promotion, ...current]);
       setPromotion(EMPTY_PROMOTION);
+      setInfluencerSearch('');
       setStatus(data.message);
     } catch (error) { setStatus(error.message); }
   }
@@ -1341,16 +1359,16 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           </div>
         </section>
       )}
-      {activeSection === 'promotions' && (
+      {activeSection === 'marketing' && (
         <section className='admin-workspace'>
           <div className='admin-section-heading'>
-            <div><p className='eyebrow'>Commercial tools</p><h2>Discount codes</h2><p>Use a percentage for subscriptions or Composers, or take an exact Mcoin amount off a Composers purchase.</p></div>
+            <div><p className='eyebrow'>Affiliate growth</p><h2>Marketing</h2><p>Create a customer discount, link it to an influencer, and pay that influencer only when the referred customer activates a paid subscription.</p></div>
           </div>
           <form className='admin-form-card' onSubmit={createPromotion}>
             <div className='admin-form-grid'>
               <label className='field'>Code<input value={promotion.code} maxLength='32' placeholder='WELCOME50' onChange={(event) => setPromotion({ ...promotion, code: event.target.value.toUpperCase() })} required /></label>
               <label className='field'>Internal name<input value={promotion.name} placeholder='Launch voucher' onChange={(event) => setPromotion({ ...promotion, name: event.target.value })} required /></label>
-              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value, value: event.target.value === 'marketplace_fixed' ? 10 : 20 })}><option value='subscription_percent'>Lucky code subscription percentage</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='marketplace_fixed'>Composers fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
+              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value, value: event.target.value === 'marketplace_fixed' ? 10 : 20, affiliateUserId: event.target.value === 'subscription_percent' ? promotion.affiliateUserId : '', affiliateRewardMcoins: event.target.value === 'subscription_percent' ? promotion.affiliateRewardMcoins : 0 })}><option value='subscription_percent'>Influencer / Lucky code subscription discount</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='marketplace_fixed'>Composers fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
               <label className='field'>{promotion.kind === 'marketplace_fixed' ? 'Mcoins off' : 'Percentage off'}<input type='number' min={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} max={promotion.kind === 'marketplace_fixed' ? '1000000000' : '100'} step={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /><small>{promotion.kind === 'marketplace_fixed' ? 'The platform funds this exact discount; it cannot exceed the song price.' : 'Enter a value from 1 to 100.'}</small></label>
               <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>
               <label className='field'>Minimum account age (days)<input type='number' min='0' value={promotion.minimumAccountAgeDays} onChange={(event) => setPromotion({ ...promotion, minimumAccountAgeDays: event.target.value })} /></label>
@@ -1358,19 +1376,22 @@ export default function AdminDatabasePage({ user, onNavigate }) {
               <label className='field'>Uses per buyer<input type='number' min='0' max='100' value={promotion.perUserLimit} onChange={(event) => setPromotion({ ...promotion, perUserLimit: event.target.value })} /><small>0 means unlimited. A friend’s ID can be shared with many buyers.</small></label>
               <label className='field'>Starts<input type='datetime-local' value={promotion.startsAt} onChange={(event) => setPromotion({ ...promotion, startsAt: event.target.value })} /></label>
               <label className='field'>Expires<input type='datetime-local' value={promotion.expiresAt} onChange={(event) => setPromotion({ ...promotion, expiresAt: event.target.value })} /></label>
+              {promotion.kind === 'subscription_percent' && <label className='field'>Find influencer<input value={influencerSearch} placeholder='Name, email, phone, or Friend ID' onChange={(event) => setInfluencerSearch(event.target.value)} /><small>Search first, then choose the exact account.</small></label>}
+              {promotion.kind === 'subscription_percent' && <label className='field'>Influencer account<select value={promotion.affiliateUserId} onChange={(event) => setPromotion({ ...promotion, affiliateUserId: event.target.value })}><option value=''>No influencer payout</option>{influencerCandidates.map((row) => <option key={row.userId} value={row.userId}>{row.name} · {row.email || row.phone || row.friendId}</option>)}</select></label>}
+              {promotion.kind === 'subscription_percent' && <label className='field'>Reward per activated subscriber (Mcoins)<input type='number' min='0' max='1000000000' step='0.01' value={promotion.affiliateRewardMcoins} onChange={(event) => setPromotion({ ...promotion, affiliateRewardMcoins: event.target.value })} /><small>Paid once, as cash-out eligible Mcoins, after PayPal confirms activation. 0 disables payout.</small></label>}
             </div>
-            <button className='primary' type='submit'>Create promotion</button>
+            <button className='primary' type='submit'>Create marketing code</button>
           </form>
           <div className='promotion-list'>
             {promotions.map((item) => (
               <article key={item.id} className={`promotion-row ${item.active ? '' : 'inactive'}`}>
                 <div><code>{item.code}</code><strong>{item.name}</strong><small>{promotionKindLabel(item.kind)}</small></div>
-                <div><strong>{promotionValueLabel(item)}</strong><small>{item.minimumSpendMcoins ? `Minimum ${item.minimumSpendMcoins} Mcoins` : 'No minimum spend'}</small></div>
-                <div><strong>{item.redemptionCount.toLocaleString()}</strong><small>{item.maxRedemptions ? `of ${item.maxRedemptions} uses` : 'redemptions'}</small></div>
+                <div><strong>{promotionValueLabel(item)}</strong><small>{item.minimumSpendMcoins ? `Minimum ${item.minimumSpendMcoins} Mcoins` : 'No minimum spend'}</small>{item.affiliate && <small>{Number(item.affiliateRewardMcoins).toLocaleString()} Mcoins → {item.affiliate.name}</small>}</div>
+                <div><strong>{item.redemptionCount.toLocaleString()}</strong><small>{item.maxRedemptions ? `of ${item.maxRedemptions} uses` : 'redemptions'}</small>{item.affiliate && <small>{item.affiliateRewardsPaidCount.toLocaleString()} paid · {Number(item.affiliateRewardsPaidMcoins).toLocaleString()} Mcoins</small>}</div>
                 <button className='ghost compact-action' type='button' disabled={item.retired} onClick={() => togglePromotion(item)}>{item.retired ? 'Retired' : item.active ? 'Pause' : 'Activate'}</button>
               </article>
             ))}
-            {!promotions.length && <div className='empty-state'>No discount codes yet.</div>}
+            {!promotions.length && <div className='empty-state'>No marketing codes yet.</div>}
           </div>
         </section>
       )}

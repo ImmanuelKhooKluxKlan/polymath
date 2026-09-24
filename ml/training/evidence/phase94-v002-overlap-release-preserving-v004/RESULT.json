@@ -1,0 +1,109 @@
+{
+  "schema": "polymath-fixed-checkpoint-boundary-combination-result-v1",
+  "candidateVersion": "phase94-v002-overlap-release-preserving-v004",
+  "evaluationCompletedBeforePodClock": "2026-09-20T18:12:32Z",
+  "clockObservation": {
+    "podDateCommandWasEightHoursBehindAuthoritativeUtc": true,
+    "freezeAndRunUsedTheSamePodClock": true,
+    "relativeFreezeBeforeRunOrderingPreserved": true
+  },
+  "artifacts": {
+    "planSha256": "14de61b8ae885157a7de98cd12f608697825056e122c63f6f22825cfb4ed3346",
+    "freezeSha256": "c0bd8659036f9af7c5f4bd93290bce246b4f9a84286e8fe851403178132d022a",
+    "checkpointSha256": "d1e9a241fae094d53a7d8838fc14ea9c6c2dc3a4f11fff7323c0c1152a55efdd",
+    "primaryEvaluationSha256": "c1e4bd4c8b491d3688d241fc381eeb92ede2874f254259a471bb438a148866fd",
+    "overlapEvaluationSha256": "175c0a3cd208c371055712ffeb40849888591213ea92f0faea5c0110557868a9",
+    "overlapEvaluationLogSha256": "28eee52f60ec802401fcc8802a568b0eb259042855dd371244e2e7e5edbf8e52",
+    "fixedPolicyCodeSha256": "2c0d0cad13dcc6529e91be59b852df339fbfe0e03cf44197755fa0ead3ec6abb",
+    "fixedPolicyReportSha256": "4b692ea27c52ebea0a4d07c7717879421bc2659e890288265b38aefcdf92f888"
+  },
+  "selection": {
+    "checkpoint": "phase94-v002-note-on-135",
+    "radiusSeconds": 0.6,
+    "onsetMatchToleranceSeconds": 0.1,
+    "testedCandidateCount": 1,
+    "safeCandidateCount": 0,
+    "retunedAfterResult": false
+  },
+  "continuousSongMetrics": {
+    "microF1_50ms": 0.842509,
+    "precision100ms": 0.922173,
+    "recall100ms": 0.909651,
+    "microF1_100ms": 0.915869,
+    "microF1_250ms": 0.930341,
+    "songBootstrapLower95_100ms": 0.904456,
+    "onsetAndOffsetF1_100ms": 0.348394,
+    "frameF1_20ms": 0.566510,
+    "cutOffNotes": 664,
+    "overlongNotes": 1015,
+    "rapidRetriggers": 51
+  },
+  "candidateMinusImmutableOriginal": {
+    "microF1_50ms": 0.003799,
+    "precision100ms": 0.003898,
+    "recall100ms": 0.008346,
+    "microF1_100ms": 0.006158,
+    "microF1_250ms": 0.006323,
+    "songBootstrapLower95_100ms": 0.006476,
+    "onsetAndOffsetF1_100ms": 0.005155,
+    "frameF1_20ms": 0.007864,
+    "cutOffNotes": -5,
+    "overlongNotes": 38,
+    "rapidRetriggers": -4,
+    "worstPerSongMicroF1_100ms": 0.001953
+  },
+  "candidateMinusV002WithoutOverlap": {
+    "microF1_50ms": 0.001593,
+    "precision100ms": 0.001873,
+    "recall100ms": 0.006359,
+    "microF1_100ms": 0.004152,
+    "microF1_250ms": 0.005120,
+    "songBootstrapLower95_100ms": 0.004914,
+    "onsetAndOffsetF1_100ms": 0.001411,
+    "frameF1_20ms": 0.005074,
+    "cutOffNotes": -3,
+    "overlongNotes": 26,
+    "rapidRetriggers": -6
+  },
+  "candidateMinusOriginalWithFixedOverlap": {
+    "microF1_50ms": 0.002446,
+    "precision100ms": 0.001859,
+    "recall100ms": 0.001590,
+    "microF1_100ms": 0.001722,
+    "microF1_250ms": 0.000924,
+    "songBootstrapLower95_100ms": 0.001369,
+    "onsetAndOffsetF1_100ms": 0.004247,
+    "frameF1_20ms": 0.002330,
+    "cutOffNotes": -6,
+    "overlongNotes": 13,
+    "rapidRetriggers": 2
+  },
+  "ratesPer1000": {
+    "overlong": {
+      "baseline": 71.801279,
+      "candidate": 73.909561,
+      "change": 2.108282,
+      "maximumAllowedIncrease": 2.0,
+      "excessOverLimit": 0.108282
+    }
+  },
+  "gate": {
+    "researchGatePassed": false,
+    "failedChecks": [
+      "overlong_rate"
+    ],
+    "certificationPassed": true,
+    "certificationLower95Observed": 0.904456,
+    "certificationLower95Required": 0.9
+  },
+  "finding": "The two independently frozen gains are additive for onset accuracy: this is the strongest Phase 94 onset, onset-plus-offset, frame, and cutoff result, and every validation song improves. It nevertheless exceeds the frozen overlong-rate allowance by 0.108282 notes per 1000 matched notes, approximately two classifications at this panel size.",
+  "decision": "reject-combination-under-frozen-safety-gate; retain-original-weights-plus-release-preserving-overlap-as-development-winner",
+  "openedSongTransferRun": false,
+  "productionPromotionAllowed": false,
+  "sealedTestOpened": false,
+  "rightsClearedForCommercialUse": false,
+  "compute": {
+    "podId": "hjbswtiwyt39bj",
+    "podDesiredStatusAfterEvidenceDownload": "EXITED"
+  }
+}

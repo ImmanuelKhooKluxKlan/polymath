@@ -1,0 +1,123 @@
+{
+  "schema": "polymath-direct-piano-benchmark-v1",
+  "id": "phase94-individual-composer-v001",
+  "status": "train-and-validation-materialized-test-sealed",
+  "objective": "Measure literal acoustic-piano transcription on recordings whose individual composer or arranger people never cross train, validation, or test.",
+  "route": "direct-piano-only",
+  "localRoot": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19",
+  "remoteRoot": "/runpod-volume/training/phase-94-maestro-individual-composer-v001",
+  "networkVolumeId": "6lbtu5fo1l",
+  "splitPolicy": {
+    "name": "individual-composer-components",
+    "unit": "connected individual people within composite composer/arranger credits",
+    "officialMaestroSplitsPreserved": false,
+    "recordingDisjoint": true,
+    "individualPersonDisjoint": true,
+    "previouslyOpenedRecordingsExcluded": 42,
+    "trainValidationPersonOverlap": 0,
+    "trainTestPersonOverlap": 0,
+    "validationTestPersonOverlap": 0
+  },
+  "foundationProvenance": {
+    "auditDate": "2026-09-19",
+    "foundationCheckpoint": "MuScriptor large",
+    "publishedTrainingSummary": {
+      "synthetic": "Approximately 1.45 million MIDI files from public sources including Lakh MIDI plus commercial providers.",
+      "real": "An internal collection of approximately 170,000 aligned recordings (more than 11,000 hours).",
+      "reinforcementLearning": "A manually reviewed 300-track subset of the internal real-audio collection."
+    },
+    "exactTrainingItemInventoryPublished": false,
+    "maestroOverlapWithFoundation": "unknown",
+    "fineTuneSplitLeakageControlled": true,
+    "validClaim": "Phase94 compares fine-tuning candidates on recordings and individual composer/arranger people withheld from this Polymath fine-tuning run.",
+    "invalidClaims": [
+      "Phase94 is proven unseen to the MuScriptor foundation checkpoint.",
+      "A Phase94 score alone certifies independent or commercial production accuracy."
+    ],
+    "independentCertificationRequirement": "Reproduce the frozen procedure on rights-cleared recordings whose creation or acquisition postdates the foundation corpus, or obtain a verifiable foundation-corpus overlap audit."
+  },
+  "counts": {
+    "trainSongs": 30,
+    "trainPeople": 6,
+    "trainClips": 2861,
+    "validationSongs": 6,
+    "validationPeople": 5,
+    "validationClips": 247,
+    "sealedTestSongs": 8,
+    "sealedTestPeople": 4,
+    "sealedTestMaterialized": false
+  },
+  "clipContract": {
+    "sampleRate": 16000,
+    "channels": 1,
+    "encoding": "PCM signed 16-bit little-endian",
+    "clipSeconds": 5.0,
+    "trainingHopSeconds": 2.5,
+    "validationHopSeconds": 5.0,
+    "instrumentFocus": "acoustic_piano",
+    "trainingPositiveExamples": 2860,
+    "trainingNegativeExamples": 1,
+    "validationPositiveExamples": 247,
+    "validationNegativeExamples": 0
+  },
+  "tokenAudit": {
+    "trainingMinimum": 2,
+    "trainingMaximum": 673,
+    "trainingAverage": 250.03,
+    "validationMinimum": 23,
+    "validationMaximum": 603,
+    "validationAverage": 286.07
+  },
+  "hashes": {
+    "selectionManifestSha256": "f2cc2eb447c1736d42b44d2ae0ee8049799966564cdc4ee04f2c23d64c09873d",
+    "trainingIndexSha256": "bf816734b5e1a6b4d160b2b69c3f6a410c4f070b268cf6e87c0cbc32c5652d48",
+    "importSummarySha256": "e35fa73244084259f1398270f0eaffb0f9d633500f05fefb6f3e8c2933017292",
+    "datasetSummarySha256": "3974a2ad93956b00b4ba34836635421d76f6547551c17f4df1d710b6288a79f7",
+    "preparedTrainSha256": "0b3f61eb84370e55dd9345039f1b9b094a118ec38659a1922bd54300e69b1f12",
+    "preparedValidationSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2"
+  },
+  "integrityAudit": {
+    "uploadedFiles": 3110,
+    "uploadedBytes": 527303202,
+    "remoteTrainAudioFiles": 2861,
+    "remoteValidationAudioFiles": 247,
+    "remotePreparedManifestHashesMatchLocal": true,
+    "audioFilesHashed": 3108,
+    "uniqueAudioSha256": 3108,
+    "crossSplitDuplicateAudioGroups": 0,
+    "withinSplitDuplicateAudioGroups": 0
+  },
+  "immutableOriginalBaseline": {
+    "completedAt": "2026-09-19T07:27:09Z",
+    "checkpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+    "evaluationSha256": "712ddebefe167bc4b7774fc2dd37fe6c3103420242e22388269048f5d38a4247",
+    "validationClipsDecoded": 247,
+    "scores": {
+      "50ms": {"precision": 0.845662, "recall": 0.808026, "microF1": 0.826416},
+      "100ms": {"precision": 0.916874, "recall": 0.876069, "microF1": 0.896007},
+      "250ms": {"precision": 0.931076, "recall": 0.889639, "microF1": 0.909886}
+    },
+    "songClusterBootstrap95": {
+      "50ms": [0.800052, 0.845915],
+      "100ms": [0.882045, 0.90957],
+      "250ms": [0.895251, 0.925961]
+    },
+    "weakestSong100msF1": 0.851821,
+    "additionalMatchesNeededForPointNineAtFixedCounts": 61,
+    "targetReached": false
+  },
+  "acceptance": {
+    "headlineMetric": "micro exact-pitch onset F1 at 100 ms",
+    "sealedTarget": 0.9,
+    "reportTolerancesMs": [50, 100, 250],
+    "reportPrecisionRecallSeparately": true,
+    "rejectMaterialWorstSongRegression": true,
+    "productionPromotionRequiresBlindListening": true
+  },
+  "rights": {
+    "source": "MAESTRO v3.0.0",
+    "license": "CC BY-NC-SA 4.0",
+    "commercialUseAllowed": false,
+    "restriction": "Research benchmark only. Reproduce on first-party or commercially licensed data and weights before production."
+  }
+}

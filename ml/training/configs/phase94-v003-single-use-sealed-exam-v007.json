@@ -1,0 +1,170 @@
+{
+  "schema": "polymath-sealed-direct-piano-exam-plan-v1",
+  "candidateVersion": "phase94-overlap-release-preserving-v003",
+  "status": "frozen-before-blind-reveal-and-test-materialization",
+  "frozenAt": "2026-09-21T03:05:16Z",
+  "objective": "Run the original MuScriptor checkpoint plus the already-frozen release-preserving overlap decoder exactly once on eight individual-person-disjoint MAESTRO songs, with predictions locked before MIDI labels are available.",
+  "selection": {
+    "manifestPath": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/selection-manifest.json",
+    "manifestSha256": "f2cc2eb447c1736d42b44d2ae0ee8049799966564cdc4ee04f2c23d64c09873d",
+    "expectedTestSongs": 8,
+    "expectedTestPeople": 4,
+    "individualPersonOverlapAcrossSplits": 0,
+    "localDatasetRoot": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/source",
+    "preparedRoot": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/dataset/prepared",
+    "emptyTestManifestPath": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/dataset/test.jsonl",
+    "testSourcePairsPresentAtFreeze": 0,
+    "preparedTestRecordsAtFreeze": 0
+  },
+  "checkpoint": {
+    "id": "original",
+    "runtimeIdentity": "original/model.safetensors",
+    "sha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+    "bytes": 5465642136,
+    "fineTunedWeightsUsed": false
+  },
+  "fixedPolicy": {
+    "windowSeconds": 5.0,
+    "overlapOffsetSeconds": 2.5,
+    "radiusSeconds": 0.6,
+    "onsetMatchToleranceSeconds": 0.1,
+    "releaseRule": "preserve primary absolute release for same-pitch matches",
+    "retuningAllowed": false,
+    "referenceLabelsUsedAtInference": false
+  },
+  "eligibility": {
+    "developmentCandidateVersion": "phase94-overlap-release-preserving-v003",
+    "developmentGatePassed": true,
+    "developmentLower95_100ms": 0.903087,
+    "openedTransferCandidateVersion": "phase94-original-overlap-opened-kiss-me-v005",
+    "openedTransferStructuralGatePassed": true,
+    "mappingCommitment": "37e0f17695be601e13b5a3bbd03794be4650264257dc5bed8acfea8ffedee514",
+    "blindCandidatePreferenceRequiredBeforeAudioAuthorization": true,
+    "audibleBlockerAllowed": false
+  },
+  "acceptance": {
+    "headlineMetric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "microF1_100msMinimum": 0.9,
+    "songBootstrapLower95_100msMinimum": 0.9,
+    "candidateMustBeatImmutableOriginal": true,
+    "fullGateArtifactName": "sealedGate",
+    "allEightSongsRequired": true,
+    "precisionAndRecallReportedSeparately": true,
+    "reportTolerancesMs": [50, 100, 250],
+    "failureConsumesTest": true,
+    "thresholdChangesAfterResultAllowed": false
+  },
+  "workflow": [
+    "record A/B/TIE before revealing the committed opened-song map",
+    "if and only if candidate wins without blocker, authorize selected test audio",
+    "download audio only; selected MIDI files must remain absent",
+    "prepare primary and 2.5-second-shifted label-free passes",
+    "decode both passes with checkpoint SHA-256 verification",
+    "apply the fixed 0.60-second release-preserving policy once",
+    "hash-lock manifests, decoded evaluations, and full-song candidate output",
+    "authorize and download MIDI labels only after prediction lock",
+    "score immutable original and candidate against the same reference manifest",
+    "apply the frozen safety and confidence gate and mark the test consumed"
+  ],
+  "artifacts": {
+    "selectionManifest": {
+      "path": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/selection-manifest.json",
+      "sha256": "f2cc2eb447c1736d42b44d2ae0ee8049799966564cdc4ee04f2c23d64c09873d"
+    },
+    "developmentFreeze": {
+      "path": "ml/training/evidence/phase94-overlap-release-preserving-v003/FREEZE.json",
+      "sha256": "771c4dfdc3e60994ded6671dd4f2d01a3181965120a6be41e294e7d66cf5b715"
+    },
+    "developmentResult": {
+      "path": "ml/training/evidence/phase94-overlap-release-preserving-v003/RESULT.json",
+      "sha256": "0173455eed4b714527b352d95e58764d89b6a29f57e3aea4b22707c0b5850bac"
+    },
+    "openedTransferFreeze": {
+      "path": "ml/training/evidence/phase94-original-overlap-opened-kiss-me-v005/FREEZE.json",
+      "sha256": "ecd2f2580da9edcce398bd453a92d1e2d376e54ee90978208a9882783b09f364"
+    },
+    "openedTransferPreListening": {
+      "path": "ml/training/evidence/phase94-original-overlap-opened-kiss-me-v005/PRE_LISTENING.json",
+      "sha256": "3dff448cd6e1a046b48674a66203043baf837c56fd3791a933f89181cfca139f"
+    },
+    "structuralFreeze": {
+      "path": "ml/training/evidence/phase94-opened-transfer-structural-audit-v006/FREEZE.json",
+      "sha256": "ae9c7b30419333758b37dac078aed3f26dc82809addce9b49fbd7286301399fa"
+    },
+    "structuralResult": {
+      "path": "ml/training/evidence/phase94-opened-transfer-structural-audit-v006/RESULT.json",
+      "sha256": "d236035acf3d2a47cd59a0e4d41a1dd0b7397f211438c7d5c3a5062956d8ce9c"
+    },
+    "sealedGate": {
+      "path": "ml/training/configs/phase94-v003-sealed-test-gate-v001.json",
+      "sha256": "9486c2af687d9dc46c8df73577e199db66a2bebecb35a9372ac6f215a632746d"
+    },
+    "assetMaterializerCode": {
+      "path": "ml/training/materialize_sealed_assets.py",
+      "sha256": "917d1fa615ce821090a8b1eb8dc73b433f0d7a8c1a1177cbf4f8265fc8ffb90d"
+    },
+    "audioPassPreparationCode": {
+      "path": "ml/training/prepare_sealed_audio_passes.py",
+      "sha256": "8561d2174475913f00aa3467c9bf18d81ad7f139f5d8936dee56c36bddc204c5"
+    },
+    "custodyCode": {
+      "path": "ml/training/sealed_exam_custody.py",
+      "sha256": "85b1a7bc9b6fe67c9b28c7402770fba7e8f96115f9d2c1988a2561fedce9d9c4"
+    },
+    "fixedPolicyCode": {
+      "path": "ml/training/apply_fixed_overlap_policy.py",
+      "sha256": "72ae2ef0ab5dacb71b0c10c7faf3ea6f4335a035cc470332da4deff7ac6669d3"
+    },
+    "releaseMergeCode": {
+      "path": "ml/training/search_overlap_release_preserving_policy.py",
+      "sha256": "2c0d0cad13dcc6529e91be59b852df339fbfe0e03cf44197755fa0ead3ec6abb"
+    },
+    "fixedPredictionScorerCode": {
+      "path": "ml/training/score_fixed_overlap_inference.py",
+      "sha256": "b6784963fe7cd0bd6c4256a6f829acdd2e0263f1c0f2e869da1a69bea4b77661"
+    },
+    "sealedReferencePreparationCode": {
+      "path": "ml/training/prepare_sealed_reference_manifest.py",
+      "sha256": "96415a16af0ffc62bf9952081ebb6ea22e9c5157e127e9ae593864727c76be63"
+    },
+    "maestroMidiParserCode": {
+      "path": "ml/training/prepare_maestro_curriculum.py",
+      "sha256": "6c7bc66bbde68613e1083fba7b9c318c01b84e0055d87549350eea713e79e1ad"
+    },
+    "referenceClipperCode": {
+      "path": "ml/training/prepare_overlap_validation.py",
+      "sha256": "df7ab421c233af5406df74db35c246cbdb1a0d58520cb43d697dd40f90e74e75"
+    },
+    "checkpointEvaluatorCode": {
+      "path": "ml/training/evaluate_checkpoint.py",
+      "sha256": "985320f91aaf24cea71ef2f235abd9903d1a50051d071aca90f9a29aab5a2da8"
+    },
+    "timelineScorerCode": {
+      "path": "ml/training/rescore_song_timelines.py",
+      "sha256": "bda1d0b0d14467dea38d39b7f5657c8ecabbd4aff1da197700e744386b094452"
+    },
+    "fullGateCode": {
+      "path": "ml/training/apply_full_validation_gate.py",
+      "sha256": "0de018040cb5c6a303646eee6e9c3f7ee640ff67975460406a355e9e929bb580"
+    },
+    "audioClipCode": {
+      "path": "ml/training/prepare_audio_clips.py",
+      "sha256": "4c6a4e8f0a0a47921ae438c21086dbec4c74d492944f34d24d7f598e61ac69ee"
+    },
+    "tokenizationCode": {
+      "path": "ml/training/train_muscriptor_piano.py",
+      "sha256": "7ef5c65d51ed6702b08593b2651acea5895381c3c3bd8caea8e32fa432a5cb20"
+    }
+  },
+  "rights": {
+    "benchmark": "MAESTRO v3.0.0",
+    "license": "CC BY-NC-SA 4.0",
+    "commercialUseAllowed": false,
+    "foundationCorpusOverlapKnown": false,
+    "technicalPassMeaning": "research evidence for the direct-piano route only",
+    "productionRequirement": "reproduce with first-party or commercially licensed data and commercially usable weights"
+  },
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "productionPromotionAllowed": false
+}

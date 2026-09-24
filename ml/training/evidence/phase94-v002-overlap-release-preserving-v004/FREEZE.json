@@ -1,0 +1,17 @@
+{
+  "schema": "polymath-candidate-freeze-v1",
+  "candidateVersion": "phase94-v002-overlap-release-preserving-v004",
+  "frozenAt": "2026-09-20T17:20:14Z",
+  "plan": "ml/training/configs/phase94-v002-overlap-release-preserving-v004.json",
+  "planSha256": "14de61b8ae885157a7de98cd12f608697825056e122c63f6f22825cfb4ed3346",
+  "checkpointSha256": "d1e9a241fae094d53a7d8838fc14ea9c6c2dc3a4f11fff7323c0c1152a55efdd",
+  "primaryEvaluationSha256": "c1e4bd4c8b491d3688d241fc381eeb92ede2874f254259a471bb438a148866fd",
+  "overlapManifestSha256": "e972e56aeaad4613386023feb3cab69994c6369feac0a0797ad48a7a610f5bd9",
+  "searchCodeSha256": "2c0d0cad13dcc6529e91be59b852df339fbfe0e03cf44197755fa0ead3ec6abb",
+  "fixedRadiusSeconds": 0.60,
+  "onsetMatchToleranceSeconds": 0.10,
+  "retuningAllowed": false,
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false,
+  "commercialUseAllowed": false
+}

@@ -5,7 +5,11 @@ from pathlib import Path
 
 from ml.training.dataset_builder import DatasetError, build_dataset, deterministic_split
 from ml.training.evaluate_predictions import analyze_errors, evaluate
-from ml.training.evaluate_checkpoint import aggregate_clip_scores, stitch_clip_notes
+from ml.training.evaluate_checkpoint import (
+    aggregate_clip_scores,
+    song_cluster_bootstrap_f1,
+    stitch_clip_notes,
+)
 
 
 class DatasetBuilderTests(unittest.TestCase):
@@ -110,6 +114,26 @@ class DatasetBuilderTests(unittest.TestCase):
         self.assertEqual(score["predictedNotes"], 2)
         self.assertEqual(score["matchedNotes"], 1)
         self.assertAlmostEqual(score["microF1"], 0.5)
+
+    def test_song_bootstrap_resamples_whole_songs_deterministically(self):
+        per_song = {
+            song: {
+                tolerance: {
+                    "referenceNotes": 10,
+                    "predictedNotes": 10,
+                    "matchedNotes": 8,
+                }
+                for tolerance in ("50ms", "100ms", "250ms")
+            }
+            for song in ("song-a", "song-b", "song-c")
+        }
+        first = song_cluster_bootstrap_f1(per_song, samples=100)
+        second = song_cluster_bootstrap_f1(per_song, samples=100)
+        self.assertEqual(first, second)
+        self.assertEqual(first["100ms"]["pointEstimateMicroF1"], 0.8)
+        self.assertEqual(first["100ms"]["lower95"], 0.8)
+        self.assertEqual(first["100ms"]["upper95"], 0.8)
+        self.assertEqual(first["100ms"]["resamplingUnit"], "complete-song")
 
     def test_error_analysis_separates_instrument_octave_retrigger_and_cutoff(self):
         reference = [

@@ -1,0 +1,49 @@
+{
+  "schema": "polymath-phase94-full-validation-gate-v1",
+  "candidateVersion": "phase94-v003-decoded-selection-control",
+  "frozenAt": "2026-09-19T10:24:00Z",
+  "scope": "Complete six-song Phase94 validation after the trainer has selected one checkpoint on its 36-clip safety panel.",
+  "primaryMetric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+  "immutableOriginal": {
+    "evaluationSha256": "aa43b7ad3e520660451b916fbfaddaf5755cefa6fb5530c739083d1a9612a499",
+    "referenceNotes": 15097,
+    "predictedNotes": 14818,
+    "matchedNotes": 13607,
+    "precision100ms": 0.918275,
+    "recall100ms": 0.901305,
+    "microF1_100ms": 0.909711,
+    "songBootstrapLower95_100ms": 0.897980,
+    "onsetAndOffsetF1_100ms": 0.343239,
+    "frameF1_20ms": 0.558646,
+    "cutOffNotes": 669,
+    "cutOffPer1000Matched": 49.166,
+    "overlongNotes": 977,
+    "overlongPer1000Matched": 71.801,
+    "rapidRetriggers": 55,
+    "rapidRetriggersPer1000Predicted": 3.712
+  },
+  "requiredChecks": {
+    "microF1_100msMustExceedOriginal": true,
+    "microF1_100msMinimum": 0.90,
+    "precision100msMaximumRegression": 0.001,
+    "recall100msMaximumRegression": 0.001,
+    "maximumPerSongF1Regression": 0.005,
+    "onsetAndOffsetF1MaximumRegression": 0.002,
+    "frameF1MaximumRegression": 0.002,
+    "cutOffPer1000MatchedMaximumIncrease": 2.0,
+    "overlongPer1000MatchedMaximumIncrease": 2.0,
+    "rapidRetriggersPer1000PredictedMaximumIncrease": 0.25
+  },
+  "certificationCheck": {
+    "songBootstrapLower95_100msMinimum": 0.90,
+    "failureMeaning": "A candidate can remain a useful research comparator, but cannot support a broad 90-percent accuracy claim."
+  },
+  "additionalRequirements": [
+    "opened-song production-route transfer",
+    "blind loudness-matched listening",
+    "single-use sealed eight-song test only after the winner is frozen",
+    "commercially licensed or first-party reproduction before deployment"
+  ],
+  "sealedTestOpened": false,
+  "productionCheckpointChanged": false
+}

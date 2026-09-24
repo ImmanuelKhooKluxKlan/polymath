@@ -1,0 +1,43 @@
+{
+  "schema": "polymath-transcription-candidate-freeze-v1",
+  "id": "phase92-focused-vocal-density-router-v001",
+  "status": "CANDIDATE_FOR_NEW_SEALED_HOLDOUT",
+  "frozenAt": "2026-09-18",
+  "claim": "A sparse-evidence safety router plus decoded focused-vocal pass improves the current production-v003 pipeline in whole-song leave-one-out development evaluation.",
+  "developmentEvidence": {
+    "songs": 4,
+    "exactPitchOnset100msF1Delta": 0.006904,
+    "exactPitchOnset100msRecallDelta": 0.009288,
+    "exactPitchOnset250msF1Delta": 0.018369,
+    "pitchClassOnset250msF1Delta": 0.016811,
+    "pitchClassOnset250msRecallDelta": 0.026571,
+    "physicalSevereCutoffRateDelta": -0.017164,
+    "rapidRetriggersUnder100msDelta": 0,
+    "allHeldoutSongsWithinExact100RegressionLimit": true,
+    "decision": "CANDIDATE_FOR_NEW_SEALED_HOLDOUT"
+  },
+  "artifacts": {
+    "policy": "ml/training/configs/phase92-focused-vocal-density-router-v001.json",
+    "searchReport": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/focused-fusion-search-v005-density-router/search/search-report.json",
+    "searchReportSha256": "db4355eab48f90a29303403d2b6627e690a4ac7079b848dd0177eda341771f93",
+    "baselineScorecard": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/production-v003-scorecard-v002.json",
+    "baselineScorecardSha256": "99b00bf05e27af373830f0174a9c73139154066daa70e8b30d254838acf0e0b9"
+  },
+  "codeSha256": {
+    "ml/training/merge_focused_transcription.py": "394437d9fccaec9b8a1acda1b64a47a335403883d311349c6a07a6d202f6fe0a",
+    "ml/training/decode_focused_vocal_melody.py": "1d6915bc1d4d3f8dfb3ecc8e09d4578b85e8f5087a3df72f5b5120c46af248b0",
+    "ml/training/search_focused_fusion_policy.py": "fcd5d8d834256f984c3c270dfa97f171805362ff1001062c507dc0479099bd48",
+    "server/piano_arranger_pipeline.py": "bbd0657119bd36cc4a916c5411f04e32ade5c4659652d835af56e822e212f5e6"
+  },
+  "requiredNextGates": [
+    "Run exactly once on a pre-registered, previously unused full-song pair.",
+    "Pass automated note, timing, duration, cutoff, and retrigger gates.",
+    "Win a mapping-sealed blind listening comparison against production-v003.",
+    "Run a production canary with an instant rollback path before broad activation."
+  ],
+  "prohibited": [
+    "Do not retune this candidate after seeing the sealed song and still call that song a holdout.",
+    "Do not deploy from the four opened development songs alone.",
+    "Do not claim 90-percent transcription accuracy from a style or listening score."
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "schema": "polymath-overlap-boundary-experiment-plan-v1",
+  "candidateVersion": "phase94-overlap-boundary-decoder-v002",
+  "status": "frozen-before-overlap-decoding",
+  "frozenAt": "2026-09-19T10:44:13Z",
+  "supersedes": "phase94-overlap-boundary-decoder-v001",
+  "objective": "Measure whether a 2.5-second shifted pass recovers notes obscured by MuScriptor's artificial five-second decode boundaries without globally unioning false notes.",
+  "principalExperiment": "Keep the primary pass except inside one pre-registered radius around each primary five-second cut; inside that zone, replace it with the shifted pass that heard the same event near its window centre.",
+  "motivation": {
+    "source": "phase94-v001 change attribution on the complete six-song validation set",
+    "persistentMissRateWithin150msOfPrimaryBoundary": 0.256059,
+    "persistentMissRateAwayFromPrimaryBoundary": 0.083545,
+    "interpretation": "The boundary-associated error rate is about 3.1 times higher, so context placement is a stronger next hypothesis than another blanket note-on weight."
+  },
+  "checkpoint": {
+    "id": "original",
+    "sha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+    "primaryEvaluationSha256": "712ddebefe167bc4b7774fc2dd37fe6c3103420242e22388269048f5d38a4247"
+  },
+  "dataset": {
+    "split": "phase94 validation only",
+    "songs": 6,
+    "primaryClips": 247,
+    "overlapClips": 247,
+    "primaryManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+    "overlapManifestSha256": "e972e56aeaad4613386023feb3cab69994c6369feac0a0797ad48a7a610f5bd9",
+    "overlapPreparationReceiptSha256": "e6401277b1327f2790ae3fe9975ce512bae3bd05c8d357b21d05b8cfb03d4f55",
+    "overlapOffsetSeconds": 2.5,
+    "windowSeconds": 5.0,
+    "referenceIdentityAudit": {
+      "primaryOnsetsAtOrAfterOffset": 14946,
+      "exactlyReconstructedOnsets": 14946,
+      "missingOnsets": 0,
+      "additionalInitialTiePrologues": 8,
+      "onsetToleranceSeconds": 0.000001
+    },
+    "sealedTestOpened": false
+  },
+  "search": {
+    "replacementRadiusSeconds": [0.10, 0.15, 0.25, 0.40, 0.60, 0.80],
+    "duplicateOnsetToleranceSeconds": 0.03,
+    "selectionRanking": [
+      "continuousSong.100ms.microF1",
+      "continuousSong.100ms.recall",
+      "continuousSong.250ms.microF1"
+    ],
+    "requiredSafetyGate": "ml/training/evidence/phase94-direct-piano-v003-decoded-selection/FULL_VALIDATION_GATE.json",
+    "maximumPerSong100msF1Regression": 0.005,
+    "durationAndRetriggerChecksRequired": true
+  },
+  "limitations": [
+    "This doubles model decoding work before any later optimization or selective routing.",
+    "The radius is development-tuned on six opened validation songs and needs the sealed test after the entire winner is frozen.",
+    "The inference pass changes note facts only; Pianella-style arrangement remains a separate downstream stage."
+  ],
+  "rights": {
+    "source": "MAESTRO v3.0.0",
+    "license": "CC BY-NC-SA 4.0",
+    "commercialUseAllowed": false
+  },
+  "code": {
+    "prepareOverlapValidationSha256": "df7ab421c233af5406df74db35c246cbdb1a0d58520cb43d697dd40f90e74e75",
+    "searchOverlapBoundaryPolicySha256": "dece61d39fe8f99b2c69c01da71177429e2855351a7b46fbc35fcd72f68326bf"
+  },
+  "productionCheckpointChanged": false
+}

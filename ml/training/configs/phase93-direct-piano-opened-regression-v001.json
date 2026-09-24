@@ -1,0 +1,39 @@
+{
+  "schema": "polymath-training-transcription-batch-v1",
+  "phase": "phase-93-opened-direct-piano-regression-v001",
+  "purpose": "Run the frozen phase93-v001 candidate on the four already-opened 90-second direct-piano development pieces. These results are regression evidence, not sealed-test evidence.",
+  "endpointId": "x0qlm1nzny5gj3",
+  "volumeId": "6lbtu5fo1l",
+  "replicas": "none",
+  "timeoutMinutes": 120,
+  "checkpoint": "phase93-v001",
+  "instrument": "piano",
+  "constraints": ["acoustic_piano"],
+  "focusedConstraints": [],
+  "tasks": [
+    {
+      "id": "schubert-phase93-v001",
+      "title": "Schubert opened regression - phase93-v001",
+      "audio": "D:/Polymath Training/phase-70-maestro-schubert-blind-transfer-2026-09-18/source/schubert-impromptu-op90-no4-000-090.wav",
+      "output": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/schubert-phase93-v001.json"
+    },
+    {
+      "id": "chopin-phase93-v001",
+      "title": "Chopin opened regression - phase93-v001",
+      "audio": "D:/Polymath Training/phase-71-maestro-chopin-final-blind-transfer-2026-09-18/source/chopin-etude-op10-no9-000-090.wav",
+      "output": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/chopin-phase93-v001.json"
+    },
+    {
+      "id": "rachmaninoff-phase93-v001",
+      "title": "Rachmaninoff opened regression - phase93-v001",
+      "audio": "D:/Polymath Training/phase-73-maestro-rachmaninoff-final-blind-transfer-2026-09-18/source/rachmaninoff-prelude-op32-no12-000-090.wav",
+      "output": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/rachmaninoff-phase93-v001.json"
+    },
+    {
+      "id": "debussy-phase93-v001",
+      "title": "Debussy opened regression - phase93-v001",
+      "audio": "D:/Polymath Training/phase-75-maestro-debussy-untouched-transfer-2026-09-18/source/debussy-etude-no7-000-090.wav",
+      "output": "D:/Polymath Training/phase-93-maestro-direct-piano-curriculum-v004-composer-disjoint-2026-09-19/opened-regression/raw/debussy-phase93-v001.json"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "polymath-candidate-supersession-v1",
+  "candidateVersion": "phase94-overlap-boundary-decoder-v001",
+  "supersededAt": "2026-09-19T10:44:13Z",
+  "status": "superseded-before-model-decoding",
+  "reason": "The preparation audit found 21 reference attacks beginning less than 10 ms before a shifted cut. The draft builder discarded the tiny left fragment, so the continuation in the next clip moved each onset onto the cut.",
+  "impact": {
+    "gpuEvaluationsUsingDraft": 0,
+    "sealedTestOpened": false,
+    "productionChanged": false,
+    "originalCorpusChanged": false
+  },
+  "replacement": "phase94-overlap-boundary-decoder-v002",
+  "replacementInvariant": "Every one of the 14,946 original reference onsets at or after 2.5 seconds is reconstructed at exact microsecond tolerance; eight additional overlap notes are expected tie prologues that began before 2.5 seconds."
+}

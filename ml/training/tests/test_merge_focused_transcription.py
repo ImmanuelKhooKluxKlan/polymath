@@ -118,6 +118,33 @@ class FocusedTranscriptionFusionTests(unittest.TestCase):
         self.assertEqual(result["notes"], primary["notes"])
         self.assertFalse(result["focusedTranscriptionFusion"]["applied"])
 
+    def test_sparse_accepted_voice_pass_can_fail_closed_to_primary(self):
+        primary = {"notes": [
+            {"midi": 60, "time": 1.0, "duration": 0.4, "instrument": "voice"},
+            {"midi": 48, "time": 10.0, "duration": 0.4, "instrument": "bass"},
+        ]}
+        focused = {"notes": [
+            {"midi": 60, "time": 1.01, "duration": 0.2, "instrument": "voice"},
+        ]}
+        result = fuse_focused_transcription(
+            primary,
+            focused,
+            strategy="corroborated-union",
+            support_scope="primary-pitched",
+            support_tolerance_seconds=0.05,
+            minimum_pass_support_ratio=0.5,
+            known_shared_audio=True,
+            focused_melody_decoder={
+                "enabled": True,
+                "minimum_input_notes_per_second": 0.5,
+                "reject_pass_below_minimum_input_density": True,
+            },
+        )
+        diagnostics = result["focusedTranscriptionFusion"]
+        self.assertEqual(result["notes"], primary["notes"])
+        self.assertFalse(diagnostics["applied"])
+        self.assertTrue(diagnostics["melodyDecoder"]["focusedPassRejected"])
+
     def test_secondary_pitched_scope_recovers_a_mislabeled_voice(self):
         primary = {"notes": [
             {"midi": 60, "time": 1.0, "duration": 0.4, "instrument": "guitar"},

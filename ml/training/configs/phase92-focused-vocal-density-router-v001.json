@@ -1,0 +1,35 @@
+{
+  "schema": "polymath-focused-vocal-density-router-v1",
+  "id": "phase92-focused-vocal-density-router-v001",
+  "status": "frozen-research-candidate-requires-new-sealed-holdout",
+  "commercialUseAllowed": false,
+  "fusion": {
+    "strategy": "corroborated-union",
+    "supportScope": "primary-pitched",
+    "supportPitchMode": "exact",
+    "supportToleranceSeconds": 0.16,
+    "minimumPassSupportRatio": 0.15,
+    "retainUnmatchedPrimary": false
+  },
+  "melodyDecoder": {
+    "enabled": true,
+    "minimum_input_notes_per_second": 1.4,
+    "reject_pass_below_minimum_input_density": true,
+    "retain_unmatched_primary_when_applied": true,
+    "decode_all_candidates_after_acceptance": true,
+    "maximum_unanchored_polyphony": 3,
+    "upper_candidate_preference": 0.2,
+    "jump_penalty_per_semitone": 0.04
+  },
+  "selectionBoundary": {
+    "songs": [
+      "kiss-me",
+      "back-to-december",
+      "cruel-summer",
+      "we-are-never-getting-back-together"
+    ],
+    "method": "whole-song leave-one-out",
+    "allSongsAreNowDevelopmentEvidence": true,
+    "productionDeploymentAuthorized": false
+  }
+}

@@ -95,7 +95,14 @@ def prepare_manifest(
             if manifest_audio_root
             else str(destination.resolve())
         )
-        prepared.append({**record, "audioClip": manifest_audio_path})
+        prepared.append({
+            **record,
+            "audioClip": manifest_audio_path,
+            # Keep one provenance/local-audit path even when the runtime path
+            # points at /runpod-volume. The trainer deliberately falls back to
+            # this file during desktop preflight and never sends it to CUDA.
+            "localAudioSource": str(destination.resolve()),
+        })
         print(f"[{index}/{len(records)}] {clip_id}")
     prepared_manifest = output_directory / f"prepared-{split}.jsonl"
     write_jsonl(prepared_manifest, prepared)

@@ -1,0 +1,60 @@
+{
+  "schema": "polymath-direct-piano-candidate-plan-v1",
+  "candidateVersion": "phase93-v001",
+  "status": "frozen-before-training",
+  "objective": "Improve strict direct-piano note and onset decoding across unseen composers without regressing strong pieces.",
+  "route": "direct-piano-only",
+  "baseCheckpoint": "original",
+  "dataset": {
+    "id": "phase-93-maestro-direct-composer-v001",
+    "remoteRoot": "/runpod-volume/training/phase-93-maestro-direct-composer-v001",
+    "selectionManifestSha256": "53eb74f9cf990869127adbcf26f01219ff20ec601409536d48978fdb6cf48252",
+    "trainManifestSha256": "a36865e72e21071be7b623a713570f29116248d3a8a1beb4429ce8cdc7c53da3",
+    "validationManifestSha256": "c71d9c1e1b21cff28ca3e214c79b61d370fb6cd6c94b7c2d7ef3b817c6bb9f58",
+    "trainSongs": 30,
+    "trainComposers": 24,
+    "trainClips": 2667,
+    "validationSongs": 6,
+    "validationComposers": 6,
+    "validationClips": 208,
+    "sealedTestSongs": 8,
+    "sealedTestComposers": 7,
+    "composerOverlapAcrossSplits": 0,
+    "sealedTestOpenedBeforeCandidateFreeze": false
+  },
+  "training": {
+    "epochs": 3,
+    "trainLastLayers": 1,
+    "learningRate": 1e-7,
+    "timingTokenWeight": 1.35,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "instrument",
+    "precision": "bf16",
+    "gradientAccumulation": 8,
+    "weightDecay": 0.01,
+    "gradientClipNorm": 1.0
+  },
+  "selectionPolicy": {
+    "teacherForcedValidationLossMustImprove": true,
+    "decodedGateTolerancesMs": [100, 250],
+    "maximumAggregateF1Regression": 0.001,
+    "maximumAggregateRecallRegression": 0.002,
+    "maximumPerSongF1Regression": 0.01,
+    "productionPromotionRequiresSealedTest": true,
+    "productionPromotionRequiresBlindListening": true,
+    "targetStrictExactPitchOnsetF1At100ms": 0.9
+  },
+  "rights": {
+    "source": "MAESTRO v3.0.0",
+    "license": "CC BY-NC-SA 4.0",
+    "commercialUseAllowed": false,
+    "restriction": "Research candidate only. Do not promote this checkpoint into a commercial production route."
+  },
+  "isolation": {
+    "endpointId": "x0qlm1nzny5gj3",
+    "networkVolumeId": "6lbtu5fo1l",
+    "overwriteExistingCheckpoint": false,
+    "productionCheckpointUnchanged": true
+  }
+}

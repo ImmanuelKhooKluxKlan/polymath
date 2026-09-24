@@ -81,11 +81,30 @@ function normalizeMoneyCents(value, fallback = 0) {
 function ensureSubscriptionCatalog(db) {
   if (!Array.isArray(db.subscriptionCategories)) db.subscriptionCategories = [];
   if (!Array.isArray(db.subscriptionPlans)) db.subscriptionPlans = [];
+  if (!Array.isArray(db.subscriptionProductOverrides)) db.subscriptionProductOverrides = [];
+  db.subscriptionProductOverrides.forEach((item) => {
+    if (!item.id && item.productId) item.id = `subscription-price-${item.productId}`;
+  });
   if (!Array.isArray(db.subscriptionCatalogEvents)) db.subscriptionCatalogEvents = [];
   if (!db.subscriptionCategories.some((item) => item.id === DEFAULT_CREATOR_CATEGORY.id)) {
     db.subscriptionCategories.push({ ...DEFAULT_CREATOR_CATEGORY });
   }
   return db;
+}
+
+function baseProductWithOverride(db, product) {
+  ensureSubscriptionCatalog(db);
+  const override = db.subscriptionProductOverrides.find((item) => item.productId === product.id);
+  if (!override) return { ...product };
+  return {
+    ...product,
+    price: (Number(override.unitAmountCents || 0) / 100).toFixed(2),
+    currency: override.currency || product.currency,
+    paypalPlanId: override.paypalPlanId || '',
+    upgradePaypalPlanId: override.upgradePaypalPlanId || '',
+    pricingRevision: Number(override.revision || 1),
+    pricingUpdatedAt: override.updatedAt || null,
+  };
 }
 
 function categoryById(db, categoryId) {
@@ -193,13 +212,15 @@ function listPublicCatalog(db, baseProducts) {
     .map((plan) => publicCustomProduct(plan, categoryById(db, plan.categoryId)))
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
   const products = [
-    ...Object.values(baseProducts).filter((product) => !product.legacy).map(decorateBaseProduct),
+    ...Object.values(baseProducts)
+      .filter((product) => !product.legacy)
+      .map((product) => decorateBaseProduct(baseProductWithOverride(db, product))),
     ...customProducts,
   ];
   return { categories, products };
 }
 
-function listAdminCatalog(db) {
+function listAdminCatalog(db, baseProducts = {}) {
   ensureSubscriptionCatalog(db);
   return {
     categories: db.subscriptionCategories
@@ -208,16 +229,68 @@ function listAdminCatalog(db) {
     plans: db.subscriptionPlans
       .map((plan) => publicCustomProduct(plan, categoryById(db, plan.categoryId), { admin: true }))
       .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name)),
+    corePlans: Object.values(baseProducts)
+      .filter((product) => product.kind === 'subscription' && !product.legacy)
+      .map((product) => {
+        const resolved = decorateBaseProduct(baseProductWithOverride(db, product));
+        return {
+          ...resolved,
+          basePrice: Number(product.price).toFixed(2),
+          paypalPlanId: resolved.paypalPlanId || '',
+          upgradePaypalPlanId: resolved.upgradePaypalPlanId || '',
+          priceEdited: Number(resolved.price) !== Number(product.price),
+          revision: Number(resolved.pricingRevision || 0),
+        };
+      }),
     entitlementOptions: ALLOWED_ENTITLEMENTS,
   };
 }
 
 function resolveProduct(db, baseProducts, productId) {
   const id = clean(productId, 100);
-  if (baseProducts[id]) return decorateBaseProduct(baseProducts[id]);
+  if (baseProducts[id]) return decorateBaseProduct(baseProductWithOverride(db, baseProducts[id]));
   ensureSubscriptionCatalog(db);
   const plan = db.subscriptionPlans.find((item) => item.id === id);
   return plan ? publicCustomProduct(plan, categoryById(db, plan.categoryId), { admin: true }) : null;
+}
+
+function updateBaseProductPrice(db, baseProducts, productId, input, actorId) {
+  ensureSubscriptionCatalog(db);
+  const product = baseProducts[clean(productId, 100)];
+  if (!product || product.kind !== 'subscription' || product.legacy) {
+    throw createError('Built-in subscription plan not found.', 404);
+  }
+  const priceNumber = Number(input.price);
+  if (!Number.isFinite(priceNumber) || priceNumber < 0.01 || priceNumber > 1_000_000) {
+    throw createError('Subscription price must be between USD 0.01 and USD 1,000,000.');
+  }
+  const unitAmountCents = normalizeMoneyCents(priceNumber * 100);
+  const paypalPlanId = clean(input.paypalPlanId, 120);
+  if (!paypalPlanId) throw createError('Add the active PayPal plan ID that matches this price.');
+  const upgradePaypalPlanId = clean(input.upgradePaypalPlanId, 120);
+  const current = db.subscriptionProductOverrides.find((item) => item.productId === product.id);
+  const now = new Date().toISOString();
+  const next = {
+    id: current?.id || `subscription-price-${product.id}`,
+    productId: product.id,
+    unitAmountCents,
+    currency: clean(input.currency || product.currency || 'USD', 3).toUpperCase(),
+    paypalPlanId,
+    upgradePaypalPlanId,
+    revision: Number(current?.revision || 0) + 1,
+    createdAt: current?.createdAt || now,
+    createdBy: current?.createdBy || actorId,
+    updatedAt: now,
+    updatedBy: actorId,
+  };
+  if (current) Object.assign(current, next);
+  else db.subscriptionProductOverrides.push(next);
+  recordCatalogEvent(db, actorId, 'base_plan_price_updated', product.id, {
+    unitAmountCents,
+    currency: next.currency,
+    revision: next.revision,
+  });
+  return next;
 }
 
 function createCategory(db, input, actorId) {
@@ -426,6 +499,7 @@ module.exports = {
   listPublicCatalog,
   normalizeEntitlements,
   resolveProduct,
+  updateBaseProductPrice,
   updateCategory,
   updatePlan,
 };

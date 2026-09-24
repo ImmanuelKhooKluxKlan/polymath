@@ -1,0 +1,55 @@
+{
+  "schema": "polymath-unlabeled-transfer-safety-plan-v1",
+  "candidateVersion": "phase94-opened-transfer-structural-audit-v006",
+  "status": "frozen-before-note-level-difference-inspection",
+  "frozenAt": "2026-09-21T02:36:10Z",
+  "scope": "Opened Kiss Me primary-window baseline versus the already-frozen release-preserving overlap decoder.",
+  "knownBeforeFreeze": {
+    "primaryNotes": 836,
+    "candidateNotes": 867,
+    "versionA_rms": 0.034652,
+    "versionB_rms": 0.035332,
+    "blindMappingInspected": false,
+    "noteLevelDifferencesInspected": false
+  },
+  "immutableInputs": {
+    "primaryPlayableSha256": "0db3214ff836f1e2e04ee41013d2966857dd604f0038fdf6f533cdb77c5a3ee9",
+    "candidatePlayableSha256": "8e8db3672e0beb67652ecc0ccb383997956bac7be799c5be33f8698555bbcc91",
+    "versionA_wavSha256": "57cc9b4099229defc01f25bf3aeaf2b4dcabfb66ec2ea87b771c2939cc624905",
+    "versionB_wavSha256": "b34bb97af02a87d73fdc4375fd4903ec3e4b2b0e4a849dac2327ba6a627c84bd",
+    "audioRenderManifestSha256": "f02c9306eecd0b5a87cdb73d8777a81c1291b98ccfb844c0fc791498481c3adf",
+    "mappingCommitment": "37e0f17695be601e13b5a3bbd03794be4650264257dc5bed8acfea8ffedee514"
+  },
+  "matching": {
+    "unchangedOnsetToleranceSeconds": 0.000001,
+    "unchangedDurationToleranceSeconds": 0.000001,
+    "samePitchMovedPairToleranceSeconds": 0.1,
+    "pairing": "deterministic greedy by onset distance, then times and indices"
+  },
+  "requiredChecks": {
+    "invalidPrimaryNotesMaximum": 0,
+    "invalidCandidateNotesMaximum": 0,
+    "changedOnsetBoundaryViolationsMaximum": 0,
+    "boundaryRadiusSeconds": 0.6,
+    "maximumPairedOnsetShiftSeconds": 0.1,
+    "candidateNoteCountRatioMinimum": 0.9,
+    "candidateNoteCountRatioMaximum": 1.1,
+    "rapidRetriggers75msPer1000MaximumIncrease": 0.25,
+    "rapidRetriggers100msMaximum": "primary * 1.05 + 1",
+    "durationP95RatioMaximum": 1.1,
+    "notesLongerThan2sMaximum": "primary * 1.10 + 2",
+    "maximumCandidateDurationSeconds": "max(primary maximum + 0.10, 5.0)",
+    "renderDurationMismatchFramesMaximum": 0,
+    "absoluteRmsDifferenceDbMaximum": 0.5,
+    "absolutePeakMaximum": 0.98,
+    "clippedSamplesMaximum": 0
+  },
+  "interpretation": {
+    "labelsPresent": false,
+    "accuracyEvidenceAllowed": false,
+    "passingMeaning": "The fixed decoder transferred without violating structural or signal safety invariants; it does not establish musical preference or accuracy.",
+    "failingMeaning": "Reject the opened-song transfer before revealing the blind mapping."
+  },
+  "sealedTestOpened": false,
+  "productionPromotionAllowed": false
+}

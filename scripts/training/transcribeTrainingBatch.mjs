@@ -26,17 +26,26 @@ async function main() {
   const spec = JSON.parse(await fs.readFile(specPath, 'utf8'));
   if (!Array.isArray(spec.tasks) || !spec.tasks.length) throw new Error('The batch spec contains no tasks');
   const defaultCheckpoint = String(spec.checkpoint || 'original').trim();
+  const endpointId = String(argument('endpoint-id') || spec.endpointId || process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || '').trim();
+  const volumeId = String(argument('volume-id') || spec.volumeId || process.env.RUNPOD_NETWORK_VOLUME_ID || '').trim();
+  const timeoutMinutes = Number(argument('timeout-minutes') || spec.timeoutMinutes || 60);
+  if (!Number.isFinite(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 720) {
+    throw new Error('--timeout-minutes must be between 1 and 720');
+  }
+  const replicas = String(argument('replicas') || spec.replicas || '').trim().toLowerCase() === 'none'
+    ? ''
+    : process.env.RUNPOD_S3_REPLICAS;
 
   const client = createRunpodServerlessClient({
-    endpointId: process.env.RUNPOD_SERVERLESS_ENDPOINT_ID,
+    endpointId,
     apiKey: process.env.RUNPOD_API_KEY,
-    volumeId: process.env.RUNPOD_NETWORK_VOLUME_ID,
+    volumeId,
     region: process.env.RUNPOD_S3_REGION,
     s3Endpoint: process.env.RUNPOD_S3_ENDPOINT,
     s3AccessKeyId: process.env.RUNPOD_S3_ACCESS_KEY_ID,
     s3SecretAccessKey: process.env.RUNPOD_S3_SECRET_ACCESS_KEY,
-    replicas: process.env.RUNPOD_S3_REPLICAS,
-    timeoutMs: Number(process.env.MUSCRIPTOR_TIMEOUT_MS) || 60 * 60 * 1000,
+    replicas,
+    timeoutMs: timeoutMinutes * 60 * 1000,
     pollIntervalMs: 2_000,
   });
   if (!client.configured) throw new Error(`RunPod is missing: ${client.missing.join(', ')}`);
@@ -49,6 +58,17 @@ async function main() {
     if (!/^(?:original|phase\d+-v\d+)$/i.test(checkpoint)) {
       throw new Error(`tasks[${index}].checkpoint is invalid`);
     }
+    const constraints = Array.isArray(task.constraints)
+      ? task.constraints.map((value) => String(value).trim()).filter(Boolean)
+      : Array.isArray(spec.constraints)
+        ? spec.constraints.map((value) => String(value).trim()).filter(Boolean)
+        : [];
+    const focusedConstraints = Array.isArray(task.focusedConstraints)
+      ? task.focusedConstraints.map((value) => String(value).trim()).filter(Boolean)
+      : Array.isArray(spec.focusedConstraints)
+        ? spec.focusedConstraints.map((value) => String(value).trim()).filter(Boolean)
+        : [];
+    const instrument = String(task.instrument || spec.instrument || 'piano').trim();
     await fs.access(audio);
     await fs.mkdir(path.dirname(output), { recursive: true });
     process.stdout.write(`[${index + 1}/${spec.tasks.length}] ${task.title || id}\n`);
@@ -57,10 +77,11 @@ async function main() {
       job: {
         id: `training-${id}-${Date.now()}`,
         title: String(task.title || id),
-        instrument: 'band',
+        instrument,
       },
       preparedPath: audio,
-      constraints: [],
+      constraints,
+      focusedConstraints,
       checkpointVersion: checkpoint,
       onProgress(status) {
         const text = `${status.state || ''} ${status.progress || ''}`.trim();
@@ -74,8 +95,12 @@ async function main() {
       ...result,
       trainingProvenance: {
         generatedAt: new Date().toISOString(),
-        endpointId: process.env.RUNPOD_SERVERLESS_ENDPOINT_ID,
+        endpointId,
+        volumeId,
         checkpoint,
+        constraints,
+        focusedConstraints,
+        instrument,
         sourceAudio: audio,
         phase: spec.phase || '',
       },

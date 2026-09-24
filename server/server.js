@@ -50,6 +50,7 @@ const {
   listAdminCatalog,
   listPublicCatalog,
   resolveProduct,
+  updateBaseProductPrice,
   updateCategory: updateSubscriptionCategory,
   updatePlan: updateSubscriptionPlan,
 } = require('./subscriptionCatalog');
@@ -98,6 +99,7 @@ const {
 } = require('./communityChat');
 const { createChatBossAssistant } = require('./chatBossAssistant');
 const { createLoginRateLimiter } = require('./loginRateLimit');
+const { affiliateRewardStats, applyAffiliateReward, rewardAmount } = require('./affiliateRewards');
 const { createAwsRdsPasswordProvider } = require('./awsSecrets');
 const {
   learningAttemptsForUser,
@@ -652,6 +654,7 @@ function ensureStorage() {
       subscriptions: [],
       subscriptionCategories: [],
       subscriptionPlans: [],
+      subscriptionProductOverrides: [],
       subscriptionCatalogEvents: [],
       webhookEvents: [],
       scoreTranslationJobs: [],
@@ -743,6 +746,7 @@ function normalizeDb(db) {
     'subscriptions',
     'subscriptionCategories',
     'subscriptionPlans',
+    'subscriptionProductOverrides',
     'subscriptionCatalogEvents',
     'webhookEvents',
     'scoreTranslationJobs',
@@ -1555,6 +1559,8 @@ function promotionRedemptionCounts(db, promotionId, userId = '') {
 
 function publicPromotion(promotion, db) {
   const counts = promotionRedemptionCounts(db, promotion.id);
+  const affiliate = db.users.find((user) => user.id === promotion.affiliateUserId && user.id !== 'platform');
+  const rewards = affiliateRewardStats(db, promotion.id);
   return {
     id: promotion.id,
     code: promotion.code,
@@ -1570,6 +1576,17 @@ function publicPromotion(promotion, db) {
     active: promotion.active !== false,
     retired: promotion.retired === true,
     redemptionCount: counts.total,
+    affiliateUserId: affiliate?.id || null,
+    affiliateRewardMcoins: rewardAmount(promotion.affiliateRewardMcoins),
+    affiliate: affiliate ? {
+      userId: affiliate.id,
+      name: affiliate.name,
+      email: affiliate.email || '',
+      phone: affiliate.phone || '',
+      friendId: affiliate.friendId || '',
+    } : null,
+    affiliateRewardsPaidCount: rewards.paidCount,
+    affiliateRewardsPaidMcoins: rewards.paidMcoins,
     createdAt: promotion.createdAt,
     updatedAt: promotion.updatedAt || null,
   };
@@ -1727,6 +1744,8 @@ function applySignupLuckyCode(db, user, claim) {
     code: promotion.code,
     value: promotion.value,
     friendId: claim.friendId || null,
+    affiliateUserId: promotion.affiliateUserId || null,
+    affiliateRewardMcoins: rewardAmount(promotion.affiliateRewardMcoins),
     claimedAt: new Date().toISOString(),
   };
   recordPromotionRedemption(db, promotion, user, {
@@ -1740,12 +1759,26 @@ function applySignupLuckyCode(db, user, claim) {
 function subscriptionPriceForUser(product, user) {
   const claim = user?.luckyCodeClaim;
   if (!claim || claim.type !== 'subscription_percent' || !Number.isFinite(Number(claim.value))) {
-    return { price: Number(product.price).toFixed(2), discountPercent: 0, luckyCode: '' };
+    return {
+      price: Number(product.price).toFixed(2),
+      discountPercent: 0,
+      luckyCode: '',
+      promotionId: null,
+      affiliateUserId: null,
+      affiliateRewardMcoins: 0,
+    };
   }
   const discountPercent = Math.min(100, Math.max(0, Number(claim.value)));
   const baseCents = Math.round(Number(product.price) * 100);
   const discountedCents = Math.max(1, Math.round(baseCents * (100 - discountPercent) / 100));
-  return { price: (discountedCents / 100).toFixed(2), discountPercent, luckyCode: claim.code || claim.friendId || '' };
+  return {
+    price: (discountedCents / 100).toFixed(2),
+    discountPercent,
+    luckyCode: claim.code || claim.friendId || '',
+    promotionId: claim.promotionId || null,
+    affiliateUserId: claim.affiliateUserId || null,
+    affiliateRewardMcoins: rewardAmount(claim.affiliateRewardMcoins),
+  };
 }
 
 function sanitizeFilename(filename = 'asset') {
@@ -7773,7 +7806,63 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
 });
 
 app.get('/api/admin/subscription-catalog', requireAuth, requireAdmin, async (req, res) => {
-  res.json(listAdminCatalog(req.db));
+  const catalog = listAdminCatalog(req.db, PRODUCTS);
+  catalog.corePlans = catalog.corePlans.map((product) => ({
+    ...product,
+    paypalPlanId: configuredSubscriptionPlanId(product, false),
+    upgradePaypalPlanId: product.tier === 'musician'
+      ? configuredSubscriptionPlanId(product, true)
+      : '',
+  }));
+  res.json(catalog);
+});
+
+app.patch('/api/admin/subscription-products/:productId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const current = resolveProduct(req.db, PRODUCTS, req.params.productId);
+    if (!current || current.kind !== 'subscription' || current.legacy || current.tier === 'custom') {
+      return res.status(404).json({ error: 'Built-in subscription plan not found.' });
+    }
+    const price = Number(req.body.price);
+    if (!Number.isFinite(price) || price < 0.01 || price > 1_000_000) {
+      return res.status(400).json({ error: 'Subscription price must be between USD 0.01 and USD 1,000,000.' });
+    }
+    const paypalPlanId = String(req.body.paypalPlanId || '').trim();
+    const upgradePaypalPlanId = String(req.body.upgradePaypalPlanId || '').trim();
+    if (!paypalPlanId) {
+      return res.status(400).json({ error: 'Add the active PayPal plan ID that matches this price.' });
+    }
+    const candidate = {
+      ...current,
+      price: price.toFixed(2),
+      currency: String(req.body.currency || current.currency || 'USD').trim().toUpperCase(),
+      paypalPlanId,
+      upgradePaypalPlanId,
+    };
+    await validatePayPalSubscriptionPlan(candidate, paypalPlanId);
+    if (candidate.tier === 'musician' && upgradePaypalPlanId) {
+      const chillId = candidate.interval === 'YEAR'
+        ? 'polymath-chill-yearly'
+        : 'polymath-chill-monthly';
+      const chillProduct = resolveProduct(req.db, PRODUCTS, chillId);
+      await validatePayPalSubscriptionPlan(candidate, upgradePaypalPlanId, chillProduct);
+    }
+    updateBaseProductPrice(req.db, PRODUCTS, current.id, candidate, req.user.id);
+    await writeDb(req.db);
+    const product = resolveProduct(req.db, PRODUCTS, current.id);
+    return res.json({
+      product: {
+        ...product,
+        paypalPlanId: configuredSubscriptionPlanId(product, false),
+        upgradePaypalPlanId: product.tier === 'musician'
+          ? configuredSubscriptionPlanId(product, true)
+          : '',
+      },
+      message: `${product.name} ${product.interval.toLowerCase()} price is now USD ${product.price}. Future checkouts will use the verified PayPal plan.`,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message, ...(error.details ? { details: error.details } : {}) });
+  }
 });
 
 app.post('/api/admin/subscription-categories', requireAuth, requireAdmin, async (req, res) => {
@@ -7847,10 +7936,24 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) =>
     : clampInteger(rawValue, 1, 100, 1);
   const startsAtDate = req.body.startsAt ? new Date(req.body.startsAt) : null;
   const expiresAtDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
+  const affiliateUserId = String(req.body.affiliateUserId || '').trim();
+  const affiliateRewardMcoins = rewardAmount(req.body.affiliateRewardMcoins);
+  const affiliate = affiliateUserId
+    ? req.db.users.find((user) => user.id === affiliateUserId && user.id !== 'platform')
+    : null;
   if (code.length < 3) return res.status(400).json({ error: 'Promotion code must contain at least 3 letters or numbers.' });
   if (!name) return res.status(400).json({ error: 'Give the promotion a short name.' });
   if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
     return res.status(400).json({ error: 'Choose a supported percentage or fixed-Mcoin discount.' });
+  }
+  if ((affiliateUserId || affiliateRewardMcoins > 0) && kind !== 'subscription_percent') {
+    return res.status(400).json({ error: 'Influencer rewards can only be attached to subscription Lucky codes.' });
+  }
+  if (affiliateRewardMcoins > 0 && !affiliateUserId) {
+    return res.status(400).json({ error: 'Choose the influencer account that should receive the reward.' });
+  }
+  if (affiliateUserId && !affiliate) {
+    return res.status(404).json({ error: 'The selected influencer account no longer exists.' });
   }
   if (!Number.isFinite(rawValue) || rawValue <= 0 || (!fixedMcoinDiscount && rawValue > 100)) {
     return res.status(400).json({ error: fixedMcoinDiscount
@@ -7882,6 +7985,8 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) =>
     startsAt,
     expiresAt,
     active: true,
+    affiliateUserId: affiliate?.id || null,
+    affiliateRewardMcoins,
     createdBy: req.user.id,
     createdAt: new Date().toISOString(),
   };
@@ -7906,6 +8011,26 @@ app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, async
     return res.status(400).json({ error: 'This legacy promotion is permanently retired.' });
   }
   if (req.body.active !== undefined) promotion.active = Boolean(req.body.active);
+  if (req.body.affiliateUserId !== undefined || req.body.affiliateRewardMcoins !== undefined) {
+    if (promotion.kind !== 'subscription_percent') {
+      return res.status(400).json({ error: 'Influencer rewards can only be attached to subscription Lucky codes.' });
+    }
+    const affiliateUserId = String(req.body.affiliateUserId ?? promotion.affiliateUserId ?? '').trim();
+    const affiliateRewardMcoins = rewardAmount(
+      req.body.affiliateRewardMcoins ?? promotion.affiliateRewardMcoins,
+    );
+    const affiliate = affiliateUserId
+      ? req.db.users.find((user) => user.id === affiliateUserId && user.id !== 'platform')
+      : null;
+    if (affiliateRewardMcoins > 0 && !affiliateUserId) {
+      return res.status(400).json({ error: 'Choose the influencer account that should receive the reward.' });
+    }
+    if (affiliateUserId && !affiliate) {
+      return res.status(404).json({ error: 'The selected influencer account no longer exists.' });
+    }
+    promotion.affiliateUserId = affiliate?.id || null;
+    promotion.affiliateRewardMcoins = affiliateRewardMcoins;
+  }
   promotion.updatedAt = new Date().toISOString();
   promotion.updatedBy = req.user.id;
   await writeDb(req.db);
@@ -8069,13 +8194,15 @@ function subscriptionStatusGrantsPro(status) {
 
 function configuredSubscriptionPlanId(product, upgrade = false) {
   if (!product || product.kind !== 'subscription') return '';
-  if (product.paypalPlanId) return String(product.paypalPlanId).trim();
+  if (upgrade && product.upgradePaypalPlanId) return String(product.upgradePaypalPlanId).trim();
   if (upgrade && product.tier === 'musician') {
     const key = product.interval === 'YEAR'
       ? 'PAYPAL_CHILL_TO_MUSICIAN_YEARLY_PLAN_ID'
       : 'PAYPAL_CHILL_TO_MUSICIAN_MONTHLY_PLAN_ID';
-    return String(process.env[key] || '').trim();
+    const configuredUpgrade = String(process.env[key] || '').trim();
+    if (configuredUpgrade) return configuredUpgrade;
   }
+  if (product.paypalPlanId) return String(product.paypalPlanId).trim();
   const keys = {
     'polymath-chill-monthly': 'PAYPAL_CHILL_MONTHLY_PLAN_ID',
     'polymath-chill-yearly': 'PAYPAL_CHILL_YEARLY_PLAN_ID',
@@ -8414,6 +8541,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       && item.productId === product.id
       && String(item.checkoutPrice || product.price) === pricing.price
       && String(item.luckyCode || '') === pricing.luckyCode
+      && String(item.promotionId || '') === String(pricing.promotionId || '')
       && String(item.campaignId || '') === String(attribution.campaignId || '')
       && String(item.referralCode || '') === String(attribution.referralCode || '')
       && ['APPROVAL_PENDING', 'APPROVED', 'CREATED'].includes(String(item.status || '').toUpperCase())
@@ -8485,6 +8613,9 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       checkoutPrice: pricing.price,
       discountPercent: pricing.discountPercent,
       luckyCode: pricing.luckyCode,
+      promotionId: pricing.promotionId,
+      affiliateUserId: pricing.affiliateUserId,
+      affiliateRewardMcoins: pricing.affiliateRewardMcoins,
       ...attribution,
       isUpgrade,
       upgradeFromSubscriptionId: isUpgrade ? req.user.paypalSubscriptionId : null,
@@ -8561,6 +8692,9 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
         record.isUpgrade ? 'subscription_upgraded' : 'subscription_active',
         `${product.name} ${product.interval.toLowerCase()}`,
       );
+    }
+    if (user && firstActivation) {
+      applyAffiliateReward(req.db, record, user, product, addLedger);
     }
     await writeDb(req.db);
     if (user?.pro && firstActivation) {
@@ -8643,6 +8777,11 @@ app.post('/api/paypal/webhook', async (req, res) => {
         }
       }
       const updatedUser = applySubscriptionStatus(db, subscriptionId, webhookStatus, resource.custom_id || '');
+      if (firstActivation && updatedUser && record) {
+        const product = resolveProduct(db, PRODUCTS, record.productId)
+          || (record.productId === 'polymath-pro' ? PRODUCTS['polymath-pro'] : null);
+        applyAffiliateReward(db, record, updatedUser, product, addLedger);
+      }
       if (firstActivation && updatedUser?.pro) {
         activatedSubscription = record;
         activatedUser = updatedUser;
@@ -8658,7 +8797,8 @@ app.post('/api/paypal/webhook', async (req, res) => {
     if (db.webhookEvents.length > 1000) db.webhookEvents = db.webhookEvents.slice(-1000);
     await writeDb(db);
     if (activatedSubscription && activatedUser) {
-      const product = PRODUCTS[activatedSubscription.productId] || PRODUCTS['polymath-pro'];
+      const product = resolveProduct(db, PRODUCTS, activatedSubscription.productId)
+        || PRODUCTS['polymath-pro'];
       await recordTrustedProductEvent('subscription_activated', activatedUser.id, {
         productId: product.id,
         tier: product.tier || '',

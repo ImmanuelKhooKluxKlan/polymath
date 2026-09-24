@@ -1,0 +1,59 @@
+{
+  "schema": "polymath-phase94-full-validation-result-v1",
+  "candidateVersion": "phase94-v001-recovery-attempt2",
+  "measuredAt": "2026-09-19T08:58:34Z",
+  "checkpoint": {
+    "path": "/root/phase94-v001-recovery/model.safetensors",
+    "bytes": 5465642192,
+    "sha256": "f955cd7e2797fcc60bcf099140a473e570b1f08838b6a50eccb8567f4950f8b5"
+  },
+  "fullClipEvaluation": {
+    "path": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/evaluation/phase94-v001-full-validation.json",
+    "sha256": "1ef9e685b588ad807976711db78ec90439f93f8ab4e8ad627e3e042b195cbd76",
+    "candidate100msMicroF1": 0.897434,
+    "original100msMicroF1": 0.896007,
+    "delta100msMicroF1": 0.001427
+  },
+  "continuousSongEvaluation": {
+    "path": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/evaluation/phase94-v001-stitched-timeline.json",
+    "sha256": "f6e1fb84ec293cd65a051f5a962f8b65bb9e5880b2bf12ca05b540ff5758e6cc",
+    "candidate100ms": {
+      "precision": 0.919981,
+      "recall": 0.902431,
+      "microF1": 0.911122,
+      "songClusterBootstrap95": [0.898536, 0.926631]
+    },
+    "deltaVersusOriginal": {
+      "50msMicroF1": 0.002325,
+      "100msMicroF1": 0.001411,
+      "250msMicroF1": 0.001348,
+      "onsetAndOffsetF1At100ms": 0.00425,
+      "frameF1": 0.003611
+    },
+    "worstPerSong100msDelta": -0.000196,
+    "cutOffNotes": {
+      "original": 669,
+      "candidate": 656
+    },
+    "overlongNotes": {
+      "original": 977,
+      "candidate": 985
+    },
+    "rapidRetriggers": {
+      "original": 55,
+      "candidate": 57
+    }
+  },
+  "decision": {
+    "fullValidationGatePassed": true,
+    "researchComparatorEligible": true,
+    "productionEligible": false,
+    "reasonsNotProductionEligible": [
+      "The lower 95% complete-song bootstrap bound remains below 0.90.",
+      "The training rerun was not deterministic, so causality/reproducibility is not established.",
+      "Duration, overlong-note and retrigger quality still require perceptual gates.",
+      "The MAESTRO data and MuScriptor weights used here are non-commercial.",
+      "The sealed test and opened-song production-route transfer remain unopened/unrun."
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "schema": "polymath-overlap-boundary-result-v1",
+  "candidateVersion": "phase94-overlap-boundary-decoder-v002",
+  "evaluatedAt": "2026-09-20T17:03:00Z",
+  "artifacts": {
+    "originalOverlapEvaluationSha256": "6fea08ddab7b10f57f4545e9989b190548206cb270c91c0255395fb96b53baa6",
+    "originalOverlapEvaluationLogSha256": "38b261bd6b7b336353563993abf7ac3cca4cb089a8dc7ff96dc4f6986f37c457",
+    "frozenSearchReportSha256": "6dfc7aad4d03f241b891028d6742d6f5f53573bfc2f805733ad34ce78658355e",
+    "winnerEvaluationSha256": "44ba8aeba2dada2313d1d9001e22371a683e144a680593393ca5e96cee0873e7",
+    "winnerStitchedTimelineSha256": "bc311f8fba4d7c79e02dfa25aa1b4e2a6313114ca0273a5bfd08295bc1cce492",
+    "gateResultSha256": "3fe61148c0a1a58dc76f4a2d3e4b20b556e3b267090cfd91b55b6ad5fd7cc1c8"
+  },
+  "selection": {
+    "frozenReplacementRadiiSeconds": [0.10, 0.15, 0.25, 0.40, 0.60, 0.80],
+    "frozenRanking": [
+      "continuousSong.100ms.microF1",
+      "continuousSong.100ms.recall",
+      "continuousSong.250ms.microF1"
+    ],
+    "winnerRadiusSeconds": 0.60,
+    "postResultRadiusChangeAllowed": false
+  },
+  "continuousSongMetrics": {
+    "microF1_50ms": 0.839500,
+    "precision100ms": 0.920285,
+    "recall100ms": 0.906935,
+    "microF1_100ms": 0.913561,
+    "microF1_250ms": 0.928907,
+    "songBootstrapLower95_100ms": 0.902543,
+    "onsetAndOffsetF1_100ms": 0.341952,
+    "frameF1_20ms": 0.571579,
+    "cutOffNotes": 517,
+    "overlongNotes": 1109,
+    "rapidRetriggers": 49
+  },
+  "candidateMinusImmutableOriginal": {
+    "microF1_50ms": 0.000790,
+    "precision100ms": 0.002010,
+    "recall100ms": 0.005630,
+    "microF1_100ms": 0.003850,
+    "microF1_250ms": 0.004889,
+    "songBootstrapLower95_100ms": 0.004563,
+    "onsetAndOffsetF1_100ms": -0.001287,
+    "frameF1_20ms": 0.012933,
+    "cutOffNotes": -152,
+    "overlongNotes": 132,
+    "rapidRetriggers": -6,
+    "worstPerSongMicroF1_100ms": -0.000405
+  },
+  "durationSafety": {
+    "baselineOverlongPer1000Matched": 71.801279,
+    "candidateOverlongPer1000Matched": 80.996202,
+    "increase": 9.194923,
+    "maximumAllowedIncrease": 2.0,
+    "passed": false,
+    "interpretation": "Shifted context recovers boundary onsets and sustained frames, but hard replacement also inherits too many long shifted-pass releases."
+  },
+  "gate": {
+    "researchGatePassed": false,
+    "failedChecks": ["overlong_rate"],
+    "onsetCertificationLower95Passed": true,
+    "onsetCertificationLower95Observed": 0.902543,
+    "onsetCertificationLower95Required": 0.900000
+  },
+  "finding": "All six frozen radii improved 100 ms F1 to 0.912836-0.913561 and produced lower 95% bounds of 0.902071-0.902702, strongly supporting the boundary-context hypothesis. The pre-registered 0.60-second winner nevertheless fails product duration safety and cannot be replaced post hoc by another radius.",
+  "nextHypothesis": "For notes shared by primary and shifted passes, borrow shifted-pass onset/pitch evidence near cuts but retain the primary release time; use shifted duration only for genuinely recovered notes. Freeze this duration-preserving merge before any sealed evaluation.",
+  "decision": "reject-as-is; retain-as-onset-certified-development-evidence",
+  "productionPromotionAllowed": false,
+  "combinedWithV002": false,
+  "sealedTestOpened": false,
+  "rightsClearedForCommercialUse": false
+}

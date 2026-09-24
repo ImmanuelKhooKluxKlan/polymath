@@ -1,0 +1,89 @@
+{
+  "schema": "polymath-direct-piano-candidate-plan-v1",
+  "candidateVersion": "phase94-v001d-control",
+  "status": "frozen-before-training",
+  "frozenAt": "2026-09-19T08:28:06Z",
+  "objective": "Establish a deterministic Phase94 training control before testing a recall-weighting hypothesis.",
+  "route": "direct-piano-only",
+  "baseCheckpoint": "original",
+  "baseCheckpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+  "baseCheckpointBytes": 5465642136,
+  "principalExperiment": "Repeat the Phase94-v001 scientific settings while correctly seeding Python, NumPy, PyTorch, CUDA and deterministic CUDA kernels. Note-on weight remains the historical 1.0 control value.",
+  "dataset": {
+    "id": "phase94-individual-composer-v001",
+    "remoteRoot": "/runpod-volume/training/phase-94-maestro-individual-composer-v001",
+    "selectionManifestSha256": "f2cc2eb447c1736d42b44d2ae0ee8049799966564cdc4ee04f2c23d64c09873d",
+    "trainManifestSha256": "0b3f61eb84370e55dd9345039f1b9b094a118ec38659a1922bd54300e69b1f12",
+    "validationManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+    "trainSongs": 30,
+    "trainPeople": 6,
+    "trainClips": 2861,
+    "validationSongs": 6,
+    "validationPeople": 5,
+    "validationClips": 247,
+    "sealedTestSongs": 8,
+    "sealedTestPeople": 4,
+    "individualPersonOverlapAcrossSplits": 0,
+    "sealedTestMaterializedBeforeCandidateFreeze": false
+  },
+  "training": {
+    "epochs": 1,
+    "trainLastLayers": 1,
+    "learningRate": 1e-7,
+    "timingTokenWeight": 1.35,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "instrument",
+    "precision": "bf16",
+    "gradientAccumulation": 8,
+    "weightDecay": 0.01,
+    "gradientClipNorm": 1.0,
+    "seedLabel": "polymath-piano-phase1-v001",
+    "numericSeed": 1407411653,
+    "deterministicAlgorithms": true,
+    "cublasWorkspaceConfig": ":4096:8",
+    "allowTf32": false,
+    "validationIntervalOptimizerSteps": 90,
+    "expectedOptimizerSteps": 358,
+    "expectedSafetyCheckpoints": [90, 180, 270, 358],
+    "baselineDecodedEvaluation": "/workspace/training-runs/phase94-original-baseline-v001/original-full-validation.json"
+  },
+  "selectionPolicy": {
+    "teacherForcedValidationLossMustImprove": true,
+    "decodedGateClipsPerSong": 6,
+    "decodedGateTolerancesMs": [100, 250],
+    "maximumAggregateF1Regression": 0.001,
+    "maximumAggregateRecallRegression": 0.002,
+    "maximumPerSongF1Regression": 0.01,
+    "fullValidationMustBeatImmutableOriginal": true,
+    "productionPromotionRequiresSealedTest": true,
+    "productionPromotionRequiresBlindListening": true,
+    "targetStrictExactPitchOnsetF1At100ms": 0.9
+  },
+  "reproducibilityFinding": {
+    "phase94V001Attempt1Step180Delta100msF1": -0.000349,
+    "phase94V001Attempt2Step180Delta100msF1": 0.000417,
+    "interpretation": "The old seed controlled file order only. Opposite-signed decoded deltas across nominally identical attempts require a deterministic control before causal comparison."
+  },
+  "foundationProvenance": {
+    "maestroOverlapWithFoundation": "unknown",
+    "claimLimit": "This can select a Polymath fine-tuning candidate; it cannot prove the material was unseen by the MuScriptor foundation model."
+  },
+  "rights": {
+    "source": "MAESTRO v3.0.0",
+    "license": "CC BY-NC-SA 4.0",
+    "commercialUseAllowed": false,
+    "restriction": "Research candidate only. Reproduce on first-party or commercially licensed data and weights before production."
+  },
+  "isolation": {
+    "podId": "hjbswtiwyt39bj",
+    "networkVolumeId": "6lbtu5fo1l",
+    "output": "/root/phase94-v001d-control",
+    "trainerSha256": "338e6b86076e614a35bfe1a166a9bf1b12a77d3762ad8fa860d29a7f0fe92a4b",
+    "evaluatorSha256": "c7d8db2ae1cad245216f6aba4c0fb53e9ca55ec49da9579519642778ba34ecea",
+    "overwriteExistingCheckpoint": false,
+    "productionCheckpointUnchanged": true,
+    "ephemeralOutputReason": "The network-volume namespace rejected another 5.47 GB checkpoint at its quota; no prior model was deleted."
+  }
+}

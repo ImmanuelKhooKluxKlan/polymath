@@ -1,0 +1,40 @@
+{
+  "schema": "polymath-fixed-checkpoint-boundary-combination-plan-v1",
+  "candidateVersion": "phase94-v002-overlap-release-preserving-v004",
+  "status": "frozen-before-v002-overlap-decoding",
+  "frozenAt": "2026-09-20T17:20:14Z",
+  "objective": "Measure whether the v002 checkpoint gain and the release-preserving boundary-context gain combine without retuning either component.",
+  "checkpoint": {
+    "id": "phase94-v002-note-on-135",
+    "sha256": "d1e9a241fae094d53a7d8838fc14ea9c6c2dc3a4f11fff7323c0c1152a55efdd",
+    "primaryEvaluationSha256": "c1e4bd4c8b491d3688d241fc381eeb92ede2874f254259a471bb438a148866fd",
+    "primaryEvaluationSourceComparisonSha256": "daa956076e925b6c4b70c96471a8d367febb871f8ab7fa9cd4e4393cdc54e8b8"
+  },
+  "fixedInferencePolicy": {
+    "sourceExperiment": "phase94-overlap-release-preserving-v003",
+    "searchReportSha256": "b5c9418703fe03a13f0b29b7a01fb41811a8f5d59b6c95e353c90adedf94123b",
+    "radiusSeconds": 0.60,
+    "overlapOffsetSeconds": 2.5,
+    "onsetMatchToleranceSeconds": 0.10,
+    "durationRule": "preserve primary absolute release for matched same-pitch notes",
+    "policyRetuningAllowed": false,
+    "searchCodeSha256": "2c0d0cad13dcc6529e91be59b852df339fbfe0e03cf44197755fa0ead3ec6abb"
+  },
+  "immutableInputs": {
+    "primaryManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+    "overlapManifestSha256": "e972e56aeaad4613386023feb3cab69994c6369feac0a0797ad48a7a610f5bd9",
+    "baselineTimelineSha256": "aa43b7ad3e520660451b916fbfaddaf5755cefa6fb5530c739083d1a9612a499",
+    "fullValidationGateSha256": "3c43fa28e25c781942b2d5520c310bb32ec56fbf90b6ef52987c797bbe528435"
+  },
+  "requiredOutcome": {
+    "researchSafetyGate": "all checks must pass",
+    "certification": "complete-song bootstrap lower 95% bound at 100 ms must be at least 0.90",
+    "comparison": "report against immutable original, v002 without overlap, and original weights with release-preserving overlap"
+  },
+  "evidenceBoundary": {
+    "split": "opened six-song Phase 94 validation only",
+    "sealedTestOpened": false,
+    "productionCheckpointChanged": false,
+    "commercialUseAllowed": false
+  }
+}

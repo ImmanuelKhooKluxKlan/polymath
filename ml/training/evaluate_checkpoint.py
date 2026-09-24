@@ -8,8 +8,10 @@ actually improved note precision, recall, and timing.
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import argparse
+import random
 from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable
@@ -20,6 +22,14 @@ from ml.training.train_muscriptor_piano import read_jsonl
 
 DEFAULT_TOLERANCES = (0.05, 0.10, 0.25)
 PIANO_INSTRUMENTS = ("acoustic_piano",)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def decoded_notes(events: Iterable[Any]) -> list[dict[str, Any]]:
@@ -200,6 +210,60 @@ def aggregate_song_clip_scores(
     }
 
 
+def song_cluster_bootstrap_f1(
+    per_song_scores: dict[str, Any],
+    *,
+    samples: int = 5000,
+    seed: str = "polymath-song-cluster-bootstrap-v1",
+) -> dict[str, Any]:
+    """Estimate uncertainty by resampling complete songs, never five-second clips."""
+
+    if samples < 100:
+        raise ValueError("Song bootstrap requires at least 100 samples")
+    song_ids = sorted(per_song_scores)
+    if not song_ids:
+        return {}
+
+    def f1_for_rows(rows: list[dict[str, Any]]) -> float:
+        reference = sum(int(row["referenceNotes"]) for row in rows)
+        predicted = sum(int(row["predictedNotes"]) for row in rows)
+        matched = sum(int(row["matchedNotes"]) for row in rows)
+        precision = matched / max(1, predicted)
+        recall = matched / max(1, reference)
+        return 2 * precision * recall / max(1e-12, precision + recall)
+
+    result: dict[str, Any] = {}
+    for tolerance_key in ("50ms", "100ms", "250ms"):
+        rng = random.Random(f"{seed}:{tolerance_key}")
+        observed_rows = [per_song_scores[song_id][tolerance_key] for song_id in song_ids]
+        draws = []
+        for _ in range(samples):
+            rows = [
+                per_song_scores[song_ids[rng.randrange(len(song_ids))]][tolerance_key]
+                for _ in song_ids
+            ]
+            draws.append(f1_for_rows(rows))
+        draws.sort()
+
+        def quantile(fraction: float) -> float:
+            position = fraction * (len(draws) - 1)
+            lower = int(position)
+            upper = min(len(draws) - 1, lower + 1)
+            mix = position - lower
+            return draws[lower] * (1 - mix) + draws[upper] * mix
+
+        result[tolerance_key] = {
+            "pointEstimateMicroF1": round(f1_for_rows(observed_rows), 6),
+            "lower95": round(quantile(0.025), 6),
+            "median": round(quantile(0.5), 6),
+            "upper95": round(quantile(0.975), 6),
+            "songs": len(song_ids),
+            "bootstrapSamples": samples,
+            "resamplingUnit": "complete-song",
+        }
+    return result
+
+
 def evaluate_loaded_transcription(
     transcription,
     records: list[dict[str, Any]],
@@ -211,12 +275,10 @@ def evaluate_loaded_transcription(
 
     import torch
 
-    transcription._model.eval()
-    references: list[list[dict[str, Any]]] = []
     predictions: list[list[dict[str, Any]]] = []
+    transcription._model.eval()
     with torch.inference_mode():
         for index, record in enumerate(records, 1):
-            references.append(list(record["notes"]))
             predictions.append(decoded_notes(
                 transcription.transcribe(
                     str(Path(record["audioClip"])),
@@ -226,9 +288,31 @@ def evaluate_loaded_transcription(
             if progress_callback and (index == 1 or index % 5 == 0 or index == len(records)):
                 progress_callback(f"Decoded {index}/{len(records)} validation clips")
 
+    return evaluate_decoded_predictions(
+        records,
+        predictions,
+        include_raw_predictions=include_raw_predictions,
+    )
+
+
+def evaluate_decoded_predictions(
+    records: list[dict[str, Any]],
+    predictions: list[list[dict[str, Any]]],
+    *,
+    include_raw_predictions: bool = False,
+) -> dict[str, Any]:
+    """Score already-decoded clips with the exact live-evaluation procedure."""
+
+    if len(records) != len(predictions):
+        raise ValueError("Record and decoded clip counts differ")
+    references = [list(record["notes"]) for record in records]
+
     metrics = aggregate_clip_scores(references, predictions)
     metrics["perSongClipScores"] = aggregate_song_clip_scores(
         records, references, predictions,
+    )
+    metrics["songClusterBootstrap95"] = song_cluster_bootstrap_f1(
+        metrics["perSongClipScores"]
     )
     stitched_references, reference_boundary_merges = stitch_clip_notes(
         records, references, reference=True,
@@ -309,12 +393,47 @@ def compare_checkpoints(
     }
     return {
         "schema": "polymath-checkpoint-comparison-v1",
+        "baseCheckpoint": str(base),
+        "baseCheckpointSha256": sha256_file(base),
+        "candidateCheckpoint": str(candidate),
+        "candidateCheckpointSha256": sha256_file(candidate),
         "validationManifest": str(validation_manifest),
         "clips": len(records),
         "instrumentConstraint": list(instruments) if instruments else [],
         "baseline": baseline,
         "candidate": candidate_metrics,
         "candidateMinusBaselineMicroF1": deltas,
+    }
+
+
+def evaluate_single_checkpoint(
+    checkpoint: Path,
+    validation_manifest: Path,
+    progress_callback: Callable[[str], None] | None = None,
+    instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
+) -> dict[str, Any]:
+    """Decode one frozen manifest without wasting a second baseline pass."""
+
+    records = read_jsonl(validation_manifest)
+    if progress_callback:
+        progress_callback(
+            f"Decoding {len(records)} frozen clips with {checkpoint.name}"
+        )
+    metrics = evaluate_checkpoint(
+        checkpoint,
+        records,
+        progress_callback,
+        instruments,
+        include_raw_predictions=True,
+    )
+    return {
+        "schema": "polymath-checkpoint-evaluation-v1",
+        "checkpoint": str(checkpoint),
+        "checkpointSha256": sha256_file(checkpoint),
+        "validationManifest": str(validation_manifest),
+        "clips": len(records),
+        "instrumentConstraint": list(instruments) if instruments else [],
+        "metrics": metrics,
     }
 
 
@@ -326,8 +445,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compare two MuScriptor checkpoints on one frozen manifest."
     )
-    parser.add_argument("--base", type=Path, required=True)
-    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--base", type=Path)
+    parser.add_argument("--candidate", type=Path)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        help="Evaluate one checkpoint once; mutually exclusive with --base/--candidate.",
+    )
     parser.add_argument("--validation-manifest", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
@@ -335,22 +459,40 @@ def main() -> None:
     def report(message: str) -> None:
         print(message, flush=True)
 
-    result = compare_checkpoints(
-        args.base.resolve(),
-        args.candidate.resolve(),
-        args.validation_manifest.resolve(),
-        progress_callback=report,
-    )
+    if args.checkpoint:
+        if args.base or args.candidate:
+            parser.error("--checkpoint cannot be combined with --base or --candidate")
+        result = evaluate_single_checkpoint(
+            args.checkpoint.resolve(),
+            args.validation_manifest.resolve(),
+            progress_callback=report,
+        )
+    else:
+        if not args.base or not args.candidate:
+            parser.error("comparison mode requires both --base and --candidate")
+        result = compare_checkpoints(
+            args.base.resolve(),
+            args.candidate.resolve(),
+            args.validation_manifest.resolve(),
+            progress_callback=report,
+        )
     destination = args.out.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     save_comparison(result, destination)
-    print(json.dumps({
+    summary = {
         "output": str(destination),
         "clips": result["clips"],
-        "candidateMinusBaselineMicroF1": result[
+    }
+    if "candidateMinusBaselineMicroF1" in result:
+        summary["candidateMinusBaselineMicroF1"] = result[
             "candidateMinusBaselineMicroF1"
-        ],
-    }, indent=2), flush=True)
+        ]
+    else:
+        summary["microF1"] = {
+            key: result["metrics"][key]["microF1"]
+            for key in ("50ms", "100ms", "250ms")
+        }
+    print(json.dumps(summary, indent=2), flush=True)
 
 
 if __name__ == "__main__":

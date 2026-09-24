@@ -1,0 +1,59 @@
+{
+  "schema": "polymath-opened-song-pre-listening-evidence-v1",
+  "candidateVersion": "phase94-original-overlap-opened-kiss-me-v005",
+  "artifacts": {
+    "planSha256": "8fa18b10f88673896744e96363f71eee3b1411cfe2808a65bd65b464edb07352",
+    "freezeSha256": "ecd2f2580da9edcce398bd453a92d1e2d376e54ee90978208a9882783b09f364",
+    "checkpointSha256": "ac4eb6ea87dfc26b6ca6b954c6b967ab87ad4c7d08e078b25214f13ed051f397",
+    "primaryManifestSha256": "7f135cfcedece257c00b8dc3abba97fe33d42d06f7ec0c344e90b478ebbd452f",
+    "overlapManifestSha256": "8a647b1bbf6567f9e4b73f90ff6f4f84b40d9b2f80d4cd7a6a4c037c3d88ed1b",
+    "primaryEvaluationSha256": "b07aebcaae63fb5edbcf5ec955b997d74340c660fe1b32425678b262c5d1caa3",
+    "primaryEvaluationLogSha256": "f6f0697c201eeef6fbd4102a6033037c199a019d70da21ddc308ca6aea36877e",
+    "overlapEvaluationSha256": "9aa3e0e539f07d95b493c77cc12e54edad7e9ac3b02b7d45ccbf82c154e481e9",
+    "overlapEvaluationLogSha256": "90c6a5250fc1e2beba5c944a5555e53bf27be970004407bd1032a464a1d46d45",
+    "primaryStitchedSha256": "1cc8821694d2bfae3193b796c5d99406d6146e08c65f7d27ebd0370f37a04a3d",
+    "candidateFixedOverlapSha256": "84354862f08ddc36d05603fdaa598613f83030f793adc642a90f38e6c47b7478",
+    "primaryPlayableSha256": "0db3214ff836f1e2e04ee41013d2966857dd604f0038fdf6f533cdb77c5a3ee9",
+    "candidatePlayableSha256": "8e8db3672e0beb67652ecc0ccb383997956bac7be799c5be33f8698555bbcc91",
+    "audioRenderManifestSha256": "f02c9306eecd0b5a87cdb73d8777a81c1291b98ccfb844c0fc791498481c3adf",
+    "listenPageSha256": "76dd0e8981e61f1c972f35fafe7c4e2041cd87861dd765c8c3373883c04b1c84",
+    "sealedMappingSha256": "d4d389d66477fbce273fb9def5d8d95df9eb66b385c84d06db6627d987455480"
+  },
+  "execution": {
+    "primaryClips": 40,
+    "overlapClips": 40,
+    "errors": 0,
+    "exitCode": 0,
+    "startedAtPodClock": "2026-09-21T02:25:55Z",
+    "completedAtPodClock": "2026-09-21T02:30:08Z",
+    "podId": "hjbswtiwyt39bj",
+    "podDesiredStatusAfterDownload": "EXITED"
+  },
+  "outputs": {
+    "primaryNotes": 836,
+    "candidateNotes": 867,
+    "candidateMinusPrimaryNotes": 31,
+    "durationSeconds": 197.76,
+    "mappingCommitment": "37e0f17695be601e13b5a3bbd03794be4650264257dc5bed8acfea8ffedee514",
+    "versionA": {
+      "sha256": "57cc9b4099229defc01f25bf3aeaf2b4dcabfb66ec2ea87b771c2939cc624905",
+      "rms": 0.034652,
+      "peak": 0.362049
+    },
+    "versionB": {
+      "sha256": "b34bb97af02a87d73fdc4375fd4903ec3e4b2b0e4a849dac2327ba6a627c84bd",
+      "rms": 0.035332,
+      "peak": 0.362049
+    }
+  },
+  "blindState": {
+    "mappingInspected": false,
+    "listenerVerdictRecorded": false,
+    "nextRequiredInput": "A, B, or TIE plus optional listening notes"
+  },
+  "labelsPresent": false,
+  "metricsIncluded": false,
+  "accuracyEvidenceAllowed": false,
+  "sealedTestOpened": false,
+  "productionPromotionAllowed": false
+}

@@ -1,0 +1,29 @@
+{
+  "schema": "polymath-stitched-baseline-evidence-v1",
+  "measuredAt": "2026-09-19T08:38:05Z",
+  "checkpoint": "immutable-original",
+  "sourceEvaluationSha256": "712ddebefe167bc4b7774fc2dd37fe6c3103420242e22388269048f5d38a4247",
+  "validationManifestSha256": "14ea5980a308b44e9f98ff1b491e7198d2b490919b4193e14ffd0e7ef0d3cba2",
+  "scorer": {
+    "path": "ml/training/rescore_song_timelines.py",
+    "sha256": "88448950c1d88552baba093fe234c7dfea4a3165b8895409d997350290e885a4"
+  },
+  "resultPath": "D:/Polymath Training/phase-94-maestro-individual-composer-curriculum-v003-2026-09-19/evaluation/phase94-original-stitched-timeline.json",
+  "resultSha256": "aa43b7ad3e520660451b916fbfaddaf5755cefa6fb5530c739083d1a9612a499",
+  "songs": 6,
+  "referenceContinuationMerges": 452,
+  "predictedBoundaryMerges": 39,
+  "strictExactPitchOnset": {
+    "50msMicroF1": 0.83871,
+    "100msMicroF1": 0.909711,
+    "250msMicroF1": 0.924018,
+    "100msSongClusterBootstrap95": [0.89798, 0.92369]
+  },
+  "durationQualityAt100msOnsetTolerance": {
+    "onsetAndOffsetF1": 0.343239,
+    "frameF1": 0.558646,
+    "cutOffNotes": 669,
+    "overlongNotes": 977
+  },
+  "interpretation": "The original checkpoint exceeds 0.90 at the 100 ms onset point estimate after artificial five-second continuation labels are merged into continuous songs. It does not have 90% duration quality: onset-and-offset and frame scores remain weak, matching the audible chopped/overlong complaints. The lower onset 95% song-cluster bound also remains below 0.90, and this six-song MAESTRO validation set is not a production or foundation-unseen certification."
+}
