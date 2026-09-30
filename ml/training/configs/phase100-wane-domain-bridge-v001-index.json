@@ -1,0 +1,29 @@
+{
+  "schema": "polymath-training-index-v1",
+  "purpose": "Private WANEGBT domain bridge. Progressively expose the trusted Pianella labels to 50/50 and then 25/75 piano-to-original-song mixtures instead of jumping from clean piano directly to a commercial full mix.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "songId": "wane-mix-p050-domain-bridge-v001",
+      "sourceMedia": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/audio/wane-curriculum-p050.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "train",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied private research material; commercial licensing is unverified and checkpoint promotion is prohibited."
+      }
+    },
+    {
+      "songId": "wane-mix-p025-domain-bridge-v001",
+      "sourceMedia": "D:/Polymath Training/phase-46-foundation-v005-hard-songs-2026-09-16/curriculum-v001/audio/wane-curriculum-p025.wav",
+      "supervisionPackage": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "instrumentFocus": "acoustic_piano",
+      "split": "train",
+      "rights": {
+        "allowedForTraining": true,
+        "note": "User-supplied private research material; commercial licensing is unverified and checkpoint promotion is prohibited."
+      }
+    }
+  ]
+}

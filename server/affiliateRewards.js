@@ -6,6 +6,16 @@ function rewardAmount(value) {
   return Math.max(0, Math.min(1_000_000_000, Math.round(amount * 100) / 100));
 }
 
+function affiliateRewardQuote({ mode = 'fixed', value = 0, checkoutPrice = 0 } = {}) {
+  const normalizedMode = mode === 'percent' ? 'percent' : 'fixed';
+  const normalizedValue = rewardAmount(value);
+  if (normalizedMode === 'percent') {
+    const price = rewardAmount(checkoutPrice);
+    return rewardAmount(price * Math.min(100, normalizedValue) / 100);
+  }
+  return normalizedValue;
+}
+
 function affiliateRewardStats(db, promotionId) {
   const rewarded = (db?.subscriptions || []).filter((record) => (
     record.promotionId === promotionId
@@ -79,6 +89,7 @@ function applyAffiliateReward(db, record, buyer, product, addLedger) {
 }
 
 module.exports = {
+  affiliateRewardQuote,
   affiliateRewardStats,
   applyAffiliateReward,
   rewardAmount,

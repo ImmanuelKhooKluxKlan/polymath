@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 from ml.training.align_piano_sections import add_source_ranges_to_windows
 from ml.training.train_piano_arranger_adapter import (
     alignment_training_ranges,
+    build_register_model,
     manifest_training_pairs,
     note_is_in_training_range,
     pair_supervision_tasks,
@@ -166,6 +170,61 @@ class PianoAlignmentSafetyTests(unittest.TestCase):
             manifest_training_pairs(
                 {"pairs": [{"id": "same"}], "auxiliaryPairs": [{"id": "same"}]}
             )
+
+    def test_register_training_learns_residual_after_role_rendering(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source_path = Path(temporary_directory) / "source.json"
+            source_path.write_text(
+                json.dumps(
+                    {
+                        "notes": [
+                            {
+                                "midi": 59,
+                                "time": 0.0,
+                                "duration": 0.5,
+                                "velocity": 0.7,
+                                "instrument": "acoustic_guitar",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            pairs = [{"id": "fixture", "source": str(source_path), "weight": 1.0}]
+            matches = {
+                "fixture": {
+                    0: {
+                        "exactPitch": False,
+                        "reference": {"midi": 83},
+                    }
+                }
+            }
+            learned_style = {
+                "roles": {
+                    "harmony": {
+                        "minimumMidi": 60,
+                        "maximumMidi": 84,
+                        "octaveShift": 0,
+                    }
+                }
+            }
+
+            model, diagnostics = build_register_model(
+                pairs,
+                matches,
+                learned_style,
+                fallback_shift_semitones=0,
+                uncertain_shift_semitones=0,
+                minimum_confidence=0.5,
+            )
+
+        evidence = model["groups"]["harmony|guitar|midi-059"]
+        # Role rendering first maps B3 (59) into B4 (71).  The learned
+        # correction is therefore one remaining octave, not two octaves from
+        # the untouched source pitch.
+        self.assertEqual(evidence["shiftSemitones"], 12)
+        self.assertEqual(model["type"], "hierarchical-categorical-octave-shift-v2")
+        self.assertEqual(diagnostics["rejectedNonOctaveMatches"], 0)
 
 
 if __name__ == "__main__":

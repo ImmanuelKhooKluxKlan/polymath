@@ -11,7 +11,7 @@ const SAFE_PROPERTIES = new Set([
   'freePreview', 'hand', 'inputMode', 'instrument', 'interval', 'level', 'noteCount',
   'outcome', 'page', 'performanceTier', 'plan', 'playbackMode', 'productId', 'qualityScore',
   'refunded', 'restored', 'score', 'signedIn', 'sizeBucket', 'sourceKind', 'tier',
-  'campaignId', 'campaignSlug', 'referralCode', 'qaScore', 'referrerType',
+  'campaignId', 'campaignSlug', 'referralCode', 'promotionCode', 'qaScore', 'referrerType',
 ]);
 const MAX_QUEUE = 100;
 let queue = [];

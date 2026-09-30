@@ -700,6 +700,56 @@ def compact_authored_two_hand_register(
     }
 
 
+def resolve_conditional_two_hand_style(
+    style: dict[str, Any],
+    default_full_mix: dict[str, Any],
+    bass_gesture_compression: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply a learned hand balance only when its source texture is present."""
+
+    resolved = dict(style or {})
+    policy = (default_full_mix or {}).get("denseBassTwoHandStyle") or {}
+    diagnostics: dict[str, Any] = {
+        "applied": False,
+        "profile": "dense-bass-two-hand-style-gate-v1",
+        "bassGestureCompressionApplied": bool(
+            (bass_gesture_compression or {}).get("applied")
+        ),
+    }
+    if not policy.get("enabled"):
+        return resolved, {**diagnostics, "reason": "disabled"}
+    if not diagnostics["bassGestureCompressionApplied"]:
+        return resolved, {
+            **diagnostics,
+            "reason": "dense-bass-signature-not-detected",
+        }
+
+    assignment = str(
+        policy.get("harmonyHandAssignment") or "target-upper-share"
+    ).strip().lower()
+    if assignment not in {"target-upper-share", "preserve-native-register"}:
+        raise ValueError("Unsupported conditional harmony hand assignment.")
+    target_upper_share = clamp(
+        float(
+            policy.get(
+                "targetUpperNoteShare",
+                resolved.get("targetUpperNoteShare", 0.54),
+            )
+        ),
+        0.25,
+        0.80,
+    )
+    resolved["harmonyHandAssignment"] = assignment
+    resolved["targetUpperNoteShare"] = target_upper_share
+    return resolved, {
+        **diagnostics,
+        "applied": True,
+        "reason": "dense-bass-signature-detected",
+        "harmonyHandAssignment": assignment,
+        "targetUpperNoteShare": round_number(target_upper_share, 4),
+    }
+
+
 def normalize_source_note(note: dict[str, Any]) -> dict[str, Any] | None:
     midi_value = safe_number(note.get("midi"))
     time = safe_number(note.get("time"))
@@ -1638,6 +1688,72 @@ def shape_melody_forward_expression(
     }
 
 
+def preserve_measured_piano_expression(
+    notes: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep audio-measured touch for a genuine solo-piano performance.
+
+    Melody-forward velocity bands belong on a reduction of a mixed song,
+    where a vocal line must remain audible. They must not re-voice an already
+    isolated piano cover merely because its ending becomes left-hand-heavy.
+    """
+
+    preserved: list[dict[str, Any]] = []
+    restored = 0
+    role_velocities: dict[str, list[float]] = defaultdict(list)
+    for source in notes:
+        note = dict(source)
+        measured = safe_number(
+            note.get("sourceVelocityBeforeArrangement"),
+            safe_number(note.get("velocity"), 0.75),
+        )
+        velocity = clamp(float(measured if measured is not None else 0.75), 0.05, 1.0)
+        if abs(velocity - float(note.get("velocity", velocity))) > 1e-9:
+            restored += 1
+        note["velocity"] = round_number(velocity, 4)
+        if str(note.get("hand") or "").lower() not in {"left", "right"}:
+            note["hand"] = "left" if int(note.get("midi", 60)) < 60 else "right"
+        role_velocities[expression_role(note)].append(note["velocity"])
+        preserved.append(note)
+
+    right_velocities = [
+        note["velocity"] for note in preserved if note.get("hand") != "left"
+    ]
+    left_velocities = [
+        note["velocity"] for note in preserved if note.get("hand") == "left"
+    ]
+    right_mean = average(right_velocities)
+    left_mean = average(left_velocities)
+    all_velocities = [note["velocity"] for note in preserved]
+    return preserved, {
+        "profile": "measured-solo-piano-dynamics-v1",
+        "shapedNotes": 0,
+        "restoredMeasuredVelocityNotes": restored,
+        "sourceVelocityRangeWasUsable": bool(all_velocities),
+        "sourceVelocityP10": round_number(quantile(all_velocities, 0.10), 3)
+        if all_velocities
+        else 0.0,
+        "sourceVelocityP90": round_number(quantile(all_velocities, 0.90), 3)
+        if all_velocities
+        else 0.0,
+        "inputMeanVelocity": round_number(average(all_velocities), 3),
+        "rightHandMeanVelocity": round_number(right_mean, 3),
+        "leftHandMeanVelocity": round_number(left_mean, 3),
+        "rightToLeftVelocityRatio": round_number(
+            right_mean / left_mean if left_mean else 0.0,
+            3,
+        ),
+        "roleMeanVelocities": {
+            role: round_number(average(values), 3)
+            for role, values in sorted(role_velocities.items())
+        },
+        "melodyBalance": {
+            "enabled": False,
+            "reason": "genuine-solo-piano-source-dynamics-preserved",
+        },
+    }
+
+
 def shape_gesture_coherent_expression(
     notes: list[dict[str, Any]],
     style_profile: dict[str, Any] | None = None,
@@ -2189,6 +2305,144 @@ def select_bass(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
         )
     return selected
+
+
+def compress_dense_bass_gestures(
+    notes: list[dict[str, Any]],
+    config: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Turn separator-rate bass pulses into playable pianist gestures.
+
+    Full-mix separators commonly emit the same bass pitch once per analysis
+    frame.  Treating every frame as a new hammer strike creates the familiar
+    machine-gun sound.  An authored piano reduction normally lets one strike
+    ring across the next repeated transient, while retaining pitch changes,
+    accents, phrase restarts, and genuinely slower repetitions.
+
+    The policy is deliberately gated by measured repetition density and is
+    opt-in through the arranger profile.  It never touches melody or harmony
+    and does not move a pitch.
+    """
+
+    policy = config or {}
+    base_diagnostics: dict[str, Any] = {
+        "applied": False,
+        "profile": "aligned-bass-gesture-compression-v1",
+        "inputNotes": len(notes),
+        "outputNotes": len(notes),
+        "removedNotes": 0,
+    }
+    if not policy.get("enabled"):
+        return notes, {**base_diagnostics, "reason": "disabled"}
+    if len(notes) < 3:
+        return notes, {**base_diagnostics, "reason": "insufficient-bass-notes"}
+
+    minimum_gap = clamp(float(policy.get("minimumRapidGapSeconds", 0.10)), 0.04, 0.30)
+    maximum_gap = clamp(
+        float(policy.get("maximumRapidGapSeconds", 0.19)),
+        minimum_gap,
+        0.45,
+    )
+    minimum_rapid_pairs = max(1, int(policy.get("minimumRapidPairs", 12)))
+    minimum_rapid_share = clamp(
+        float(policy.get("minimumRapidPairShare", 0.25)), 0.0, 1.0
+    )
+    keep_every = max(2, min(4, int(policy.get("keepEveryNthStrike", 2))))
+    accent_delta = clamp(
+        float(policy.get("preserveAccentVelocityDelta", 0.14)), 0.02, 0.50
+    )
+
+    ordered = sorted(
+        (dict(note) for note in notes),
+        key=lambda note: (float(note["time"]), int(note["midi"])),
+    )
+    by_pitch: dict[int, list[int]] = defaultdict(list)
+    for index, note in enumerate(ordered):
+        by_pitch[int(note["midi"])].append(index)
+
+    rapid_pairs = 0
+    eligible_pairs = 0
+    for indices in by_pitch.values():
+        for previous_index, current_index in zip(indices, indices[1:]):
+            gap = float(ordered[current_index]["time"]) - float(
+                ordered[previous_index]["time"]
+            )
+            if gap >= minimum_gap:
+                eligible_pairs += 1
+            if minimum_gap <= gap < maximum_gap:
+                rapid_pairs += 1
+    rapid_share = rapid_pairs / max(1, eligible_pairs)
+    if rapid_pairs < minimum_rapid_pairs or rapid_share < minimum_rapid_share:
+        return notes, {
+            **base_diagnostics,
+            "reason": "bass-repetition-density-below-gate",
+            "rapidPairs": rapid_pairs,
+            "eligiblePairs": eligible_pairs,
+            "rapidPairShare": round_number(rapid_share, 4),
+        }
+
+    removed: set[int] = set()
+    accent_preserved = 0
+    compressed_runs = 0
+    for indices in by_pitch.values():
+        run: list[int] = []
+
+        def finish_run() -> None:
+            nonlocal accent_preserved, compressed_runs
+            if len(run) < 2:
+                return
+            compressed_runs += 1
+            last_kept = run[0]
+            for position, note_index in enumerate(run[1:], start=1):
+                current_velocity = float(
+                    ordered[note_index].get(
+                        "sourceVelocityBeforeArrangement",
+                        ordered[note_index].get("velocity", 0.72),
+                    )
+                )
+                kept_velocity = float(
+                    ordered[last_kept].get(
+                        "sourceVelocityBeforeArrangement",
+                        ordered[last_kept].get("velocity", 0.72),
+                    )
+                )
+                is_accent = current_velocity - kept_velocity >= accent_delta
+                if position % keep_every == 0 or is_accent:
+                    last_kept = note_index
+                    accent_preserved += int(is_accent)
+                else:
+                    removed.add(note_index)
+
+        for previous_index, current_index in zip(indices, indices[1:]):
+            gap = float(ordered[current_index]["time"]) - float(
+                ordered[previous_index]["time"]
+            )
+            if minimum_gap <= gap < maximum_gap:
+                if not run:
+                    run.append(previous_index)
+                run.append(current_index)
+            else:
+                finish_run()
+                run = []
+        finish_run()
+
+    output = [note for index, note in enumerate(ordered) if index not in removed]
+    return output, {
+        **base_diagnostics,
+        "applied": bool(removed),
+        "reason": "dense-repeated-bass-transients" if removed else "no-removable-runs",
+        "outputNotes": len(output),
+        "removedNotes": len(removed),
+        "rapidPairs": rapid_pairs,
+        "eligiblePairs": eligible_pairs,
+        "rapidPairShare": round_number(rapid_share, 4),
+        "minimumRapidGapSeconds": round_number(minimum_gap, 4),
+        "maximumRapidGapSeconds": round_number(maximum_gap, 4),
+        "keepEveryNthStrike": keep_every,
+        "compressedRuns": compressed_runs,
+        "preservedAccents": accent_preserved,
+        "pitchClassPreserved": True,
+    }
 
 
 def compact_harmony(
@@ -5153,6 +5407,12 @@ def arrange_payload(
         note for note in source_notes if note["instrument"] not in PERCUSSION_INSTRUMENTS
     ]
     role_notes: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    default_full_mix: dict[str, Any] = {}
+    bass_gesture_compression: dict[str, Any] = {
+        "applied": False,
+        "profile": "aligned-bass-gesture-compression-v1",
+        "reason": "source-piano-preservation-route",
+    }
 
     if profile["detectedAcousticPianoPerformance"]:
         for source in working:
@@ -5214,8 +5474,6 @@ def arrange_payload(
             for note in working
             if note["instrument"] not in VOICE_INSTRUMENTS and note["midi"] <= 52
         ]
-        role_notes["bass"] = select_bass(explicit_bass or fallback_bass)
-
         harmony_sources = [
             note
             for note in working
@@ -5227,6 +5485,11 @@ def arrange_payload(
             if default_pipeline_profile
             else {}
         ) or {}
+        role_notes["bass"] = select_bass(explicit_bass or fallback_bass)
+        role_notes["bass"], bass_gesture_compression = compress_dense_bass_gestures(
+            role_notes["bass"],
+            default_full_mix.get("bassGestureCompression") or {},
+        )
         harmony_window_seconds = clamp(
             float(default_full_mix.get("harmonyWindowSeconds", 0.30)),
             0.06,
@@ -5303,6 +5566,13 @@ def arrange_payload(
         )
 
     authored_two_hand_style = style_decoder.get("authoredTwoHandStyle") or {}
+    authored_two_hand_style, conditional_two_hand_style = (
+        resolve_conditional_two_hand_style(
+            authored_two_hand_style,
+            default_full_mix,
+            bass_gesture_compression,
+        )
+    )
     if (
         arranger_profile == "full-mix-piano-reduction"
         and authored_two_hand_style.get("enabled")
@@ -5326,7 +5596,16 @@ def arrange_payload(
     else:
         arranged_notes, range_fold_collisions = suppress_rapid_retriggers(arranged_notes)
     retriggers_removed += range_fold_collisions
-    arranged_notes, expression = shape_melody_forward_expression(arranged_notes)
+    measured_solo_piano_dynamics = bool(
+        arranger_profile == "acoustic-piano-preserve"
+        and (payload.get("transcriptionCleanup") or {}).get("sourceDynamicsApplied")
+    )
+    if measured_solo_piano_dynamics:
+        arranged_notes, expression = preserve_measured_piano_expression(
+            arranged_notes
+        )
+    else:
+        arranged_notes, expression = shape_melody_forward_expression(arranged_notes)
     gesture_expression: dict[str, Any] = {
         "applied": False,
         "profile": "gesture-coherent-piano-dynamics-v1",
@@ -5417,6 +5696,7 @@ def arrange_payload(
             "maximumNote": "C8",
         },
         "compactRange": range_compaction,
+        "conditionalTwoHandStyle": conditional_two_hand_style,
         "adaptiveMelodyRegisterSeparation": melody_register_separation,
         "rangeFoldCollisionsRemoved": range_fold_collisions,
         "densityLimitNotesPerSecond": density_limit,
@@ -5441,6 +5721,15 @@ def arrange_payload(
             else {
                 "applied": False,
                 "profile": "source-supported-cyclic-harmony-v1",
+                "reason": "source-piano-preservation-route",
+            }
+        ),
+        "bassGestureCompression": (
+            bass_gesture_compression
+            if arranger_profile == "full-mix-piano-reduction"
+            else {
+                "applied": False,
+                "profile": "aligned-bass-gesture-compression-v1",
                 "reason": "source-piano-preservation-route",
             }
         ),
@@ -5475,7 +5764,10 @@ def arrange_payload(
     output['pianoArrangement']['adaptiveMelodyMixBalance'] = adaptive_mix
     output['performance']['profile'] = 'polymath-piano-arranger-v5'
     output['performance']['defaultAutoplayReleaseSeconds'] = 0.62
-    output['performance']['melodyForwardDynamics'] = True
+    output['performance']['melodyForwardDynamics'] = not measured_solo_piano_dynamics
+    output['performance']['measuredSoloPianoDynamicsPreserved'] = (
+        measured_solo_piano_dynamics
+    )
     output['pianoArrangement']['version'] = 5
     output['pianoArrangement']['maximumHarmonyPitchClasses'] = (
         maximum_harmony_pitch_classes

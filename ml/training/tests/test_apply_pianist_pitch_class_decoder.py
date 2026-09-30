@@ -99,6 +99,44 @@ class ApplyPitchClassDecoderTest(unittest.TestCase):
     @patch(
         "ml.training.apply_pianist_pitch_class_decoder.cell_probabilities"
     )
+    def test_can_preserve_unmatched_cells_for_later_pipeline_candidates(self, mocked):
+        mocked.return_value = {
+            0: {pitch_class: 0.5 for pitch_class in range(12)}
+        }
+        candidate = {"notes": [candidate_note(60, time=1.0)]}
+        source = {"notes": []}
+        audit_song = {
+            "id": "test",
+            "cells": [
+                {
+                    "sourceTime": 2.0,
+                    "candidatePitchClasses": [0],
+                    "sourcePitchClasses": [0],
+                }
+            ],
+        }
+        model = {
+            "id": "test",
+            "addThreshold": 0.9,
+            "removeThreshold": 0.1,
+            "sourceSupportedAdditionsOnly": True,
+        }
+
+        output, report = apply_decoder(
+            candidate,
+            source,
+            audit_song,
+            model,
+            skip_unmatched_cells=True,
+        )
+
+        self.assertEqual(output["notes"], candidate["notes"])
+        self.assertEqual(report["unmatchedAuditCells"], 1)
+        self.assertEqual(report["matchedCandidateGroups"], 0)
+
+    @patch(
+        "ml.training.apply_pianist_pitch_class_decoder.cell_probabilities"
+    )
     def test_applies_supported_addition_and_confident_removal(self, mocked):
         mocked.return_value = {
             0: {pitch_class: (0.95 if pitch_class in (0, 4) else 0.01)

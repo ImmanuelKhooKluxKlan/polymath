@@ -30,18 +30,21 @@ const DEFAULT_CREATOR_CATEGORY = Object.freeze({
   updatedAt: '2026-09-07T00:00:00.000Z',
 });
 
-const BASE_FEATURES = Object.freeze({
-  chill: [
-    'Piano, guitar, and supported instrument studios',
-    'Unlimited JSON and MIDI ready-to-play uploads',
-    '10 shared PDF or audio translations every month',
-    'Extra translations for 0.5 Mcoin each',
-  ],
-  musician: [
-    'Everything included in Chill',
-    '20 shared PDF or audio translations every month',
-    'Extra translations for 0.5 Mcoin each',
-  ],
+const DEFAULT_CORE_POLICIES = Object.freeze({
+  chill: Object.freeze({
+    tier: 'chill',
+    translationsPerMonth: 10,
+    audioTranslationsPerMonth: 10,
+    pdfTranslationsPerMonth: 10,
+    entitlements: Object.freeze(['ready_sheets.unlimited']),
+  }),
+  musician: Object.freeze({
+    tier: 'musician',
+    translationsPerMonth: 20,
+    audioTranslationsPerMonth: 20,
+    pdfTranslationsPerMonth: 20,
+    entitlements: Object.freeze(['learn', 'band', 'ready_sheets.unlimited']),
+  }),
 });
 
 function createError(message, status = 400) {
@@ -78,10 +81,17 @@ function normalizeMoneyCents(value, fallback = 0) {
   return Math.max(0, Math.min(100_000_000, Math.round(number)));
 }
 
+function normalizeTranslationLimit(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(100_000, Math.round(number)));
+}
+
 function ensureSubscriptionCatalog(db) {
   if (!Array.isArray(db.subscriptionCategories)) db.subscriptionCategories = [];
   if (!Array.isArray(db.subscriptionPlans)) db.subscriptionPlans = [];
   if (!Array.isArray(db.subscriptionProductOverrides)) db.subscriptionProductOverrides = [];
+  if (!Array.isArray(db.subscriptionTierPolicies)) db.subscriptionTierPolicies = [];
   db.subscriptionProductOverrides.forEach((item) => {
     if (!item.id && item.productId) item.id = `subscription-price-${item.productId}`;
   });
@@ -90,6 +100,83 @@ function ensureSubscriptionCatalog(db) {
     db.subscriptionCategories.push({ ...DEFAULT_CREATOR_CATEGORY });
   }
   return db;
+}
+
+function coreSubscriptionPolicy(db, tier) {
+  const normalizedTier = clean(tier, 24).toLowerCase();
+  const defaults = DEFAULT_CORE_POLICIES[normalizedTier];
+  if (!defaults) return null;
+  ensureSubscriptionCatalog(db || {});
+  const stored = db?.subscriptionTierPolicies?.find((item) => item.tier === normalizedTier);
+  const translationsPerMonth = normalizeTranslationLimit(
+    stored?.translationsPerMonth,
+    defaults.translationsPerMonth,
+  );
+  return {
+    tier: normalizedTier,
+    translationsPerMonth,
+    audioTranslationsPerMonth: Math.min(
+      translationsPerMonth,
+      normalizeTranslationLimit(stored?.audioTranslationsPerMonth, defaults.audioTranslationsPerMonth),
+    ),
+    pdfTranslationsPerMonth: Math.min(
+      translationsPerMonth,
+      normalizeTranslationLimit(stored?.pdfTranslationsPerMonth, defaults.pdfTranslationsPerMonth),
+    ),
+    entitlements: normalizeEntitlements(stored?.entitlements || defaults.entitlements),
+    revision: Number(stored?.revision || 0),
+    updatedAt: stored?.updatedAt || null,
+  };
+}
+
+function updateCoreSubscriptionPolicy(db, tier, input, actorId) {
+  ensureSubscriptionCatalog(db);
+  const normalizedTier = clean(tier, 24).toLowerCase();
+  const defaults = DEFAULT_CORE_POLICIES[normalizedTier];
+  if (!defaults) throw createError('Built-in subscription tier not found.', 404);
+  const previous = coreSubscriptionPolicy(db, normalizedTier);
+  const translationsPerMonth = normalizeTranslationLimit(
+    input.translationsPerMonth,
+    previous.translationsPerMonth,
+  );
+  const audioTranslationsPerMonth = normalizeTranslationLimit(
+    input.audioTranslationsPerMonth,
+    previous.audioTranslationsPerMonth,
+  );
+  const pdfTranslationsPerMonth = normalizeTranslationLimit(
+    input.pdfTranslationsPerMonth,
+    previous.pdfTranslationsPerMonth,
+  );
+  if (audioTranslationsPerMonth > translationsPerMonth || pdfTranslationsPerMonth > translationsPerMonth) {
+    throw createError('Audio and PDF limits cannot exceed the shared monthly translation limit.');
+  }
+  const entitlements = input.entitlements === undefined
+    ? previous.entitlements
+    : normalizeEntitlements(input.entitlements);
+  const current = db.subscriptionTierPolicies.find((item) => item.tier === normalizedTier);
+  const now = new Date().toISOString();
+  const next = {
+    tier: normalizedTier,
+    translationsPerMonth,
+    audioTranslationsPerMonth,
+    pdfTranslationsPerMonth,
+    entitlements,
+    revision: Number(current?.revision || 0) + 1,
+    createdAt: current?.createdAt || now,
+    createdBy: current?.createdBy || actorId,
+    updatedAt: now,
+    updatedBy: actorId,
+  };
+  if (current) Object.assign(current, next);
+  else db.subscriptionTierPolicies.push(next);
+  recordCatalogEvent(db, actorId, 'core_plan_policy_updated', normalizedTier, {
+    translationsPerMonth,
+    audioTranslationsPerMonth,
+    pdfTranslationsPerMonth,
+    entitlements,
+    revision: next.revision,
+  });
+  return coreSubscriptionPolicy(db, normalizedTier);
 }
 
 function baseProductWithOverride(db, product) {
@@ -158,7 +245,29 @@ function publicCustomProduct(plan, category, { admin = false } = {}) {
   return product;
 }
 
-function decorateBaseProduct(product) {
+function corePlanFeatures(product, policy) {
+  const features = product.tier === 'musician'
+    ? ['Everything included in Chill']
+    : ['Piano, guitar, and supported instrument studios'];
+  if (policy.entitlements.includes('ready_sheets.unlimited')) {
+    features.push('Unlimited JSON and MIDI ready-to-play uploads');
+  }
+  features.push(`${policy.translationsPerMonth} shared PDF or audio translations every month`);
+  if (
+    policy.audioTranslationsPerMonth < policy.translationsPerMonth
+    || policy.pdfTranslationsPerMonth < policy.translationsPerMonth
+  ) {
+    features.push(
+      `Up to ${policy.audioTranslationsPerMonth} audio/video and ${policy.pdfTranslationsPerMonth} PDF translations`,
+    );
+  }
+  if (policy.entitlements.includes('learn')) features.push('Full Learn access');
+  if (policy.entitlements.includes('band')) features.push('Band collaboration access');
+  features.push('Extra translations for 0.5 Mcoin each');
+  return features;
+}
+
+function decorateBaseProduct(product, policy = null) {
   if (product.kind !== 'subscription') {
     return {
       ...product,
@@ -172,8 +281,12 @@ function decorateBaseProduct(product) {
   }
   const institution = Boolean(product.institutionTier);
   const tier = product.tier || 'musician';
+  const resolvedPolicy = policy || coreSubscriptionPolicy(null, tier) || DEFAULT_CORE_POLICIES.musician;
   return {
     ...product,
+    translations: resolvedPolicy.translationsPerMonth,
+    audioTranslations: resolvedPolicy.audioTranslationsPerMonth,
+    pdfTranslations: resolvedPolicy.pdfTranslationsPerMonth,
     categoryId: institution ? 'institution' : 'individual',
     categorySlug: institution ? 'institution' : 'individual',
     categoryName: institution ? 'Institution' : 'Individual',
@@ -184,12 +297,8 @@ function decorateBaseProduct(product) {
           'Supported instrument studios and monthly translations',
           'Private access code with seat controls',
         ]
-      : BASE_FEATURES[tier] || [],
-    entitlements: tier === 'musician'
-      ? ['learn', 'band', 'ready_sheets.unlimited']
-      : tier === 'chill'
-        ? ['ready_sheets.unlimited']
-        : [],
+      : corePlanFeatures(product, resolvedPolicy),
+    entitlements: resolvedPolicy.entitlements,
     checkoutConfigured: true,
   };
 }
@@ -214,7 +323,10 @@ function listPublicCatalog(db, baseProducts) {
   const products = [
     ...Object.values(baseProducts)
       .filter((product) => !product.legacy)
-      .map((product) => decorateBaseProduct(baseProductWithOverride(db, product))),
+      .map((product) => decorateBaseProduct(
+        baseProductWithOverride(db, product),
+        coreSubscriptionPolicy(db, product.tier),
+      )),
     ...customProducts,
   ];
   return { categories, products };
@@ -232,7 +344,10 @@ function listAdminCatalog(db, baseProducts = {}) {
     corePlans: Object.values(baseProducts)
       .filter((product) => product.kind === 'subscription' && !product.legacy)
       .map((product) => {
-        const resolved = decorateBaseProduct(baseProductWithOverride(db, product));
+        const resolved = decorateBaseProduct(
+          baseProductWithOverride(db, product),
+          coreSubscriptionPolicy(db, product.tier),
+        );
         return {
           ...resolved,
           basePrice: Number(product.price).toFixed(2),
@@ -242,13 +357,17 @@ function listAdminCatalog(db, baseProducts = {}) {
           revision: Number(resolved.pricingRevision || 0),
         };
       }),
+    corePolicies: Object.keys(DEFAULT_CORE_POLICIES).map((tier) => coreSubscriptionPolicy(db, tier)),
     entitlementOptions: ALLOWED_ENTITLEMENTS,
   };
 }
 
 function resolveProduct(db, baseProducts, productId) {
   const id = clean(productId, 100);
-  if (baseProducts[id]) return decorateBaseProduct(baseProductWithOverride(db, baseProducts[id]));
+  if (baseProducts[id]) return decorateBaseProduct(
+    baseProductWithOverride(db, baseProducts[id]),
+    coreSubscriptionPolicy(db, baseProducts[id].tier),
+  );
   ensureSubscriptionCatalog(db);
   const plan = db.subscriptionPlans.find((item) => item.id === id);
   return plan ? publicCustomProduct(plan, categoryById(db, plan.categoryId), { admin: true }) : null;
@@ -487,9 +606,11 @@ function applyCustomProductAccess(user, product, subscriptionId, status) {
 
 module.exports = {
   ALLOWED_ENTITLEMENTS,
+  DEFAULT_CORE_POLICIES,
   DEFAULT_CREATOR_CATEGORY,
   activeEntitlements,
   applyCustomProductAccess,
+  coreSubscriptionPolicy,
   createCategory,
   createPlan,
   decorateBaseProduct,
@@ -500,6 +621,7 @@ module.exports = {
   normalizeEntitlements,
   resolveProduct,
   updateBaseProductPrice,
+  updateCoreSubscriptionPolicy,
   updateCategory,
   updatePlan,
 };

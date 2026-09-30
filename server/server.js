@@ -16,6 +16,7 @@ const { createDirectUploadService } = require('./directUpload');
 const { createJobQueue } = require('./jobQueue');
 const { createTaskPool } = require('./taskPool');
 const { PUBLIC_PRODUCT_EVENT_NAMES, sanitizeProductEventBatch } = require('./productAnalytics');
+const { DEFAULT_TEST_BUDGET_USD, buildMarketingAutopilot } = require('./marketingAutopilot');
 const {
   adminArtistCampaign,
   buildCampaignExcerpt,
@@ -43,6 +44,7 @@ const {
 const {
   activeEntitlements,
   applyCustomProductAccess,
+  coreSubscriptionPolicy,
   createCategory: createSubscriptionCategory,
   createPlan: createSubscriptionPlan,
   ensureSubscriptionCatalog,
@@ -51,6 +53,7 @@ const {
   listPublicCatalog,
   resolveProduct,
   updateBaseProductPrice,
+  updateCoreSubscriptionPolicy,
   updateCategory: updateSubscriptionCategory,
   updatePlan: updateSubscriptionPlan,
 } = require('./subscriptionCatalog');
@@ -99,7 +102,12 @@ const {
 } = require('./communityChat');
 const { createChatBossAssistant } = require('./chatBossAssistant');
 const { createLoginRateLimiter } = require('./loginRateLimit');
-const { affiliateRewardStats, applyAffiliateReward, rewardAmount } = require('./affiliateRewards');
+const {
+  affiliateRewardQuote,
+  affiliateRewardStats,
+  applyAffiliateReward,
+  rewardAmount,
+} = require('./affiliateRewards');
 const { createAwsRdsPasswordProvider } = require('./awsSecrets');
 const {
   learningAttemptsForUser,
@@ -324,7 +332,7 @@ const PIANO_ARRANGER_WORKER = String(process.env.PIANO_ARRANGER_WORKER || '').tr
 // environment value can still pin or roll back to another profile.
 const PIANO_ARRANGER_PROFILE_PATH = String(
   process.env.PIANO_ARRANGER_PROFILE_PATH
-    || path.join(__dirname, 'models', 'piano-arranger', 'polymath-pianella-v003.json'),
+    || path.join(__dirname, 'models', 'piano-arranger', 'polymath-pianella-v004.json'),
 ).trim();
 const MUSCRIPTOR_REMOTE_URL = String(process.env.MUSCRIPTOR_REMOTE_URL || '').trim().replace(/\/+$/, '');
 const MUSCRIPTOR_REMOTE_TOKEN = String(process.env.MUSCRIPTOR_REMOTE_TOKEN || '').trim();
@@ -566,6 +574,7 @@ const DEFAULT_SITE_POLICIES = Object.freeze({
   privacyUrl: '',
   supportEmail: '',
   supportPhone: '',
+  marketingTestBudgetUsd: DEFAULT_TEST_BUDGET_USD,
 });
 
 function ensureStorage() {
@@ -655,6 +664,7 @@ function ensureStorage() {
       subscriptionCategories: [],
       subscriptionPlans: [],
       subscriptionProductOverrides: [],
+      subscriptionTierPolicies: [],
       subscriptionCatalogEvents: [],
       webhookEvents: [],
       scoreTranslationJobs: [],
@@ -747,6 +757,7 @@ function normalizeDb(db) {
     'subscriptionCategories',
     'subscriptionPlans',
     'subscriptionProductOverrides',
+    'subscriptionTierPolicies',
     'subscriptionCatalogEvents',
     'webhookEvents',
     'scoreTranslationJobs',
@@ -801,9 +812,21 @@ function normalizeDb(db) {
     }
   });
   normalized.promotions.forEach((promotion) => {
-    if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(promotion.kind)) {
+    if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent', 'subscription_fixed'].includes(promotion.kind)) {
       promotion.active = false;
       promotion.retired = true;
+    }
+    if (['subscription_percent', 'subscription_fixed'].includes(promotion.kind)) {
+      promotion.affiliateRewardMode = promotion.affiliateRewardMode === 'percent' ? 'percent' : 'fixed';
+      promotion.affiliateRewardValue = rewardAmount(
+        promotion.affiliateRewardValue ?? promotion.affiliateRewardMcoins,
+      );
+      if (promotion.affiliateRewardMode === 'percent') {
+        promotion.affiliateRewardValue = Math.min(100, promotion.affiliateRewardValue);
+      }
+      promotion.affiliateRewardMcoins = promotion.affiliateRewardMode === 'fixed'
+        ? promotion.affiliateRewardValue
+        : 0;
     }
   });
   ensureFriendIds(normalized.users);
@@ -1004,7 +1027,9 @@ async function bootstrapAdminAccounts() {
       subscriptionInterval: null,
       subscriptionStartedAt: null,
       paypalSubscriptionId: null,
-      translationUsage: { period: currentTranslationPeriod(), includedUsed: 0 },
+      translationUsage: {
+        period: currentTranslationPeriod(), includedUsed: 0, audioUsed: 0, pdfUsed: 0,
+      },
       readySheetUploadUsage: { period: currentTranslationPeriod(), freeUsed: 0 },
       passwordBootstrappedAt: now,
       createdAt: now,
@@ -1171,15 +1196,16 @@ function hasMusicianAccess(user) {
   return isAdministrator(user) || activeSubscriptionTier(user) === 'musician';
 }
 
-function userEntitlements(user) {
+function userEntitlements(user, db = null) {
   const entitlements = new Set(activeEntitlements(user));
   const tier = activeSubscriptionTier(user);
-  if (tier === 'chill' || tier === 'musician') entitlements.add('ready_sheets.unlimited');
-  if (tier === 'musician') {
-    entitlements.add('learn');
-    entitlements.add('band');
-  }
+  const policy = coreSubscriptionPolicy(db, tier);
+  (policy?.entitlements || []).forEach((entitlement) => entitlements.add(entitlement));
   return [...entitlements];
+}
+
+function hasSubscriptionEntitlement(user, db, entitlement) {
+  return isAdministrator(user) || userEntitlements(user, db).includes(entitlement);
 }
 
 function ensureReadySheetUsage(user, now = new Date()) {
@@ -1191,8 +1217,8 @@ function ensureReadySheetUsage(user, now = new Date()) {
   return user.readySheetUploadUsage;
 }
 
-function readySheetAllowance(user, now = new Date()) {
-  if (isAdministrator(user) || activeSubscriptionTier(user) !== 'free') {
+function readySheetAllowance(user, now = new Date(), db = null) {
+  if (hasSubscriptionEntitlement(user, db, 'ready_sheets.unlimited')) {
     return {
       unlimited: true,
       limit: null,
@@ -1213,13 +1239,13 @@ function readySheetAllowance(user, now = new Date()) {
   };
 }
 
-function readySheetUploadCost(user, now = new Date()) {
-  const allowance = readySheetAllowance(user, now);
+function readySheetUploadCost(user, now = new Date(), db = null) {
+  const allowance = readySheetAllowance(user, now, db);
   return allowance.unlimited || allowance.remaining > 0 ? 0 : READY_SHEET_UPLOAD_MCOIN_COST;
 }
 
 function chargeReadySheetUpload(db, user, filename, now = new Date()) {
-  const allowance = readySheetAllowance(user, now);
+  const allowance = readySheetAllowance(user, now, db);
   if (allowance.unlimited) {
     addLedger(db, user.id, 0, isAdministrator(user) ? 'admin_ready_sheet_upload' : 'subscriber_ready_sheet_upload', filename);
     return { costMcoins: 0, paymentMethod: 'unlimited' };
@@ -1283,6 +1309,8 @@ function ensureTranslationUsage(user, now = new Date()) {
     user.translationUsage = {
       period,
       includedUsed: 0,
+      audioUsed: 0,
+      pdfUsed: 0,
     };
   }
   if (!Number.isFinite(Number(user.translationUsage.includedUsed))) {
@@ -1292,6 +1320,8 @@ function ensureTranslationUsage(user, now = new Date()) {
     user.translationUsage.includedUsed = legacyUsed;
   }
   user.translationUsage.includedUsed = Math.max(0, Number(user.translationUsage.includedUsed || 0));
+  user.translationUsage.audioUsed = Math.max(0, Number(user.translationUsage.audioUsed || 0));
+  user.translationUsage.pdfUsed = Math.max(0, Number(user.translationUsage.pdfUsed || 0));
   return user.translationUsage;
 }
 
@@ -1303,7 +1333,7 @@ function hasUnlimitedMcoins(user) {
   return isAdministrator(user);
 }
 
-function translationAllowance(user, now = new Date()) {
+function translationAllowance(user, now = new Date(), db = null) {
   if (isAdministrator(user)) {
     return {
       plan: 'admin',
@@ -1312,48 +1342,75 @@ function translationAllowance(user, now = new Date()) {
       used: 0,
       remaining: null,
       resetAt: null,
+      audio: { limit: null, used: 0, remaining: null },
+      pdf: { limit: null, used: 0, remaining: null },
     };
   }
   const usage = ensureTranslationUsage(user, now);
   const plan = activeSubscriptionTier(user);
-  const limits = {
-    free: FREE_TRANSLATION_LIMIT,
-    chill: CHILL_TRANSLATION_LIMIT,
-    musician: MUSICIAN_TRANSLATION_LIMIT,
-  };
-  const limit = limits[plan];
+  const policy = coreSubscriptionPolicy(db, plan);
+  const limit = plan === 'free'
+    ? FREE_TRANSLATION_LIMIT
+    : Number(policy?.translationsPerMonth || 0);
+  const audioLimit = plan === 'free' ? FREE_TRANSLATION_LIMIT : Number(policy?.audioTranslationsPerMonth || 0);
+  const pdfLimit = plan === 'free' ? FREE_TRANSLATION_LIMIT : Number(policy?.pdfTranslationsPerMonth || 0);
   const used = usage.includedUsed;
+  const sharedRemaining = Math.max(0, limit - used);
+  const audioUsed = usage.audioUsed;
+  const pdfUsed = usage.pdfUsed;
   return {
     plan,
     unlimited: false,
     limit,
     used: Math.min(limit, used),
-    remaining: Math.max(0, limit - used),
+    remaining: sharedRemaining,
     resetAt: translationUsageWindow(user, now).resetAt,
     overageCostMcoins: translationMcoinCost(user),
+    audio: {
+      limit: audioLimit,
+      used: Math.min(audioLimit, audioUsed),
+      remaining: Math.min(sharedRemaining, Math.max(0, audioLimit - audioUsed)),
+    },
+    pdf: {
+      limit: pdfLimit,
+      used: Math.min(pdfLimit, pdfUsed),
+      remaining: Math.min(sharedRemaining, Math.max(0, pdfLimit - pdfUsed)),
+    },
   };
 }
 
-function deductTranslationAllowance(user) {
-  const allowance = translationAllowance(user);
+function deductTranslationAllowance(user, kind = 'shared', db = null, now = new Date()) {
+  const allowance = translationAllowance(user, now, db);
   if (allowance.unlimited) return 'admin';
-  if (allowance.remaining <= 0) return null;
+  const normalizedKind = ['audio', 'pdf'].includes(kind) ? kind : 'shared';
+  const remaining = normalizedKind === 'shared'
+    ? allowance.remaining
+    : allowance[normalizedKind].remaining;
+  if (remaining <= 0) return null;
   user.translationUsage.includedUsed += 1;
-  return 'included';
+  if (normalizedKind === 'audio') user.translationUsage.audioUsed += 1;
+  if (normalizedKind === 'pdf') user.translationUsage.pdfUsed += 1;
+  return normalizedKind === 'shared' ? 'included' : `included_${normalizedKind}`;
 }
 
 function restoreTranslationAllowance(user, bucket) {
   ensureTranslationUsage(user);
-  if (['included', 'pro', 'free'].includes(bucket)) {
+  if (['included', 'included_audio', 'included_pdf', 'pro', 'free'].includes(bucket)) {
     user.translationUsage.includedUsed = Math.max(0, user.translationUsage.includedUsed - 1);
+  }
+  if (bucket === 'included_audio') {
+    user.translationUsage.audioUsed = Math.max(0, user.translationUsage.audioUsed - 1);
+  }
+  if (bucket === 'included_pdf') {
+    user.translationUsage.pdfUsed = Math.max(0, user.translationUsage.pdfUsed - 1);
   }
 }
 
-function safeUser(user) {
+function safeUser(user, db = null) {
   const subscriptionTier = activeSubscriptionTier(user);
   const administrator = isAdministrator(user);
   const administratorGrant = activeAdminSubscriptionGrant(user);
-  const entitlements = userEntitlements(user);
+  const entitlements = userEntitlements(user, db);
   const entitlementSet = new Set(entitlements);
   return {
     user_id: user.id,
@@ -1389,6 +1446,14 @@ function safeUser(user) {
         startedAt: item.startedAt,
       })),
     luckyCodeApplied: Boolean(user.luckyCodeClaim),
+    subscriptionOffer: user.luckyCodeClaim && ['subscription_percent', 'subscription_fixed'].includes(
+      user.luckyCodeClaim.kind || user.luckyCodeClaim.type,
+    ) ? {
+      code: user.luckyCodeClaim.code || user.luckyCodeClaim.friendId || '',
+      kind: user.luckyCodeClaim.kind || user.luckyCodeClaim.type,
+      value: Number(user.luckyCodeClaim.value || 0),
+      claimedAt: user.luckyCodeClaim.claimedAt || null,
+    } : null,
     institution: user.institutionId ? {
       id: user.institutionId,
       name: user.institutionName || '',
@@ -1398,9 +1463,9 @@ function safeUser(user) {
       seats: Number(user.institutionSeatLimit || 0),
       accessCode: user.institutionRole === 'owner' ? (user.institutionAccessCode || '') : '',
     } : null,
-    translationAllowance: translationAllowance(user),
-    readySheetAllowance: readySheetAllowance(user),
-    readySheetUploadCostMcoins: readySheetUploadCost(user),
+    translationAllowance: translationAllowance(user, new Date(), db),
+    readySheetAllowance: readySheetAllowance(user, new Date(), db),
+    readySheetUploadCostMcoins: readySheetUploadCost(user, new Date(), db),
     adultCompanionConfirmed: Boolean(user.adultCompanionConfirmedAt),
     admin: administrator,
     access: {
@@ -1445,7 +1510,7 @@ async function requireAuth(req, res, next) {
 
 function requireMusician(req, res, next) {
   return requireAuth(req, res, () => {
-    if (!hasMusicianAccess(req.user)) {
+    if (!hasSubscriptionEntitlement(req.user, req.db, 'band')) {
       res.status(403).json({ error: 'Band access requires the Musician plan.' });
       return;
     }
@@ -1455,7 +1520,7 @@ function requireMusician(req, res, next) {
 
 function requireLearn(req, res, next) {
   return requireAuth(req, res, () => {
-    if (!hasMusicianAccess(req.user)) {
+    if (!hasSubscriptionEntitlement(req.user, req.db, 'learn')) {
       res.status(403).json({
         error: 'Learning progress sync requires the Musician plan.',
         code: 'LEARN_ACCESS_REQUIRED',
@@ -1549,8 +1614,30 @@ function normalizePromotionCode(value) {
   return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
 }
 
+function isSubscriptionPromotionKind(kind) {
+  return ['subscription_percent', 'subscription_fixed'].includes(String(kind || ''));
+}
+
+function normalizeAffiliateRewardMode(value) {
+  return value === 'percent' ? 'percent' : 'fixed';
+}
+
+function normalizeAffiliateRewardValue(mode, value) {
+  const amount = rewardAmount(value);
+  return mode === 'percent' ? Math.min(100, amount) : amount;
+}
+
+function referralShareUrl(code) {
+  const normalizedCode = normalizePromotionCode(code);
+  return normalizedCode
+    ? `${CLIENT_ORIGIN}/#payment?promo=${encodeURIComponent(normalizedCode)}`
+    : '';
+}
+
 function promotionRedemptionCounts(db, promotionId, userId = '') {
-  const matching = db.promotionRedemptions.filter((entry) => entry.promotionId === promotionId);
+  const matching = db.promotionRedemptions.filter((entry) => (
+    entry.promotionId === promotionId && !entry.supersededAt
+  ));
   return {
     total: matching.length,
     user: userId ? matching.filter((entry) => entry.userId === userId).length : 0,
@@ -1577,7 +1664,15 @@ function publicPromotion(promotion, db) {
     retired: promotion.retired === true,
     redemptionCount: counts.total,
     affiliateUserId: affiliate?.id || null,
-    affiliateRewardMcoins: rewardAmount(promotion.affiliateRewardMcoins),
+    affiliateRewardMode: normalizeAffiliateRewardMode(promotion.affiliateRewardMode),
+    affiliateRewardValue: normalizeAffiliateRewardValue(
+      normalizeAffiliateRewardMode(promotion.affiliateRewardMode),
+      promotion.affiliateRewardValue ?? promotion.affiliateRewardMcoins,
+    ),
+    affiliateRewardMcoins: normalizeAffiliateRewardMode(promotion.affiliateRewardMode) === 'fixed'
+      ? rewardAmount(promotion.affiliateRewardValue ?? promotion.affiliateRewardMcoins)
+      : 0,
+    shareUrl: isSubscriptionPromotionKind(promotion.kind) ? referralShareUrl(promotion.code) : '',
     affiliate: affiliate ? {
       userId: affiliate.id,
       name: affiliate.name,
@@ -1711,21 +1806,21 @@ function resolveSignupLuckyCode(db, value) {
 
   const promotionCode = normalizePromotionCode(raw);
   const promotion = db.promotions.find((item) => item.code === promotionCode);
-  if (!promotion || promotion.kind !== 'subscription_percent') {
+  if (!promotion || !isSubscriptionPromotionKind(promotion.kind)) {
     return { claim: null, error: 'That Lucky code is not valid.' };
   }
   const error = promotionSignupAvailability(db, promotion);
   if (error) return { claim: null, error };
   return {
     claim: {
-      type: 'subscription_percent',
+      type: promotion.kind,
       promotion,
     },
     error: '',
   };
 }
 
-function applySignupLuckyCode(db, user, claim) {
+function applySignupLuckyCode(db, user, claim, source = 'registration_lucky_code') {
   if (!claim) return;
   if (claim.type === 'institution') {
     addInstitutionMembership(db, user, claim.institution, 'member');
@@ -1738,46 +1833,104 @@ function applySignupLuckyCode(db, user, claim) {
   }
 
   const promotion = claim.promotion;
+  const rewardMode = normalizeAffiliateRewardMode(promotion.affiliateRewardMode);
+  const rewardValue = normalizeAffiliateRewardValue(
+    rewardMode,
+    promotion.affiliateRewardValue ?? promotion.affiliateRewardMcoins,
+  );
   user.luckyCodeClaim = {
     type: claim.type,
+    kind: promotion.kind === 'friend_id_percent' ? 'subscription_percent' : promotion.kind,
     promotionId: promotion.id,
     code: promotion.code,
     value: promotion.value,
     friendId: claim.friendId || null,
     affiliateUserId: promotion.affiliateUserId || null,
-    affiliateRewardMcoins: rewardAmount(promotion.affiliateRewardMcoins),
+    affiliateRewardMode: rewardMode,
+    affiliateRewardValue: rewardValue,
+    affiliateRewardMcoins: rewardMode === 'fixed' ? rewardValue : 0,
     claimedAt: new Date().toISOString(),
   };
   recordPromotionRedemption(db, promotion, user, {
-    source: 'registration_lucky_code',
+    source,
     friendId: claim.friendId || null,
     creditedMcoins: 0,
-    subscriptionDiscountPercent: promotion.value,
+    subscriptionDiscountPercent: promotion.kind === 'subscription_percent' ? promotion.value : 0,
+    subscriptionDiscountMcoins: promotion.kind === 'subscription_fixed' ? promotion.value : 0,
   });
 }
 
-function subscriptionPriceForUser(product, user) {
+function subscriptionPriceForUser(db, product, user) {
   const claim = user?.luckyCodeClaim;
-  if (!claim || claim.type !== 'subscription_percent' || !Number.isFinite(Number(claim.value))) {
-    return {
-      price: Number(product.price).toFixed(2),
-      discountPercent: 0,
-      luckyCode: '',
-      promotionId: null,
-      affiliateUserId: null,
-      affiliateRewardMcoins: 0,
-    };
+  const defaultPrice = Number(product.price).toFixed(2);
+  const defaultPricing = {
+    price: defaultPrice,
+    discountPercent: 0,
+    discountMcoins: 0,
+    luckyCode: '',
+    promotionId: null,
+    affiliateUserId: null,
+    affiliateRewardMode: 'fixed',
+    affiliateRewardValue: 0,
+    affiliateRewardMcoins: 0,
+  };
+  const claimKind = claim?.kind || claim?.type;
+  if (!claim || !isSubscriptionPromotionKind(claimKind) || !Number.isFinite(Number(claim.value))) {
+    return defaultPricing;
   }
-  const discountPercent = Math.min(100, Math.max(0, Number(claim.value)));
+  const promotion = db?.promotions?.find((item) => item.id === claim.promotionId);
+  if (promotion) {
+    const now = Date.now();
+    const unavailable = promotion.active === false
+      || promotion.retired === true
+      || (promotion.startsAt && new Date(promotion.startsAt).getTime() > now)
+      || (promotion.expiresAt && new Date(promotion.expiresAt).getTime() < now);
+    if (unavailable) return defaultPricing;
+  } else if (claim.promotionId) {
+    return defaultPricing;
+  }
+
+  const source = promotion || claim;
+  const kind = source.kind || claimKind;
+  const rawValue = Number(source.value);
+  if (!Number.isFinite(rawValue) || rawValue <= 0) {
+    return defaultPricing;
+  }
   const baseCents = Math.round(Number(product.price) * 100);
-  const discountedCents = Math.max(1, Math.round(baseCents * (100 - discountPercent) / 100));
+  let discountedCents;
+  let discountPercent = 0;
+  if (kind === 'subscription_fixed') {
+    discountedCents = Math.max(1, baseCents - Math.round(Math.max(0, rawValue) * 100));
+  } else {
+    discountPercent = Math.min(100, Math.max(0, rawValue));
+    discountedCents = Math.max(1, Math.round(baseCents * (100 - discountPercent) / 100));
+  }
+  const discountMcoins = Number(((baseCents - discountedCents) / 100).toFixed(2));
+  const price = (discountedCents / 100).toFixed(2);
+  const rewardMode = normalizeAffiliateRewardMode(
+    source.affiliateRewardMode ?? claim.affiliateRewardMode,
+  );
+  const rewardValue = normalizeAffiliateRewardValue(
+    rewardMode,
+    source.affiliateRewardValue
+      ?? source.affiliateRewardMcoins
+      ?? claim.affiliateRewardValue
+      ?? claim.affiliateRewardMcoins,
+  );
+  const affiliateUserId = source.affiliateUserId || claim.affiliateUserId || null;
+  const affiliateRewardMcoins = affiliateUserId
+    ? affiliateRewardQuote({ mode: rewardMode, value: rewardValue, checkoutPrice: price })
+    : 0;
   return {
-    price: (discountedCents / 100).toFixed(2),
+    price,
     discountPercent,
-    luckyCode: claim.code || claim.friendId || '',
-    promotionId: claim.promotionId || null,
-    affiliateUserId: claim.affiliateUserId || null,
-    affiliateRewardMcoins: rewardAmount(claim.affiliateRewardMcoins),
+    discountMcoins,
+    luckyCode: claim.code || claim.friendId || source.code || '',
+    promotionId: claim.promotionId || source.id || null,
+    affiliateUserId,
+    affiliateRewardMode: rewardMode,
+    affiliateRewardValue: rewardValue,
+    affiliateRewardMcoins,
   };
 }
 
@@ -2361,13 +2514,18 @@ function activatedSubscriptionValue(record, product) {
 }
 
 function subscriptionAttributionProperties(record, product) {
-  if (!record?.campaignId) return {};
-  return {
-    campaignId: record.campaignId,
-    campaignSlug: record.campaignSlug || '',
-    referralCode: record.referralCode || '',
-    activationValueUsd: activatedSubscriptionValue(record, product),
-  };
+  if (!record) return {};
+  const properties = {};
+  if (record.promotionId && record.luckyCode) properties.promotionCode = record.luckyCode;
+  if (record.campaignId) {
+    properties.campaignId = record.campaignId;
+    properties.campaignSlug = record.campaignSlug || '';
+    properties.referralCode = record.referralCode || '';
+  }
+  if (record.promotionId || record.campaignId) {
+    properties.activationValueUsd = activatedSubscriptionValue(record, product);
+  }
+  return properties;
 }
 
 function campaignSongContentType(format) {
@@ -3771,7 +3929,7 @@ app.post('/api/assistant/support', requireAuth, async (req, res) => {
   const reservation = reserveSupportQuestion(req.user, { unlimited });
   try {
     if (reservation.reserved) await writeDb(req.db);
-    const safe = safeUser(req.user);
+    const safe = safeUser(req.user, req.db);
     const publicCatalog = listPublicCatalog(req.db, PRODUCTS);
     const answer = await POLYMATH_ASSISTANT.supportChat({
       messages: req.body?.messages,
@@ -3856,7 +4014,7 @@ app.get('/api/virtual-lessons', requireAuth, async (req, res) => {
     assistantAvailable: POLYMATH_ASSISTANT.capabilities().available,
     teacherSpeech: TEACHER_SPEECH.capabilities(),
     session: publicVirtualLesson(activeVirtualLesson(req.db, req.user.id)),
-    user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
   });
 });
 
@@ -3877,7 +4035,7 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
         studentName: req.user.name,
         conversationMode: existing.conversationMode,
       }),
-      user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     });
   }
   const active = activeVirtualLesson(req.db, req.user.id);
@@ -3983,7 +4141,7 @@ app.post('/api/virtual-lessons', requireAuth, async (req, res) => {
       studentName: req.user.name,
       conversationMode: session.conversationMode,
     }),
-    user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     chargedMcoins: priceMcoins,
   });
 });
@@ -4312,7 +4470,7 @@ app.post('/api/virtual-lessons/:sessionId/end', requireAuth, async (req, res) =>
       console.error('Could not cancel ended virtual teacher job:', error.message);
     });
   }
-  return res.json({ session: publicVirtualLesson(session), user: safeUser(req.user) });
+  return res.json({ session: publicVirtualLesson(session), user: safeUser(req.user, req.db) });
 });
 
 app.post('/api/assistant/teacher', requireAuth, async (req, res) => {
@@ -5093,6 +5251,20 @@ app.get('/api/admin/product-analytics', requireAuth, requireAdmin, async (req, r
       };
     });
     summary.commissionNotice = 'Creator commission is an estimate for reconciliation. Polymath does not issue automatic payouts.';
+    summary.marketingAutopilot = buildMarketingAutopilot({
+      analytics: summary,
+      promotions: db.promotions,
+      campaigns: db.artistCampaigns.map((campaign) => ({
+        ...campaign,
+        live: campaignIsLive(campaign),
+      })),
+      budgetUsd: clampDecimal(
+        db.settings?.marketingTestBudgetUsd,
+        0,
+        1000000,
+        DEFAULT_TEST_BUDGET_USD,
+      ),
+    });
     return res.json(summary);
   } catch (error) {
     return next(error);
@@ -5509,6 +5681,8 @@ app.post('/api/auth/register', async (req, res) => {
     translationUsage: {
       period: currentTranslationPeriod(),
       includedUsed: 0,
+      audioUsed: 0,
+      pdfUsed: 0,
     },
     readySheetUploadUsage: {
       period: currentTranslationPeriod(),
@@ -5524,7 +5698,12 @@ app.post('/api/auth/register', async (req, res) => {
   applySignupLuckyCode(db, user, luckyResult.claim);
   db.authEvents.push({ id: id('auth'), userId: user.id, type: 'register_verified', channel: verification.channel, createdAt });
   await writeDb(db);
-  res.status(201).json({ token, user: safeUser(user) });
+  if (user.luckyCodeClaim?.promotionId && user.luckyCodeClaim?.code) {
+    await recordTrustedProductEvent('referral_code_applied', user.id, {
+      promotionCode: user.luckyCodeClaim.code,
+    });
+  }
+  res.status(201).json({ token, user: safeUser(user, db) });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -5562,11 +5741,11 @@ app.post('/api/auth/login', async (req, res) => {
   db.authEvents.push({ id: id('auth'), userId: user.id, type: 'login', createdAt: user.lastLoginAt });
   db.authEvents = db.authEvents.slice(-5000);
   await writeDb(db);
-  res.json({ token, user: safeUser(user) });
+  res.json({ token, user: safeUser(user, db) });
 });
 
 app.get('/api/auth/me', requireAuth, async (req, res) => {
-  res.json({ user: safeUser(req.user) });
+  res.json({ user: safeUser(req.user, req.db) });
 });
 
 app.put('/api/profile/avatar', requireAuth, async (req, res) => {
@@ -5574,7 +5753,7 @@ app.put('/api/profile/avatar', requireAuth, async (req, res) => {
   if (!avatarDataUrl) {
     req.user.avatarUrl = '';
     await writeDb(req.db);
-    return res.json({ user: safeUser(req.user) });
+    return res.json({ user: safeUser(req.user, req.db) });
   }
   const match = avatarDataUrl.match(/^data:image\/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/=]+)$/);
   if (!match) return res.status(400).json({ error: 'Use a JPEG, PNG, WebP, or GIF profile picture.' });
@@ -5584,7 +5763,7 @@ app.put('/api/profile/avatar', requireAuth, async (req, res) => {
   }
   req.user.avatarUrl = avatarDataUrl;
   await writeDb(req.db);
-  res.json({ user: safeUser(req.user) });
+  res.json({ user: safeUser(req.user, req.db) });
 });
 
 app.post('/api/ready-sheet-uploads', requireAuth, async (req, res, next) => {
@@ -5611,7 +5790,7 @@ app.post('/api/ready-sheet-uploads', requireAuth, async (req, res, next) => {
     }
     await writeDb(req.db);
     return res.status(201).json({
-      user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
       costMcoins: charged.costMcoins,
       paymentMethod: charged.paymentMethod,
       personalSong: null,
@@ -5650,7 +5829,7 @@ app.post('/api/ready-sheet-uploads', requireAuth, async (req, res, next) => {
     if (duplicate) {
       if (pendingKey) await safeRemoveArtifact(pendingKey);
       return res.json({
-        user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
         costMcoins: 0,
         paymentMethod: 'existing',
         personalSong: publicPersonalSong(duplicate),
@@ -5700,7 +5879,7 @@ app.post('/api/ready-sheet-uploads', requireAuth, async (req, res, next) => {
     }
     finalKey = '';
     return res.status(201).json({
-      user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
       costMcoins: charged.costMcoins,
       paymentMethod: charged.paymentMethod,
       personalSong: publicPersonalSong(personalSong),
@@ -5732,7 +5911,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     || session.token === currentToken
   ));
   await writeDb(req.db);
-  res.json({ user: safeUser(req.user) });
+  res.json({ user: safeUser(req.user, req.db) });
 });
 
 app.post('/api/auth/logout', requireAuth, async (req, res) => {
@@ -5930,6 +6109,25 @@ app.post('/api/teachers/:teacherProfileId/reviews', requireAuth, async (req, res
   });
 });
 
+app.patch('/api/admin/marketing-autopilot', requireAuth, requireAdmin, async (req, res) => {
+  const requestedBudget = Number(req.body?.budgetUsd);
+  if (!Number.isFinite(requestedBudget) || requestedBudget < 0 || requestedBudget > 1000000) {
+    return res.status(400).json({ error: 'Marketing test ceiling must be between USD 0 and USD 1,000,000.' });
+  }
+  const budgetUsd = clampDecimal(requestedBudget, 0, 1000000, DEFAULT_TEST_BUDGET_USD);
+  req.db.settings = {
+    ...(req.db.settings || {}),
+    marketingTestBudgetUsd: budgetUsd,
+    updatedAt: new Date().toISOString(),
+    updatedBy: req.user.id,
+  };
+  await writeDb(req.db);
+  return res.json({
+    budgetUsd,
+    message: `Marketing test ceiling saved at USD ${budgetUsd.toFixed(2)}. Automatic spend remains disabled.`,
+  });
+});
+
 app.get('/api/human-lessons/config', requireAuth, async (req, res) => {
   res.json({
     durationStepMinutes: LESSON_DURATION_STEP_MINUTES,
@@ -5958,7 +6156,7 @@ app.get('/api/human-lessons', requireAuth, async (req, res) => {
       breakoutRoomCostMcoins: BREAKOUT_ROOM_COST_MCOINS,
       minimumTransferMcoins: MINIMUM_CHAT_TRANSFER_MCOINS,
     },
-    user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
   });
 });
 
@@ -5989,7 +6187,7 @@ app.post('/api/human-lessons', requireAuth, async (req, res, next) => {
     return res.status(201).json({
       meeting: publicHumanLesson(meeting, req.db, req.user.id),
       message: `Lesson ready. Your wallet is charged only when you start it.`,
-      user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     });
   } catch (error) {
     return next(error);
@@ -6034,7 +6232,7 @@ app.post('/api/human-lessons/join', requireAuth, async (req, res, next) => {
       meeting: publicHumanLesson(meeting, req.db, req.user.id, { includeParticipants: true }),
       chargedMcoins,
       waitingForHost: !isHost && effectiveMeetingStatus(timedMeeting) === 'ready',
-      user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     });
   } catch (error) {
     return next(error);
@@ -6136,7 +6334,7 @@ app.post('/api/human-lessons/:meetingId/breakouts', requireAuth, async (req, res
       breakout: publicHumanLesson(breakout, req.db, req.user.id),
       meeting: publicHumanLesson(meeting, req.db, req.user.id),
       chargedMcoins,
-      user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     });
   } catch (error) {
     return next(error);
@@ -6599,7 +6797,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
   if (!listing) return res.status(404).json({ error: 'Listing not found.' });
   if (listing.sellerId === req.user.id) return res.status(400).json({ error: 'You already own this listing.' });
   const existing = req.db.purchases.find((purchase) => purchase.listingId === listing.id && purchase.buyerId === req.user.id);
-  if (existing) return res.json({ purchase: existing, user: safeUser(req.user) });
+  if (existing) return res.json({ purchase: existing, user: safeUser(req.user, req.db) });
 
   const mode = listingMode(listing);
   const seller = req.db.users.find((user) => user.id === listing.sellerId);
@@ -6644,7 +6842,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     addLedger(req.db, seller.id, hasUnlimitedMcoins(seller) ? 0 : -reward.rewardMcoins, 'listener_reward_paid', `${listing.title}; rewarded ${req.user.name}`);
     addLedger(req.db, req.user.id, reward.rewardMcoins, 'listener_reward_received', `${listing.title}; paid by ${seller.name}`);
     await writeDb(req.db);
-    return res.status(201).json({ purchase, user: safeUser(req.user) });
+    return res.status(201).json({ purchase, user: safeUser(req.user, req.db) });
   }
 
   const promotionCode = String(req.body.promotionCode || '').trim();
@@ -6738,7 +6936,7 @@ app.post('/api/listings/:listingId/purchase', requireAuth, async (req, res) => {
     });
   }
   await writeDb(req.db);
-  res.status(201).json({ purchase, user: safeUser(req.user), promotion: promotion ? publicPromotion(promotion, req.db) : null });
+  res.status(201).json({ purchase, user: safeUser(req.user, req.db), promotion: promotion ? publicPromotion(promotion, req.db) : null });
 });
 
 app.get('/api/listings/:listingId/download', requireAuth, async (req, res) => {
@@ -6990,7 +7188,7 @@ app.post('/api/bands', requireMusician, async (req, res) => {
     joinedAt: band.createdAt,
   });
   await writeDb(req.db);
-  res.status(201).json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
+  res.status(201).json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user, req.db) });
 });
 
 app.post('/api/bands/join-by-code', requireMusician, async (req, res) => {
@@ -7016,7 +7214,7 @@ app.post('/api/bands/:bandId/join', requireMusician, async (req, res) => {
   if (!band) return res.status(404).json({ error: 'Band not found.' });
   if (bandBan(band, req.user.id)) return res.status(403).json({ error: 'The band creator has banned this account.' });
   if (bandMembership(req.db, band.id, req.user.id)) {
-    return res.json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
+    return res.json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user, req.db) });
   }
   if (band.accessMode === 'invite') {
     return res.status(403).json({ error: 'This band can only be joined with its friend invite code.' });
@@ -7057,7 +7255,7 @@ app.post('/api/bands/:bandId/join', requireMusician, async (req, res) => {
     joinedAt: new Date().toISOString(),
   });
   await writeDb(req.db);
-  res.json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user) });
+  res.json({ band: safeBand(band, req.db, req.user.id), user: safeUser(req.user, req.db) });
 });
 
 app.get('/api/bands/:bandId/chat', requireMusician, async (req, res) => {
@@ -7291,7 +7489,7 @@ app.post('/api/messages/transfers', requireAuth, async (req, res, next) => {
     ));
     if (duplicate) {
       const message = req.db.messages.find((item) => item.transferId === duplicate.id) || null;
-      return res.json({ transfer: duplicate, message, user: safeUser(req.user), duplicate: true });
+      return res.json({ transfer: duplicate, message, user: safeUser(req.user, req.db), duplicate: true });
     }
     const unlimitedSender = hasUnlimitedMcoins(req.user);
     if (!unlimitedSender && Number(req.user.mcoins || 0) < amountMcoins) {
@@ -7348,7 +7546,7 @@ app.post('/api/messages/transfers', requireAuth, async (req, res, next) => {
     };
     req.db.messages.push(message);
     await writeDb(req.db);
-    return res.status(201).json({ transfer, message, user: safeUser(req.user), duplicate: false });
+    return res.status(201).json({ transfer, message, user: safeUser(req.user, req.db), duplicate: false });
   } catch (error) {
     return next(error);
   }
@@ -7370,7 +7568,7 @@ app.get('/api/wallet', requireAuth, async (req, res) => {
   const ledger = req.db.ledger.filter((entry) => entry.userId === req.user.id).slice(-100).reverse();
   const withdrawals = req.db.withdrawals.filter((item) => item.userId === req.user.id).slice(-20).reverse();
   const policies = sitePolicies(req.db);
-  res.json({ user: safeUser(req.user), ledger, withdrawals, withdrawalFeeRate: policies.withdrawalFeePercent / 100, policies });
+  res.json({ user: safeUser(req.user, req.db), ledger, withdrawals, withdrawalFeeRate: policies.withdrawalFeePercent / 100, policies });
 });
 
 app.get('/api/admin/customer-purchases', requireAuth, requireAdmin, async (req, res) => {
@@ -7533,7 +7731,7 @@ app.post('/api/admin/users/:userId/mcoins', requireAuth, requireAdmin, async (re
   );
   await writeDb(req.db);
   return res.json({
-    user: safeUser(target),
+    user: safeUser(target, req.db),
     message: `${amountMcoins.toLocaleString()} Mcoins were added to ${target.name}.`,
   });
 });
@@ -7570,6 +7768,8 @@ app.post('/api/admin/users/:userId/subscription', requireAuth, requireAdmin, asy
     target.translationUsage = {
       period: translationUsageWindow(target, now).key,
       includedUsed: 0,
+      audioUsed: 0,
+      pdfUsed: 0,
     };
   }
   addLedger(
@@ -7581,7 +7781,7 @@ app.post('/api/admin/users/:userId/subscription', requireAuth, requireAdmin, asy
   );
   await writeDb(req.db);
   return res.json({
-    user: safeUser(target),
+    user: safeUser(target, req.db),
     extended: extending,
     message: `${tier === 'musician' ? 'Musician' : 'Chill'} access for ${target.name} is active through ${expiresAt.toLocaleDateString('en-SG')}.`,
   });
@@ -7603,7 +7803,7 @@ app.delete('/api/admin/users/:userId/subscription', requireAuth, requireAdmin, a
   );
   await writeDb(req.db);
   return res.json({
-    user: safeUser(target),
+    user: safeUser(target, req.db),
     message: `Administrator-granted access was removed from ${target.name}. PayPal or institution access, if any, remains unchanged.`,
   });
 });
@@ -7766,6 +7966,12 @@ app.put('/api/admin/policies', requireAuth, requireAdmin, async (req, res) => {
       1000000000,
       current.virtualLessonPricePer30MinutesMcoins,
     ),
+    marketingTestBudgetUsd: clampDecimal(
+      req.db.settings?.marketingTestBudgetUsd,
+      0,
+      1000000,
+      DEFAULT_TEST_BUDGET_USD,
+    ),
     policyNotice: String(req.body.policyNotice || '').trim().slice(0, 1000),
     termsUrl: String(req.body.termsUrl || '').trim().slice(0, 500),
     privacyUrl: String(req.body.privacyUrl || '').trim().slice(0, 500),
@@ -7815,6 +8021,19 @@ app.get('/api/admin/subscription-catalog', requireAuth, requireAdmin, async (req
       : '',
   }));
   res.json(catalog);
+});
+
+app.patch('/api/admin/subscription-policies/:tier', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const policy = updateCoreSubscriptionPolicy(req.db, req.params.tier, req.body || {}, req.user.id);
+    await writeDb(req.db);
+    return res.json({
+      policy,
+      message: `${policy.tier === 'musician' ? 'Musician' : 'Chill'} limits and abilities are now active.`,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message });
+  }
 });
 
 app.patch('/api/admin/subscription-products/:productId', requireAuth, requireAdmin, async (req, res) => {
@@ -7929,7 +8148,7 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) =>
   const code = normalizePromotionCode(req.body.code);
   const name = String(req.body.name || '').trim().slice(0, 100);
   const kind = String(req.body.kind || '');
-  const fixedMcoinDiscount = kind === 'marketplace_fixed';
+  const fixedMcoinDiscount = ['marketplace_fixed', 'subscription_fixed'].includes(kind);
   const rawValue = Number(req.body.value);
   const value = fixedMcoinDiscount
     ? clampDecimal(rawValue, 0.01, 1000000000, 0.01)
@@ -7937,19 +8156,24 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) =>
   const startsAtDate = req.body.startsAt ? new Date(req.body.startsAt) : null;
   const expiresAtDate = req.body.expiresAt ? new Date(req.body.expiresAt) : null;
   const affiliateUserId = String(req.body.affiliateUserId || '').trim();
-  const affiliateRewardMcoins = rewardAmount(req.body.affiliateRewardMcoins);
+  const affiliateRewardMode = normalizeAffiliateRewardMode(req.body.affiliateRewardMode);
+  const affiliateRewardValue = normalizeAffiliateRewardValue(
+    affiliateRewardMode,
+    req.body.affiliateRewardValue ?? req.body.affiliateRewardMcoins,
+  );
+  const affiliateRewardMcoins = affiliateRewardMode === 'fixed' ? affiliateRewardValue : 0;
   const affiliate = affiliateUserId
     ? req.db.users.find((user) => user.id === affiliateUserId && user.id !== 'platform')
     : null;
   if (code.length < 3) return res.status(400).json({ error: 'Promotion code must contain at least 3 letters or numbers.' });
   if (!name) return res.status(400).json({ error: 'Give the promotion a short name.' });
-  if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent'].includes(kind)) {
+  if (!['marketplace_percent', 'marketplace_fixed', 'friend_id_percent', 'subscription_percent', 'subscription_fixed'].includes(kind)) {
     return res.status(400).json({ error: 'Choose a supported percentage or fixed-Mcoin discount.' });
   }
-  if ((affiliateUserId || affiliateRewardMcoins > 0) && kind !== 'subscription_percent') {
+  if ((affiliateUserId || affiliateRewardValue > 0) && !isSubscriptionPromotionKind(kind)) {
     return res.status(400).json({ error: 'Influencer rewards can only be attached to subscription Lucky codes.' });
   }
-  if (affiliateRewardMcoins > 0 && !affiliateUserId) {
+  if (affiliateRewardValue > 0 && !affiliateUserId) {
     return res.status(400).json({ error: 'Choose the influencer account that should receive the reward.' });
   }
   if (affiliateUserId && !affiliate) {
@@ -7986,6 +8210,8 @@ app.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) =>
     expiresAt,
     active: true,
     affiliateUserId: affiliate?.id || null,
+    affiliateRewardMode,
+    affiliateRewardValue,
     affiliateRewardMcoins,
     createdBy: req.user.id,
     createdAt: new Date().toISOString(),
@@ -8011,25 +8237,37 @@ app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, async
     return res.status(400).json({ error: 'This legacy promotion is permanently retired.' });
   }
   if (req.body.active !== undefined) promotion.active = Boolean(req.body.active);
-  if (req.body.affiliateUserId !== undefined || req.body.affiliateRewardMcoins !== undefined) {
-    if (promotion.kind !== 'subscription_percent') {
+  if (req.body.affiliateUserId !== undefined
+    || req.body.affiliateRewardMcoins !== undefined
+    || req.body.affiliateRewardMode !== undefined
+    || req.body.affiliateRewardValue !== undefined) {
+    if (!isSubscriptionPromotionKind(promotion.kind)) {
       return res.status(400).json({ error: 'Influencer rewards can only be attached to subscription Lucky codes.' });
     }
     const affiliateUserId = String(req.body.affiliateUserId ?? promotion.affiliateUserId ?? '').trim();
-    const affiliateRewardMcoins = rewardAmount(
-      req.body.affiliateRewardMcoins ?? promotion.affiliateRewardMcoins,
+    const affiliateRewardMode = normalizeAffiliateRewardMode(
+      req.body.affiliateRewardMode ?? promotion.affiliateRewardMode,
+    );
+    const affiliateRewardValue = normalizeAffiliateRewardValue(
+      affiliateRewardMode,
+      req.body.affiliateRewardValue
+        ?? req.body.affiliateRewardMcoins
+        ?? promotion.affiliateRewardValue
+        ?? promotion.affiliateRewardMcoins,
     );
     const affiliate = affiliateUserId
       ? req.db.users.find((user) => user.id === affiliateUserId && user.id !== 'platform')
       : null;
-    if (affiliateRewardMcoins > 0 && !affiliateUserId) {
+    if (affiliateRewardValue > 0 && !affiliateUserId) {
       return res.status(400).json({ error: 'Choose the influencer account that should receive the reward.' });
     }
     if (affiliateUserId && !affiliate) {
       return res.status(404).json({ error: 'The selected influencer account no longer exists.' });
     }
     promotion.affiliateUserId = affiliate?.id || null;
-    promotion.affiliateRewardMcoins = affiliateRewardMcoins;
+    promotion.affiliateRewardMode = affiliateRewardMode;
+    promotion.affiliateRewardValue = affiliateRewardValue;
+    promotion.affiliateRewardMcoins = affiliateRewardMode === 'fixed' ? affiliateRewardValue : 0;
   }
   promotion.updatedAt = new Date().toISOString();
   promotion.updatedBy = req.user.id;
@@ -8037,6 +8275,176 @@ app.patch('/api/admin/promotions/:promotionId', requireAuth, requireAdmin, async
   res.json({
     promotion: publicPromotion(promotion, req.db),
     message: `${promotion.code} is now ${promotion.active ? 'active' : 'paused'}.`,
+  });
+});
+
+app.get('/api/promotions/subscription-preview', async (req, res) => {
+  const db = await readDb();
+  const code = normalizePromotionCode(req.query.code);
+  const promotion = db.promotions.find((item) => item.code === code);
+  const now = Date.now();
+  const counts = promotion ? promotionRedemptionCounts(db, promotion.id) : { total: 0 };
+  const unavailable = !promotion
+    || !isSubscriptionPromotionKind(promotion.kind)
+    || promotion.active === false
+    || promotion.retired === true
+    || (promotion.startsAt && new Date(promotion.startsAt).getTime() > now)
+    || (promotion.expiresAt && new Date(promotion.expiresAt).getTime() < now)
+    || (promotion.maxRedemptions > 0 && counts.total >= promotion.maxRedemptions);
+  if (unavailable) return res.status(404).json({ error: 'That subscription promotion is not available.' });
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({
+    promotion: {
+      code: promotion.code,
+      kind: promotion.kind,
+      value: Number(promotion.value || 0),
+    },
+  });
+});
+
+app.post('/api/promotions/claim-subscription', requireAuth, async (req, res) => {
+  const code = normalizePromotionCode(req.body.code);
+  if (!code) return res.status(400).json({ error: 'Enter a subscription promotion code.' });
+
+  const currentClaim = req.user.luckyCodeClaim;
+  if (currentClaim?.type === 'institution') {
+    return res.status(409).json({ error: 'This account already uses an institution access code.' });
+  }
+  if (normalizePromotionCode(currentClaim?.code) === code) {
+    const currentPromotion = req.db.promotions.find((item) => item.id === currentClaim.promotionId);
+    const now = Date.now();
+    if (!currentPromotion
+      || currentPromotion.active === false
+      || currentPromotion.retired === true
+      || (currentPromotion.startsAt && new Date(currentPromotion.startsAt).getTime() > now)
+      || (currentPromotion.expiresAt && new Date(currentPromotion.expiresAt).getTime() < now)) {
+      return res.status(400).json({ error: 'That subscription promotion is no longer active.' });
+    }
+    return res.json({
+    user: safeUser(req.user, req.db),
+      promotion: currentClaim ? {
+        code: currentClaim.code,
+        kind: currentClaim.kind || currentClaim.type,
+        value: Number(currentClaim.value || 0),
+      } : null,
+      message: `${code} is already applied.`,
+    });
+  }
+
+  const { promotion, error } = promotionForUse(
+    req.db,
+    code,
+    req.user,
+    ['subscription_percent', 'subscription_fixed'],
+  );
+  if (error) return res.status(400).json({ error });
+  if (!promotion) return res.status(404).json({ error: 'That subscription promotion was not found.' });
+  if (promotion.affiliateUserId && promotion.affiliateUserId === req.user.id) {
+    return res.status(400).json({ error: 'You cannot use your own referral code.' });
+  }
+
+  const lockedCheckout = currentClaim?.promotionId && req.db.subscriptions.some((record) => (
+    record.userId === req.user.id
+    && record.promotionId === currentClaim.promotionId
+    && ['APPROVAL_PENDING', 'APPROVED', 'CREATED', 'ACTIVE'].includes(String(record.status || '').toUpperCase())
+  ));
+  if (lockedCheckout) {
+    return res.status(409).json({ error: 'A subscription checkout already uses your current code. Finish or cancel it before changing codes.' });
+  }
+
+  if (currentClaim?.promotionId) {
+    req.db.promotionRedemptions
+      .filter((entry) => (
+        entry.userId === req.user.id
+        && entry.promotionId === currentClaim.promotionId
+        && !entry.supersededAt
+      ))
+      .forEach((entry) => {
+        entry.supersededAt = new Date().toISOString();
+        entry.supersededByPromotionId = promotion.id;
+      });
+  }
+  applySignupLuckyCode(req.db, req.user, { type: promotion.kind, promotion }, 'subscription_checkout_code');
+  await writeDb(req.db);
+  await recordTrustedProductEvent('referral_code_applied', req.user.id, {
+    promotionCode: promotion.code,
+  });
+  res.json({
+    user: safeUser(req.user, req.db),
+    promotion: {
+      code: promotion.code,
+      kind: promotion.kind,
+      value: Number(promotion.value || 0),
+    },
+    message: `${promotion.code} is applied to subscription checkout.`,
+  });
+});
+
+app.get('/api/referrals/me', requireAuth, async (req, res) => {
+  let referralAnalytics = [];
+  try {
+    const summary = await STATE_STORE.productEventSummary(30);
+    referralAnalytics = Array.isArray(summary.referrals) ? summary.referrals : [];
+  } catch {
+    referralAnalytics = [];
+  }
+  const analyticsByCode = new Map(
+    referralAnalytics.map((entry) => [normalizePromotionCode(entry.promotionCode), entry]),
+  );
+  const programs = req.db.promotions
+    .filter((promotion) => (
+      promotion.affiliateUserId === req.user.id && isSubscriptionPromotionKind(promotion.kind)
+    ))
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+    .map((promotion) => {
+      const rewards = affiliateRewardStats(req.db, promotion.id);
+      const claims = req.db.promotionRedemptions.filter((entry) => (
+        entry.promotionId === promotion.id && !entry.supersededAt
+      ));
+      const pendingConversions = req.db.subscriptions.filter((record) => (
+        record.promotionId === promotion.id
+        && !record.affiliateRewardPaidAt
+        && !record.affiliateRewardBlockedAt
+        && ['APPROVAL_PENDING', 'APPROVED', 'CREATED'].includes(String(record.status || '').toUpperCase())
+      )).length;
+      const rewardMode = normalizeAffiliateRewardMode(promotion.affiliateRewardMode);
+      const rewardValue = normalizeAffiliateRewardValue(
+        rewardMode,
+        promotion.affiliateRewardValue ?? promotion.affiliateRewardMcoins,
+      );
+      const funnel = analyticsByCode.get(promotion.code) || {};
+      return {
+        id: promotion.id,
+        code: promotion.code,
+        name: promotion.name,
+        active: promotion.active !== false && !promotion.retired,
+        customerReward: {
+          mode: promotion.kind === 'subscription_fixed' ? 'fixed' : 'percent',
+          value: Number(promotion.value || 0),
+        },
+        commission: { mode: rewardMode, value: rewardValue },
+        shareUrl: referralShareUrl(promotion.code),
+        disclosure: `I may earn Mcoins if you subscribe through code ${promotion.code}.`,
+        claims: claims.length,
+        pendingConversions,
+        paidConversions: rewards.paidCount,
+        earnedMcoins: rewards.paidMcoins,
+        visitors30d: Number(funnel.visitors || 0),
+        checkoutStarts30d: Number(funnel.checkouts || 0),
+        activations30d: Number(funnel.activations || 0),
+        conversionPercent: claims.length
+          ? Number((rewards.paidCount * 100 / claims.length).toFixed(1))
+          : 0,
+      };
+    });
+  res.json({
+    programs,
+    totals: {
+      paidConversions: programs.reduce((sum, program) => sum + program.paidConversions, 0),
+      earnedMcoins: Number(programs.reduce((sum, program) => sum + program.earnedMcoins, 0).toFixed(2)),
+      cashoutEligibleMcoins: Number(req.user.withdrawableMcoins || 0),
+    },
+    analyticsWindowDays: 30,
   });
 });
 
@@ -8141,7 +8549,7 @@ app.post('/api/wallet/withdraw', requireAuth, async (req, res) => {
   req.db.withdrawals.push(withdrawal);
   addLedger(req.db, req.user.id, -amountMcoins, 'withdrawal_requested', `${policies.withdrawalFeePercent}% cash-out fee: ${feeMcoins} Mcoins; net: ${netMcoins} Mcoins`);
   await writeDb(req.db);
-  res.status(201).json({ withdrawal, user: safeUser(req.user) });
+  res.status(201).json({ withdrawal, user: safeUser(req.user, req.db) });
 });
 
 async function getPayPalAccessToken() {
@@ -8278,6 +8686,8 @@ function applySubscriptionStatus(db, subscriptionId, status, fallbackUserId = ''
         user.translationUsage = {
           period: translationUsageWindow(user).key,
           includedUsed: 0,
+          audioUsed: 0,
+          pdfUsed: 0,
         };
       }
     } else if (user.paypalSubscriptionId === subscriptionId) {
@@ -8437,7 +8847,7 @@ app.post('/api/paypal/capture-order', requireAuth, async (req, res) => {
     const record = req.db.paymentOrders.find((item) => item.orderId === orderId && item.userId === req.user.id);
     if (!record) return res.status(404).json({ error: 'Payment order not found.' });
     if (record.status === 'COMPLETED') {
-      return res.json({ user: safeUser(req.user), product: PRODUCTS[record.productId], alreadyCaptured: true });
+      return res.json({ user: safeUser(req.user, req.db), product: PRODUCTS[record.productId], alreadyCaptured: true });
     }
 
     const product = PRODUCTS[record.productId];
@@ -8484,7 +8894,7 @@ app.post('/api/paypal/capture-order', requireAuth, async (req, res) => {
     req.user.mcoins += product.mcoins;
     addLedger(req.db, req.user.id, product.mcoins, 'mcoin_purchase', product.name);
     await writeDb(req.db);
-    res.json({ user: safeUser(req.user), product, paypalStatus: paymentData.status });
+    res.json({ user: safeUser(req.user, req.db), product, paypalStatus: paymentData.status });
   } catch (error) {
     console.error('PayPal capture order failed:', error.message);
     res.status(error.status || 500).json({ error: error.message, ...(error.details ? { details: error.details } : {}) });
@@ -8533,7 +8943,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
         error: `The PayPal ${isUpgrade ? 'upgrade' : product.name} ${product.interval.toLowerCase()} plan is not configured on the server.`,
       });
     }
-    const pricing = subscriptionPriceForUser(product, req.user);
+    const pricing = subscriptionPriceForUser(req.db, product, req.user);
     const attribution = campaignAttribution(req.db, req.body);
 
     const reusablePending = req.db.subscriptions.find((item) => (
@@ -8555,6 +8965,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
         interval: product.interval || '',
         audience: product.audience || 'individual',
         outcome: 'reused',
+        promotionCode: pricing.luckyCode,
         ...attribution,
       });
       return res.json({
@@ -8568,7 +8979,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
 
     const planDetails = await validatePayPalSubscriptionPlan(product, planId, upgradeFrom);
     const regularCycle = (planDetails.billing_cycles || []).find((cycle) => cycle.tenure_type === 'REGULAR');
-    const planOverride = pricing.discountPercent > 0 ? {
+    const planOverride = pricing.discountMcoins > 0 ? {
       billing_cycles: [{
         sequence: Number(regularCycle.sequence),
         total_cycles: Number(regularCycle.total_cycles || 0),
@@ -8612,9 +9023,12 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       status: data.status || 'APPROVAL_PENDING',
       checkoutPrice: pricing.price,
       discountPercent: pricing.discountPercent,
+      discountMcoins: pricing.discountMcoins,
       luckyCode: pricing.luckyCode,
       promotionId: pricing.promotionId,
       affiliateUserId: pricing.affiliateUserId,
+      affiliateRewardMode: pricing.affiliateRewardMode,
+      affiliateRewardValue: pricing.affiliateRewardValue,
       affiliateRewardMcoins: pricing.affiliateRewardMcoins,
       ...attribution,
       isUpgrade,
@@ -8636,6 +9050,7 @@ app.post('/api/paypal/create-subscription', requireAuth, async (req, res) => {
       interval: product.interval || '',
       audience: product.audience || 'individual',
       outcome: 'created',
+      promotionCode: pricing.luckyCode,
       ...attribution,
     });
     res.status(201).json({
@@ -8709,7 +9124,7 @@ app.post('/api/paypal/confirm-subscription', requireAuth, async (req, res) => {
     }
 
     res.json({
-      user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
       product,
       subscriptionStatus: data.status,
       active: subscriptionStatusGrantsPro(data.status),
@@ -9809,7 +10224,7 @@ async function submitMediaTranscription(req, res, {
       return res.json({
         job: publicMediaTranscriptionJob(duplicate),
         capability,
-        user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
         duplicate: true,
       });
     }
@@ -9824,7 +10239,7 @@ async function submitMediaTranscription(req, res, {
   }
   let allowanceBucket = null;
   if (paymentMethod === 'allowance') {
-    allowanceBucket = deductTranslationAllowance(req.user);
+    allowanceBucket = deductTranslationAllowance(req.user, 'audio', req.db);
     if (!allowanceBucket) {
       return cleanupAndReject(402, `No included translations remain. Pay ${mcoinCost} Mcoins to continue.`);
     }
@@ -9885,7 +10300,7 @@ async function submitMediaTranscription(req, res, {
   return res.status(202).json({
     job: publicMediaTranscriptionJob(job),
     capability,
-    user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     translationMcoinCost: mcoinCost,
   });
 }
@@ -9896,7 +10311,7 @@ app.get('/api/media-transcriptions', requireAuth, async (req, res) => {
     .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))
     .slice(0, 20)
     .map(publicMediaTranscriptionJob);
-  res.json({ jobs, capability: muscriptorAvailability(), user: safeUser(req.user) });
+  res.json({ jobs, capability: muscriptorAvailability(), user: safeUser(req.user, req.db) });
 });
 
 app.post('/api/media-transcriptions', requireAuth, async (req, res, next) => {
@@ -9954,7 +10369,7 @@ app.get('/api/media-transcriptions/:jobId', requireAuth, async (req, res) => {
   return res.json({
     job: publicMediaTranscriptionJob(job),
     capability: muscriptorAvailability(),
-    user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
   });
 });
 
@@ -10006,7 +10421,7 @@ app.get('/api/media-transcriptions/:jobId/download', requireAuth, async (req, re
 app.get('/api/score-translations/usage', requireAuth, async (req, res) => {
   await writeDb(req.db);
   res.json({
-    user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     translationMcoinCost: translationMcoinCost(req.user),
     mcoinsPerUsd: MCOINS_PER_USD,
   });
@@ -10023,7 +10438,7 @@ app.get('/api/score-translations', requireAuth, async (req, res) => {
       return publicTranslationJob(job);
     });
   if (changed) await writeDb(req.db);
-  res.json({ jobs, user: safeUser(req.user) });
+  res.json({ jobs, user: safeUser(req.user, req.db) });
 });
 
 app.post('/api/score-translations', requireAuth, async (req, res) => {
@@ -10039,7 +10454,7 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
     if (receiptDuplicate) {
       return res.json({
         job: publicTranslationJob(receiptDuplicate),
-        user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
         duplicate: true,
       });
     }
@@ -10105,14 +10520,14 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
     await cleanupDirectUpload();
     extendTranslationEstimate(recentDuplicate);
     await writeDb(req.db);
-    return res.json({ job: publicTranslationJob(recentDuplicate), user: safeUser(req.user), duplicate: true });
+    return res.json({ job: publicTranslationJob(recentDuplicate), user: safeUser(req.user, req.db), duplicate: true });
   }
 
   let allowanceBucket = null;
   if (paymentMethod === 'admin') {
     // Backend-authorized administrators have unlimited translation access.
   } else if (paymentMethod === 'allowance') {
-    allowanceBucket = deductTranslationAllowance(req.user);
+    allowanceBucket = deductTranslationAllowance(req.user, 'pdf', req.db);
     if (!allowanceBucket) {
       await cleanupDirectUpload();
       return res.status(402).json({
@@ -10169,7 +10584,7 @@ app.post('/api/score-translations', requireAuth, async (req, res) => {
 
   res.status(202).json({
     job: publicTranslationJob(job),
-    user: safeUser(req.user),
+    user: safeUser(req.user, req.db),
     translationMcoinCost: mcoinCost,
   });
 });
@@ -10179,7 +10594,7 @@ app.get('/api/score-translations/:jobId', requireAuth, async (req, res) => {
   if (!job) return res.status(404).json({ error: 'Translation job not found.' });
   const changed = extendTranslationEstimate(job);
   if (changed) await writeDb(req.db);
-  res.json({ job: publicTranslationJob(job), user: safeUser(req.user) });
+  res.json({ job: publicTranslationJob(job), user: safeUser(req.user, req.db) });
 });
 
 app.get('/api/score-translations/:jobId/download', requireAuth, async (req, res) => {
@@ -10388,10 +10803,12 @@ module.exports = {
     subscriptionPriceForUser,
     hasMusicianAccess,
     chargeReadySheetUpload,
+    deductTranslationAllowance,
     readySheetAllowance,
     readySheetUploadCost,
     translationAllowance,
     translationMcoinCost,
     translationUsageWindow,
+    userEntitlements,
   },
 };

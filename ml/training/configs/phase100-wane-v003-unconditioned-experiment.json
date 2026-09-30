@@ -1,0 +1,47 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase100-v003-unconditioned",
+  "status": "prepared-awaiting-runpod-credit",
+  "productionMutationAllowed": false,
+  "hypothesis": "Training and decoding the production full-mix route without an instrument condition will update the route that website piano jobs actually invoke; the previous piano-conditioned candidate improved only when the same condition was supplied.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-100-wane-p050-v001",
+    "trainClips": 1866,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "targetSongLeakageBlocked": true
+  },
+  "singleChangedVariable": {
+    "name": "conditioningMode",
+    "control": "instrument",
+    "candidate": "unconditioned"
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "precision": "bf16"
+  },
+  "gates": [
+    "training loss must beat the immutable base on unconditioned validation",
+    "the internal decoded unconditioned multi-song panel must pass",
+    "full 258-clip unconditioned micro-F1 must not regress at 100 ms or 250 ms",
+    "no validation song may show a material F1 regression",
+    "the WANE trusted opening must improve after the frozen production-v004 arranger",
+    "manual listening must confirm cleaner phrasing before any deployment"
+  ],
+  "rejectionPolicy": "If any gate fails, retain the artifact for diagnosis but do not deploy, do not advance to the p025 curriculum, and do not change production routing.",
+  "preparedRunner": "scripts/training/run_phase100_v003_unconditioned.sh"
+}

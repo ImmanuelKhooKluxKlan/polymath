@@ -75,6 +75,11 @@ function learningTargetClass(midi, targets) {
   return '';
 }
 
+function practiceCorrectionClass(midi, correction) {
+  if (!correction?.expectedMidis?.some((expected) => Number(expected) === Number(midi))) return '';
+  return correction.status === 'correct' ? 'practice-correction-correct' : 'practice-correction-waiting';
+}
+
 function PianoRow({
   row,
   activeNotes,
@@ -84,6 +89,7 @@ function PianoRow({
   disabled,
   showKeyNotes,
   teacherTargets,
+  practiceCorrection,
 }) {
   return (
     <div
@@ -100,7 +106,7 @@ function PianoRow({
                 key={key.note}
                 type="button"
                 aria-label={`Piano key ${noteToDisplayName(key.midi, true)}`}
-                className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)}`}
+                className={`piano-key white ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)} ${practiceCorrectionClass(key.midi, practiceCorrection)}`}
                 disabled={disabled}
                 {...(disabled ? {} : pointerHandlers(key.note, onPress, onRelease))}
               >
@@ -120,7 +126,7 @@ function PianoRow({
                 key={key.note}
                 type="button"
                 aria-label={`Piano key ${noteToDisplayName(key.midi, true)}`}
-                className={`piano-key black ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)}`}
+                className={`piano-key black ${activeNotes.has(key.note) ? 'active' : ''} ${learningTargetClass(key.midi, teacherTargets)} ${practiceCorrectionClass(key.midi, practiceCorrection)}`}
                 style={{
                   left: `calc(${key.position.leftEdgeWhiteUnits} * (100% / var(--white-count)))`,
                 }}
@@ -152,6 +158,7 @@ export default function PianoKeyboard({
   deviceClass = 'desktop',
   onPrepare,
   teacherTargets = null,
+  practiceCorrection = null,
   compact = layout.isTwoStorey,
   showModeLabel = true,
   showPreparation = true,
@@ -197,6 +204,7 @@ export default function PianoKeyboard({
             disabled={disabled}
             showKeyNotes={showKeyNotes}
             teacherTargets={teacherTargets}
+            practiceCorrection={practiceCorrection}
           />
         ))}
       </div>

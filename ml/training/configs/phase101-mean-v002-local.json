@@ -1,0 +1,16 @@
+[
+  {
+    "audio": "D:/Polymath Training/phase-101-mean-route-canary-2026-09-29/mean-trusted-84.7981-105.8203.wav",
+    "output": "D:/Polymath Training/phase-101-mean-route-canary-2026-09-29/v002-unconditioned-raw.json",
+    "title": "Mean - frozen trusted passage 84.7981-105.8203 - phase100 v002 unconditioned",
+    "instruments": []
+  },
+  {
+    "audio": "D:/Polymath Training/phase-101-mean-route-canary-2026-09-29/mean-trusted-84.7981-105.8203.wav",
+    "output": "D:/Polymath Training/phase-101-mean-route-canary-2026-09-29/v002-piano-conditioned-raw.json",
+    "title": "Mean - frozen trusted passage 84.7981-105.8203 - phase100 v002 piano conditioned",
+    "instruments": [
+      "acoustic_piano"
+    ]
+  }
+]

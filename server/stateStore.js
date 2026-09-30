@@ -329,7 +329,7 @@ class StateStore {
       );
     }
 
-    const [countsResult, dailyResult, returnResult, feedbackResult, campaignResult] = await Promise.all([
+    const [countsResult, dailyResult, returnResult, feedbackResult, campaignResult, referralResult] = await Promise.all([
       this.pool.query(`
         SELECT
           event_name,
@@ -389,6 +389,17 @@ class StateStore {
           AND nullif(properties->>'campaignId', '') IS NOT NULL
         GROUP BY properties->>'campaignId', event_name
       `, [cutoff]),
+      this.pool.query(`
+        SELECT
+          upper(properties->>'promotionCode') AS promotion_code,
+          event_name,
+          count(*)::integer AS events,
+          count(DISTINCT coalesce(nullif(user_id, ''), nullif(anonymous_id, ''), session_id))::integer AS actors
+        FROM polymath_product_events
+        WHERE occurred_at >= $1::timestamptz
+          AND nullif(properties->>'promotionCode', '') IS NOT NULL
+        GROUP BY upper(properties->>'promotionCode'), event_name
+      `, [cutoff]),
     ]);
     const counts = countsResult.rows.map((row) => ({
       eventName: row.event_name,
@@ -409,6 +420,12 @@ class StateStore {
       scoreCount: row.score_count,
       activationValueUsd: row.activation_value_usd,
     }));
+    const referralRows = referralResult.rows.map((row) => ({
+      promotionCode: row.promotion_code,
+      eventName: row.event_name,
+      events: row.events,
+      actors: row.actors,
+    }));
     return summaryFromCounts({
       counts,
       daily,
@@ -417,6 +434,7 @@ class StateStore {
       signedActors: Number(returnResult.rows[0]?.signed_actors || 0),
       returningActors: Number(returnResult.rows[0]?.returning_actors || 0),
       campaignRows,
+      referralRows,
     });
   }
 

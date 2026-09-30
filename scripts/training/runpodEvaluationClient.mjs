@@ -25,7 +25,7 @@ async function loadEnvironment(filename) {
 async function main() {
   const args = parseArguments(process.argv.slice(2));
   if (!args.dataset || !args.version) {
-    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--baseline-version original] [--conditioning-mode instrument|unconditioned] [--endpoint-id id] [--timeout-minutes 60] [--result result.json]');
+    throw new Error('Usage: --dataset phase-1-v001 --version phase1-v001 [--baseline-version original] [--conditioning-mode instrument|unconditioned] [--endpoint-id id] [--job-id existing-job-id] [--timeout-minutes 60] [--result result.json]');
   }
   if (!/^[a-z0-9][a-z0-9-]{2,50}$/.test(args.dataset)) {
     throw new Error('--dataset must be 3-51 lowercase letters, digits, or hyphens, starting with a letter or digit');
@@ -58,24 +58,27 @@ async function main() {
     return payload;
   };
 
-  const submitted = await request('/run', {
-    method: 'POST',
-    body: JSON.stringify({
-      input: {
-        action: 'evaluate_piano_candidate',
-        dataset_id: args.dataset,
-        version: args.version,
-        baseline_version: args['baseline-version'] || 'original',
-        conditioning_mode: args['conditioning-mode'] || 'instrument',
-      },
-      policy: {
-        executionTimeout: timeoutMs,
-        ttl: Math.min(7 * 24 * 60 * 60 * 1000, Math.max(timeoutMs * 2, 2 * 60 * 60 * 1000)),
-      },
-    }),
-  });
+  const resumeJobId = String(args['job-id'] || '').trim();
+  const submitted = resumeJobId
+    ? { id: resumeJobId, status: 'RESUMED' }
+    : await request('/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        input: {
+          action: 'evaluate_piano_candidate',
+          dataset_id: args.dataset,
+          version: args.version,
+          baseline_version: args['baseline-version'] || 'original',
+          conditioning_mode: args['conditioning-mode'] || 'instrument',
+        },
+        policy: {
+          executionTimeout: timeoutMs,
+          ttl: Math.min(7 * 24 * 60 * 60 * 1000, Math.max(timeoutMs * 2, 2 * 60 * 60 * 1000)),
+        },
+      }),
+    });
   if (!submitted.id) throw new Error('RunPod did not return an evaluation job id');
-  process.stdout.write(`JOB_ID=${submitted.id}\n`);
+  process.stdout.write(`${resumeJobId ? 'RESUMING_JOB_ID' : 'JOB_ID'}=${submitted.id}\n`);
   await writeResult({
     jobId: submitted.id,
     submittedAt: new Date().toISOString(),

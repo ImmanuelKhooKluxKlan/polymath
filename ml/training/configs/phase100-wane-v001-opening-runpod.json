@@ -1,0 +1,8 @@
+[
+  {
+    "audio": "/runpod-volume/training/phase-100-wane-canary-v001/wane-opening-10.1896-32.0.wav",
+    "output": "/runpod-volume/models/muscriptor-tester/phase100-v001/wane-opening-raw.json",
+    "title": "We Are Never Getting Back Together - trusted opening 10.1896-32.0",
+    "instruments": []
+  }
+]

@@ -466,6 +466,7 @@ function measuredPerformanceEvidence({ matches, missed, extras, timingBiasSecond
     .sort((left, right) => Math.abs(right.errorMs) - Math.abs(left.errorMs))
     .slice(0, 6);
   const holds = matches
+    .filter(({ played }) => played.durationCapable !== false)
     .map(({ expected, played }) => ({
       note: evidenceNote(expected),
       targetMs: Math.round(Math.max(0.035, Number(expected.duration) || 0.12) * 1000),
@@ -635,7 +636,8 @@ export function analyzePracticeAttempt({
     ? clamp(((matches.length - extras.length * 0.3) / expected.length) * 100, 0, 100)
     : 0;
   const rhythmSamples = matches.map(({ timingError }) => clamp(1 - Math.abs(timingError) / MATCH_WINDOW_SECONDS, 0, 1));
-  const durationSamples = matches.map(({ expected: target, played: actual }) => {
+  const durationMatches = matches.filter(({ played: actual }) => actual.durationCapable !== false);
+  const durationSamples = durationMatches.map(({ expected: target, played: actual }) => {
     const ratio = Math.max(0.05, actual.duration) / Math.max(0.05, target.duration);
     return clamp(1 - Math.abs(Math.log(ratio)) / Math.log(4), 0, 1);
   });
@@ -658,9 +660,9 @@ export function analyzePracticeAttempt({
     rhythm: metric(mean(rhythmSamples) * 100, 'Rhythm', matches.length
       ? `Average timing difference ${Math.round(mean(matches.map(({ timingError }) => Math.abs(timingError))) * 1000)} ms.`
       : 'Play the highlighted notes to measure rhythm.'),
-    duration: metric(mean(durationSamples) * 100, 'Holds', matches.length
+    duration: metric(mean(durationSamples) * 100, 'Holds', durationMatches.length
       ? 'Compares when each key was released with the intended note length.'
-      : 'Key releases were not available to compare.'),
+      : 'Microphone pitch can check the note, but not a reliable key release.', durationMatches.length > 0),
     dynamics: metric(mean(dynamicSamples) * 100, 'Touch', dynamicMatches.length
       ? `Measured from ${dynamicMatches.length} velocity-sensitive MIDI notes.`
       : 'Connect a velocity-sensitive MIDI keyboard to measure soft and strong playing.', dynamicMatches.length > 0),

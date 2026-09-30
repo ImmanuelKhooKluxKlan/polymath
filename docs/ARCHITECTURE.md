@@ -36,7 +36,7 @@ React/Vite single-page application with route state managed in `src/App.jsx`.
 - a three-level local OMR ladder: exact embedded MusicXML, semantic SMuFL/vector PDF reading, then conservative high-resolution computer vision for scans;
 - a piano interpretation layer that separates written, key-hold, and damper duration; aligns grand-staff chord columns; shapes articulation/dynamics; clears repeated keys physically; and schedules printed or conservative inferred re-pedaling;
 - authenticated disk-streamed audio/video jobs, bundled FFmpeg preparation, sequential MuScriptor execution, instrument constraints, native chunk progress, restart recovery, source cleanup, and protected ready-to-play results;
-- backend-enforced signup/spending policies, percentage-only promotion codes, reusable short Friend IDs, redemption limits, administrator password-reset audits, and hashed 30-day sessions.
+- backend-enforced signup/spending policies, percentage or fixed subscription offers, affiliate attribution and activation-only Mcoin commissions, reusable short Friend IDs, redemption limits, administrator password-reset audits, and hashed 30-day sessions.
 
 ## Current persistence
 

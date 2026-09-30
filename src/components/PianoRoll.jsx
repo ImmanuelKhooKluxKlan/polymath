@@ -23,6 +23,7 @@ export default function PianoRoll({
   activeNotes,
   activePlaybackEventIds,
   performanceTier,
+  practiceCorrection = null,
   ...keyboardProps
 }) {
   const compact = layout.isTwoStorey;
@@ -43,6 +44,7 @@ export default function PianoRoll({
               activePlaybackEventIds={activePlaybackEventIds}
               performanceTier={performanceTier}
               compact={compact}
+              practiceCorrection={practiceCorrection}
             />
             <div className="piano-scroll-wrap">
               <PianoKeyboard
@@ -51,6 +53,7 @@ export default function PianoRoll({
                 activeNotes={activeNotes}
                 performanceTier={performanceTier}
                 compact={compact}
+                practiceCorrection={practiceCorrection}
                 showModeLabel={index === 0}
                 showPreparation={index === 0}
               />

@@ -46,7 +46,15 @@ import {
   recordLearningAttempt,
   writeLearningProgress,
 } from './engine/learningCoach.js';
-import { midiToNote } from './engine/noteMath.js';
+import { midiToNote, parseNote } from './engine/noteMath.js';
+import { createTeacherHearingMonitor } from './engine/teacherHearingEngine.js';
+import {
+  advancePracticeReadingStability,
+  buildPracticeOnsetGroups,
+  classifyPracticeReading,
+  createPracticeReadingStability,
+  findPracticeOnsetGroup,
+} from './engine/microphonePractice.js';
 import {
   buildTeacherHandTargets,
   prepareTeacherHandTimeline,
@@ -229,6 +237,16 @@ export default function App() {
   const [activePracticePlan, setActivePracticePlan] = useState(null);
   const [learningProgress, setLearningProgress] = useState(() => readLearningProgress(window.localStorage, 'guest'));
   const [learningSyncStatus, setLearningSyncStatus] = useState('device');
+  const [learningMicrophone, setLearningMicrophone] = useState(() => ({
+    supported: Boolean(navigator?.mediaDevices?.getUserMedia),
+    status: 'idle',
+    note: '',
+    confidence: 0,
+    feedback: '',
+    feedbackType: '',
+    error: '',
+  }));
+  const [practiceCorrection, setPracticeCorrection] = useState(null);
   const [midiInput, setMidiInput] = useState(() => ({
     supported: typeof navigator !== 'undefined' && typeof navigator.requestMIDIAccess === 'function',
     status: 'idle',
@@ -284,6 +302,15 @@ export default function App() {
   const practicePlaybackModeRef = useRef('listen');
   const learningCaptureRef = useRef({ status: 'idle', notes: [], activeNotes: new Map(), pedals: [] });
   const midiAccessRef = useRef(null);
+  const learningMicrophoneStreamRef = useRef(null);
+  const learningMicrophoneMonitorRef = useRef(null);
+  const learningMicrophoneReadingHandlerRef = useRef(null);
+  const learningMicrophoneStabilityRef = useRef(createPracticeReadingStability());
+  const learningMicrophoneUiStampRef = useRef(0);
+  const learningMicrophoneRequestRef = useRef(0);
+  const practiceCorrectionRef = useRef(null);
+  const practiceCorrectionTimerRef = useRef(null);
+  const practiceCorrectionResumeRef = useRef(false);
   const calibrationRef = useRef(null);
   const runtimePerformanceRef = useRef({
     lastFrame: 0,
@@ -375,7 +402,7 @@ export default function App() {
     songId: songLibraryId(song),
     report: learningReport,
   }), [learningProgress, song, learningReport]);
-  const sharedLearnRequest = LIVE_PRODUCT_FEATURES.instrumentLearning
+  const sharedLearnRequest = LIVE_PRODUCT_FEATURES.pianoLearning
     && route.page === 'studio'
     && route.params.get('try') === 'learn';
   const campaignSlug = sharedLearnRequest ? String(route.params.get('campaign') || '').trim().toLowerCase() : '';
@@ -413,6 +440,23 @@ export default function App() {
       level: learningLevel,
     });
   }, [teachingMode]);
+
+  useEffect(() => {
+    if (route.page === 'studio' && teachingMode === 'learn' && LIVE_PRODUCT_FEATURES.pianoLearning) return;
+    if (learningMicrophoneMonitorRef.current || learningMicrophoneStreamRef.current) {
+      void disableLearningMicrophone();
+    }
+  }, [route.page, teachingMode]);
+
+  useEffect(() => () => {
+    learningMicrophoneRequestRef.current += 1;
+    const monitor = learningMicrophoneMonitorRef.current;
+    const stream = learningMicrophoneStreamRef.current;
+    learningMicrophoneMonitorRef.current = null;
+    learningMicrophoneStreamRef.current = null;
+    void monitor?.stop?.();
+    stream?.getTracks?.().forEach((track) => track.stop());
+  }, []);
 
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', '#studio');
@@ -856,6 +900,318 @@ export default function App() {
     }, 120);
   }
 
+  function setPracticeCorrectionState(nextCorrection) {
+    practiceCorrectionRef.current = nextCorrection;
+    setPracticeCorrection(nextCorrection);
+  }
+
+  function clearPracticeCorrection() {
+    if (practiceCorrectionTimerRef.current) {
+      window.clearTimeout(practiceCorrectionTimerRef.current);
+      practiceCorrectionTimerRef.current = null;
+    }
+    practiceCorrectionResumeRef.current = false;
+    setPracticeCorrectionState(null);
+  }
+
+  function practiceInputMode(capture = learningCaptureRef.current) {
+    if (capture?.notes?.some((note) => note.inputType === 'microphone')) return 'microphone';
+    if (capture?.notes?.some((note) => note.inputType === 'midi') || midiInput.status === 'connected') return 'midi';
+    if (learningMicrophone.status === 'ready') return 'microphone';
+    return 'screen-or-keyboard';
+  }
+
+  function formatPracticeNotes(midis = []) {
+    return [...new Set(midis.map((midi) => Math.round(Number(midi))).filter(Number.isFinite))]
+      .map((midi) => midiToNote(midi))
+      .join(' + ');
+  }
+
+  function recordMicrophonePracticeNotes(capture, group, verdict, startTime) {
+    if (!capture || !group || !verdict?.observed?.length) return;
+    if (!capture.microphoneGroupNotes) capture.microphoneGroupNotes = new Map();
+    const recorded = capture.microphoneGroupNotes.get(group.id) || new Set();
+    const candidates = verdict.matches?.length ? verdict.matches : verdict.observed.slice(0, 1);
+    candidates.forEach((candidate) => {
+      if (recorded.has(candidate.midi)) return;
+      recorded.add(candidate.midi);
+      capture.notes.push({
+        id: `microphone-${group.id}-${candidate.midi}`,
+        note: midiToNote(candidate.midi),
+        midi: candidate.midi,
+        start: clampSongTime(startTime),
+        duration: 0.12,
+        velocity: Math.max(0.2, Math.min(1, Number(candidate.confidence) || 0.72)),
+        inputType: 'microphone',
+        dynamicCapable: false,
+        durationCapable: false,
+      });
+    });
+    capture.microphoneGroupNotes.set(group.id, recorded);
+  }
+
+  async function resumePracticeAfterCorrection(group) {
+    if (practiceCorrectionResumeRef.current) return;
+    const capture = learningCaptureRef.current;
+    if (capture.status !== 'waiting') return;
+    practiceCorrectionResumeRef.current = true;
+    capture.status = 'resuming';
+    setLearningAttemptStatus('resuming');
+    setPracticeCorrectionState({
+      ...practiceCorrectionRef.current,
+      status: 'correct',
+      heardNotes: group.notes,
+      message: `Correct — ${formatPracticeNotes(group.midis)}. Continuing…`,
+    });
+    setLearningMicrophone((current) => ({
+      ...current,
+      feedback: `Correct: ${formatPracticeNotes(group.midis)}`,
+      feedbackType: 'correct',
+    }));
+
+    const rangeEnd = Number(capture.range?.end) || songDurationRef.current;
+    const resumeAt = Math.min(rangeEnd, Number(group.time) + 0.065);
+    practicePlaybackModeRef.current = 'attempt';
+    let started = false;
+    try {
+      started = await startPlaybackAt(resumeAt);
+    } catch (error) {
+      console.error('Practice could not continue after a correction:', error);
+    }
+
+    if (learningCaptureRef.current !== capture) {
+      practiceCorrectionResumeRef.current = false;
+      return;
+    }
+    if (!started) {
+      capture.status = 'waiting';
+      setLearningAttemptStatus('waiting');
+      setPracticeCorrectionState({
+        ...practiceCorrectionRef.current,
+        status: 'waiting',
+        message: `Play ${formatPracticeNotes(group.midis)} to continue.`,
+      });
+      practiceCorrectionResumeRef.current = false;
+      return;
+    }
+
+    capture.status = 'running';
+    setLearningAttemptStatus('running');
+    practiceCorrectionResumeRef.current = false;
+    practiceCorrectionTimerRef.current = window.setTimeout(() => {
+      if (practiceCorrectionRef.current?.groupId === group.id) setPracticeCorrectionState(null);
+      practiceCorrectionTimerRef.current = null;
+    }, 650);
+  }
+
+  function handlePracticeAttack(reading, inputType = 'microphone') {
+    const capture = learningCaptureRef.current;
+    if (!['running', 'waiting'].includes(capture.status)) return;
+    if (inputType === 'microphone' && performance.now() < Number(capture.ignoreMicrophoneUntil || 0)) return;
+    if (capture.status === 'running' && performance.now() - Number(capture.lastResolvedWallAt || 0) < 70) return;
+
+    const correction = practiceCorrectionRef.current;
+    const songTime = capture.status === 'waiting'
+      ? Number(correction?.time)
+      : learningCaptureTime();
+    const group = capture.status === 'waiting' && correction
+      ? capture.onsetGroups?.find((candidate) => candidate.id === correction.groupId)
+      : findPracticeOnsetGroup(capture.onsetGroups, songTime, {
+        resolvedIds: capture.resolvedGroupIds,
+      });
+    if (!group) return;
+
+    const verdict = classifyPracticeReading(reading, group.midis);
+    if (['silence', 'uncertain', 'partial'].includes(verdict.type)) return;
+    const observedMidis = verdict.observed.map((candidate) => candidate.midi);
+    const observedLabel = formatPracticeNotes(observedMidis) || 'another note';
+    if (inputType === 'microphone') {
+      recordMicrophonePracticeNotes(capture, group, verdict, songTime);
+    }
+
+    if (verdict.type === 'correct') {
+      capture.resolvedGroupIds.add(group.id);
+      capture.lastResolvedWallAt = performance.now();
+      setLearningMicrophone((current) => ({
+        ...current,
+        feedback: `Correct: ${formatPracticeNotes(group.midis)}`,
+        feedbackType: 'correct',
+      }));
+      if (capture.status === 'waiting') void resumePracticeAfterCorrection(group);
+      return;
+    }
+
+    const expectedLabel = formatPracticeNotes(group.midis);
+    if (capture.status === 'waiting') {
+      setPracticeCorrectionState({
+        ...correction,
+        heardNotes: observedMidis.map(midiToNote),
+        message: `Try ${expectedLabel} — heard ${observedLabel}.`,
+      });
+      setLearningMicrophone((current) => ({
+        ...current,
+        feedback: `Try ${expectedLabel} — heard ${observedLabel}`,
+        feedbackType: 'wrong',
+      }));
+      return;
+    }
+
+    finishAllCapturedNotes(songTime);
+    capture.status = 'waiting';
+    setLearningAttemptStatus('waiting');
+    silencePlayback(group.time);
+    setIsPlaying(false);
+    setCurrentTime(group.time);
+    setPracticeCorrectionState({
+      status: 'waiting',
+      groupId: group.id,
+      time: group.time,
+      eventIds: group.eventIds,
+      expectedMidis: group.midis,
+      expectedNotes: group.notes,
+      heardNotes: observedMidis.map(midiToNote),
+      message: `Try ${expectedLabel} — heard ${observedLabel}.`,
+    });
+    setLearningMicrophone((current) => ({
+      ...current,
+      feedback: `Try ${expectedLabel} — heard ${observedLabel}`,
+      feedbackType: 'wrong',
+    }));
+    trackProductEvent('learning_correction_wait_started', {
+      expected: expectedLabel,
+      heard: observedLabel,
+      inputMode: inputType,
+    });
+  }
+
+  function handleDirectPracticeNote(note, inputType = 'screen') {
+    let midi;
+    try {
+      midi = parseNote(note).midi;
+    } catch {
+      return;
+    }
+    const capture = learningCaptureRef.current;
+    if (!['running', 'waiting'].includes(capture.status)) return;
+    capture.ignoreMicrophoneUntil = performance.now() + 260;
+    handlePracticeAttack({
+      heard: true,
+      midi,
+      note,
+      cents: 0,
+      confidence: 1,
+      rms: 0.25,
+      dbfs: -8,
+      notes: [{ midi, note, confidence: 1, dbfs: -8 }],
+    }, inputType);
+  }
+
+  function handleLearningMicrophoneReading(reading) {
+    const now = performance.now();
+    if (now - learningMicrophoneUiStampRef.current >= 180) {
+      learningMicrophoneUiStampRef.current = now;
+      setLearningMicrophone((current) => ({
+        ...current,
+        note: reading?.heard && reading?.midi !== null && Number(reading?.confidence) >= 0.5
+          ? String(reading.note || '')
+          : '',
+        confidence: Math.round(Math.max(0, Math.min(1, Number(reading?.confidence) || 0)) * 100),
+      }));
+    }
+    const advanced = advancePracticeReadingStability(learningMicrophoneStabilityRef.current, reading);
+    learningMicrophoneStabilityRef.current = advanced.state;
+    if (advanced.attack) handlePracticeAttack(advanced.attack.reading, 'microphone');
+  }
+
+  async function releaseLearningMicrophoneResources() {
+    const monitor = learningMicrophoneMonitorRef.current;
+    const stream = learningMicrophoneStreamRef.current;
+    learningMicrophoneMonitorRef.current = null;
+    learningMicrophoneStreamRef.current = null;
+    if (monitor) await monitor.stop().catch(() => {});
+    stream?.getTracks?.().forEach((track) => track.stop());
+  }
+
+  async function enableLearningMicrophone() {
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      setLearningMicrophone((current) => ({
+        ...current,
+        supported: false,
+        status: 'unsupported',
+        error: 'This browser cannot listen to a microphone. Screen keys and MIDI still work.',
+      }));
+      return;
+    }
+    const requestId = learningMicrophoneRequestRef.current + 1;
+    learningMicrophoneRequestRef.current = requestId;
+    setLearningMicrophone((current) => ({ ...current, status: 'requesting', error: '', feedback: '', feedbackType: '' }));
+    await releaseLearningMicrophoneResources();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+        },
+      });
+      if (requestId !== learningMicrophoneRequestRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      learningMicrophoneStreamRef.current = stream;
+      learningMicrophoneStabilityRef.current = createPracticeReadingStability();
+      const monitor = await createTeacherHearingMonitor(
+        stream,
+        (reading) => learningMicrophoneReadingHandlerRef.current?.(reading),
+        { intervalMs: deviceClass === 'phone' ? 135 : 105, fftSize: 4096 },
+      );
+      if (requestId !== learningMicrophoneRequestRef.current) {
+        await monitor.stop();
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      learningMicrophoneMonitorRef.current = monitor;
+      setLearningMicrophone((current) => ({
+        ...current,
+        supported: true,
+        status: 'ready',
+        error: '',
+        feedback: 'Listening for your piano',
+        feedbackType: 'ready',
+      }));
+    } catch (error) {
+      await releaseLearningMicrophoneResources();
+      if (requestId !== learningMicrophoneRequestRef.current) return;
+      const blocked = ['NotAllowedError', 'SecurityError'].includes(error?.name);
+      setLearningMicrophone((current) => ({
+        ...current,
+        status: 'error',
+        error: blocked
+          ? 'Microphone access was blocked. Allow it in this site’s browser settings, then try again.'
+          : 'Polymath could not start this microphone. Screen keys and MIDI still work.',
+      }));
+    }
+  }
+
+  async function disableLearningMicrophone() {
+    learningMicrophoneRequestRef.current += 1;
+    await releaseLearningMicrophoneResources();
+    learningMicrophoneStabilityRef.current = createPracticeReadingStability();
+    setLearningMicrophone((current) => ({
+      ...current,
+      status: 'idle',
+      note: '',
+      confidence: 0,
+      feedback: '',
+      feedbackType: '',
+      error: '',
+    }));
+  }
+
+  learningMicrophoneReadingHandlerRef.current = handleLearningMicrophoneReading;
+
   function learningCaptureTime(now = performance.now()) {
     const capture = learningCaptureRef.current;
     if (capture.status !== 'running') return clampSongTime(currentTime);
@@ -880,9 +1236,11 @@ export default function App() {
 
   function captureNoteStart(note, velocity, playbackOptions = {}) {
     const capture = learningCaptureRef.current;
-    if (capture.status !== 'running') return;
+    if (!['running', 'waiting'].includes(capture.status)) return;
     const key = manualVoiceKey(note, playbackOptions);
-    const start = learningCaptureTime();
+    const start = capture.status === 'waiting'
+      ? Number(practiceCorrectionRef.current?.time) || learningCaptureTime()
+      : learningCaptureTime();
     finishCapturedNote(key, start);
     capture.activeNotes.set(key, {
       note,
@@ -1012,6 +1370,7 @@ export default function App() {
         manualVoiceKey(note, playbackOptions),
         voice
       );
+      handleDirectPracticeNote(note, playbackOptions.inputType || playbackOptions.pointerType || 'screen');
     }
     return voice;
   }
@@ -1057,7 +1416,7 @@ export default function App() {
   }
 
   function stopPlayback() {
-    if (learningCaptureRef.current.status === 'running' || learningCaptureRef.current.status === 'paused') {
+    if (['preparing', 'running', 'paused', 'waiting', 'resuming'].includes(learningCaptureRef.current.status)) {
       resetLearningCapture('idle');
       practicePlaybackModeRef.current = 'listen';
     }
@@ -1125,6 +1484,7 @@ export default function App() {
   }
 
   async function togglePlayPause() {
+    if (learningCaptureRef.current.status === 'waiting') return;
     if (isPlaying) {
       pauseLearningCapture(currentTime);
       silencePlayback(currentTime);
@@ -1136,6 +1496,7 @@ export default function App() {
   }
 
   function beginSeek() {
+    if (learningCaptureRef.current.status === 'waiting') return;
     seekWasPlaying.current = isPlaying;
     pauseLearningCapture(currentTime);
     silencePlayback(currentTime);
@@ -1143,12 +1504,14 @@ export default function App() {
   }
 
   function previewSeek(position) {
+    if (learningCaptureRef.current.status === 'waiting') return;
     const target = clampPlaybackTime(position);
     pauseOffset.current = target;
     setCurrentTime(target);
   }
 
   async function commitSeek(position) {
+    if (learningCaptureRef.current.status === 'waiting') return;
     const target = clampPlaybackTime(position);
     const shouldResume = seekWasPlaying.current;
     seekWasPlaying.current = false;
@@ -1160,6 +1523,7 @@ export default function App() {
   }
 
   async function jumpBy(seconds) {
+    if (learningCaptureRef.current.status === 'waiting') return;
     const shouldResume = isPlaying;
     const target = clampPlaybackTime(currentTime + seconds);
     pauseLearningCapture(currentTime);
@@ -1173,6 +1537,7 @@ export default function App() {
   }
 
   async function handleSpeedChange(nextSpeed) {
+    if (learningCaptureRef.current.status === 'waiting') return;
     const rawValue = typeof nextSpeed === 'function' ? nextSpeed(speed) : nextSpeed;
     const safeSpeed = Math.max(0.2, Math.min(2, Number(rawValue) || 1));
     const shouldResume = isPlaying;
@@ -1340,6 +1705,8 @@ export default function App() {
 
   function resetLearningCapture(status = 'idle') {
     learningCaptureRef.current = { status, notes: [], activeNotes: new Map(), pedals: [] };
+    learningMicrophoneStabilityRef.current = createPracticeReadingStability();
+    clearPracticeCorrection();
     setLearningAttemptStatus(status);
   }
 
@@ -1388,6 +1755,8 @@ export default function App() {
       return;
     }
     const practicePlan = activePracticePlan || learningCoachPlan;
+    learningMicrophoneStabilityRef.current = createPracticeReadingStability();
+    clearPracticeCorrection();
     learningCaptureRef.current = {
       status: 'running',
       notes: [],
@@ -1401,20 +1770,25 @@ export default function App() {
       practiceFocusId: practicePlan?.skillId || 'notes',
       practicePlanSource: practicePlan?.source || 'baseline',
       practiceTargetScore: practicePlan?.goal?.targetScore ?? null,
+      onsetGroups: buildPracticeOnsetGroups(playbackNotes, range),
+      resolvedGroupIds: new Set(),
+      microphoneGroupNotes: new Map(),
+      ignoreMicrophoneUntil: performance.now() + 180,
+      lastResolvedWallAt: 0,
     };
     setLearningAttemptStatus('running');
     trackProductEvent('learning_attempt_started', {
       freePreview: !hasFullLearnAccess,
       level: learningLevel,
       hand: pianoHandMode,
-      inputMode: midiInput.status === 'connected' ? 'midi' : 'screen-or-keyboard',
+      inputMode: practiceInputMode(),
     });
     if (activeCampaign?.id && !activeCampaign.adminPreview) {
       trackProductEvent('campaign_attempt_started', {
         campaignId: activeCampaign.id,
         campaignSlug: activeCampaign.slug,
         referralCode: activeCampaign.referralCode || '',
-        inputMode: midiInput.status === 'connected' ? 'midi' : 'screen-or-keyboard',
+        inputMode: practiceInputMode(),
       });
     }
     focusMobilePlayer(true);
@@ -1447,7 +1821,7 @@ export default function App() {
       freePreview: !hasFullLearnAccess,
       level: capture.levelId,
       hand: capture.handMode,
-      inputMode: capture.notes.some((note) => note.inputType === 'midi') ? 'midi' : 'screen-or-keyboard',
+      inputMode: practiceInputMode(capture),
       noteCount: capture.notes.length,
       score: report.score,
     });
@@ -1456,7 +1830,7 @@ export default function App() {
         campaignId: activeCampaign.id,
         campaignSlug: activeCampaign.slug,
         referralCode: activeCampaign.referralCode || '',
-        inputMode: capture.notes.some((note) => note.inputType === 'midi') ? 'midi' : 'screen-or-keyboard',
+        inputMode: practiceInputMode(capture),
         noteCount: capture.notes.length,
         score: report.score,
       });
@@ -1899,6 +2273,7 @@ export default function App() {
         onNavigate={navigate}
         returnPage={route.params.get('next')}
         returnProductId={route.params.get('productId')}
+        initialLuckyCode={route.params.get('promo') || ''}
       />
     );
     if (route.page === 'payment') {
@@ -1910,6 +2285,7 @@ export default function App() {
           paymentStatus={route.params.get('status')}
           paymentToken={route.params.get('token')}
           initialCategory={route.params.get('category')}
+          initialPromotionCode={route.params.get('promo') || ''}
           onNavigate={navigate}
         />
       );
@@ -1918,7 +2294,7 @@ export default function App() {
     return (
       <section className={`studio-page ${teachingMode === 'learn' ? 'is-learning-journey' : ''}`}>
         <PianoLearnJourney
-          learningEnabled={LIVE_PRODUCT_FEATURES.instrumentLearning}
+          learningEnabled={LIVE_PRODUCT_FEATURES.pianoLearning}
           mode={teachingMode}
           locked={!activeCampaign && !hasFullLearnAccess}
           onUpgrade={() => {
@@ -1967,6 +2343,11 @@ export default function App() {
           preparationStage={keyboardPreparationStage}
           midi={midiInput}
           onConnectMidi={connectMidiInput}
+          microphone={learningMicrophone}
+          onToggleMicrophone={learningMicrophone.status === 'ready'
+            ? disableLearningMicrophone
+            : enableLearningMicrophone}
+          practiceCorrection={practiceCorrection}
           onListen={listenToLearningRange}
           onStartAttempt={startLearningAttempt}
           attemptStatus={learningAttemptStatus}
@@ -2020,6 +2401,7 @@ export default function App() {
               activeNotes={activeNotes}
               activePlaybackEventIds={activePlaybackEventIds}
               performanceTier={performanceTier}
+              practiceCorrection={practiceCorrection}
               strikeVersions={strikeVersions}
               showKeyNotes={showKeyNotes}
               onPress={(note, interaction = {}) => pressNote(
@@ -2058,6 +2440,8 @@ export default function App() {
               onShowKeyNotesChange={setShowKeyNotes}
               minSpeed={0.2}
               playbackRange={teachingMode === 'learn' ? practiceRange : null}
+              practiceLocked={learningAttemptStatus === 'waiting' || learningAttemptStatus === 'resuming'}
+              practiceLockLabel={practiceCorrection?.message || 'Play the highlighted key to continue.'}
             />
             <details className="lesson-options player-settings">
               <summary>Settings</summary>

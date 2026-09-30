@@ -8,7 +8,7 @@ function initialCountryIso() {
   return suggestedCountryIso(typeof navigator === 'undefined' ? '' : navigator.language);
 }
 
-export default function AccountPage({ user, setUser, onNavigate, returnPage, returnProductId }) {
+export default function AccountPage({ user, setUser, onNavigate, returnPage, returnProductId, initialLuckyCode = '' }) {
   const [mode, setMode] = useState('login');
   const [form, setForm] = useState(() => ({
     name: '',
@@ -20,7 +20,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
     registerCountryIso: initialCountryIso(),
     email: '',
     phone: '',
-    luckyCode: '',
+    luckyCode: initialLuckyCode,
     password: '',
     verificationCode: '',
     birthDate: '',
@@ -31,6 +31,7 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
   const [status, setStatus] = useState('');
   const [withdraw, setWithdraw] = useState({ amountMcoins: '', payoutEmail: '' });
   const [newPassword, setNewPassword] = useState({ password: '', confirm: '' });
+  const [referrals, setReferrals] = useState(null);
   const [withdrawalFeeRate, setWithdrawalFeeRate] = useState(0.25);
   const [policies, setPolicies] = useState({
     registrationEnabled: true,
@@ -54,6 +55,16 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setReferrals(null);
+      return;
+    }
+    apiRequest('/api/referrals/me')
+      .then(setReferrals)
+      .catch(() => setReferrals(null));
+  }, [user]);
 
   async function submit(event) {
     event.preventDefault();
@@ -106,7 +117,10 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
       setUser(data.user);
       setStatus(`Welcome, ${data.user.name}.`);
       if (data.user.admin) onNavigate('admin-database');
-      else if (returnPage === 'payment') onNavigate('payment', { productId: returnProductId || 'polymath-chill-monthly' });
+      else if (returnPage === 'payment') onNavigate('payment', {
+        productId: returnProductId || 'polymath-chill-monthly',
+        promo: initialLuckyCode || form.luckyCode,
+      });
     } catch (error) {
       setStatus(error.message);
     } finally {
@@ -291,6 +305,8 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
     resetAt: '',
   };
   const unlimitedTranslations = Boolean(user.admin || allowance.unlimited);
+  const audioAllowance = allowance.audio || allowance;
+  const pdfAllowance = allowance.pdf || allowance;
   const planName = user.subscriptionTier === 'musician'
     ? 'Musician'
     : user.subscriptionTier === 'chill'
@@ -331,11 +347,36 @@ export default function AccountPage({ user, setUser, onNavigate, returnPage, ret
           </div>
         </article>
 
+        {referrals?.programs?.length > 0 && (
+          <article className='wallet-card referral-dashboard-card'>
+            <p className='eyebrow'>Creator referrals</p>
+            <h2>Earn when your audience subscribes</h2>
+            <div className='referral-summary'>
+              <span><strong>{Number(referrals.totals.paidConversions || 0).toLocaleString()}</strong> paid subscribers</span>
+              <span><strong>{Number(referrals.totals.earnedMcoins || 0).toLocaleString()}</strong> Mcoins earned</span>
+            </div>
+            <div className='referral-program-list'>
+              {referrals.programs.map((program) => (
+                <div className='referral-program' key={program.id}>
+                  <div><code>{program.code}</code><small>{program.customerReward.value}{program.customerReward.mode === 'percent' ? '%' : ' Mcoins'} off · {program.commission.value}{program.commission.mode === 'percent' ? '%' : ' Mcoins'} commission</small></div>
+                  <div><strong>{program.paidConversions}</strong><small>{program.visitors30d} visits (30d) · {program.checkoutStarts30d} checkouts (30d) · {program.pendingConversions} pending</small></div>
+                  <button className='ghost compact-action' type='button' onClick={() => {
+                    navigator.clipboard.writeText(`${program.disclosure} ${program.shareUrl}`);
+                    setStatus('Disclosure and referral link copied.');
+                  }}>Copy link</button>
+                </div>
+              ))}
+            </div>
+            <small className='muted'>Commission becomes cash-out eligible only after a paid subscription activates. Always keep the disclosure when sharing.</small>
+          </article>
+        )}
+
         <article className="wallet-card translation-allowance-card">
           <p className="eyebrow">Translation allowance</p>
           <strong className="allowance-number">{unlimitedTranslations ? 'Unlimited' : allowance.remaining}</strong>
           <h2>{unlimitedTranslations ? 'administrator translations' : `of ${allowance.limit} remaining this month`}</h2>
-          <p className="muted">{unlimitedTranslations ? 'Administrator access includes unlimited PDF and audio/video translations with no Mcoin charge.' : user.pro ? planName + ' includes ' + allowance.limit + ' shared PDF or audio translations each month.' : 'Choose Chill or Musician for a monthly translation allowance.'}</p>
+          <p className="muted">{unlimitedTranslations ? 'Administrator access includes unlimited PDF and audio/video translations with no Mcoin charge.' : user.pro ? planName + ' includes ' + allowance.limit + ' shared translations each month.' : 'Choose Chill or Musician for a monthly translation allowance.'}</p>
+          {!unlimitedTranslations && user.pro && <small>Audio/video: {audioAllowance.remaining} of {audioAllowance.limit} left Â· PDF: {pdfAllowance.remaining} of {pdfAllowance.limit} left</small>}
           {!unlimitedTranslations && allowance.resetAt && <small>Resets {new Date(allowance.resetAt).toLocaleDateString()}</small>}
           <button className="ghost full" type="button" onClick={() => onNavigate(unlimitedTranslations || user.pro ? 'ensemble' : 'payment', unlimitedTranslations || user.pro ? {} : { productId: 'polymath-chill-monthly' })}>{unlimitedTranslations || user.pro ? 'Open Instrument Studio' : 'See subscription options'}</button>
         </article>

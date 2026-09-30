@@ -45,10 +45,30 @@ function validateCheckpoint(value) {
   return checkpoint;
 }
 
-function createClient(env) {
+function parseReplicas(value) {
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function targetForVolume(env, volumeId) {
+  return [
+    {
+      volumeId: env.RUNPOD_NETWORK_VOLUME_ID,
+      region: env.RUNPOD_S3_REGION,
+      s3Endpoint: env.RUNPOD_S3_ENDPOINT,
+    },
+    ...parseReplicas(env.RUNPOD_S3_REPLICAS),
+  ].find((target) => String(target?.volumeId || '') === String(volumeId || ''));
+}
+
+function createClient(env, target) {
   const client = new S3Client({
-    region: env.RUNPOD_S3_REGION,
-    endpoint: env.RUNPOD_S3_ENDPOINT,
+    region: target.region,
+    endpoint: target.s3Endpoint,
     forcePathStyle: true,
     requestChecksumCalculation: 'WHEN_REQUIRED',
     responseChecksumValidation: 'WHEN_REQUIRED',
@@ -359,6 +379,12 @@ async function main() {
   ]) {
     if (!String(process.env[name] || '').trim()) throw new Error(`${name} is missing`);
   }
+  const target = targetForVolume(process.env, bucket);
+  if (!target?.region || !target?.s3Endpoint) {
+    throw new Error(
+      `RunPod volume ${bucket} is not configured as the primary volume or an S3 replica`,
+    );
+  }
 
   const files = [];
   for (const name of REQUIRED_FILES) {
@@ -373,7 +399,7 @@ async function main() {
     if ((await stat(filename).catch(() => null))?.isFile()) files.push({ name, filename });
   }
 
-  const client = createClient(process.env);
+  const client = createClient(process.env, target);
   const prefix = `models/muscriptor-tester/${checkpoint}`;
   const uploaded = [];
   for (const file of files) {
@@ -386,7 +412,14 @@ async function main() {
       verifyExistingByDownload: Boolean(args['verify-existing-by-download']),
     }));
   }
-  process.stdout.write(`${JSON.stringify({ checkpoint, bucket, prefix, files: uploaded }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({
+    checkpoint,
+    bucket,
+    region: target.region,
+    s3Endpoint: target.s3Endpoint,
+    prefix,
+    files: uploaded,
+  }, null, 2)}\n`);
 }
 
 main().catch((error) => {

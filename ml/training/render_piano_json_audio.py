@@ -10,6 +10,7 @@ advantage after rendering.
 from __future__ import annotations
 
 import argparse
+import bisect
 import hashlib
 import json
 import math
@@ -26,6 +27,17 @@ ATTACK_SECONDS = 0.006
 MASTER_GAIN = 0.82
 LIMITER_DRIVE = 0.88
 NOTE_NAMES_FLAT = ("C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B")
+PEDAL_RETRIGGER_GAP_SECONDS = 0.012
+TARGET_RMS_POINTS = (
+    (21, 0.078),
+    (33, 0.076),
+    (45, 0.073),
+    (60, 0.069),
+    (72, 0.064),
+    (84, 0.057),
+    (96, 0.049),
+    (108, 0.041),
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -78,6 +90,86 @@ def normalize_render_notes(
     return sorted(notes, key=lambda note: (float(note["time"]), int(note["midi"])))
 
 
+def apply_sustain_pedal_to_render_notes(
+    notes: list[dict[str, float | int]], payload: dict[str, Any]
+) -> tuple[list[dict[str, float | int]], dict[str, Any]]:
+    """Extend a released key to pedal-up, like the browser piano engine.
+
+    ``audioDuration`` is the physical key hold. If the damper pedal is down at
+    key-up, the string continues until pedal-up or a same-key retrigger. The
+    listening renderer must model that or sustained endings sound falsely
+    weak compared with the actual website and source performance.
+    """
+
+    raw_events = payload.get("pedals")
+    if not isinstance(raw_events, list) or not raw_events:
+        raw_events = payload.get("pedalEvents")
+    events: list[tuple[float, bool]] = []
+    for event in raw_events or []:
+        if not isinstance(event, dict):
+            continue
+        time = _finite(event.get("time"), -1.0)
+        if time >= 0:
+            events.append((time, bool(event.get("down"))))
+    events.sort(key=lambda event: event[0])
+    if not events:
+        return [dict(note) for note in notes], {
+            "pedalAware": False,
+            "pedalEvents": 0,
+            "pedalExtendedNotes": 0,
+            "maximumPedalExtensionSeconds": 0.0,
+        }
+
+    event_times = [event[0] for event in events]
+    next_up_after: list[float | None] = [None] * len(events)
+    next_up: float | None = None
+    for index in range(len(events) - 1, -1, -1):
+        if not events[index][1]:
+            next_up = events[index][0]
+        next_up_after[index] = next_up
+
+    pitch_times: dict[int, list[float]] = {}
+    for note in notes:
+        pitch_times.setdefault(int(note["midi"]), []).append(float(note["time"]))
+
+    output: list[dict[str, float | int]] = []
+    extended = 0
+    maximum_extension = 0.0
+    for source in notes:
+        note = dict(source)
+        start = float(note["time"])
+        key_up = start + float(note["duration"])
+        event_index = bisect.bisect_right(event_times, key_up) - 1
+        if event_index >= 0 and events[event_index][1]:
+            pedal_up = next_up_after[event_index]
+            if pedal_up is not None and pedal_up > key_up:
+                same_pitch_times = pitch_times[int(note["midi"])]
+                next_note_index = bisect.bisect_right(same_pitch_times, start + 1e-9)
+                audible_end = pedal_up
+                if next_note_index < len(same_pitch_times):
+                    audible_end = min(
+                        audible_end,
+                        max(
+                            key_up,
+                            same_pitch_times[next_note_index]
+                            - PEDAL_RETRIGGER_GAP_SECONDS,
+                        ),
+                    )
+                if audible_end > key_up + 1e-9:
+                    extension = audible_end - key_up
+                    note["duration"] = min(60.0, audible_end - start)
+                    extended += 1
+                    maximum_extension = max(maximum_extension, extension)
+        output.append(note)
+
+    return output, {
+        "pedalAware": True,
+        "pedalEvents": len(events),
+        "pedalExtendedNotes": extended,
+        "maximumPedalExtensionSeconds": round(maximum_extension, 6),
+    }
+
+
 def read_pcm16_stereo(path: Path) -> np.ndarray:
     with wave.open(str(path), "rb") as handle:
         channels = handle.getnchannels()
@@ -96,6 +188,39 @@ def read_pcm16_stereo(path: Path) -> np.ndarray:
     if channels == 2:
         return values.reshape(-1, 2)
     raise ValueError(f"Expected mono or stereo sample, got {channels} channels: {path}")
+
+
+def target_rms_for_midi(midi: int) -> float:
+    """Mirror the browser piano engine's register-shaped RMS target."""
+
+    if midi <= TARGET_RMS_POINTS[0][0]:
+        return TARGET_RMS_POINTS[0][1]
+    if midi >= TARGET_RMS_POINTS[-1][0]:
+        return TARGET_RMS_POINTS[-1][1]
+    for (left_midi, left_rms), (right_midi, right_rms) in zip(
+        TARGET_RMS_POINTS, TARGET_RMS_POINTS[1:]
+    ):
+        if left_midi <= midi <= right_midi:
+            fraction = (midi - left_midi) / (right_midi - left_midi)
+            return left_rms + (right_rms - left_rms) * fraction
+    return TARGET_RMS_POINTS[-1][1]
+
+
+def browser_sample_gain(sample: np.ndarray, midi: int) -> float:
+    """Apply the same bounded per-key normalization used by the website."""
+
+    start = min(len(sample), round(0.02 * SAMPLE_RATE))
+    end = min(len(sample), round(1.2 * SAMPLE_RATE))
+    window = sample[start:end]
+    if not window.size:
+        rms = 0.05
+        peak = 0.05
+    else:
+        rms = float(np.sqrt(np.mean(np.square(window), dtype=np.float64)))
+        peak = float(np.max(np.abs(window)))
+    rms_gain = target_rms_for_midi(midi) / max(rms, 0.0001)
+    peak_gain_limit = 0.92 / max(peak, 0.0001)
+    return min(1.95, max(0.35, min(rms_gain, peak_gain_limit)))
 
 
 def write_pcm16_stereo(path: Path, audio: np.ndarray) -> None:
@@ -139,6 +264,7 @@ def render_payload(
     )
     if not notes:
         raise ValueError("Input JSON contains no playable 88-key piano notes")
+    notes, pedal_summary = apply_sustain_pedal_to_render_notes(notes, payload)
     natural_end = max(float(note["time"]) + float(note["duration"]) + RELEASE_SECONDS for note in notes)
     if hard_stop_seconds is not None:
         render_seconds = _finite(hard_stop_seconds, -1.0)
@@ -148,7 +274,7 @@ def render_payload(
         render_seconds = max(natural_end, _finite(duration_seconds, natural_end))
     total_frames = max(1, math.ceil(render_seconds * SAMPLE_RATE))
     mix = np.zeros((total_frames, 2), dtype=np.float32)
-    cache: dict[int, np.ndarray] = {}
+    cache: dict[int, tuple[np.ndarray, float]] = {}
     release_frames = max(1, round(RELEASE_SECONDS * SAMPLE_RATE))
 
     for note in notes:
@@ -157,8 +283,9 @@ def render_payload(
             sample_path = samples_directory / midi_to_sample_name(midi)
             if not sample_path.is_file():
                 raise FileNotFoundError(f"Missing piano sample: {sample_path}")
-            cache[midi] = read_pcm16_stereo(sample_path)
-        sample = cache[midi]
+            sample = read_pcm16_stereo(sample_path)
+            cache[midi] = (sample, browser_sample_gain(sample, midi))
+        sample, sample_gain = cache[midi]
         start = max(0, round(float(note["time"]) * SAMPLE_RATE))
         if start >= total_frames:
             continue
@@ -175,6 +302,7 @@ def render_payload(
             * envelope[:, None]
             * velocity_gain
             * performance_gain
+            * sample_gain
         )
 
     pre_limiter_peak = float(np.max(np.abs(mix))) if mix.size else 0.0
@@ -196,6 +324,8 @@ def render_payload(
         "preLimiterPeak": round(pre_limiter_peak, 6),
         "perFileNormalization": False,
         "releaseSeconds": RELEASE_SECONDS,
+        "sampleGainCalibration": "browser-target-rms-v1",
+        **pedal_summary,
         "hardStopSeconds": (
             round(float(hard_stop_seconds), 6)
             if hard_stop_seconds is not None

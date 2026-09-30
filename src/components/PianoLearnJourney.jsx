@@ -114,6 +114,52 @@ function PianoStudioStart({ onChooseMusic }) {
   );
 }
 
+function MicrophonePracticeSource({ microphone, onToggle, disabled = false }) {
+  const status = microphone?.status || 'idle';
+  const ready = status === 'ready';
+  const requesting = status === 'requesting';
+  const title = requesting
+    ? 'Waiting for microphone permission…'
+    : ready
+      ? microphone.note
+        ? `Hearing ${microphone.note} · ${microphone.confidence}% confidence`
+        : 'Listening for your piano'
+      : status === 'unsupported'
+        ? 'Microphone listening is unavailable here'
+        : 'Use an acoustic piano or keyboard speakers';
+  return (
+    <>
+      <div className={`learn-microphone-source ${ready ? 'is-ready' : ''} ${microphone?.feedbackType ? `is-${microphone.feedbackType}` : ''}`}>
+        <span className="learn-microphone-mark" aria-hidden="true">{ready ? '●' : '♪'}</span>
+        <div>
+          <span>Hear my piano</span>
+          <strong>{title}</strong>
+          <small>{microphone?.feedback || 'Audio is analysed on this device and is not saved.'}</small>
+        </div>
+        {microphone?.supported !== false && (
+          <button
+            type="button"
+            className={ready ? 'ghost' : 'primary'}
+            onClick={onToggle}
+            disabled={disabled || requesting}
+          >
+            {requesting ? 'Connecting…' : ready ? 'Turn off' : 'Use microphone'}
+          </button>
+        )}
+      </div>
+      {microphone?.error && <p className="learn-inline-error" role="alert">{microphone.error}</p>}
+    </>
+  );
+}
+
+function attemptMessage(status, correction) {
+  if (status === 'preparing') return ['Getting your attempt ready', 'The timer starts only when the piano is ready.'];
+  if (status === 'paused') return ['Attempt paused', 'Press play below the keyboard when you are ready.'];
+  if (status === 'waiting') return ['Wrong key — the lesson is waiting', correction?.message || 'Play the highlighted key to continue.'];
+  if (status === 'resuming') return ['Correct key', 'Continuing from the same note…'];
+  return ['Listening to your attempt', 'Play when each falling note reaches the keys.'];
+}
+
 export default function PianoLearnJourney({
   learningEnabled = true,
   mode,
@@ -139,6 +185,9 @@ export default function PianoLearnJourney({
   preparationStage,
   midi,
   onConnectMidi,
+  microphone,
+  onToggleMicrophone,
+  practiceCorrection,
   onListen,
   onStartAttempt,
   attemptStatus,
@@ -187,6 +236,8 @@ export default function PianoLearnJourney({
     && Number.isFinite(Number(challengeScore))
     ? Math.max(0, Math.min(100, Math.round(Number(challengeScore))))
     : null;
+  const attemptActive = ['preparing', 'running', 'paused', 'waiting', 'resuming'].includes(attemptStatus);
+  const [attemptHeadline, attemptDetail] = attemptMessage(attemptStatus, practiceCorrection);
 
   useEffect(() => {
     const songIdentity = song?.libraryId || song?.title;
@@ -346,8 +397,13 @@ export default function PianoLearnJourney({
                   </div>
                   {preparationStatus !== 'ready' && !['calibrating', 'loading'].includes(preparationStatus) && <button type="button" className="primary" onClick={onPrepare}>Prepare piano</button>}
                 </div>
-                {['preparing', 'running', 'paused'].includes(attemptStatus) ? (
-                  <div className="learn-attempt-live" role="status"><i /><span><strong>{attemptStatus === 'preparing' ? 'Getting your attempt ready' : attemptStatus === 'paused' ? 'Attempt paused' : 'Listening to your attempt'}</strong><small>Play when each falling note reaches the keys.</small></span></div>
+                <MicrophonePracticeSource
+                  microphone={microphone}
+                  onToggle={onToggleMicrophone}
+                  disabled={attemptActive}
+                />
+                {attemptActive ? (
+                  <div className={`learn-attempt-live ${attemptStatus === 'waiting' ? 'is-waiting' : ''} ${attemptStatus === 'resuming' ? 'is-correct' : ''}`} role="status"><i /><span><strong>{attemptHeadline}</strong><small>{attemptDetail}</small></span></div>
                 ) : (
                   <div className="learn-play-actions">
                     <button type="button" className="ghost" disabled={preparationStatus !== 'ready'} onClick={() => onListen(previewRange)}>Hear the example</button>
@@ -577,14 +633,20 @@ export default function PianoLearnJourney({
                 </div>
 
                 <div className="learn-input-source">
-                  <div><span>Playing input</span><strong>{midi?.status === 'connected' ? midi.name : 'Screen or computer keys'}</strong></div>
+                  <div><span>Playing input</span><strong>{midi?.status === 'connected' ? midi.name : microphone?.status === 'ready' ? 'Microphone + screen keys' : 'Screen or computer keys'}</strong></div>
                   {midi?.supported && midi.status !== 'connected' && <button type="button" className="ghost" onClick={onConnectMidi} disabled={midi.status === 'connecting'}>{midi.status === 'connecting' ? 'Connecting…' : 'Connect MIDI'}</button>}
                   {midi?.status === 'connected' && <span className="learn-connected-badge">Velocity ready</span>}
                 </div>
                 {midi?.error && <p className="learn-inline-error" role="alert">{midi.error}</p>}
 
-                {['preparing', 'running', 'paused'].includes(attemptStatus) ? (
-                  <div className="learn-attempt-live" role="status"><i /><span><strong>{attemptStatus === 'preparing' ? 'Getting your attempt ready' : attemptStatus === 'paused' ? 'Attempt paused' : 'Listening to your attempt'}</strong><small>{attemptStatus === 'preparing' ? 'The timer starts only when the piano is ready.' : attemptStatus === 'paused' ? 'Press play below the keyboard when you are ready.' : 'Play when each falling note reaches the keys.'}</small></span></div>
+                <MicrophonePracticeSource
+                  microphone={microphone}
+                  onToggle={onToggleMicrophone}
+                  disabled={attemptActive}
+                />
+
+                {attemptActive ? (
+                  <div className={`learn-attempt-live ${attemptStatus === 'waiting' ? 'is-waiting' : ''} ${attemptStatus === 'resuming' ? 'is-correct' : ''}`} role="status"><i /><span><strong>{attemptHeadline}</strong><small>{attemptDetail}</small></span></div>
                 ) : (
                   <div className="learn-play-actions">
                     <button type="button" className="ghost" disabled={preparationStatus !== 'ready'} onClick={() => onListen(activeRange)}>Hear example</button>

@@ -1,6 +1,7 @@
 export const LIVE_PRODUCT_FEATURES = Object.freeze({
   band: false,
   createMusic: false,
+  pianoLearning: true,
   instrumentLearning: false,
 });
 

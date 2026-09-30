@@ -22,7 +22,7 @@ async function main() {
   const args = argumentsFrom(process.argv.slice(2));
   const remoteInput = String(args['remote-input'] || '').trim();
   if ((!args.input && !remoteInput) || (args.input && remoteInput) || !args.output) {
-    throw new Error('Usage: (--input prepared.wav | --remote-input /runpod-volume/jobs/prepared.wav) --output raw.json [--checkpoint phase1-v002] [--instrument piano] [--constraints acoustic_piano,electric_piano] [--focused-constraints voice] [--endpoint-id id] [--volume-id id] [--replicas none] [--timeout-minutes 45]');
+    throw new Error('Usage: (--input prepared.wav | --remote-input /runpod-volume/jobs/prepared.wav) --output raw.json [--checkpoint phase1-v002] [--instrument piano] [--constraints acoustic_piano,electric_piano] [--focused-constraints voice] [--job-id unique-id] [--endpoint-id id] [--volume-id id] [--replicas none] [--timeout-minutes 45]');
   }
   if (remoteInput) {
     const segments = remoteInput.split('/');
@@ -52,6 +52,10 @@ async function main() {
   const replicas = String(args.replicas || '').trim().toLowerCase() === 'none'
     ? ''
     : process.env.RUNPOD_S3_REPLICAS;
+  const requestedJobId = String(args['job-id'] || '').trim();
+  if (requestedJobId && !/^[a-zA-Z0-9_-]{1,80}$/.test(requestedJobId)) {
+    throw new Error('--job-id may contain only letters, numbers, underscores, and hyphens (80 characters maximum)');
+  }
   const client = createRunpodServerlessClient({
     endpointId: args['endpoint-id'] || process.env.RUNPOD_SERVERLESS_ENDPOINT_ID || process.env.RUNPOD_ENDPOINT_ID,
     apiKey: process.env.RUNPOD_API_KEY,
@@ -114,7 +118,9 @@ async function main() {
   } else {
     result = await client.transcribe({
       job: {
-        id: `research-${Date.now()}`,
+        // Explicit IDs make concurrent research passes collision-safe and
+        // leave a human-readable object key in every replicated volume.
+        id: requestedJobId || `research-${process.pid}-${Date.now()}`,
         title: args.title || path.basename(inputPath, path.extname(inputPath)),
         instrument: args.instrument || 'piano',
       },

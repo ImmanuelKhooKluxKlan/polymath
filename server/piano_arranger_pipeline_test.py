@@ -78,7 +78,7 @@ class ProductionPianoPipelineTests(unittest.TestCase):
         self.assertFalse(diagnostics["blanketGlobalRegisterShiftEnabled"])
         self.assertEqual(output["notes"][0]["performanceGain"], 0.98)
         self.assertEqual(diagnostics["acousticHandBalance"]["rightNotesAdjusted"], 1)
-        self.assertEqual(output["arrangementProfile"], "polymath-pianella-v003")
+        self.assertEqual(output["arrangementProfile"], "polymath-pianella-v004")
 
 
 if __name__ == "__main__":

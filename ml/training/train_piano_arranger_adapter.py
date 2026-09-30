@@ -38,6 +38,7 @@ from piano_arranger_adapter import (  # noqa: E402
     arrangement_role,
     duration_feature_rows,
     instrument_family,
+    map_octave_to_range,
     normalize_source_notes,
     raw_feature_rows,
     selection_feature_rows,
@@ -302,12 +303,13 @@ def source_midi_band(midi: int) -> str:
 def build_register_model(
     pairs: list[dict[str, Any]],
     match_maps: dict[str, dict[int, dict[str, Any]]],
+    learned_style: dict[str, Any],
     *,
     fallback_shift_semitones: int,
     uncertain_shift_semitones: int,
     minimum_confidence: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Learn conservative octave choices from trusted, pitch-class matches.
+    """Learn conservative residual octave choices after role rendering.
 
     The model is deliberately a compact hierarchical table rather than a
     high-capacity network: our real-song corpus is still small.  Inference
@@ -337,17 +339,39 @@ def build_register_model(
                 target_midi = int(round(float(reference["midi"])))
             except (KeyError, TypeError, ValueError):
                 continue
-            difference = target_midi - int(source["midi"])
+            role = arrangement_role(source)
+            role_defaults = {
+                "melody": {"minimumMidi": 55, "maximumMidi": 88, "octaveShift": 0},
+                "bass": {"minimumMidi": 28, "maximumMidi": 55, "octaveShift": 0},
+                "harmony": {"minimumMidi": 45, "maximumMidi": 79, "octaveShift": 0},
+            }
+            config = {
+                **role_defaults[role],
+                **((learned_style.get("roles") or {}).get(role) or {}),
+            }
+            role_shift = int(
+                round(float(config.get("octaveShift", 0)) / 12.0) * 12
+            )
+            rendered_midi = map_octave_to_range(
+                int(source["midi"]) + role_shift,
+                int(config["minimumMidi"]),
+                int(config["maximumMidi"]),
+            )
+            difference = target_midi - rendered_midi
             if difference % 12 != 0:
                 rejected_non_octave += 1
                 continue
             shift = int(clamp(difference, REGISTER_SHIFT_VALUES[0], REGISTER_SHIFT_VALUES[-1]))
             shift = int(round(shift / 12.0) * 12)
             evidence_weight = pair_weight * (1.0 if match.get("exactPitch") else 0.65)
-            role = arrangement_role(source)
             family = instrument_family(str(source.get("instrument") or ""))
             band = source_midi_band(int(source["midi"]))
+            pitch_class = int(source["midi"]) % 12
             for key in (
+                f"{role}|{family}|midi-{int(source['midi']):03d}",
+                f"{role}|{family}|{band}|pc-{pitch_class:02d}",
+                f"{role}|{family}|pc-{pitch_class:02d}",
+                f"{role}|pc-{pitch_class:02d}",
                 f"{role}|{family}|{band}",
                 f"{role}|{family}",
                 role,
@@ -391,12 +415,14 @@ def build_register_model(
         )
     )
     model = {
-        "type": "hierarchical-categorical-octave-shift-v1",
+        "type": "hierarchical-categorical-octave-shift-v2",
         "shiftValuesSemitones": list(REGISTER_SHIFT_VALUES),
         "fallbackShiftSemitones": fallback,
         "uncertainShiftSemitones": uncertain,
         "minimumSpecificWeightedSupport": 18.0,
         "minimumRoleWeightedSupport": 36.0,
+        "minimumFineWeightedSupport": 2.0,
+        "minimumFineConfidence": 0.5,
         "minimumConfidence": round(clamp(minimum_confidence, 0.0, 1.0), 4),
         "groups": groups,
     }
@@ -1039,6 +1065,7 @@ def main() -> None:
         register_model, register_diagnostics = build_register_model(
             register_pairs,
             match_maps,
+            learned_style,
             fallback_shift_semitones=args.register_fallback_shift_semitones,
             uncertain_shift_semitones=args.register_uncertain_shift_semitones,
             minimum_confidence=args.register_minimum_confidence,

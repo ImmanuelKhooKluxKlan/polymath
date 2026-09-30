@@ -24,6 +24,8 @@ const PRODUCT_EVENT_NAMES = new Set([
   'transcription_failed',
   'transcription_feedback',
   'subscription_page_viewed',
+  'referral_link_opened',
+  'referral_code_applied',
   'checkout_started',
   'checkout_returned',
   'subscription_activated',
@@ -52,6 +54,7 @@ const PUBLIC_PRODUCT_EVENT_NAMES = new Set([
   'transcription_file_selected',
   'transcription_restored',
   'subscription_page_viewed',
+  'referral_link_opened',
   'checkout_returned',
 ]);
 
@@ -60,7 +63,7 @@ const SAFE_PROPERTY_NAMES = new Set([
   'freePreview', 'hand', 'inputMode', 'instrument', 'interval', 'level', 'noteCount',
   'outcome', 'page', 'performanceTier', 'plan', 'playbackMode', 'productId', 'qualityScore',
   'refunded', 'restored', 'score', 'signedIn', 'sizeBucket', 'sourceKind', 'tier',
-  'activationValueUsd', 'campaignId', 'campaignSlug', 'referralCode', 'qaScore', 'referrerType',
+  'activationValueUsd', 'campaignId', 'campaignSlug', 'referralCode', 'promotionCode', 'qaScore', 'referrerType',
 ]);
 
 function cleanIdentifier(value, maximum = 100) {
@@ -199,8 +202,37 @@ function campaignSummaryFromRows(rows = []) {
   ));
 }
 
+function referralSummaryFromRows(rows = []) {
+  const referrals = new Map();
+  for (const row of rows) {
+    const promotionCode = cleanText(row.promotionCode, 32).toUpperCase();
+    if (!promotionCode) continue;
+    if (!referrals.has(promotionCode)) referrals.set(promotionCode, {});
+    referrals.get(promotionCode)[row.eventName] = {
+      events: Number(row.events || 0),
+      actors: Number(row.actors || 0),
+    };
+  }
+  return [...referrals].map(([promotionCode, events]) => {
+    const visitors = events.referral_link_opened?.actors || 0;
+    const claims = events.referral_code_applied?.actors || 0;
+    const checkouts = events.checkout_started?.actors || 0;
+    const activations = events.subscription_activated?.actors || 0;
+    return {
+      promotionCode,
+      visitors,
+      claims,
+      checkouts,
+      activations,
+      claimFromVisitPercent: percent(claims, visitors),
+      checkoutFromVisitPercent: percent(checkouts, visitors),
+      activationFromVisitPercent: percent(activations, visitors),
+    };
+  }).sort((left, right) => right.visitors - left.visitors);
+}
+
 function summaryFromCounts({
-  counts = [], daily = [], feedback = [], campaignRows = [], days = 30,
+  counts = [], daily = [], feedback = [], campaignRows = [], referralRows = [], days = 30,
   returningActors = 0, signedActors = 0,
 } = {}) {
   const byName = new Map(counts.map((entry) => [entry.eventName, {
@@ -263,6 +295,7 @@ function summaryFromCounts({
       definition: 'Signed-in people active on at least two separate UTC days in this window.',
     },
     campaigns: campaignSummaryFromRows(campaignRows),
+    referrals: referralSummaryFromRows(referralRows),
     privacy: 'No source audio, filenames, song titles, messages, IP addresses, email addresses, or phone numbers are stored in product events.',
   };
 }
@@ -276,6 +309,7 @@ function summarizeProductEvents(events = [], days = 30) {
   const signedDays = new Map();
   const feedbackActors = new Map();
   const campaignGroups = new Map();
+  const referralGroups = new Map();
   for (const event of events) {
     const actor = actorFor(event);
     if (!actor) continue;
@@ -324,6 +358,21 @@ function summarizeProductEvents(events = [], days = 30) {
         group.activationValueUsd += Math.max(0, event.properties.activationValueUsd);
       }
     }
+    const promotionCode = cleanText(event.properties?.promotionCode, 32).toUpperCase();
+    if (promotionCode) {
+      const key = `${promotionCode}\u0000${event.eventName}`;
+      if (!referralGroups.has(key)) {
+        referralGroups.set(key, {
+          promotionCode,
+          eventName: event.eventName,
+          events: 0,
+          actors: new Set(),
+        });
+      }
+      const group = referralGroups.get(key);
+      group.events += 1;
+      group.actors.add(actor);
+    }
   }
   const mean = (values = []) => values.length
     ? values.reduce((sum, value) => sum + value, 0) / values.length
@@ -345,6 +394,10 @@ function summarizeProductEvents(events = [], days = 30) {
     averageScore: mean(group.scores),
     scoreCount: group.scores.length,
   }));
+  const referralRows = [...referralGroups.values()].map((group) => ({
+    ...group,
+    actors: group.actors.size,
+  }));
   return summaryFromCounts({
     counts,
     daily,
@@ -353,6 +406,7 @@ function summarizeProductEvents(events = [], days = 30) {
     returningActors,
     signedActors: signedDays.size,
     campaignRows,
+    referralRows,
   });
 }
 

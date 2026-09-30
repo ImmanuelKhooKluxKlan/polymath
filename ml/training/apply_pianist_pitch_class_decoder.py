@@ -264,6 +264,7 @@ def apply_decoder(
     add_threshold_override: float | None = None,
     remove_threshold_override: float | None = None,
     probabilities_override: dict[str, Any] | None = None,
+    skip_unmatched_cells: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     output = copy.deepcopy(candidate)
     payload_notes = output.get("notes")
@@ -297,14 +298,21 @@ def apply_decoder(
     attempted_additions = rejected_no_evidence = protected_last_note = 0
     protected_melody = protected_non_generated = protected_upstream_confidence = 0
     protected_register_evidence = 0
+    unmatched_cells = 0
     removals_by_pitch_class: dict[int, int] = {}
     additions_by_pitch_class: dict[int, int] = {}
 
     for cell_index, row in enumerate(rows):
         time = float(row.get("sourceTime", 0.0))
-        _group_index, group = find_candidate_group(
-            candidate_groups, time, used=used_groups
-        )
+        try:
+            _group_index, group = find_candidate_group(
+                candidate_groups, time, used=used_groups
+            )
+        except ValueError:
+            if not skip_unmatched_cells:
+                raise
+            unmatched_cells += 1
+            continue
         scores = probabilities[cell_index]
         current_pcs = {int(note["midi"]) % 12 for note in group}
         source_pcs = {int(value) % 12 for value in row.get("sourcePitchClasses") or []}
@@ -477,6 +485,8 @@ def apply_decoder(
         "songId": audit_song.get("id"),
         "cells": len(rows),
         "matchedCandidateGroups": len(used_groups),
+        "unmatchedAuditCells": unmatched_cells,
+        "skipUnmatchedCells": bool(skip_unmatched_cells),
         "addThreshold": add_threshold,
         "removeThreshold": remove_threshold,
         "registerStrategy": register_strategy,
@@ -542,6 +552,14 @@ def main() -> None:
     parser.add_argument("--remove-generated-only", action="store_true")
     parser.add_argument("--maximum-generated-probability-for-removal", type=float)
     parser.add_argument("--require-exact-source-midi-for-removal", action="store_true")
+    parser.add_argument(
+        "--skip-unmatched-cells",
+        action="store_true",
+        help=(
+            "Preserve a later-pipeline candidate when an older audit cell no longer "
+            "has a one-to-one onset group instead of aborting the whole experiment."
+        ),
+    )
     parser.add_argument("--minimum-midi", type=int, default=33)
     parser.add_argument("--maximum-midi", type=int, default=108)
     parser.add_argument(
@@ -585,6 +603,7 @@ def main() -> None:
         probabilities_override=(
             load_json(Path(args.scores).resolve()) if args.scores else None
         ),
+        skip_unmatched_cells=bool(args.skip_unmatched_cells),
     )
     output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)

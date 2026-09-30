@@ -1,0 +1,75 @@
+{
+  "schema": "polymath-multiview-texture-sources-v1",
+  "purpose": "Inference-only synchronized evidence views for whole-gesture pitch-class research.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "style",
+      "views": {
+        "fullMix": "C:/Users/admin/Documents/Polymath Training/phase-9-full-mix-holdout-2026-09-12/style/raw-original.json",
+        "vocals": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/source-separation/transcriptions/style-vocals-original-raw.json",
+        "backing": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/source-separation/transcriptions/style-no-vocals-original-raw.json"
+      }
+    },
+    {
+      "id": "the-way-i-loved-you",
+      "views": {
+        "fullMix": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/production-parity-sources/the-way-i-loved-you.json",
+        "vocals": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/primary-source-separation/transcriptions/the-way-i-loved-you-vocals-original.json",
+        "backing": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/primary-source-separation/transcriptions/the-way-i-loved-you-backing-original.json"
+      }
+    },
+    {
+      "id": "mean",
+      "views": {
+        "fullMix": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/production-parity-sources/mean.json",
+        "vocals": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/primary-source-separation/transcriptions/mean-vocals-original.json",
+        "backing": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/primary-source-separation/transcriptions/mean-backing-original.json"
+      }
+    },
+    {
+      "id": "you-need-to-calm-down",
+      "views": {
+        "fullMix": "C:/Users/admin/Documents/Polymath Training/phase-32-pianist-gesture-dynamics-2026-09-13/production-parity-sources/you-need-to-calm-down.json",
+        "vocals": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/primary-source-separation/transcriptions/you-need-to-calm-down-vocals-original.json",
+        "backing": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/primary-source-separation/transcriptions/you-need-to-calm-down-backing-original.json"
+      }
+    },
+    {
+      "id": "kiss-me",
+      "views": {
+        "vocals": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/kiss-vocals-phase46-v007-raw.json",
+        "backing": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/kiss-no-vocals-phase46-v007-raw.json"
+      }
+    },
+    {
+      "id": "back-to-december",
+      "views": {
+        "vocals": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/back-vocals-phase46-v007-raw.json",
+        "backing": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/back-no-vocals-phase46-v007-raw.json"
+      }
+    },
+    {
+      "id": "cruel-summer",
+      "views": {
+        "vocals": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/cruel-vocals-phase46-v007-raw.json",
+        "backing": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/cruel-no-vocals-phase46-v007-raw.json"
+      }
+    },
+    {
+      "id": "we-are-never-getting-back-together",
+      "views": {
+        "vocals": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-vocals-phase46-v007-raw.json",
+        "backing": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-no-vocals-phase46-v007-raw.json"
+      }
+    },
+    {
+      "id": "love-story",
+      "views": {
+        "fullMix": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/transcriptions/love-story-full-mix-phase46-v007.json",
+        "vocals": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/transcriptions/love-story-vocals-phase46-v007-raw.json",
+        "backing": "D:/Polymath Training/phase-48-love-story-separated-transfer-2026-09-17/transcriptions/love-story-no-vocals-phase46-v007-raw.json"
+      }
+    }
+  ]
+}

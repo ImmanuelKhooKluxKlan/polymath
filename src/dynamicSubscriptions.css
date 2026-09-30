@@ -10,6 +10,27 @@
   line-height: 1.35;
 }
 
+.subscription-promotion-card {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(190px, 0.8fr) auto;
+  align-items: end;
+  gap: 14px;
+  margin: 16px 0 22px;
+  padding: 16px;
+  border: 1px solid rgba(112, 91, 231, 0.3);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(92, 126, 230, 0.09), rgba(193, 82, 184, 0.08));
+}
+
+.subscription-promotion-card > div,
+.subscription-promotion-card .field {
+  display: grid;
+  gap: 4px;
+}
+
+.subscription-promotion-card small { color: var(--muted); }
+.subscription-price s { color: var(--muted); font-size: 0.9rem; }
+
 .custom-subscription-category {
   display: grid;
   gap: 24px;
@@ -44,6 +65,13 @@
 }
 
 @media (max-width: 760px) {
+  .subscription-promotion-card {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    gap: 9px;
+    padding: 12px;
+  }
+
   .subscription-audience {
     display: flex;
     gap: 8px;

@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-pianist-structural-root-cause-manifest-v1",
+  "purpose": "Register audit for the exact production-v004 WANEGBT candidate.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "we-are-never-getting-back-together",
+      "reference": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/aligned-training-labels.json",
+      "referenceAlreadyAligned": true,
+      "source": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-original-postprocessed-full.json",
+      "alignment": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "baseline": "D:/Polymath Training/phase-100-wane-systematic-refinement-2026-09-28/wane-current-production-v004.json",
+      "candidate": "D:/Polymath Training/phase-100-wane-systematic-refinement-2026-09-28/wane-current-production-v004.json",
+      "textureCandidate": "D:/Polymath Training/phase-100-wane-systematic-refinement-2026-09-28/wane-current-production-v004.json",
+      "candidateEndSeconds": 194.090688
+    }
+  ]
+}

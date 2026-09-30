@@ -64,6 +64,43 @@ test('free, Chill, Musician, and administrator translation rules are exact', () 
   assert.equal(subscriptionRules.hasMusicianAccess(administrator), true);
 });
 
+test('administrator policy changes enforce shared, audio, PDF, and ability limits', () => {
+  const now = new Date('2026-02-28T12:00:00.000Z');
+  const db = {
+    subscriptionTierPolicies: [{
+      tier: 'chill',
+      translationsPerMonth: 4,
+      audioTranslationsPerMonth: 2,
+      pdfTranslationsPerMonth: 3,
+      entitlements: ['learn'],
+    }],
+  };
+  const member = {
+    email: 'policy-member@example.test',
+    pro: true,
+    proStatus: 'ACTIVE',
+    subscriptionTier: 'chill',
+    subscriptionInterval: 'MONTH',
+    subscriptionStartedAt: '2026-02-01T00:00:00.000Z',
+  };
+
+  let allowance = subscriptionRules.translationAllowance(member, now, db);
+  assert.equal(allowance.limit, 4);
+  assert.equal(allowance.audio.limit, 2);
+  assert.equal(allowance.pdf.limit, 3);
+  assert.deepEqual(subscriptionRules.userEntitlements(member, db), ['learn']);
+  assert.equal(subscriptionRules.readySheetAllowance(member, now, db).unlimited, false);
+
+  assert.equal(subscriptionRules.deductTranslationAllowance(member, 'audio', db, now), 'included_audio');
+  assert.equal(subscriptionRules.deductTranslationAllowance(member, 'audio', db, now), 'included_audio');
+  assert.equal(subscriptionRules.deductTranslationAllowance(member, 'audio', db, now), null);
+  assert.equal(subscriptionRules.deductTranslationAllowance(member, 'pdf', db, now), 'included_pdf');
+  allowance = subscriptionRules.translationAllowance(member, now, db);
+  assert.equal(allowance.remaining, 1);
+  assert.equal(allowance.audio.remaining, 0);
+  assert.equal(allowance.pdf.remaining, 1);
+});
+
 test('Chill to Musician activation resets day one once and is webhook-idempotent', () => {
   const user = {
     id: 'user-1',
@@ -169,10 +206,11 @@ test('promotion codes and Friend IDs can lock a signup subscription discount', (
   assert.equal(codeResult.error, '');
   subscriptionRules.applySignupLuckyCode(db, user, codeResult.claim);
   assert.deepEqual(subscriptionRules.subscriptionPriceForUser(
-    subscriptionRules.products['polymath-musician-monthly'], user,
+    db, subscriptionRules.products['polymath-musician-monthly'], user,
   ), {
     price: '7.50', discountPercent: 50, luckyCode: 'JAN50', promotionId: 'promo-jan',
-    affiliateUserId: null, affiliateRewardMcoins: 0,
+    discountMcoins: 7.49, affiliateUserId: null, affiliateRewardMode: 'fixed',
+    affiliateRewardValue: 0, affiliateRewardMcoins: 0,
   });
 
   const referred = { id: 'new-2', mcoins: 0 };
@@ -183,6 +221,31 @@ test('promotion codes and Friend IDs can lock a signup subscription discount', (
   assert.equal(referred.luckyCodeClaim.friendId, 'user_abc12');
   assert.equal(referred.luckyCodeClaim.value, 50);
   assert.equal(db.promotionRedemptions.length, 2);
+});
+
+test('fixed subscription savings and percentage commissions use the discounted checkout price', () => {
+  const influencer = { id: 'creator-1', friendId: 'user_ab123' };
+  const buyer = { id: 'buyer-1', mcoins: 0 };
+  const promotion = {
+    id: 'promo-fixed', code: 'SAVE5', name: 'Save five', kind: 'subscription_fixed',
+    value: 5, active: true, maxRedemptions: 0, perUserLimit: 1, minimumAccountAgeDays: 0,
+    affiliateUserId: influencer.id, affiliateRewardMode: 'percent', affiliateRewardValue: 10,
+    createdAt: '2026-01-03T00:00:00.000Z',
+  };
+  const db = {
+    users: [influencer, buyer], institutions: [], institutionMemberships: [],
+    promotions: [promotion], promotionRedemptions: [], ledger: [],
+  };
+  const result = subscriptionRules.resolveSignupLuckyCode(db, 'save5');
+  assert.equal(result.error, '');
+  subscriptionRules.applySignupLuckyCode(db, buyer, result.claim);
+  assert.deepEqual(subscriptionRules.subscriptionPriceForUser(
+    db, subscriptionRules.products['polymath-chill-monthly'], buyer,
+  ), {
+    price: '2.99', discountPercent: 0, discountMcoins: 5, luckyCode: 'SAVE5',
+    promotionId: 'promo-fixed', affiliateUserId: 'creator-1', affiliateRewardMode: 'percent',
+    affiliateRewardValue: 10, affiliateRewardMcoins: 0.3,
+  });
 });
 
 test('ready-sheet uploads include two monthly attempts, then cost 0.5 Mcoin, while paid plans are unlimited', () => {

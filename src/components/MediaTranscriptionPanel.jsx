@@ -78,7 +78,8 @@ export default function MediaTranscriptionPanel({
   const transcriptionUnavailable = capability?.enabled === false
     || Boolean(capability?.adminOnly && !user?.admin);
   const allowance = user?.translationAllowance;
-  const remaining = allowance?.unlimited ? null : Math.max(0, Number(allowance?.remaining || 0));
+  const audioAllowance = allowance?.audio || allowance;
+  const remaining = allowance?.unlimited ? null : Math.max(0, Number(audioAllowance?.remaining || 0));
   const paymentMethod = user?.admin ? 'admin' : remaining > 0 ? 'allowance' : 'mcoins';
   const overageCost = Number(allowance?.overageCostMcoins ?? (user?.pro ? 0.5 : 2));
   const insufficientMcoins = paymentMethod === 'mcoins'

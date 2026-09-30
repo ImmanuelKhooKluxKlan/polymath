@@ -32,6 +32,7 @@ function usd(value) {
 export default function SubscriptionCatalogAdmin() {
   const [catalog, setCatalog] = useState({ categories: [], plans: [], corePlans: [], entitlementOptions: [] });
   const [corePriceDrafts, setCorePriceDrafts] = useState({});
+  const [corePolicyDrafts, setCorePolicyDrafts] = useState({});
   const [view, setView] = useState('plans');
   const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY);
   const [planForm, setPlanForm] = useState(EMPTY_PLAN);
@@ -45,6 +46,12 @@ export default function SubscriptionCatalogAdmin() {
       price: plan.price,
       paypalPlanId: plan.paypalPlanId || '',
       upgradePaypalPlanId: plan.upgradePaypalPlanId || '',
+    }])));
+    setCorePolicyDrafts(Object.fromEntries((data.corePolicies || []).map((policy) => [policy.tier, {
+      translationsPerMonth: policy.translationsPerMonth,
+      audioTranslationsPerMonth: policy.audioTranslationsPerMonth,
+      pdfTranslationsPerMonth: policy.pdfTranslationsPerMonth,
+      entitlements: policy.entitlements || [],
     }])));
     setPlanForm((current) => ({
       ...current,
@@ -60,6 +67,58 @@ export default function SubscriptionCatalogAdmin() {
       ...current,
       [productId]: { ...current[productId], [field]: value },
     }));
+  }
+
+  function updateCorePolicyDraft(tier, field, value) {
+    setCorePolicyDrafts((current) => {
+      const next = { ...current[tier], [field]: value };
+      if (field === 'translationsPerMonth' && value !== '') {
+        const sharedLimit = Math.max(0, Number(value) || 0);
+        next.audioTranslationsPerMonth = Math.min(Number(next.audioTranslationsPerMonth) || 0, sharedLimit);
+        next.pdfTranslationsPerMonth = Math.min(Number(next.pdfTranslationsPerMonth) || 0, sharedLimit);
+      }
+      return { ...current, [tier]: next };
+    });
+  }
+
+  function toggleCoreEntitlement(tier, key) {
+    setCorePolicyDrafts((current) => {
+      const draft = current[tier] || { entitlements: [] };
+      const entitlements = draft.entitlements || [];
+      return {
+        ...current,
+        [tier]: {
+          ...draft,
+          entitlements: entitlements.includes(key)
+            ? entitlements.filter((item) => item !== key)
+            : [...entitlements, key],
+        },
+      };
+    });
+  }
+
+  async function saveCorePolicy(tier) {
+    const draft = corePolicyDrafts[tier];
+    if (!draft) return;
+    setBusy(true);
+    setStatus(`Saving ${tier === 'musician' ? 'Musician' : 'Chill'} abilities...`);
+    try {
+      const data = await apiRequest(`/api/admin/subscription-policies/${encodeURIComponent(tier)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          translationsPerMonth: Number(draft.translationsPerMonth),
+          audioTranslationsPerMonth: Number(draft.audioTranslationsPerMonth),
+          pdfTranslationsPerMonth: Number(draft.pdfTranslationsPerMonth),
+          entitlements: draft.entitlements || [],
+        }),
+      });
+      await loadCatalog();
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveCorePrice(plan) {
@@ -226,6 +285,38 @@ export default function SubscriptionCatalogAdmin() {
 
       {view === 'plans' && (
         <>
+          <section className='catalog-core-pricing catalog-core-policies'>
+            <header>
+              <div><p className='eyebrow'>Access rules</p><h3>Plan limits and abilities</h3></div>
+              <p>These rules are enforced by the server for active and future Chill or Musician accounts. Administrators remain unlimited.</p>
+            </header>
+            <div className='catalog-policy-grid'>
+              {(catalog.corePolicies || []).map((policy) => {
+                const draft = corePolicyDrafts[policy.tier] || policy;
+                const label = policy.tier === 'musician' ? 'Musician' : 'Chill';
+                return (
+                  <article key={policy.tier}>
+                    <header>
+                      <div><strong>{label}</strong><span>Applies to monthly and yearly members</span></div>
+                      <b>Server enforced</b>
+                    </header>
+                    <div className='catalog-limit-grid'>
+                      <label className='field'>Shared translations / month<input type='number' min='0' max='100000' step='1' value={draft.translationsPerMonth ?? 0} onChange={(event) => updateCorePolicyDraft(policy.tier, 'translationsPerMonth', event.target.value)} /><small>Maximum total across audio and PDF.</small></label>
+                      <label className='field'>MP3, audio or video max<input type='number' min='0' max={draft.translationsPerMonth ?? 0} step='1' value={draft.audioTranslationsPerMonth ?? 0} onChange={(event) => updateCorePolicyDraft(policy.tier, 'audioTranslationsPerMonth', event.target.value)} /></label>
+                      <label className='field'>PDF max<input type='number' min='0' max={draft.translationsPerMonth ?? 0} step='1' value={draft.pdfTranslationsPerMonth ?? 0} onChange={(event) => updateCorePolicyDraft(policy.tier, 'pdfTranslationsPerMonth', event.target.value)} /></label>
+                    </div>
+                    <fieldset className='catalog-entitlements catalog-core-entitlements'>
+                      <legend>Abilities</legend>
+                      <div>{catalog.entitlementOptions.map((option) => <label key={option.key}><input type='checkbox' checked={(draft.entitlements || []).includes(option.key)} onChange={() => toggleCoreEntitlement(policy.tier, option.key)} /><span>{option.label}</span><code>{option.key}</code></label>)}</div>
+                    </fieldset>
+                    <button type='button' className='primary' disabled={busy} onClick={() => saveCorePolicy(policy.tier)}>Save {label} rules</button>
+                  </article>
+                );
+              })}
+            </div>
+            <div className='catalog-safety-note'><strong>Changes are immediate.</strong><span>Reducing a limit affects the remaining allowance for active members. It does not change their PayPal billing price.</span></div>
+          </section>
+
           <section className='catalog-core-pricing'>
             <header>
               <div><p className='eyebrow'>Live prices</p><h3>Built-in subscriptions</h3></div>

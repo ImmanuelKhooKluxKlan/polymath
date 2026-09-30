@@ -2,7 +2,13 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { affiliateRewardStats, applyAffiliateReward } = require('./affiliateRewards');
+const { affiliateRewardQuote, affiliateRewardStats, applyAffiliateReward } = require('./affiliateRewards');
+
+test('affiliate quote supports a percentage of the real discounted checkout price', () => {
+  assert.equal(affiliateRewardQuote({ mode: 'percent', value: 10, checkoutPrice: 7.99 }), 0.8);
+  assert.equal(affiliateRewardQuote({ mode: 'fixed', value: 1.25, checkoutPrice: 7.99 }), 1.25);
+  assert.equal(affiliateRewardQuote({ mode: 'percent', value: 500, checkoutPrice: 10 }), 10);
+});
 
 function fixture() {
   return {

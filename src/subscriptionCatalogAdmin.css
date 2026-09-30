@@ -29,6 +29,17 @@
 .catalog-core-grid > article > header span { color: var(--muted); font-size: .67rem; text-transform: capitalize; }
 .catalog-core-grid > article > header b { padding: 4px 7px; border-radius: 999px; color: #e6c266; background: rgba(226,179,72,.1); font-size: .58rem; text-transform: uppercase; }
 .catalog-core-grid .primary { width: 100%; }
+.catalog-policy-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.catalog-policy-grid > article { display: grid; align-content: start; gap: 13px; min-width: 0; padding: 16px; border: 1px solid rgba(150,140,220,.18); border-radius: 16px; background: rgba(255,255,255,.045); }
+.catalog-policy-grid > article > header { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.catalog-policy-grid > article > header div { display: grid; gap: 2px; min-width: 0; }
+.catalog-policy-grid > article > header span { color: var(--muted); font-size: .67rem; }
+.catalog-policy-grid > article > header b { padding: 4px 7px; border-radius: 999px; color: #8ff0cc; background: rgba(38,170,126,.14); font-size: .58rem; text-transform: uppercase; }
+.catalog-limit-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.catalog-limit-grid .field:first-child { grid-column: 1 / -1; }
+.catalog-core-entitlements { padding: 12px; }
+.catalog-core-entitlements > div { grid-template-columns: 1fr; max-height: 260px; overflow: auto; }
+.catalog-policy-grid .primary { width: 100%; }
 .catalog-plan-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 11px; }
 .catalog-plan-grid > article { display: grid; align-content: start; gap: 13px; min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.05); }
 .catalog-plan-grid > article.archived { opacity: .65; }
@@ -58,12 +69,14 @@
 @media (max-width: 940px) {
   .catalog-admin-layout { grid-template-columns: 1fr; }
   .catalog-core-grid { grid-template-columns: 1fr; }
+  .catalog-policy-grid { grid-template-columns: 1fr; }
   .catalog-plan-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 620px) {
   .catalog-admin-heading { align-items: stretch; flex-direction: column; }
   .catalog-admin-tabs { display: grid; grid-template-columns: 1fr 1fr; }
-  .catalog-two-fields, .catalog-form-grid, .catalog-entitlements > div, .catalog-plan-grid { grid-template-columns: 1fr; }
+  .catalog-two-fields, .catalog-form-grid, .catalog-limit-grid, .catalog-entitlements > div, .catalog-plan-grid { grid-template-columns: 1fr; }
+  .catalog-limit-grid .field:first-child { grid-column: auto; }
   .catalog-list article { grid-template-columns: minmax(0,1fr) auto; }
   .catalog-list article button { grid-column: 1 / -1; width: 100%; }
   .catalog-editor > header { align-items: stretch; flex-direction: column; }

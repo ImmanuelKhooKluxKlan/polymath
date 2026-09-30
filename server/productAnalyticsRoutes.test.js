@@ -121,4 +121,25 @@ test('product events accept guests while aggregate evidence remains admin-only',
   assert.equal(summary.data.stages[0].actors, 1);
   assert.equal(summary.data.transcription.playablePercent, 100);
   assert.match(summary.data.privacy, /No source audio/);
+  assert.equal(summary.data.marketingAutopilot.experiments.length, 2);
+  assert.equal(summary.data.marketingAutopilot.budget.automaticSpendUsd, 0);
+
+  const savedBudget = await api('/api/admin/marketing-autopilot', {
+    method: 'PATCH',
+    token: registration.data.token,
+    body: { budgetUsd: 425 },
+  });
+  assert.equal(savedBudget.status, 200);
+  assert.equal(savedBudget.data.budgetUsd, 425);
+
+  const invalidBudget = await api('/api/admin/marketing-autopilot', {
+    method: 'PATCH',
+    token: registration.data.token,
+    body: { budgetUsd: -1 },
+  });
+  assert.equal(invalidBudget.status, 400);
+
+  const refreshedSummary = await api('/api/admin/product-analytics?days=7', { token: registration.data.token });
+  assert.equal(refreshedSummary.data.marketingAutopilot.budget.ceilingUsd, 425);
+  assert.equal(refreshedSummary.data.marketingAutopilot.budget.automaticSpendUsd, 0);
 });

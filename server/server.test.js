@@ -449,6 +449,55 @@ test('admin policies, vouchers, password reset, and hashed sessions persist', as
   const adminToken = adminRegistration.data.token;
   const adminFriendId = adminRegistration.data.user.friend_id;
 
+  const subscriptionCatalog = await api('/api/admin/subscription-catalog', { token: adminToken });
+  assert.equal(subscriptionCatalog.status, 200);
+  assert.equal(subscriptionCatalog.data.corePolicies.length, 2);
+  assert.equal(subscriptionCatalog.data.corePolicies.find((item) => item.tier === 'chill').translationsPerMonth, 10);
+
+  const rejectedSubscriptionPolicy = await api('/api/admin/subscription-policies/chill', {
+    method: 'PATCH',
+    token: adminToken,
+    body: {
+      translationsPerMonth: 2,
+      audioTranslationsPerMonth: 3,
+      pdfTranslationsPerMonth: 1,
+      entitlements: [],
+    },
+  });
+  assert.equal(rejectedSubscriptionPolicy.status, 400);
+
+  const updatedSubscriptionPolicy = await api('/api/admin/subscription-policies/chill', {
+    method: 'PATCH',
+    token: adminToken,
+    body: {
+      translationsPerMonth: 6,
+      audioTranslationsPerMonth: 4,
+      pdfTranslationsPerMonth: 2,
+      entitlements: ['learn'],
+    },
+  });
+  assert.equal(updatedSubscriptionPolicy.status, 200);
+  assert.equal(updatedSubscriptionPolicy.data.policy.audioTranslationsPerMonth, 4);
+  assert.deepEqual(updatedSubscriptionPolicy.data.policy.entitlements, ['learn']);
+  const updatedPublicCatalog = await api('/api/catalog');
+  const updatedChill = updatedPublicCatalog.data.products.find((item) => item.id === 'polymath-chill-monthly');
+  assert.equal(updatedChill.translations, 6);
+  assert.equal(updatedChill.audioTranslations, 4);
+  assert.equal(updatedChill.pdfTranslations, 2);
+  assert.deepEqual(updatedChill.entitlements, ['learn']);
+
+  const restoredSubscriptionPolicy = await api('/api/admin/subscription-policies/chill', {
+    method: 'PATCH',
+    token: adminToken,
+    body: {
+      translationsPerMonth: 10,
+      audioTranslationsPerMonth: 10,
+      pdfTranslationsPerMonth: 10,
+      entitlements: ['ready_sheets.unlimited'],
+    },
+  });
+  assert.equal(restoredSubscriptionPolicy.status, 200);
+
   const featuredSongPayload = {
     title: 'Admin Library Song',
     composer: 'Test Composer',

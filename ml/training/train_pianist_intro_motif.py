@@ -201,6 +201,43 @@ def infer_grid(
     return best
 
 
+def infer_slot_timing_offsets(
+    groups: list[list[dict[str, Any]]],
+    *,
+    period: int,
+    cycles: int,
+    subdivisions: int,
+    attacked_slots: list[int],
+) -> list[float]:
+    """Learn the pianist's within-cycle push/pull without memorising onsets.
+
+    Each value is a median offset in pulse units for one attacked grid slot.
+    Cycle starts and durations are normalised before measurement, so the
+    result captures repeatable microtiming rather than the song's absolute
+    timeline or tempo map.
+    """
+
+    if len(attacked_slots) != period:
+        raise ValueError("Every motif gesture requires one attacked grid slot")
+    offsets: list[float] = []
+    for gesture_offset, grid_slot in enumerate(attacked_slots):
+        observed: list[float] = []
+        for cycle in range(cycles):
+            start_index = cycle * period
+            next_start_index = (cycle + 1) * period
+            if next_start_index >= len(groups):
+                break
+            start = float(groups[start_index][0]["time"])
+            end = float(groups[next_start_index][0]["time"])
+            local_pulse = (end - start) / max(1, subdivisions)
+            if local_pulse <= 0:
+                continue
+            onset = float(groups[start_index + gesture_offset][0]["time"])
+            observed.append((onset - start) / local_pulse - grid_slot)
+        offsets.append(rounded(median(observed)) if observed else 0.0)
+    return offsets
+
+
 def note_duration(note: dict[str, Any]) -> float:
     return max(0.03, finite(note.get("scoreDuration", note.get("duration")), 0.2))
 
@@ -599,6 +636,33 @@ def source_cycle_transition_anchors(
     return anchors
 
 
+def cycle_anchor_blend(
+    application: dict[str, Any],
+    *,
+    cycle: int,
+    planned_cycles: int,
+    fallback: float,
+) -> float:
+    """Return a bounded source-anchor blend with optional boundary tapering.
+
+    Harmonic transitions are strongest in the middle of an instrumental
+    phrase.  At either boundary they have only one-sided context and are more
+    likely to be a sustain fragment.  A sine envelope lets the fixed clock
+    contribute more at those boundaries while preserving source rubato in the
+    centre.  Profiles without the envelope retain the original global blend.
+    """
+
+    envelope = application.get("sourceCycleAnchorEnvelope") or {}
+    if not bool(envelope.get("enabled")) or planned_cycles <= 1:
+        return max(0.0, min(1.0, fallback))
+    edge = max(0.0, min(1.0, float(envelope.get("edgeBlend", fallback))))
+    peak = max(0.0, min(1.0, float(envelope.get("peakBlend", fallback))))
+    power = max(0.05, float(envelope.get("power", 1.0)))
+    position = cycle / max(1, planned_cycles - 1)
+    shape = max(0.0, math.sin(math.pi * position)) ** power
+    return max(0.0, min(1.0, edge + (peak - edge) * shape))
+
+
 def generated_note(
     *,
     midi: int,
@@ -718,12 +782,33 @@ def apply_intro_motif(
         if cadence_enabled
         else None
     )
+    attacked_slots = [int(value) for value in profile["clock"]["attackedSlots"]]
+    timing_offsets = [
+        float(value)
+        for value in profile["clock"].get("attackedSlotOffsetsPulses", [])
+    ]
+    if timing_offsets and len(timing_offsets) != len(attacked_slots):
+        raise ValueError(
+            "attackedSlotOffsetsPulses must match the attackedSlots length"
+        )
+    timing_offset_by_slot = {
+        slot: timing_offsets[index] if timing_offsets else 0.0
+        for index, slot in enumerate(attacked_slots)
+    }
+    applied_anchor_blends: list[float] = []
     while start + cycles * cycle_seconds < cutoff:
         fixed_cycle_start = start + cycles * cycle_seconds
         source_cycle_start = source_anchors[cycles]
+        local_anchor_blend = cycle_anchor_blend(
+            application,
+            cycle=cycles,
+            planned_cycles=planned_cycles,
+            fallback=source_anchor_blend,
+        )
+        applied_anchor_blends.append(local_anchor_blend)
         cycle_start = (
-            fixed_cycle_start * (1.0 - source_anchor_blend)
-            + source_cycle_start * source_anchor_blend
+            fixed_cycle_start * (1.0 - local_anchor_blend)
+            + source_cycle_start * local_anchor_blend
         )
         if previous_cycle_start is not None:
             earliest_cycle_start = previous_cycle_start + minimum_cycle_separation
@@ -748,14 +833,16 @@ def apply_intro_motif(
             stable_pitch_classes=stable_source_pitch_classes,
         )
         moving_output = moving_source + moving_shift
-        for grid_slot, template in zip(profile["clock"]["attackedSlots"], profile["templates"]):
+        for grid_slot, template in zip(attacked_slots, profile["templates"]):
             if (
                 cadence_enabled
                 and cycles == cadence_cycle
                 and int(grid_slot) >= cadence_replace_from_slot
             ):
                 continue
-            time = cycle_start + int(grid_slot) * local_pulse
+            time = cycle_start + (
+                int(grid_slot) + timing_offset_by_slot[int(grid_slot)]
+            ) * local_pulse
             if time >= cutoff:
                 continue
             # Source transcription velocities describe the mixed recording,
@@ -881,7 +968,14 @@ def apply_intro_motif(
         "outputBassMidi": bass_midi,
         "movingSourceOctaveShift": moving_shift,
         "sourceCycleAnchorBlend": rounded(source_anchor_blend),
+        "sourceCycleAnchorEnvelope": application.get("sourceCycleAnchorEnvelope"),
+        "appliedSourceCycleAnchorBlends": [
+            rounded(value) for value in applied_anchor_blends
+        ],
         "sourceCycleTempoBlend": rounded(source_tempo_blend),
+        "attackedSlotOffsetsPulses": [
+            rounded(timing_offset_by_slot[slot]) for slot in attacked_slots
+        ],
         "minimumCycleSeparationRatio": rounded(minimum_cycle_separation_ratio),
         "minimumCycleSeparationSeconds": rounded(minimum_cycle_separation),
         "adjustedCycleBoundaries": adjusted_cycle_boundaries,
@@ -1012,11 +1106,34 @@ def main() -> None:
     parser.add_argument("--report", required=True)
     parser.add_argument("--profile-id", required=True)
     parser.add_argument("--source-cycle-anchor-blend", type=float, default=0.0)
+    parser.add_argument("--source-cycle-anchor-edge-blend", type=float)
+    parser.add_argument("--source-cycle-anchor-peak-blend", type=float)
+    parser.add_argument(
+        "--source-cycle-anchor-envelope-power", type=float, default=1.0
+    )
     parser.add_argument("--source-cycle-tempo-blend", type=float, default=0.0)
     parser.add_argument("--minimum-cycle-separation-ratio", type=float, default=0.95)
     args = parser.parse_args()
     if not 0.0 <= args.source_cycle_anchor_blend <= 1.0:
         parser.error("--source-cycle-anchor-blend must be between 0 and 1")
+    envelope_values = (
+        args.source_cycle_anchor_edge_blend,
+        args.source_cycle_anchor_peak_blend,
+    )
+    if any(value is not None for value in envelope_values) and not all(
+        value is not None for value in envelope_values
+    ):
+        parser.error(
+            "--source-cycle-anchor-edge-blend and "
+            "--source-cycle-anchor-peak-blend must be supplied together"
+        )
+    if any(
+        value is not None and not 0.0 <= value <= 1.0
+        for value in envelope_values
+    ):
+        parser.error("source-cycle anchor envelope blends must be between 0 and 1")
+    if args.source_cycle_anchor_envelope_power <= 0:
+        parser.error("--source-cycle-anchor-envelope-power must be positive")
     if not 0.0 <= args.source_cycle_tempo_blend <= 1.0:
         parser.error("--source-cycle-tempo-blend must be between 0 and 1")
     if not 0.0 <= args.minimum_cycle_separation_ratio <= 1.0:
@@ -1042,6 +1159,13 @@ def main() -> None:
         period=int(motif["periodGestures"]),
         cycles=int(motif["cycles"]),
         pulse_seconds=float(grid["pulseSeconds"]),
+    )
+    slot_timing_offsets = infer_slot_timing_offsets(
+        reference,
+        period=int(motif["periodGestures"]),
+        cycles=int(motif["cycles"]),
+        subdivisions=int(grid["subdivisions"]),
+        attacked_slots=[int(value) for value in grid["slots"]],
     )
     source = json.loads(Path(row["source"]).read_text(encoding="utf-8-sig"))
     register_application = infer_intro_register_application(
@@ -1072,6 +1196,7 @@ def main() -> None:
         "clock": {
             "subdivisions": int(grid["subdivisions"]),
             "attackedSlots": list(grid["slots"]),
+            "attackedSlotOffsetsPulses": slot_timing_offsets,
             "cycleDurationSeconds": rounded(grid["cycleDurationSeconds"]),
             "referencePulseSeconds": rounded(grid["pulseSeconds"]),
             "cyclePatternAgreement": rounded(grid["cyclePatternAgreement"]),
@@ -1084,6 +1209,16 @@ def main() -> None:
             "scope": "pre-vocal-intro-only",
             **register_application,
             "sourceCycleAnchorBlend": args.source_cycle_anchor_blend,
+            "sourceCycleAnchorEnvelope": (
+                {
+                    "enabled": True,
+                    "edgeBlend": args.source_cycle_anchor_edge_blend,
+                    "peakBlend": args.source_cycle_anchor_peak_blend,
+                    "power": args.source_cycle_anchor_envelope_power,
+                }
+                if args.source_cycle_anchor_edge_blend is not None
+                else {"enabled": False}
+            ),
             "sourceCycleTempoBlend": args.source_cycle_tempo_blend,
             "minimumCycleSeparationRatio": args.minimum_cycle_separation_ratio,
             "targetReadAtInference": False,

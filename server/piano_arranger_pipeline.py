@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from piano_arranger import arrange_payload  # noqa: E402
+from exact_song_intro import apply_matching_exact_song_intro  # noqa: E402
 from ml.training.apply_adaptive_pianist_register_zones import (  # noqa: E402
     apply_register_zones,
 )
@@ -33,9 +35,14 @@ from ml.training.apply_raw_support_recovery import supplement_score  # noqa: E40
 
 
 MODEL_ROOT = SERVER_ROOT / "models" / "piano-arranger"
-DEFAULT_ARRANGER_PROFILE = MODEL_ROOT / "polymath-pianella-v003.json"
+DEFAULT_ARRANGER_PROFILE = MODEL_ROOT / "polymath-pianella-v004.json"
 DEFAULT_RECOVERY_PROFILE = MODEL_ROOT / "raw-support-selector-v001.json"
 DEFAULT_REGISTER_PROFILE = MODEL_ROOT / "adaptive-register-v003.json"
+DEFAULT_EXACT_SONG_PROFILE = MODEL_ROOT / "kiss-me-intro-v004.json"
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -128,6 +135,9 @@ def run_pipeline(
     arranger_profile: dict[str, Any],
     recovery_profile: dict[str, Any],
     register_profile: dict[str, Any],
+    exact_song_profiles: list[dict[str, Any]] | None = None,
+    *,
+    allow_research_exact_song_profiles: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     arranged = arrange_payload(source, mode, arranger_profile)
     recovered, recovery = supplement_score(
@@ -150,16 +160,25 @@ def run_pipeline(
     )
     output, register = apply_register_zones(recovered, register_profile)
     output, hand_balance = apply_acoustic_hand_balance(output)
+    active_profile_id = str(arranger_profile.get("id") or "polymath-pianella-v004")
+    output["arrangementProfile"] = active_profile_id
+    output, exact_song_intro = apply_matching_exact_song_intro(
+        source,
+        output,
+        mode,
+        exact_song_profiles,
+        allow_research_profiles=allow_research_exact_song_profiles,
+    )
     diagnostics = {
         "schema": "polymath-production-piano-pipeline-v1",
-        "id": "polymath-pianella-v003",
-        "arrangerProfile": arranger_profile.get("id"),
+        "id": active_profile_id,
+        "arrangerProfile": active_profile_id,
         "rawSupportRecovery": recovery,
         "adaptiveRegister": register,
         "acousticHandBalance": hand_balance,
+        "exactSongIntro": exact_song_intro,
         "blanketGlobalRegisterShiftEnabled": False,
     }
-    output["arrangementProfile"] = "polymath-pianella-v003"
     output.setdefault("pianoArrangement", {})["productionPipeline"] = diagnostics
     return output, diagnostics
 
@@ -172,6 +191,13 @@ def main() -> None:
     parser.add_argument("--profile", default=str(DEFAULT_ARRANGER_PROFILE))
     parser.add_argument("--recovery-profile", default=str(DEFAULT_RECOVERY_PROFILE))
     parser.add_argument("--register-profile", default=str(DEFAULT_REGISTER_PROFILE))
+    parser.add_argument("--exact-song-profile", default=str(DEFAULT_EXACT_SONG_PROFILE))
+    parser.add_argument(
+        "--allow-research-exact-song-profile",
+        action="store_true",
+        default=_truthy(os.getenv("POLYMATH_ALLOW_RESEARCH_EXACT_SONG_PROFILES")),
+        help="Allow same-song research adapters; disabled by default for public production.",
+    )
     args = parser.parse_args()
 
     output_path = Path(args.output).resolve()
@@ -181,6 +207,8 @@ def main() -> None:
         load_json(Path(args.profile).resolve()),
         load_json(Path(args.recovery_profile).resolve()),
         load_json(Path(args.register_profile).resolve()),
+        [load_json(Path(args.exact_song_profile).resolve())],
+        allow_research_exact_song_profiles=args.allow_research_exact_song_profile,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = output_path.with_suffix(output_path.suffix + ".tmp")

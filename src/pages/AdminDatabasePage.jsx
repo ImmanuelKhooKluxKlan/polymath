@@ -69,7 +69,7 @@ function loadPhoneReviews() {
 const EMPTY_PROMOTION = {
   code: '', name: '', kind: 'subscription_percent', value: 20, minimumSpendMcoins: 0,
   minimumAccountAgeDays: 0, maxRedemptions: 0, perUserLimit: 1, startsAt: '', expiresAt: '',
-  affiliateUserId: '', affiliateRewardMcoins: 0,
+  affiliateUserId: '', affiliateRewardMode: 'percent', affiliateRewardValue: 0,
 };
 
 const EMPTY_ACCOUNT_MANAGER = {
@@ -163,12 +163,22 @@ function promotionKindLabel(kind) {
   if (kind === 'marketplace_fixed') return 'Composers fixed Mcoin discount';
   if (kind === 'friend_id_percent') return 'Friend ID percentage voucher';
   if (kind === 'subscription_percent') return 'Lucky code subscription discount';
+  if (kind === 'subscription_fixed') return 'Lucky code fixed subscription discount';
   return 'Retired legacy promotion';
+}
+
+function localDateTimeValue(date) {
+  const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return shifted.toISOString().slice(0, 16);
+}
+
+function isSubscriptionPromotion(kind) {
+  return kind === 'subscription_percent' || kind === 'subscription_fixed';
 }
 
 function promotionValueLabel(item) {
   if (item.retired) return 'Retired';
-  return item.kind === 'marketplace_fixed'
+  return ['marketplace_fixed', 'subscription_fixed'].includes(item.kind)
     ? `${Number(item.value).toLocaleString()} Mcoins off`
     : `${item.value}% off`;
 }
@@ -201,6 +211,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
   const [analytics, setAnalytics] = useState(null);
   const [analyticsDays, setAnalyticsDays] = useState(30);
   const [analyticsStatus, setAnalyticsStatus] = useState('');
+  const [marketingBudgetDraft, setMarketingBudgetDraft] = useState('500');
   const [characterDraft, setCharacterDraft] = useState(EMPTY_CHARACTER);
   const [editingCharacterId, setEditingCharacterId] = useState('');
   const [characterImage, setCharacterImage] = useState(null);
@@ -250,6 +261,9 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     try {
       const data = await apiRequest(`/api/admin/product-analytics?days=${encodeURIComponent(days)}`);
       setAnalytics(data);
+      if (Number.isFinite(Number(data.marketingAutopilot?.budget?.ceilingUsd))) {
+        setMarketingBudgetDraft(String(data.marketingAutopilot.budget.ceilingUsd));
+      }
       setAnalyticsStatus('');
     } catch (error) {
       setAnalyticsStatus(error.message);
@@ -333,6 +347,11 @@ export default function AdminDatabasePage({ user, onNavigate }) {
     () => new Map((analytics?.campaigns || []).map((entry) => [entry.campaignId, entry])),
     [analytics?.campaigns],
   );
+  const referralAnalyticsByCode = useMemo(
+    () => new Map((analytics?.referrals || []).map((entry) => [String(entry.promotionCode || '').toUpperCase(), entry])),
+    [analytics?.referrals],
+  );
+  const marketingAutopilot = analytics?.marketingAutopilot || null;
 
   const preset = DEVICE_PRESETS.find((device) => device.id === deviceId) || DEVICE_PRESETS[1];
   const baseWidth = preset.id === 'custom' ? Number(customViewport.width) || 390 : preset.width;
@@ -573,7 +592,7 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           minimumAccountAgeDays: Number(promotion.minimumAccountAgeDays),
           maxRedemptions: Number(promotion.maxRedemptions),
           perUserLimit: Number(promotion.perUserLimit),
-          affiliateRewardMcoins: Number(promotion.affiliateRewardMcoins),
+          affiliateRewardValue: Number(promotion.affiliateRewardValue),
         }),
       });
       setPromotions((current) => [data.promotion, ...current]);
@@ -817,6 +836,85 @@ export default function AdminDatabasePage({ user, onNavigate }) {
       'noopener,noreferrer',
     );
   }
+
+  function preparePartnerPilot() {
+    const now = new Date();
+    const expires = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));
+    setActiveSection('marketing');
+    setInfluencerSearch('');
+    setPromotion({
+      ...EMPTY_PROMOTION,
+      name: 'Founding teacher partner pilot',
+      kind: 'subscription_percent',
+      value: 10,
+      maxRedemptions: 25,
+      perUserLimit: 1,
+      startsAt: localDateTimeValue(now),
+      expiresAt: localDateTimeValue(expires),
+      affiliateRewardMode: 'percent',
+      affiliateRewardValue: 10,
+    });
+    setStatus('Partner pilot prepared. Add a unique code and select the exact teacher or creator account.');
+    window.setTimeout(() => document.getElementById('marketing-offer-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  }
+
+  function prepareSongProofPilot() {
+    setEditingCampaignId('');
+    setCampaignDraft({
+      ...EMPTY_CAMPAIGN,
+      hook: 'Can Polymath hear this song?',
+      description: 'Hear the original musical moment, try its playable Polymath version, then share your score.',
+      previewDurationSeconds: 20,
+      affiliatePercent: 10,
+    });
+    setCampaignSong(null);
+    setCampaignCover(null);
+    setCampaignFormOpen(true);
+    setActiveSection('growth');
+    setStatus('Song-proof draft prepared. Add only original, licensed, or public-domain music and complete every QA gate.');
+    window.setTimeout(() => document.getElementById('artist-campaign-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }
+
+  async function saveMarketingBudget(event) {
+    event.preventDefault();
+    setStatus('Saving the marketing test ceiling...');
+    try {
+      const data = await apiRequest('/api/admin/marketing-autopilot', {
+        method: 'PATCH',
+        body: JSON.stringify({ budgetUsd: Number(marketingBudgetDraft) }),
+      });
+      await loadProductAnalytics();
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function copyMarketingBrief(experiment) {
+    const text = [
+      experiment.title,
+      experiment.brief,
+      `Scale gate: ${experiment.scaleRule}`,
+      `Disclosure: I may earn Mcoins if you subscribe through my partner link.`,
+    ].join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(`${experiment.title} brief copied.`);
+    } catch {
+      window.prompt('Copy this campaign brief:', text);
+    }
+  }
+
+  const marketingExampleBase = 14.99;
+  const marketingExamplePrice = promotion.kind === 'subscription_fixed'
+    ? Math.max(0.01, marketingExampleBase - Math.max(0, Number(promotion.value) || 0))
+    : marketingExampleBase * (1 - Math.min(100, Math.max(0, Number(promotion.value) || 0)) / 100);
+  const marketingExampleCommission = promotion.affiliateUserId
+    ? promotion.affiliateRewardMode === 'percent'
+      ? marketingExamplePrice * Math.min(100, Math.max(0, Number(promotion.affiliateRewardValue) || 0)) / 100
+      : Math.max(0, Number(promotion.affiliateRewardValue) || 0)
+    : 0;
+  const marketingExampleRetained = marketingExamplePrice - marketingExampleCommission;
 
   if (!user?.admin) {
     return (
@@ -1364,31 +1462,107 @@ export default function AdminDatabasePage({ user, onNavigate }) {
           <div className='admin-section-heading'>
             <div><p className='eyebrow'>Affiliate growth</p><h2>Marketing</h2><p>Create a customer discount, link it to an influencer, and pay that influencer only when the referred customer activates a paid subscription.</p></div>
           </div>
-          <form className='admin-form-card' onSubmit={createPromotion}>
+          {marketingAutopilot && (
+            <section className='marketing-autopilot' aria-labelledby='marketing-autopilot-title'>
+              <header className='marketing-autopilot-heading'>
+                <div>
+                  <p className='eyebrow'>Planning before spending</p>
+                  <h3 id='marketing-autopilot-title'>Two-campaign autopilot</h3>
+                  <p>{marketingAutopilot.principle}</p>
+                </div>
+                <form className='marketing-budget-control' onSubmit={saveMarketingBudget}>
+                  <label>Planning ceiling (USD)<input type='number' min='0' max='1000000' step='1' value={marketingBudgetDraft} onChange={(event) => setMarketingBudgetDraft(event.target.value)} /></label>
+                  <button className='ghost compact-action' type='submit'>Save ceiling</button>
+                </form>
+              </header>
+
+              <div className='marketing-budget-strip'>
+                <div><span>Automatic spend</span><strong>${Number(marketingAutopilot.budget.automaticSpendUsd || 0).toFixed(2)}</strong></div>
+                {marketingAutopilot.budget.allocations.map((allocation) => (
+                  <div key={allocation.id}><span>{allocation.label}</span><strong>Up to ${Number(allocation.ceilingUsd || 0).toFixed(2)}</strong></div>
+                ))}
+              </div>
+              <p className={`marketing-scale-rule ${marketingAutopilot.budget.paidAmplificationEligible ? 'is-ready' : ''}`}>{marketingAutopilot.budget.rule}</p>
+              <small className='marketing-budget-notice'>{marketingAutopilot.budget.trackingNotice}</small>
+
+              <div className='marketing-experiment-grid'>
+                {marketingAutopilot.experiments.map((experiment) => (
+                  <article className={`marketing-experiment is-${experiment.status}`} key={experiment.id}>
+                    <header>
+                      <div><span className='marketing-experiment-number'>{experiment.id === 'teacher-partners' ? '01' : '02'}</span><h4>{experiment.title}</h4></div>
+                      <strong className='marketing-decision'>{experiment.statusLabel}</strong>
+                    </header>
+                    <p className='marketing-audience'>{experiment.audience}</p>
+                    <div className='marketing-experiment-metrics'>
+                      {experiment.metrics.map((metric) => (
+                        <span key={metric.id}><small>{metric.label}</small><strong>{Number(metric.value || 0).toLocaleString()}</strong><em>{metric.detail}</em></span>
+                      ))}
+                    </div>
+                    <div className='marketing-verdict'><strong>{experiment.verdict}</strong><p>{experiment.nextAction}</p></div>
+                    <details>
+                      <summary>Brief and decision rules</summary>
+                      <p><b>Content:</b> {experiment.brief}</p>
+                      <p><b>Scale:</b> {experiment.scaleRule}</p>
+                      <p><b>Stop or repair:</b> {experiment.stopRule}</p>
+                      <p><b>Safety:</b> {experiment.safety}</p>
+                    </details>
+                    <div className='button-row'>
+                      <button className='primary compact-action' type='button' onClick={experiment.actionId === 'prepare-partner-offer' ? preparePartnerPilot : prepareSongProofPilot}>{experiment.actionLabel}</button>
+                      <button className='ghost compact-action' type='button' onClick={() => copyMarketingBrief(experiment)}>Copy brief</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <small className='marketing-automation-boundary'>{marketingAutopilot.automationBoundary}</small>
+            </section>
+          )}
+          {!marketingAutopilot && <div className='empty-state'>{analyticsStatus || 'Loading the two campaign decisions...'}</div>}
+          <form id='marketing-offer-form' className='admin-form-card' onSubmit={createPromotion}>
             <div className='admin-form-grid'>
               <label className='field'>Code<input value={promotion.code} maxLength='32' placeholder='WELCOME50' onChange={(event) => setPromotion({ ...promotion, code: event.target.value.toUpperCase() })} required /></label>
               <label className='field'>Internal name<input value={promotion.name} placeholder='Launch voucher' onChange={(event) => setPromotion({ ...promotion, name: event.target.value })} required /></label>
-              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => setPromotion({ ...promotion, kind: event.target.value, value: event.target.value === 'marketplace_fixed' ? 10 : 20, affiliateUserId: event.target.value === 'subscription_percent' ? promotion.affiliateUserId : '', affiliateRewardMcoins: event.target.value === 'subscription_percent' ? promotion.affiliateRewardMcoins : 0 })}><option value='subscription_percent'>Influencer / Lucky code subscription discount</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='marketplace_fixed'>Composers fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
-              <label className='field'>{promotion.kind === 'marketplace_fixed' ? 'Mcoins off' : 'Percentage off'}<input type='number' min={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} max={promotion.kind === 'marketplace_fixed' ? '1000000000' : '100'} step={promotion.kind === 'marketplace_fixed' ? '0.01' : '1'} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /><small>{promotion.kind === 'marketplace_fixed' ? 'The platform funds this exact discount; it cannot exceed the song price.' : 'Enter a value from 1 to 100.'}</small></label>
-              <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>
+              <label className='field'>Promotion type<select value={promotion.kind} onChange={(event) => {
+                const kind = event.target.value;
+                setPromotion({
+                  ...promotion,
+                  kind,
+                  value: ['marketplace_fixed', 'subscription_fixed'].includes(kind) ? 5 : 20,
+                  minimumSpendMcoins: isSubscriptionPromotion(kind) ? 0 : promotion.minimumSpendMcoins,
+                  affiliateUserId: isSubscriptionPromotion(kind) ? promotion.affiliateUserId : '',
+                  affiliateRewardValue: isSubscriptionPromotion(kind) ? promotion.affiliateRewardValue : 0,
+                });
+              }}><option value='subscription_percent'>Subscription · percentage off</option><option value='subscription_fixed'>Subscription · fixed Mcoins off</option><option value='marketplace_percent'>Composers percentage coupon</option><option value='marketplace_fixed'>Composers fixed Mcoin coupon</option><option value='friend_id_percent'>Friend ID percentage voucher</option></select></label>
+              <label className='field'>{['marketplace_fixed', 'subscription_fixed'].includes(promotion.kind) ? 'Mcoins off' : 'Percentage off'}<input type='number' min={['marketplace_fixed', 'subscription_fixed'].includes(promotion.kind) ? '0.01' : '1'} max={['marketplace_fixed', 'subscription_fixed'].includes(promotion.kind) ? '1000000000' : '100'} step={['marketplace_fixed', 'subscription_fixed'].includes(promotion.kind) ? '0.01' : '1'} value={promotion.value} onChange={(event) => setPromotion({ ...promotion, value: event.target.value })} required /><small>{promotion.kind === 'subscription_fixed' ? '1 Mcoin equals $1 USD, and checkout never falls below $0.01.' : promotion.kind === 'marketplace_fixed' ? 'The platform funds this exact discount; it cannot exceed the song price.' : 'Enter a value from 1 to 100.'}</small></label>
+              {!isSubscriptionPromotion(promotion.kind) && <label className='field'>Minimum spend (Mcoins)<input type='number' min='0' value={promotion.minimumSpendMcoins} onChange={(event) => setPromotion({ ...promotion, minimumSpendMcoins: event.target.value })} /></label>}
               <label className='field'>Minimum account age (days)<input type='number' min='0' value={promotion.minimumAccountAgeDays} onChange={(event) => setPromotion({ ...promotion, minimumAccountAgeDays: event.target.value })} /></label>
               <label className='field'>Total redemption limit<input type='number' min='0' value={promotion.maxRedemptions} onChange={(event) => setPromotion({ ...promotion, maxRedemptions: event.target.value })} /><small>0 means unlimited</small></label>
               <label className='field'>Uses per buyer<input type='number' min='0' max='100' value={promotion.perUserLimit} onChange={(event) => setPromotion({ ...promotion, perUserLimit: event.target.value })} /><small>0 means unlimited. A friend’s ID can be shared with many buyers.</small></label>
               <label className='field'>Starts<input type='datetime-local' value={promotion.startsAt} onChange={(event) => setPromotion({ ...promotion, startsAt: event.target.value })} /></label>
               <label className='field'>Expires<input type='datetime-local' value={promotion.expiresAt} onChange={(event) => setPromotion({ ...promotion, expiresAt: event.target.value })} /></label>
-              {promotion.kind === 'subscription_percent' && <label className='field'>Find influencer<input value={influencerSearch} placeholder='Name, email, phone, or Friend ID' onChange={(event) => setInfluencerSearch(event.target.value)} /><small>Search first, then choose the exact account.</small></label>}
-              {promotion.kind === 'subscription_percent' && <label className='field'>Influencer account<select value={promotion.affiliateUserId} onChange={(event) => setPromotion({ ...promotion, affiliateUserId: event.target.value })}><option value=''>No influencer payout</option>{influencerCandidates.map((row) => <option key={row.userId} value={row.userId}>{row.name} · {row.email || row.phone || row.friendId}</option>)}</select></label>}
-              {promotion.kind === 'subscription_percent' && <label className='field'>Reward per activated subscriber (Mcoins)<input type='number' min='0' max='1000000000' step='0.01' value={promotion.affiliateRewardMcoins} onChange={(event) => setPromotion({ ...promotion, affiliateRewardMcoins: event.target.value })} /><small>Paid once, as cash-out eligible Mcoins, after PayPal confirms activation. 0 disables payout.</small></label>}
+              {isSubscriptionPromotion(promotion.kind) && <label className='field'>Find influencer<input value={influencerSearch} placeholder='Name, email, phone, or Friend ID' onChange={(event) => setInfluencerSearch(event.target.value)} /><small>Search first, then choose the exact account.</small></label>}
+              {isSubscriptionPromotion(promotion.kind) && <label className='field'>Influencer account<select value={promotion.affiliateUserId} onChange={(event) => {
+                const affiliateUserId = event.target.value;
+                setPromotion({
+                  ...promotion,
+                  affiliateUserId,
+                  affiliateRewardValue: affiliateUserId
+                    ? Number(promotion.affiliateRewardValue) > 0 ? promotion.affiliateRewardValue : 10
+                    : 0,
+                });
+              }}><option value=''>No influencer payout</option>{influencerCandidates.map((row) => <option key={row.userId} value={row.userId}>{row.name} · {row.email || row.phone || row.friendId}</option>)}</select></label>}
+              {isSubscriptionPromotion(promotion.kind) && <label className='field'>Commission type<select value={promotion.affiliateRewardMode} onChange={(event) => setPromotion({ ...promotion, affiliateRewardMode: event.target.value, affiliateRewardValue: event.target.value === 'percent' ? 10 : 1 })}><option value='percent'>Percentage of paid checkout</option><option value='fixed'>Fixed Mcoins per subscriber</option></select></label>}
+              {isSubscriptionPromotion(promotion.kind) && <label className='field'>{promotion.affiliateRewardMode === 'percent' ? 'Commission percentage' : 'Commission Mcoins'}<input type='number' min='0' max={promotion.affiliateRewardMode === 'percent' ? '100' : '1000000000'} step='0.01' value={promotion.affiliateRewardValue} onChange={(event) => setPromotion({ ...promotion, affiliateRewardValue: event.target.value })} /><small>{promotion.affiliateRewardMode === 'percent' ? 'Calculated from the customer’s actual discounted price. Example: 10% of $10 = 1 Mcoin.' : 'A fixed cash-out eligible reward.'} Paid once after PayPal confirms activation.</small></label>}
             </div>
+            {isSubscriptionPromotion(promotion.kind) && <div className='admin-summary-grid marketing-economics-preview'><article><span>$14.99 example checkout</span><strong>${marketingExamplePrice.toFixed(2)}</strong></article><article><span>Creator commission</span><strong>{marketingExampleCommission.toFixed(2)} Mcoins</strong></article><article><span>Before payment fees</span><strong className={marketingExampleRetained < 0 ? 'danger-text' : ''}>${marketingExampleRetained.toFixed(2)}</strong></article></div>}
             <button className='primary' type='submit'>Create marketing code</button>
           </form>
           <div className='promotion-list'>
             {promotions.map((item) => (
               <article key={item.id} className={`promotion-row ${item.active ? '' : 'inactive'}`}>
                 <div><code>{item.code}</code><strong>{item.name}</strong><small>{promotionKindLabel(item.kind)}</small></div>
-                <div><strong>{promotionValueLabel(item)}</strong><small>{item.minimumSpendMcoins ? `Minimum ${item.minimumSpendMcoins} Mcoins` : 'No minimum spend'}</small>{item.affiliate && <small>{Number(item.affiliateRewardMcoins).toLocaleString()} Mcoins → {item.affiliate.name}</small>}</div>
-                <div><strong>{item.redemptionCount.toLocaleString()}</strong><small>{item.maxRedemptions ? `of ${item.maxRedemptions} uses` : 'redemptions'}</small>{item.affiliate && <small>{item.affiliateRewardsPaidCount.toLocaleString()} paid · {Number(item.affiliateRewardsPaidMcoins).toLocaleString()} Mcoins</small>}</div>
-                <button className='ghost compact-action' type='button' disabled={item.retired} onClick={() => togglePromotion(item)}>{item.retired ? 'Retired' : item.active ? 'Pause' : 'Activate'}</button>
+                <div><strong>{promotionValueLabel(item)}</strong><small>{item.minimumSpendMcoins ? `Minimum ${item.minimumSpendMcoins} Mcoins` : 'No minimum spend'}</small>{item.affiliate && <small>{Number(item.affiliateRewardValue).toLocaleString()}{item.affiliateRewardMode === 'percent' ? '%' : ' Mcoins'} → {item.affiliate.name}</small>}</div>
+                <div><strong>{item.redemptionCount.toLocaleString()}</strong><small>{item.maxRedemptions ? `of ${item.maxRedemptions} uses` : 'redemptions'}</small>{item.affiliate && <small>{item.affiliateRewardsPaidCount.toLocaleString()} paid · {Number(item.affiliateRewardsPaidMcoins).toLocaleString()} Mcoins</small>}{isSubscriptionPromotion(item.kind) && <small>{Number(referralAnalyticsByCode.get(item.code)?.visitors || 0).toLocaleString()} visits · {Number(referralAnalyticsByCode.get(item.code)?.checkouts || 0).toLocaleString()} checkouts · {Number(referralAnalyticsByCode.get(item.code)?.activations || 0).toLocaleString()} activations ({analyticsDays}d)</small>}</div>
+                <div className='button-row'>{item.shareUrl && <button className='ghost compact-action' type='button' onClick={() => { navigator.clipboard.writeText(`I may earn Mcoins if you subscribe through code ${item.code}. ${item.shareUrl}`); setStatus(`${item.code} disclosure and referral link copied.`); }}>Copy share link</button>}<button className='ghost compact-action' type='button' disabled={item.retired} onClick={() => togglePromotion(item)}>{item.retired ? 'Retired' : item.active ? 'Pause' : 'Activate'}</button></div>
               </article>
             ))}
             {!promotions.length && <div className='empty-state'>No marketing codes yet.</div>}

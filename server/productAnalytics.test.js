@@ -101,3 +101,31 @@ test('campaign summary measures the artist funnel and trusted activation value',
   assert.equal(campaign.averageScore, 86);
   assert.equal(campaign.attributedActivationValueUsd, 14.99);
 });
+
+test('referral summary measures visits, claims, checkout, and activation without buyer details', () => {
+  const base = {
+    anonymousId: 'anon_referral_12345678',
+    sessionId: 'session_referral_12345678',
+    path: 'payment',
+    release: 'test',
+    occurredAt: '2026-09-07T10:00:00Z',
+    properties: { promotionCode: 'PIANO20' },
+  };
+  const events = [
+    { ...base, eventId: 'event_referral_visit_123', eventName: 'referral_link_opened' },
+    { ...base, eventId: 'event_referral_claim_123', eventName: 'referral_code_applied', userId: 'user_buyer_1' },
+    { ...base, eventId: 'event_referral_checkout_123', eventName: 'checkout_started', userId: 'user_buyer_1' },
+    { ...base, eventId: 'event_referral_active_123', eventName: 'subscription_activated', userId: 'user_buyer_1' },
+  ];
+  const [referral] = summarizeProductEvents(events, 30).referrals;
+  assert.deepEqual(referral, {
+    promotionCode: 'PIANO20',
+    visitors: 1,
+    claims: 1,
+    checkouts: 1,
+    activations: 1,
+    claimFromVisitPercent: 100,
+    checkoutFromVisitPercent: 100,
+    activationFromVisitPercent: 100,
+  });
+});

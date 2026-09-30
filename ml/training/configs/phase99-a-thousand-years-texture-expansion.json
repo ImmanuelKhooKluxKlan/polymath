@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-pianist-manifest-v1",
+  "purpose": "Training-only expansion with the manually reviewed A Thousand Years alignment. Opened development data; never a sealed promotion gate.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "a-thousand-years",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-6-expanded-piano-2026-09-03/targets/a-thousand-years.json",
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-2-preflight/a-thousand-years-phase1-v002.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-6-expanded-piano-2026-09-03/legacy-evaluation/a-thousand-years/section-alignment-report.json",
+      "candidate": "C:/Users/admin/Documents/Polymath Training/phase-2-continued-2026-08-31/phase2-v007/listening-exports/a-thousand-years-phase2-preflight-candidate.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": null,
+      "candidateEndSeconds": 239.76,
+      "weight": 0.5
+    }
+  ]
+}

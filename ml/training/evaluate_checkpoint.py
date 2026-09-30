@@ -452,9 +452,19 @@ def main() -> None:
         type=Path,
         help="Evaluate one checkpoint once; mutually exclusive with --base/--candidate.",
     )
+    parser.add_argument(
+        "--unconditioned",
+        action="store_true",
+        help=(
+            "Decode without an instrument text condition. Use this for the "
+            "production full-mix piano-reduction route; the default remains "
+            "the historical acoustic-piano-conditioned evaluation."
+        ),
+    )
     parser.add_argument("--validation-manifest", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    instruments = None if args.unconditioned else PIANO_INSTRUMENTS
 
     def report(message: str) -> None:
         print(message, flush=True)
@@ -466,6 +476,7 @@ def main() -> None:
             args.checkpoint.resolve(),
             args.validation_manifest.resolve(),
             progress_callback=report,
+            instruments=instruments,
         )
     else:
         if not args.base or not args.candidate:
@@ -475,6 +486,7 @@ def main() -> None:
             args.candidate.resolve(),
             args.validation_manifest.resolve(),
             progress_callback=report,
+            instruments=instruments,
         )
     destination = args.out.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)

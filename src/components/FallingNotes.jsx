@@ -31,6 +31,7 @@ function FallingRow({
   activeNotes,
   activePlaybackEventIds,
   compact,
+  practiceCorrection,
 }) {
   return (
     <div className="falling-row" style={{ '--white-count': row.whiteCount }}>
@@ -76,11 +77,18 @@ function FallingRow({
         const widthScale = event.widthScale || 1;
         const laneOffset = event.laneOffsetPercent || 0;
         const displayName = noteToDisplayName(parsed.midi, true);
+        const correctionEventIds = practiceCorrection?.eventIds || [];
+        const isCorrectionTarget = correctionEventIds.length
+          ? correctionEventIds.includes(event.id)
+          : Boolean(
+            practiceCorrection?.expectedMidis?.includes(parsed.midi)
+            && Math.abs(Number(event.time) - Number(practiceCorrection.time)) <= 0.06,
+          );
 
         return (
           <div
             key={event.id}
-            className={`falling-note ${position.isBlack ? 'black-falling-note' : 'white-falling-note'} ${handClassFor(event)} ${isHot ? 'hot' : ''}`}
+            className={`falling-note ${position.isBlack ? 'black-falling-note' : 'white-falling-note'} ${handClassFor(event)} ${isHot ? 'hot' : ''} ${isCorrectionTarget ? `practice-correction-target is-${practiceCorrection.status || 'waiting'}` : ''}`}
             data-event-id={event.id}
             data-note={normalizedNote}
             data-note-time={event.time}
@@ -110,6 +118,7 @@ export default function FallingNotes({
   activePlaybackEventIds = new Set(),
   performanceTier = 'full',
   compact = layout.isTwoStorey,
+  practiceCorrection = null,
 }) {
   const notes = song?.notes || [];
   const visibleNotes = [];
@@ -146,10 +155,15 @@ export default function FallingNotes({
             activeNotes={activeNotes}
             activePlaybackEventIds={activePlaybackEventIds}
             compact={compact}
+            practiceCorrection={practiceCorrection}
           />
         ))}
       </div>
-      {!isPlaying && <div className="paused-badge">Ready</div>}
+      {!isPlaying && (
+        <div className={`paused-badge ${practiceCorrection ? `is-practice-correction is-${practiceCorrection.status || 'waiting'}` : ''}`}>
+          {practiceCorrection?.message || 'Ready'}
+        </div>
+      )}
     </section>
   );
 }

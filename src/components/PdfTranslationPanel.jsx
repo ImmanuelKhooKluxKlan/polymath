@@ -58,8 +58,9 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
   const pollTimer = useRef(null);
 
   const allowance = user?.translationAllowance || null;
+  const pdfAllowance = allowance?.pdf || allowance;
   const unlimited = Boolean(user?.admin || allowance?.unlimited);
-  const remaining = unlimited ? null : Number(allowance?.remaining || 0);
+  const remaining = unlimited ? null : Number(pdfAllowance?.remaining || 0);
   const overageCost = Number(allowance?.overageCostMcoins ?? (user?.pro ? 0.5 : 2));
   const planLabel = user?.subscriptionTier
     ? `${user.subscriptionTier === 'musician' ? 'Musician' : 'Chill'} included translation`
@@ -243,7 +244,7 @@ export default function PdfTranslationPanel({ user, setUser, instrument, onNavig
       <div className="allowance-summary">
         <div>
           <span>{unlimited ? 'Administrator access' : user.subscriptionTier ? `${user.subscriptionTier === 'musician' ? 'Musician' : 'Chill'} allowance` : 'No subscription'}</span>
-          <strong>{unlimited ? 'Unlimited translations' : `${remaining} of ${allowance?.limit ?? 0} remaining`}</strong>
+          <strong>{unlimited ? 'Unlimited translations' : `${remaining} of ${pdfAllowance?.limit ?? 0} PDF translations remaining`}</strong>
         </div>
         <div>
           <span>{unlimited ? 'Translation cost' : 'Mcoin balance'}</span>

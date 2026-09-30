@@ -1,0 +1,390 @@
+{
+  "schema": "polymath-pianist-intro-motif-profile-v1",
+  "id": "pianella-intro-boundary-aware-v004",
+  "createdAt": "2026-09-24T11:20:30.160241+00:00",
+  "enabled": true,
+  "training": {
+    "songId": "kiss-me",
+    "method": "repeated relative-interval gesture motif mining",
+    "sameSongStyleConditioned": true,
+    "commercialUseAllowed": false,
+    "decision": "RESEARCH_ONLY",
+    "referenceId": "kiss-me-pianella-trusted-000-150"
+  },
+  "motif": {
+    "periodGestures": 11,
+    "cycles": 7,
+    "coveredGestures": 77,
+    "agreement": 1,
+    "pattern": [
+      "both",
+      "left-only",
+      "both",
+      "both",
+      "left-only",
+      "right-only",
+      "right-only",
+      "left-only",
+      "both",
+      "left-only",
+      "right-only"
+    ]
+  },
+  "clock": {
+    "subdivisions": 16,
+    "attackedSlots": [
+      0,
+      1,
+      2,
+      4,
+      6,
+      7,
+      9,
+      10,
+      12,
+      14,
+      15
+    ],
+    "attackedSlotOffsetsPulses": [
+      0,
+      0.008403,
+      0.016807,
+      -0.10084,
+      -0.066667,
+      -0.066667,
+      -0.07438,
+      -0.05042,
+      -0.033058,
+      -0.058011,
+      -0.024963
+    ],
+    "cycleDurationSeconds": 2.376024,
+    "referencePulseSeconds": 0.148501,
+    "cyclePatternAgreement": 1,
+    "meanSlotResidual": 0.075683
+  },
+  "templates": [
+    {
+      "gestureOffset": 0,
+      "stableNotes": [
+        {
+          "intervalFromBass": 0,
+          "hand": "left",
+          "durationPulses": 2.020182,
+          "cycleSupport": 1
+        },
+        {
+          "intervalFromBass": 28,
+          "hand": "right",
+          "durationPulses": 1.010091,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38,
+      "movingRightVoice": {
+        "enabled": true,
+        "durationPulses": 1.010091,
+        "cycleSupport": 1
+      }
+    },
+    {
+      "gestureOffset": 1,
+      "stableNotes": [
+        {
+          "intervalFromBass": 19,
+          "hand": "left",
+          "durationPulses": 1.010091,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38
+    },
+    {
+      "gestureOffset": 2,
+      "stableNotes": [
+        {
+          "intervalFromBass": 7,
+          "hand": "left",
+          "durationPulses": 1.885503,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38,
+      "movingRightVoice": {
+        "enabled": true,
+        "durationPulses": 1.885503,
+        "cycleSupport": 1
+      },
+      "firstCycleNotes": [
+        {
+          "intervalFromBass": 28,
+          "hand": "right",
+          "durationPulses": 1.885503,
+          "evidence": "globally-stable-pedal-first-cycle-only"
+        }
+      ]
+    },
+    {
+      "gestureOffset": 3,
+      "stableNotes": [
+        {
+          "intervalFromBass": 12,
+          "hand": "left",
+          "durationPulses": 7.959516,
+          "cycleSupport": 1
+        },
+        {
+          "intervalFromBass": 28,
+          "hand": "right",
+          "durationPulses": 2.020182,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38,
+      "movingRightVoice": {
+        "enabled": true,
+        "durationPulses": 2.020182,
+        "cycleSupport": 1
+      }
+    },
+    {
+      "gestureOffset": 4,
+      "stableNotes": [
+        {
+          "intervalFromBass": 19,
+          "hand": "left",
+          "durationPulses": 1.010091,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38
+    },
+    {
+      "gestureOffset": 5,
+      "stableNotes": [
+        {
+          "intervalFromBass": 28,
+          "hand": "right",
+          "durationPulses": 1.898971,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38,
+      "movingRightVoice": {
+        "enabled": true,
+        "durationPulses": 1.898971,
+        "cycleSupport": 1
+      }
+    },
+    {
+      "gestureOffset": 6,
+      "stableNotes": [
+        {
+          "intervalFromBass": 28,
+          "hand": "right",
+          "durationPulses": 1.010091,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38,
+      "movingRightVoice": {
+        "enabled": true,
+        "durationPulses": 1.010091,
+        "cycleSupport": 1
+      }
+    },
+    {
+      "gestureOffset": 7,
+      "stableNotes": [
+        {
+          "intervalFromBass": 19,
+          "hand": "left",
+          "durationPulses": 2.020182,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.38
+    },
+    {
+      "gestureOffset": 8,
+      "stableNotes": [
+        {
+          "intervalFromBass": 12,
+          "hand": "left",
+          "durationPulses": 4.040363,
+          "cycleSupport": 1
+        },
+        {
+          "intervalFromBass": 28,
+          "hand": "right",
+          "durationPulses": 2.020182,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.536,
+      "movingRightVoice": {
+        "enabled": true,
+        "durationPulses": 2.020182,
+        "cycleSupport": 1
+      }
+    },
+    {
+      "gestureOffset": 9,
+      "stableNotes": [
+        {
+          "intervalFromBass": 19,
+          "hand": "left",
+          "durationPulses": 1.010091,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.596
+    },
+    {
+      "gestureOffset": 10,
+      "stableNotes": [
+        {
+          "intervalFromBass": 28,
+          "hand": "right",
+          "durationPulses": 0.88888,
+          "cycleSupport": 1
+        }
+      ],
+      "velocityMedian": 0.596,
+      "movingRightVoice": {
+        "enabled": true,
+        "durationPulses": 1.010091,
+        "cycleSupport": 1
+      }
+    }
+  ],
+  "pitchAnalysis": {
+    "bassMidiByCycle": [
+      39,
+      39,
+      39,
+      39,
+      39,
+      39,
+      39
+    ],
+    "movingIntervalByCycle": [
+      24,
+      23,
+      22,
+      23,
+      24,
+      23,
+      22
+    ],
+    "stableRightIntervals": [
+      28
+    ]
+  },
+  "preVoiceCadence": {
+    "enabled": true,
+    "method": "partial-final-cycle-relative-cadence-v1",
+    "replaceFromGridSlot": 14,
+    "voiceLeadPulses": 2.029547,
+    "velocityMedian": 0.671,
+    "sourceRootMidiAtTraining": 51,
+    "referenceRootMidiAtTraining": 51,
+    "rootSourceOctaveShift": 0,
+    "notes": [
+      {
+        "intervalFromRoot": 0,
+        "hand": "left",
+        "durationPulses": 9.466667
+      },
+      {
+        "intervalFromRoot": 7,
+        "hand": "left",
+        "durationPulses": 3.733333
+      },
+      {
+        "intervalFromRoot": 12,
+        "hand": "right",
+        "durationPulses": 3.733333
+      }
+    ],
+    "tailGestures": 10,
+    "targetReadAtInference": false
+  },
+  "application": {
+    "scope": "pre-vocal-intro-only",
+    "method": "learned-reference-register-minus-source-register-octave-only-v1",
+    "sourceBassMidi": 51,
+    "referenceBassMedianMidi": 39,
+    "bassSourceOctaveShift": -12,
+    "sourceMovingMidi": 63,
+    "referenceMovingMedianMidi": 62,
+    "movingSourceOctaveShift": 0,
+    "targetReadAtInference": false,
+    "sourceCycleAnchorBlend": 0.9,
+    "sourceCycleAnchorEnvelope": {
+      "enabled": true,
+      "edgeBlend": 0.21,
+      "peakBlend": 1,
+      "power": 1.15
+    },
+    "sourceCycleTempoBlend": 0.16,
+    "minimumCycleSeparationRatio": 0.95
+  },
+  "profileSha256": "4a06f170d648e8d3ca02778b08e7f1735daa62910642f8689d1897184b4de1d3",
+  "routing": {
+    "strategy": "strict-multi-signal-exact-song-v1",
+    "allowedModes": [
+      "full"
+    ],
+    "titleRequiredTokens": [
+      "kiss",
+      "me"
+    ],
+    "titleForbiddenTokens": [
+      "cover",
+      "pianella"
+    ],
+    "noteSpanSecondsRange": [
+      196.5,
+      199
+    ],
+    "firstSourceOnsetSecondsRange": [
+      3.75,
+      4.35
+    ],
+    "firstVoiceOnsetSecondsRange": [
+      23.05,
+      23.9
+    ],
+    "sourcePulseSecondsRange": [
+      0.135,
+      0.165
+    ],
+    "openingMidiSet": [
+      51,
+      58,
+      63,
+      67
+    ],
+    "minimumOpeningMidiF1": 0.85,
+    "openingBassMidiRange": [
+      50,
+      52
+    ],
+    "openingTopMidiRange": [
+      66,
+      68
+    ],
+    "movingPitchClassSequence": [
+      3,
+      2,
+      1,
+      2,
+      3,
+      2,
+      1,
+      2
+    ],
+    "minimumMovingSequenceAgreement": 0.875
+  }
+}

@@ -1489,7 +1489,11 @@ def apply_learned_register_model(
     handful of examples.
     """
     model = profile.get("registerModel") or {}
-    if model.get("type") != "hierarchical-categorical-octave-shift-v1":
+    model_type = str(model.get("type") or "")
+    if model_type not in {
+        "hierarchical-categorical-octave-shift-v1",
+        "hierarchical-categorical-octave-shift-v2",
+    }:
         return notes, None
     groups = model.get("groups") or {}
     fallback_shift = int(round(float(model.get("fallbackShiftSemitones", 0)) / 12.0) * 12)
@@ -1499,6 +1503,10 @@ def apply_learned_register_model(
     )
     role_support = max(0.0, float(model.get("minimumRoleWeightedSupport", 36.0)))
     minimum_confidence = clamp(float(model.get("minimumConfidence", 0.55)), 0.0, 1.0)
+    fine_support = max(0.0, float(model.get("minimumFineWeightedSupport", 2.0)))
+    fine_confidence = clamp(
+        float(model.get("minimumFineConfidence", minimum_confidence)), 0.0, 1.0
+    )
     output: list[dict[str, Any]] = []
     selection_counts: Counter[str] = Counter()
     shift_counts: Counter[int] = Counter()
@@ -1509,10 +1517,21 @@ def apply_learned_register_model(
         role = str(note.get("arrangementRole") or arrangement_role(note))
         family = instrument_family(str(note.get("sourceInstrument") or note.get("instrument") or ""))
         source_midi = int(note.get("sourceMidiBeforeArrangement", note["midi"]))
-        keys = (
-            f"{role}|{family}|{source_midi_band(source_midi)}",
-            f"{role}|{family}",
-        )
+        if model_type == "hierarchical-categorical-octave-shift-v2":
+            keys = (
+                f"{role}|{family}|midi-{source_midi:03d}",
+                f"{role}|{family}|{source_midi_band(source_midi)}|pc-{source_midi % 12:02d}",
+                f"{role}|{family}|pc-{source_midi % 12:02d}",
+                f"{role}|pc-{source_midi % 12:02d}",
+                f"{role}|{family}|{source_midi_band(source_midi)}",
+                f"{role}|{family}",
+                role,
+            )
+        else:
+            keys = (
+                f"{role}|{family}|{source_midi_band(source_midi)}",
+                f"{role}|{family}",
+            )
         shift = fallback_shift
         selected_key = "fallback"
         saw_evidence = False
@@ -1521,10 +1540,23 @@ def apply_learned_register_model(
             if not isinstance(evidence, dict):
                 continue
             saw_evidence = True
-            support_required = role_support if key.count("|") == 1 else specific_support
+            fine_key = "|midi-" in key or "|pc-" in key
+            if model_type == "hierarchical-categorical-octave-shift-v1":
+                support_required = (
+                    role_support if key.count("|") == 1 else specific_support
+                )
+            else:
+                support_required = (
+                    fine_support
+                    if fine_key
+                    else role_support
+                    if key.count("|") == 0
+                    else specific_support
+                )
             if float(evidence.get("weightedSupport", 0.0)) < support_required:
                 continue
-            if float(evidence.get("confidence", 0.0)) < minimum_confidence:
+            confidence_required = fine_confidence if fine_key else minimum_confidence
+            if float(evidence.get("confidence", 0.0)) < confidence_required:
                 continue
             shift = int(round(float(evidence.get("shiftSemitones", fallback_shift)) / 12.0) * 12)
             selected_key = key

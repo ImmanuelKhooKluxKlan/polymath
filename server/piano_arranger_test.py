@@ -17,11 +17,13 @@ from piano_arranger import (
     collapse_exact_left_hand_duplicates,
     collapse_focused_melody_collisions,
     compact_authored_two_hand_register,
+    compress_dense_bass_gestures,
     compact_harmony,
     compact_pianella_register,
     interpolate_raw_selection_models,
     learned_physical_performance_limits,
     refine_left_hand_accompaniment,
+    resolve_conditional_two_hand_style,
     route_conditional_learned_profile,
     shape_gesture_coherent_expression,
     shape_melody_forward_expression,
@@ -1287,6 +1289,97 @@ class LeftHandAccompanimentTests(unittest.TestCase):
 
 
 class PianoLegatoTests(unittest.TestCase):
+    def test_conditional_two_hand_style_requires_dense_bass_signature(self):
+        original = {
+            'harmonyHandAssignment': 'preserve-native-register',
+            'targetUpperNoteShare': 0.50634,
+        }
+        policy = {
+            'denseBassTwoHandStyle': {
+                'enabled': True,
+                'harmonyHandAssignment': 'target-upper-share',
+                'targetUpperNoteShare': 0.55408,
+            }
+        }
+
+        unchanged, closed = resolve_conditional_two_hand_style(
+            original, policy, {'applied': False}
+        )
+        activated, opened = resolve_conditional_two_hand_style(
+            original, policy, {'applied': True}
+        )
+
+        self.assertEqual(unchanged, original)
+        self.assertFalse(closed['applied'])
+        self.assertEqual(closed['reason'], 'dense-bass-signature-not-detected')
+        self.assertEqual(activated['harmonyHandAssignment'], 'target-upper-share')
+        self.assertEqual(activated['targetUpperNoteShare'], 0.55408)
+        self.assertTrue(opened['applied'])
+        self.assertEqual(original['harmonyHandAssignment'], 'preserve-native-register')
+
+    def test_dense_bass_gesture_compression_pairs_separator_rate_repeats(self):
+        source = [
+            {
+                **note(43, index * 0.16, 'electric_bass', duration=0.12),
+                'arrangementRole': 'bass',
+                'sourceVelocityBeforeArrangement': 0.70,
+            }
+            for index in range(8)
+        ]
+
+        compressed, diagnostics = compress_dense_bass_gestures(
+            source,
+            {
+                'enabled': True,
+                'minimumRapidPairs': 3,
+                'minimumRapidPairShare': 0.5,
+                'keepEveryNthStrike': 2,
+            },
+        )
+
+        self.assertEqual([item['time'] for item in compressed], [0.0, 0.32, 0.64, 0.96])
+        self.assertEqual([item['midi'] for item in compressed], [43, 43, 43, 43])
+        self.assertEqual(diagnostics['removedNotes'], 4)
+        self.assertTrue(diagnostics['pitchClassPreserved'])
+
+    def test_dense_bass_gesture_compression_preserves_accents_and_sparse_bass(self):
+        dense = [
+            {
+                **note(43, index * 0.16, 'electric_bass', duration=0.12),
+                'arrangementRole': 'bass',
+                'sourceVelocityBeforeArrangement': 0.94 if index == 1 else 0.68,
+            }
+            for index in range(5)
+        ]
+        compressed, diagnostics = compress_dense_bass_gestures(
+            dense,
+            {
+                'enabled': True,
+                'minimumRapidPairs': 2,
+                'minimumRapidPairShare': 0.5,
+                'preserveAccentVelocityDelta': 0.14,
+            },
+        )
+        self.assertIn(0.16, [item['time'] for item in compressed])
+        self.assertEqual(diagnostics['preservedAccents'], 1)
+
+        sparse = [
+            {**note(43, index * 0.50, 'electric_bass'), 'arrangementRole': 'bass'}
+            for index in range(5)
+        ]
+        untouched, sparse_diagnostics = compress_dense_bass_gestures(
+            sparse,
+            {
+                'enabled': True,
+                'minimumRapidPairs': 2,
+                'minimumRapidPairShare': 0.5,
+            },
+        )
+        self.assertEqual(untouched, sparse)
+        self.assertEqual(
+            sparse_diagnostics['reason'], 'bass-repetition-density-below-gate'
+        )
+
     def test_authored_register_defaults_keep_notes_in_pianella_hand_bands(self):
         source = [
             {**note(39, 0.0, 'electric_bass'), 'arrangementRole': 'bass', 'sourceIndex': 0},
@@ -1586,6 +1679,46 @@ class PianoLegatoTests(unittest.TestCase):
             1.2,
         )
 
+    def test_preserved_piano_keeps_audio_measured_dynamics_when_available(self):
+        notes = []
+        for index in range(60):
+            onset = index * 0.18
+            notes.extend(
+                [
+                    note(48 + index % 4, onset, 'acoustic_piano', duration=0.45, velocity=0.82),
+                    note(67 + index % 5, onset, 'acoustic_piano', duration=0.38, velocity=0.71),
+                ]
+            )
+
+        result = arrange_payload(
+            {
+                'title': 'Measured piano dynamics fixture',
+                'notes': notes,
+                'transcriptionCleanup': {'sourceDynamicsApplied': True},
+            },
+            'full',
+        )
+        left = [item for item in result['notes'] if item['hand'] == 'left']
+        right = [item for item in result['notes'] if item['hand'] == 'right']
+
+        self.assertEqual(result['pianoArrangement']['profile'], 'acoustic-piano-preserve')
+        self.assertEqual(
+            result['pianoArrangement']['expression']['profile'],
+            'measured-solo-piano-dynamics-v1',
+        )
+        self.assertAlmostEqual(
+            sum(item['velocity'] for item in left) / len(left),
+            0.82,
+            places=3,
+        )
+        self.assertAlmostEqual(
+            sum(item['velocity'] for item in right) / len(right),
+            0.71,
+            places=3,
+        )
+        self.assertFalse(result['performance']['melodyForwardDynamics'])
+        self.assertTrue(result['performance']['measuredSoloPianoDynamicsPreserved'])
+
     def test_profile_can_duck_accompaniment_while_a_vocal_melody_is_active(self):
         notes = [
             {
@@ -1704,6 +1837,49 @@ class LearnedDurationTests(unittest.TestCase):
         self.assertEqual(adjusted[1]["learnedRegisterEvidenceKey"], "uncertain")
         self.assertEqual(adjusted[2]["learnedRegisterEvidenceKey"], "fallback")
         self.assertEqual(diagnostics["shiftCounts"], {"0": 2, "12": 1})
+
+    def test_register_model_v2_prefers_source_midi_pitch_class_evidence(self):
+        profile = {
+            "roles": {
+                "harmony": {"minimumMidi": 45, "maximumMidi": 84},
+            },
+            "registerModel": {
+                "type": "hierarchical-categorical-octave-shift-v2",
+                "fallbackShiftSemitones": 0,
+                "uncertainShiftSemitones": 0,
+                "minimumSpecificWeightedSupport": 18,
+                "minimumRoleWeightedSupport": 36,
+                "minimumFineWeightedSupport": 2,
+                "minimumConfidence": 0.75,
+                "minimumFineConfidence": 0.5,
+                "groups": {
+                    "harmony|guitar|midi-059": {
+                        "shiftSemitones": 12,
+                        "weightedSupport": 4,
+                        "confidence": 0.75,
+                    },
+                    "harmony|guitar|high": {
+                        "shiftSemitones": -12,
+                        "weightedSupport": 80,
+                        "confidence": 0.9,
+                    },
+                },
+            },
+        }
+        rendered = _render_note(
+            normalize_source_notes([note(59, 0.0, "acoustic_guitar")])[0],
+            0.9,
+            profile,
+        )
+
+        adjusted, diagnostics = apply_learned_register_model([rendered], profile)
+
+        self.assertEqual(adjusted[0]["midi"], 71)
+        self.assertEqual(
+            adjusted[0]["learnedRegisterEvidenceKey"],
+            "harmony|guitar|midi-059",
+        )
+        self.assertEqual(diagnostics["shiftCounts"], {"12": 1})
 
     def test_minimum_rendered_duration_only_extends_abnormally_short_notes(self):
         source = normalize_source_notes(

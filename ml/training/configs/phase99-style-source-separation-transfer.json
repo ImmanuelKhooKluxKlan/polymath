@@ -1,0 +1,15 @@
+{
+  "schema": "polymath-piano-arranger-training-manifest-v1",
+  "profileId": "phase99-style-source-separation-transfer",
+  "purpose": "One-shot transfer test of the frozen Phase 92 focused-vocal policy on Style. The target is opened development evidence and cannot certify production promotion.",
+  "commercialUseAllowed": false,
+  "pairs": [
+    {
+      "id": "style",
+      "source": "C:/Users/admin/Documents/Polymath Training/phase-9-full-mix-holdout-2026-09-12/style/raw-original.json",
+      "target": "D:/Polymath Training/phase-97-style-pianella-reference-2026-09-24/style-pianella-tail-fixed.json",
+      "alignmentReport": "D:/Polymath Training/phase-98-style-supervised-2026-09-24/audio-chroma-raw-source/alignment-report.json",
+      "weight": 1.0
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-pianist-manifest-v1",
+  "purpose": "Training-only expansion with the reviewed Taylor Swift 22 alignment. Opened development data; never a sealed promotion gate.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "22",
+      "reference": "C:/Users/admin/Documents/Polymath Training/phase-6-expanded-piano-2026-09-03/targets/22.json",
+      "source": "C:/Users/admin/Documents/Polymath Training/round-1/raw-import-2026-08-28/22/Taylor_Swift_-_22_-_YouTube_-_Google_Chrome_2026-08-27_14-28-31.json",
+      "alignment": "C:/Users/admin/Documents/Polymath Training/phase-6-expanded-piano-2026-09-03/legacy-evaluation/22/section-alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-96-latest-full-22-style-2026-09-24/22-latest-full.json",
+      "referenceAlreadyAligned": false,
+      "referenceTransposeSemitones": 0,
+      "referenceEndSeconds": null,
+      "candidateEndSeconds": 234.9002
+    }
+  ]
+}

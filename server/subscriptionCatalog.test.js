@@ -5,12 +5,14 @@ const test = require('node:test');
 const {
   activeEntitlements,
   applyCustomProductAccess,
+  coreSubscriptionPolicy,
   createPlan,
   ensureSubscriptionCatalog,
   listAdminCatalog,
   listPublicCatalog,
   resolveProduct,
   updateBaseProductPrice,
+  updateCoreSubscriptionPolicy,
   updatePlan,
 } = require('./subscriptionCatalog');
 
@@ -85,4 +87,37 @@ test('administrator price overrides change built-in catalog and checkout resolut
   assert.equal(listPublicCatalog(db, baseProducts).products[0].price, '8.99');
   assert.equal(listAdminCatalog(db, baseProducts).corePlans[0].priceEdited, true);
   assert.equal(listAdminCatalog(db, baseProducts).corePlans[0].paypalPlanId, 'P-CHILL-899');
+});
+
+test('administrator policies control core translation caps and server entitlements', () => {
+  const baseProducts = {
+    'polymath-chill-monthly': {
+      id: 'polymath-chill-monthly', name: 'Chill', kind: 'subscription', recurring: true,
+      price: '7.99', currency: 'USD', interval: 'MONTH', tier: 'chill',
+    },
+  };
+  const db = { subscriptionCategories: [], subscriptionPlans: [], subscriptionCatalogEvents: [] };
+  const policy = updateCoreSubscriptionPolicy(db, 'chill', {
+    translationsPerMonth: 6,
+    audioTranslationsPerMonth: 4,
+    pdfTranslationsPerMonth: 2,
+    entitlements: ['learn'],
+  }, 'admin-1');
+
+  assert.deepEqual(policy, coreSubscriptionPolicy(db, 'chill'));
+  assert.equal(policy.translationsPerMonth, 6);
+  assert.equal(policy.audioTranslationsPerMonth, 4);
+  assert.equal(policy.pdfTranslationsPerMonth, 2);
+  assert.deepEqual(policy.entitlements, ['learn']);
+  const publicProduct = listPublicCatalog(db, baseProducts).products[0];
+  assert.equal(publicProduct.translations, 6);
+  assert.equal(publicProduct.audioTranslations, 4);
+  assert.equal(publicProduct.pdfTranslations, 2);
+  assert.deepEqual(publicProduct.entitlements, ['learn']);
+  assert.throws(() => updateCoreSubscriptionPolicy(db, 'chill', {
+    translationsPerMonth: 3,
+    audioTranslationsPerMonth: 4,
+    pdfTranslationsPerMonth: 2,
+    entitlements: [],
+  }, 'admin-1'), /cannot exceed/);
 });

@@ -27,6 +27,8 @@ export default function TransportDock({
   onShowKeyNotesChange,
   minSpeed = 0.45,
   playbackRange = null,
+  practiceLocked = false,
+  practiceLockLabel = '',
 }) {
   const songDuration = getSongDuration(song);
   const rangeStart = playbackRange
@@ -46,6 +48,7 @@ export default function TransportDock({
   const displayedElapsed = Math.max(0, Math.min(duration, displayedTime - rangeStart));
 
   function beginScrub() {
+    if (practiceLocked) return;
     if (scrubbingRef.current) return;
     scrubbingRef.current = true;
     scrubTimeRef.current = displayedTime;
@@ -85,12 +88,12 @@ export default function TransportDock({
   return (
     <section className="transport-dock" aria-label="Playback controls">
       <div className="transport-button-group">
-        <button className="primary transport-main" type="button" onClick={onPlayPause}>
-          {isPlaying ? 'Pause' : displayedElapsed > 0.01 ? 'Resume' : 'Play'}
+        <button className="primary transport-main" type="button" onClick={onPlayPause} disabled={practiceLocked} title={practiceLocked ? practiceLockLabel : undefined}>
+          {practiceLocked ? 'Waiting for key' : isPlaying ? 'Pause' : displayedElapsed > 0.01 ? 'Resume' : 'Play'}
         </button>
         <button className="ghost" type="button" onClick={onStop}>Stop</button>
-        <button className="ghost seek-jump" type="button" onClick={onRewind} aria-label="Rewind 10 seconds">↶ 10s</button>
-        <button className="ghost seek-jump" type="button" onClick={onForward} aria-label="Forward 10 seconds">10s ↷</button>
+        <button className="ghost seek-jump" type="button" onClick={onRewind} disabled={practiceLocked} aria-label="Rewind 10 seconds">↶ 10s</button>
+        <button className="ghost seek-jump" type="button" onClick={onForward} disabled={practiceLocked} aria-label="Forward 10 seconds">10s ↷</button>
         <button
           className={`ghost key-notes-toggle ${showKeyNotes ? 'active' : ''}`}
           type="button"
@@ -111,6 +114,7 @@ export default function TransportDock({
           max="1.75"
           step="0.05"
           value={speed}
+          disabled={practiceLocked}
           onChange={(event) => setSpeed(Number(event.target.value))}
         />
       </label>
@@ -118,6 +122,7 @@ export default function TransportDock({
       <button
         type="button"
         className={`pedal-button ${pedalDown ? 'active' : ''}`}
+        disabled={practiceLocked}
         onPointerDown={() => onPedalChange(true)}
         onPointerUp={() => onPedalChange(false)}
         onPointerCancel={() => onPedalChange(false)}
@@ -138,6 +143,7 @@ export default function TransportDock({
           max={Math.max(rangeEnd, rangeStart + 0.01)}
           step="0.01"
           value={Math.max(rangeStart, Math.min(displayedTime, rangeEnd))}
+          disabled={practiceLocked}
           onPointerDown={beginScrub}
           onKeyDown={beginScrub}
           onChange={(event) => previewScrub(event.target.value)}

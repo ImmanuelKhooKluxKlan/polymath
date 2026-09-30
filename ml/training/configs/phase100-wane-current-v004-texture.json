@@ -1,0 +1,17 @@
+{
+  "schema": "polymath-pianist-texture-manifest-v1",
+  "purpose": "Rebuild WANEGBT supervision cells against the exact production-v004 candidate rather than the stale Phase 44 gesture boundary.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "we-are-never-getting-back-together",
+      "reference": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-pianella-raw-reference.json",
+      "referenceAlreadyAligned": false,
+      "source": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/transcriptions/wane-gbt-original-postprocessed-full.json",
+      "alignment": "D:/Polymath Training/phase-39-wane-gbt-sealed-holdout-2026-09-16/alignment/audio-dtw-unseeded-v001/alignment-report.json",
+      "candidate": "D:/Polymath Training/phase-100-wane-systematic-refinement-2026-09-28/wane-current-production-v004.json",
+      "candidateEndSeconds": 194.090688,
+      "weight": 1.0
+    }
+  ]
+}

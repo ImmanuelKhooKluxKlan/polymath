@@ -33,6 +33,8 @@ const FEATURES = {
   ],
   musician: [
     'Everything included in Chill',
+    'Full five-stage Learn journey with saved progress',
+    'Live microphone note checking and wrong-note guidance',
     '20 shared PDF or audio translations every month',
     'Extra translations for 0.5 Mcoin each',
   ],
@@ -46,7 +48,26 @@ function usdPrice(value) {
   return Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function InstitutionPlans({ products, billing, setBilling, user, busy, onChoose }) {
+function subscriptionOfferPrice(product, offer) {
+  const baseCents = Math.round(Number(product?.price || 0) * 100);
+  if (!product || product.kind !== 'subscription' || !offer || baseCents <= 0) {
+    return Number(product?.price || 0).toFixed(2);
+  }
+  const value = Math.max(0, Number(offer.value || 0));
+  const discountedCents = offer.kind === 'subscription_fixed'
+    ? Math.max(1, baseCents - Math.round(value * 100))
+    : Math.max(1, Math.round(baseCents * (100 - Math.min(100, value)) / 100));
+  return (discountedCents / 100).toFixed(2);
+}
+
+function promotionBenefit(offer) {
+  if (!offer) return '';
+  return offer.kind === 'subscription_fixed'
+    ? `${Number(offer.value).toLocaleString()} Mcoins off`
+    : `${Number(offer.value).toLocaleString()}% off`;
+}
+
+function InstitutionPlans({ products, billing, setBilling, user, busy, offer, onChoose }) {
   return (
     <>
       <div className='billing-switch segmented-control' role='group' aria-label='Institution billing period'>
@@ -70,7 +91,7 @@ function InstitutionPlans({ products, billing, setBilling, user, busy, onChoose 
                 <div className='annual-saving'><s>${usdPrice(product.annualListPrice)}</s><strong>20% off</strong></div>
               )}
               <div className='subscription-price institution-price'>
-                <strong>${usdPrice(product?.price)}</strong><span>USD / {periodLabel(product)}</span>
+                {offer && <s>${usdPrice(product?.price)}</s>}<strong>${usdPrice(subscriptionOfferPrice(product, offer))}</strong><span>USD / {periodLabel(product)}</span>
               </div>
               <ul>
                 <li>{product?.seats || 0} individual student accounts</li>
@@ -89,7 +110,7 @@ function InstitutionPlans({ products, billing, setBilling, user, busy, onChoose 
   );
 }
 
-function CustomPlanCategory({ category, products, billing, setBilling, user, busy, onChoose }) {
+function CustomPlanCategory({ category, products, billing, setBilling, user, busy, offer, onChoose }) {
   const intervals = [...new Set(products.map((product) => product.interval))];
   const visible = products.filter((product) => product.interval === billing);
   const currentIds = new Set((user?.activeSubscriptions || []).map((item) => item.productId));
@@ -112,7 +133,7 @@ function CustomPlanCategory({ category, products, billing, setBilling, user, bus
             <article key={product.id} className='subscription-plan-card creator-plan'>
               <header><div><p className='eyebrow'>{product.badge || 'Creator access'}</p><h2>{product.name}</h2></div></header>
               {product.description && <p className='custom-plan-description'>{product.description}</p>}
-              <div className='subscription-price'><strong>${product.price}</strong><span>USD / {periodLabel(product)}</span></div>
+              <div className='subscription-price'>{offer && <s>${product.price}</s>}<strong>${subscriptionOfferPrice(product, offer)}</strong><span>USD / {periodLabel(product)}</span></div>
               <ul>{(product.features || []).map((feature) => <li key={feature}>{feature}</li>)}</ul>
               <button className='primary full' type='button' disabled={busy || current || !product.checkoutConfigured} onClick={() => onChoose(product)}>
                 {current ? 'Current plan' : product.checkoutConfigured ? `Choose ${product.name}` : 'Checkout being prepared'}
@@ -126,7 +147,7 @@ function CustomPlanCategory({ category, products, billing, setBilling, user, bus
   );
 }
 
-export default function PaymentPage({ user, setUser, productId, paymentStatus, paymentToken, initialCategory, onNavigate }) {
+export default function PaymentPage({ user, setUser, productId, paymentStatus, paymentToken, initialCategory, initialPromotionCode = '', onNavigate }) {
   const initialProductId = productId || 'polymath-chill-monthly';
   const [products, setProducts] = useState(FALLBACK_PRODUCTS);
   const [categories, setCategories] = useState(FALLBACK_CATEGORIES);
@@ -136,7 +157,13 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
   const [walletOpen, setWalletOpen] = useState(initialProductId.startsWith('mcoins-'));
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [promotionCode, setPromotionCode] = useState(initialPromotionCode);
+  const [appliedOffer, setAppliedOffer] = useState(user?.subscriptionOffer || null);
+  const [promotionBusy, setPromotionBusy] = useState(false);
   const confirmationStarted = useRef(false);
+  const automaticPromotionStarted = useRef('');
+  const referralVisitTracked = useRef('');
+  const promotionPreviewStarted = useRef('');
 
   const subscriptions = useMemo(
     () => products.filter((product) => product.kind === 'subscription' && ['chill', 'musician'].includes(product.tier)),
@@ -164,6 +191,23 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
   }, []);
 
   useEffect(() => {
+    const promotionCode = String(initialPromotionCode || '').trim().toUpperCase();
+    if (!promotionCode || referralVisitTracked.current === promotionCode) return;
+    setPromotionCode(promotionCode);
+    referralVisitTracked.current = promotionCode;
+    trackProductEvent('referral_link_opened', { promotionCode });
+  }, [initialPromotionCode]);
+
+  useEffect(() => {
+    const code = String(initialPromotionCode || '').trim().toUpperCase();
+    if (user || !code || promotionPreviewStarted.current === code) return;
+    promotionPreviewStarted.current = code;
+    apiRequest(`/api/promotions/subscription-preview?code=${encodeURIComponent(code)}`)
+      .then((data) => setAppliedOffer(data.promotion || null))
+      .catch(() => setAppliedOffer(null));
+  }, [initialPromotionCode, user]);
+
+  useEffect(() => {
     if (!paymentStatus) return;
     trackProductEvent('checkout_returned', {
       productId: initialProductId,
@@ -183,6 +227,35 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
       })
       .catch(() => {});
   }, [initialCategory]);
+
+  useEffect(() => {
+    setAppliedOffer(user?.subscriptionOffer || null);
+  }, [user?.subscriptionOffer]);
+
+  useEffect(() => {
+    const requestedCode = String(
+      initialPromotionCode || user?.subscriptionOffer?.code || '',
+    ).trim().toUpperCase();
+    if (!user || !requestedCode || automaticPromotionStarted.current === requestedCode) return;
+    automaticPromotionStarted.current = requestedCode;
+    setPromotionBusy(true);
+    setStatus('Applying your referral reward…');
+    apiRequest('/api/promotions/claim-subscription', {
+      method: 'POST',
+      body: JSON.stringify({ code: requestedCode }),
+    })
+      .then((data) => {
+        setUser(data.user);
+        setAppliedOffer(data.user.subscriptionOffer || data.promotion || null);
+        setPromotionCode(data.promotion?.code || requestedCode);
+        setStatus(data.message);
+      })
+      .catch((error) => {
+        setAppliedOffer(null);
+        setStatus(error.message);
+      })
+      .finally(() => setPromotionBusy(false));
+  }, [initialPromotionCode, setUser, user]);
 
   useEffect(() => {
     const categoryProducts = products.filter((product) => product.categorySlug === audience && product.kind === 'subscription');
@@ -233,9 +306,41 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
     return subscriptions.find((product) => product.tier === tier && product.interval === billing);
   }
 
-  async function checkout(product = selected) {
+  async function applyPromotion(event) {
+    event?.preventDefault();
+    const code = String(promotionCode || '').trim().toUpperCase();
+    if (!code) {
+      setStatus('Enter a referral or Lucky code.');
+      return;
+    }
     if (!user) {
-      onNavigate('account', { next: 'payment', productId: product?.id || selected?.id });
+      onNavigate('account', { next: 'payment', productId: selected?.id, promo: code });
+      return;
+    }
+    setPromotionBusy(true);
+    setStatus('Checking your code…');
+    try {
+      const data = await apiRequest('/api/promotions/claim-subscription', {
+        method: 'POST', body: JSON.stringify({ code }),
+      });
+      setUser(data.user);
+      setAppliedOffer(data.user.subscriptionOffer || data.promotion || null);
+      setPromotionCode(data.promotion?.code || code);
+      setStatus(data.message);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setPromotionBusy(false);
+    }
+  }
+
+  async function checkout(product = selected) {
+    if (promotionBusy) {
+      setStatus('Wait a moment while your code is applied.');
+      return;
+    }
+    if (!user) {
+      onNavigate('account', { next: 'payment', productId: product?.id || selected?.id, promo: promotionCode });
       return;
     }
     if (!product) return;
@@ -279,6 +384,16 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
         <p>Start with who the subscription is for. You will only see the relevant options.</p>
       </div>
 
+      <form className='subscription-promotion-card' onSubmit={applyPromotion}>
+        <div>
+          <p className='eyebrow'>Referral or Lucky code</p>
+          <strong>{appliedOffer ? `${appliedOffer.code} · ${promotionBenefit(appliedOffer)}` : 'Have a creator code?'}</strong>
+          <small>{appliedOffer ? 'Your reduced price is shown below.' : 'Apply it before PayPal checkout.'}</small>
+        </div>
+        <label className='field'><span>Code</span><input value={promotionCode} maxLength='32' placeholder='CREATOR10' onChange={(event) => setPromotionCode(event.target.value.toUpperCase())} /></label>
+        <button className='ghost compact-action' type='submit' disabled={promotionBusy}>{promotionBusy ? 'Applying…' : user ? 'Apply code' : 'Sign in to apply'}</button>
+      </form>
+
       <div className="subscription-audience" role="tablist" aria-label="Subscription category">
         {categories.map((category) => (
           <button type="button" role="tab" key={category.id} aria-selected={audience === category.slug} className={audience === category.slug ? 'active' : ''} onClick={() => setAudience(category.slug)}>
@@ -313,7 +428,8 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
                     {tier === 'musician' && <span className="plan-badge">Learn + Band</span>}
                   </header>
                   <div className="subscription-price">
-                    <strong>${product?.price || '—'}</strong>
+                    {appliedOffer && <s>${product?.price || '—'}</s>}
+                    <strong>${product ? subscriptionOfferPrice(product, appliedOffer) : '—'}</strong>
                     <span>USD / {periodLabel(product)}</span>
                   </div>
                   <ul>
@@ -327,7 +443,7 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
                   <button
                     type="button"
                     className="primary full"
-                    disabled={busy || current || (currentTier === 'musician' && tier === 'chill')}
+                    disabled={busy || promotionBusy || current || (currentTier === 'musician' && tier === 'chill')}
                     onClick={() => { choosePlan(product); checkout(product); }}
                   >
                     {current
@@ -351,7 +467,8 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
             billing={billing}
             setBilling={setBilling}
             user={user}
-            busy={busy}
+            busy={busy || promotionBusy}
+            offer={appliedOffer}
             onChoose={(product) => { choosePlan(product); checkout(product); }}
           />
         </div>
@@ -363,7 +480,8 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
           billing={billing}
           setBilling={setBilling}
           user={user}
-          busy={busy}
+          busy={busy || promotionBusy}
+          offer={appliedOffer}
           onChoose={(product) => { choosePlan(product); checkout(product); }}
         />
       )}
@@ -390,7 +508,7 @@ export default function PaymentPage({ user, setUser, productId, paymentStatus, p
         )}
       </section>
 
-      {!user && <button className="ghost subscription-signin" type="button" onClick={() => onNavigate('account', { next: 'payment', productId: selected?.id })}>Sign in before checkout</button>}
+      {!user && <button className="ghost subscription-signin" type="button" onClick={() => onNavigate('account', { next: 'payment', productId: selected?.id, promo: promotionCode })}>Sign in before checkout</button>}
       {paymentStatus === 'cancelled' && <p className="form-status">Checkout was cancelled. Nothing was charged.</p>}
       {status && <p className="form-status subscription-status" aria-live="polite">{status}</p>}
     </section>

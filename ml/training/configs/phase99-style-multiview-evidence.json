@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-multiview-evidence-manifest-v1",
+  "purpose": "Measure complementary evidence from full-mix, vocal, and accompaniment views of Style without changing any inference policy.",
+  "commercialUseAllowed": false,
+  "pairs": [
+    {
+      "id": "style",
+      "target": "D:/Polymath Training/phase-97-style-pianella-reference-2026-09-24/style-pianella-tail-fixed.json",
+      "alignmentReport": "D:/Polymath Training/phase-98-style-supervised-2026-09-24/audio-chroma-raw-source/alignment-report.json",
+      "primaryView": "fullMix",
+      "views": {
+        "fullMix": "C:/Users/admin/Documents/Polymath Training/phase-9-full-mix-holdout-2026-09-12/style/raw-original.json",
+        "vocals": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/source-separation/transcriptions/style-vocals-original-raw.json",
+        "backing": "D:/Polymath Training/phase-99-style-70-accuracy-2026-09-25/source-separation/transcriptions/style-no-vocals-original-raw.json"
+      },
+      "weight": 1.0
+    }
+  ]
+}

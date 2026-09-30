@@ -2,10 +2,12 @@ import unittest
 
 from ml.training.train_pianist_intro_motif import (
     apply_intro_motif,
+    cycle_anchor_blend,
     evaluation,
     infer_grid,
     infer_intro_register_application,
     infer_pre_voice_cadence,
+    infer_slot_timing_offsets,
     nearest_octave_shift,
     repeating_prefix,
     source_cycle_transition_anchors,
@@ -23,6 +25,48 @@ def group(time, state):
 
 
 class PianistIntroMotifTest(unittest.TestCase):
+    def test_infers_repeatable_slot_microtiming_in_pulse_units(self):
+        slots = [0, 2]
+        groups = []
+        cycles = ((0.0, 1.0), (1.0, 1.2), (2.2, 0.8))
+        for cycle_start, cycle_seconds in cycles:
+            pulse = cycle_seconds / 4
+            groups.append(group(cycle_start, "both"))
+            groups.append(group(cycle_start + (2.25 * pulse), "left-only"))
+        groups.append(group(3.0, "both"))
+
+        offsets = infer_slot_timing_offsets(
+            groups,
+            period=2,
+            cycles=3,
+            subdivisions=4,
+            attacked_slots=slots,
+        )
+
+        self.assertEqual(offsets, [0.0, 0.25])
+
+    def test_cycle_anchor_envelope_reduces_boundary_trust(self):
+        application = {
+            "sourceCycleAnchorEnvelope": {
+                "enabled": True,
+                "edgeBlend": 0.2,
+                "peakBlend": 1.0,
+                "power": 1.0,
+            }
+        }
+        blends = [
+            cycle_anchor_blend(
+                application,
+                cycle=index,
+                planned_cycles=5,
+                fallback=0.8,
+            )
+            for index in range(5)
+        ]
+        self.assertAlmostEqual(blends[0], 0.2)
+        self.assertAlmostEqual(blends[2], 1.0)
+        self.assertAlmostEqual(blends[4], 0.2)
+
     def test_learns_partial_final_cycle_as_relative_pre_voice_cadence(self):
         pattern = ["both", "left-only"]
         reference = [

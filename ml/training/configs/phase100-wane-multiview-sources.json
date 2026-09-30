@@ -1,0 +1,14 @@
+{
+  "schema": "polymath-multiview-texture-sources-v1",
+  "purpose": "Inference-only synchronized evidence for the production-v004 WANEGBT audit.",
+  "commercialUseAllowed": false,
+  "songs": [
+    {
+      "id": "we-are-never-getting-back-together",
+      "views": {
+        "vocals": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-vocals-phase46-v007-raw.json",
+        "backing": "D:/Polymath Training/phase-47-source-separation-2026-09-17/transcriptions/wane-no-vocals-phase46-v007-raw.json"
+      }
+    }
+  ]
+}
