@@ -35,6 +35,7 @@ jobs:
           'PyYAML>=6,<7'
           'pytest>=8,<9'
           'scikit-learn>=1.6,<2'
+          'soundfile>=0.14,<1'
       - name: Test training and worker timing logic
         run: |
           python -m unittest discover -s ml/training/tests -p 'test_*.py'
