@@ -23,6 +23,11 @@
     "control": "instrument",
     "candidate": "unconditioned"
   },
+  "listeningCanary": {
+    "manifestSha256": "38e26eee5f00dc92a1ae96a84d859486c3e7c2f11a4bf2c449d50e0b4aaad3d0",
+    "audioSha256": "919d37b0481805ef0f5a0e31a5b07c500492160db5d5abe57afb9bfc58b1e3dd",
+    "role": "opened-development-listening-only"
+  },
   "frozenHyperparameters": {
     "trainLastLayers": 1,
     "epochs": 1,
