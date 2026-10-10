@@ -4,6 +4,7 @@ set -Eeuo pipefail
 STATUS_PATH="/runpod-volume/training/phase-100-wane-p050-v001/phase100-v003-unconditioned-status.txt"
 LOG_PATH="/runpod-volume/training/phase-100-wane-p050-v001/phase100-v003-unconditioned.log"
 REPO_PATH="/workspace/polymath-phase100-v003"
+VENV_PATH="/workspace/polymath-phase100-v003-venv"
 BASE_PATH="/runpod-volume/models/muscriptor-tester/phase46-v017/model.safetensors"
 OUTPUT_DIR="/runpod-volume/models/muscriptor-tester/phase100-v003-unconditioned"
 TRAIN_MANIFEST="/runpod-volume/training/phase-100-wane-p050-v001/prepared-train.jsonl"
@@ -43,19 +44,23 @@ printf '%s  %s\n' "$CANARY_MANIFEST_SHA256" "$CANARY_MANIFEST" | sha256sum --che
 printf '%s  %s\n' "$CANARY_AUDIO_SHA256" "$CANARY_AUDIO" | sha256sum --check --strict -
 test ! -e "$OUTPUT_DIR"
 test ! -e "$REPO_PATH"
+test ! -e "$VENV_PATH"
 
 echo PHASE100_V003_STAGE_BOOTSTRAP
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  git ffmpeg libsndfile1 ca-certificates
+  git ffmpeg libsndfile1 ca-certificates python3-venv
 git clone --filter=blob:none https://github.com/ImmanuelKhooKluxKlan/polymath.git "$REPO_PATH"
 cd "$REPO_PATH"
 git checkout --detach "$REPO_COMMIT"
 test "$(git rev-parse HEAD)" = "$REPO_COMMIT"
-python -m pip install --no-cache-dir -r serverless/muscriptor/requirements.txt
+python -m venv --system-site-packages "$VENV_PATH"
+PYTHON="$VENV_PATH/bin/python"
+"$PYTHON" -m pip install --upgrade pip
+"$PYTHON" -m pip install --no-cache-dir -r serverless/muscriptor/requirements.txt
 
 echo PHASE100_V003_STAGE_TRAIN_UNCONDITIONED
-python -m ml.training.train_muscriptor_piano \
+"$PYTHON" -m ml.training.train_muscriptor_piano \
   --train-manifest "$TRAIN_MANIFEST" \
   --validation-manifest "$VALIDATION_MANIFEST" \
   --base "$BASE_PATH" \
@@ -78,7 +83,7 @@ python -m ml.training.train_muscriptor_piano \
   --seed polymath-phase100-v003-unconditioned
 
 echo PHASE100_V003_STAGE_FULL_UNCONDITIONED_EVALUATION
-python - <<'PY'
+"$PYTHON" - <<'PY'
 import json
 from pathlib import Path
 
@@ -106,19 +111,19 @@ print(json.dumps({
 PY
 
 echo PHASE100_V003_STAGE_CONTINUOUS_SONG_RESCORE
-python -m ml.training.rescore_song_timelines \
+"$PYTHON" -m ml.training.rescore_song_timelines \
   --evaluation "$EVALUATION_PATH" \
   --validation-manifest "$VALIDATION_MANIFEST" \
   --comparison-side baseline \
   --out "$BASE_TIMELINE_PATH"
-python -m ml.training.rescore_song_timelines \
+"$PYTHON" -m ml.training.rescore_song_timelines \
   --evaluation "$EVALUATION_PATH" \
   --validation-manifest "$VALIDATION_MANIFEST" \
   --comparison-side candidate \
   --out "$CANDIDATE_TIMELINE_PATH"
 
 echo PHASE100_V003_STAGE_FAIL_CLOSED_ROUTE_GATE
-python -m ml.training.apply_route_matched_validation_gate \
+"$PYTHON" -m ml.training.apply_route_matched_validation_gate \
   --comparison "$EVALUATION_PATH" \
   --baseline-timeline "$BASE_TIMELINE_PATH" \
   --candidate-timeline "$CANDIDATE_TIMELINE_PATH" \
@@ -128,7 +133,7 @@ python -m ml.training.apply_route_matched_validation_gate \
   --fail-on-rejection
 
 echo PHASE100_V003_STAGE_WANE_UNCONDITIONED_CANARY
-python -m ml.training.transcribe_batch \
+"$PYTHON" -m ml.training.transcribe_batch \
   --manifest "$CANARY_MANIFEST" \
   --model "$OUTPUT_DIR/model.safetensors" \
   --model-id phase100-v003-unconditioned \
