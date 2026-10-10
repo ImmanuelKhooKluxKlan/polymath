@@ -9,7 +9,14 @@ OUTPUT_DIR="/runpod-volume/models/muscriptor-tester/phase100-v003-unconditioned"
 TRAIN_MANIFEST="/runpod-volume/training/phase-100-wane-p050-v001/prepared-train.jsonl"
 VALIDATION_MANIFEST="/runpod-volume/training/phase-100-wane-p050-v001/prepared-validation.jsonl"
 CANARY_MANIFEST="/runpod-volume/training/phase-100-wane-canary-v001/phase100-v003-unconditioned-manifest.json"
-REPO_COMMIT="e7b1b4e324aadf0031afbcecf4a31360fa437990"
+REPO_COMMIT="${POLYMATH_REPO_COMMIT:?Set POLYMATH_REPO_COMMIT to the immutable commit containing this gate}"
+BASE_SHA256="a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+TRAIN_SHA256="733bf64496c858fd88d5d92f98aa447dd0234008328501387e9b1a55df31f1d6"
+VALIDATION_SHA256="c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"
+EVALUATION_PATH="$OUTPUT_DIR/evaluation-unconditioned-phase-100-wane-p050-v001.json"
+BASE_TIMELINE_PATH="$OUTPUT_DIR/evaluation-unconditioned-baseline-continuous.json"
+CANDIDATE_TIMELINE_PATH="$OUTPUT_DIR/evaluation-unconditioned-candidate-continuous.json"
+GATE_RESULT_PATH="$OUTPUT_DIR/route-matched-validation-gate.json"
 
 finish() {
   code=$?
@@ -26,6 +33,9 @@ exec > >(tee -a "$LOG_PATH") 2>&1
 for required in "$BASE_PATH" "$TRAIN_MANIFEST" "$VALIDATION_MANIFEST" "$CANARY_MANIFEST"; do
   test -f "$required"
 done
+printf '%s  %s\n' "$BASE_SHA256" "$BASE_PATH" | sha256sum --check --strict -
+printf '%s  %s\n' "$TRAIN_SHA256" "$TRAIN_MANIFEST" | sha256sum --check --strict -
+printf '%s  %s\n' "$VALIDATION_SHA256" "$VALIDATION_MANIFEST" | sha256sum --check --strict -
 test ! -e "$OUTPUT_DIR"
 test ! -e "$REPO_PATH"
 
@@ -89,6 +99,28 @@ print(json.dumps({
     "candidateMinusBaselineMicroF1": result["candidateMinusBaselineMicroF1"],
 }, indent=2), flush=True)
 PY
+
+echo PHASE100_V003_STAGE_CONTINUOUS_SONG_RESCORE
+python -m ml.training.rescore_song_timelines \
+  --evaluation "$EVALUATION_PATH" \
+  --validation-manifest "$VALIDATION_MANIFEST" \
+  --comparison-side baseline \
+  --out "$BASE_TIMELINE_PATH"
+python -m ml.training.rescore_song_timelines \
+  --evaluation "$EVALUATION_PATH" \
+  --validation-manifest "$VALIDATION_MANIFEST" \
+  --comparison-side candidate \
+  --out "$CANDIDATE_TIMELINE_PATH"
+
+echo PHASE100_V003_STAGE_FAIL_CLOSED_ROUTE_GATE
+python -m ml.training.apply_route_matched_validation_gate \
+  --comparison "$EVALUATION_PATH" \
+  --baseline-timeline "$BASE_TIMELINE_PATH" \
+  --candidate-timeline "$CANDIDATE_TIMELINE_PATH" \
+  --training-metadata "$OUTPUT_DIR/training-metadata.json" \
+  --gate "ml/training/configs/phase100-v003-unconditioned-validation-gate.json" \
+  --out "$GATE_RESULT_PATH" \
+  --fail-on-rejection
 
 echo PHASE100_V003_STAGE_WANE_UNCONDITIONED_CANARY
 python -m ml.training.transcribe_batch \

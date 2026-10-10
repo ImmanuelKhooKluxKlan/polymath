@@ -14,6 +14,8 @@
     "validationClips": 258,
     "trainCompositions": 20,
     "validationCompositions": 3,
+    "trainManifestSha256": "733bf64496c858fd88d5d92f98aa447dd0234008328501387e9b1a55df31f1d6",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
     "targetSongLeakageBlocked": true
   },
   "singleChangedVariable": {
@@ -43,5 +45,6 @@
     "manual listening must confirm cleaner phrasing before any deployment"
   ],
   "rejectionPolicy": "If any gate fails, retain the artifact for diagnosis but do not deploy, do not advance to the p025 curriculum, and do not change production routing.",
+  "validationGate": "ml/training/configs/phase100-v003-unconditioned-validation-gate.json",
   "preparedRunner": "scripts/training/run_phase100_v003_unconditioned.sh"
 }
