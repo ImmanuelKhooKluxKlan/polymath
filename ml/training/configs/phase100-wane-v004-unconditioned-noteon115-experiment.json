@@ -1,0 +1,67 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase100-v004-unconditioned-noteon115",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "hypothesis": "The route-matched v003 run improved aggregate onset F1 but reduced recall. Holding every other input constant and modestly increasing note-on token weight from 1.00 to 1.15 may recover omitted onsets without reintroducing the conditioning mismatch.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-100-wane-p050-v001",
+    "trainClips": 1866,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "trainManifestSha256": "733bf64496c858fd88d5d92f98aa447dd0234008328501387e9b1a55df31f1d6",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+    "targetSongLeakageBlocked": true
+  },
+  "control": {
+    "candidateId": "phase100-v003-unconditioned",
+    "result": "rejected-by-decoded-note-safety-gate",
+    "aggregate100msMicroF1Delta": 0.003131,
+    "aggregate100msRecallDelta": -0.015577
+  },
+  "singleChangedVariable": {
+    "name": "noteOnTokenWeight",
+    "control": 1.0,
+    "candidate": 1.15
+  },
+  "heldConstant": {
+    "conditioningMode": "unconditioned",
+    "seed": "polymath-phase100-v003-unconditioned",
+    "reasonForSeedReuse": "Changing the seed would confound the isolated note-on-weight experiment."
+  },
+  "listeningCanary": {
+    "manifest": "ml/training/configs/phase100-wane-v004-unconditioned-noteon115-opening-runpod.json",
+    "manifestSha256": "7534655bcf079c6faf099044ce6401e3d080aa57946fabd0fdac402373829ffb",
+    "audioSha256": "919d37b0481805ef0f5a0e31a5b07c500492160db5d5abe57afb9bfc58b1e3dd",
+    "role": "opened-development-listening-only"
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.15,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "precision": "bf16"
+  },
+  "gates": [
+    "training loss must beat the immutable base on unconditioned validation",
+    "the internal decoded unconditioned multi-song panel must pass without recall regression",
+    "full 258-clip unconditioned micro-F1 must not regress at 100 ms or 250 ms",
+    "no validation song may show a material F1 regression",
+    "the WANE trusted opening must improve after the frozen production-v004 arranger",
+    "manual listening must confirm cleaner phrasing before any deployment"
+  ],
+  "rejectionPolicy": "If any gate fails, preserve a hashed rejection receipt but no model checkpoint; do not deploy, do not advance curriculum, and do not change production routing.",
+  "validationGate": "ml/training/configs/phase100-v004-unconditioned-noteon115-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase100_v004_unconditioned_noteon115.sh"
+}

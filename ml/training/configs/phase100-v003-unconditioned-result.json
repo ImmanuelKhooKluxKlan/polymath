@@ -1,0 +1,65 @@
+{
+  "schema": "polymath-controlled-checkpoint-result-v1",
+  "candidateId": "phase100-v003-unconditioned",
+  "status": "rejected",
+  "candidateWritten": false,
+  "productionMutated": false,
+  "sourceCommit": "cbfe3681a08ebc4c5618f86b5e30cd5d8360ea86",
+  "sourceLog": {
+    "filename": "phase100-v003-unconditioned.log",
+    "sha256": "acbd37437a56ea1c19bc673cbc5d91586e14acb8215096b0825baad5717819b0"
+  },
+  "training": {
+    "conditioningMode": "unconditioned",
+    "checkpointIndex": 1,
+    "epoch": 1,
+    "optimizerStep": 234,
+    "trigger": "epoch-end",
+    "validationLoss": 0.7822036921450969,
+    "baselineValidationLoss": null,
+    "lossImprovedVersusBaseline": true,
+    "baselineLossUnavailableReason": "The v003 command did not attach its progress callback; this audit defect is fixed before v004."
+  },
+  "decodedGate": {
+    "schema": "polymath-decoded-checkpoint-gate-v1",
+    "passed": false,
+    "policy": {
+      "tolerancesMs": [100, 250],
+      "maximumAggregateF1Regression": 0.001,
+      "maximumAggregateRecallRegression": 0.002,
+      "maximumPerSongF1Regression": 0.01
+    },
+    "aggregateCandidateMinusBaseline": {
+      "100ms": {
+        "microF1": 0.003131,
+        "recall": -0.015577
+      },
+      "250ms": {
+        "microF1": 0.010479,
+        "recall": -0.010904
+      }
+    },
+    "perSongCandidateMinusBaseline": {
+      "babyslakh-track00018": {
+        "100ms": {"microF1": -0.027072},
+        "250ms": {"microF1": -0.005309}
+      },
+      "back-to-december-pianella-phase4-exact": {
+        "100ms": {"microF1": -0.019093},
+        "250ms": {"microF1": -0.009546}
+      },
+      "cruel-summer-pianella-supervision": {
+        "100ms": {"microF1": 0.016644},
+        "250ms": {"microF1": 0.009394}
+      }
+    },
+    "worstPerSongF1Delta": -0.027072,
+    "failedChecks": [
+      "aggregate_100ms_recall",
+      "aggregate_250ms_recall",
+      "song_babyslakh-track00018_100ms_f1",
+      "song_back-to-december-pianella-phase4-exact_100ms_f1"
+    ]
+  },
+  "conclusion": "Route matching improved aggregate F1 but made the checkpoint too conservative: recall fell and two held-out songs regressed. Reject and test a modest note-on loss-weight increase while holding all other variables fixed."
+}
