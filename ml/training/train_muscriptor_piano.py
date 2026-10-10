@@ -136,6 +136,83 @@ def sha256_file(path: Path, chunk_bytes: int = 8 * 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def build_rejection_receipt(
+    *,
+    base_checkpoint: Path,
+    train_manifest: Path,
+    validation_manifest: Path,
+    train_audit: dict[str, Any],
+    validation_audit: dict[str, Any],
+    instrument_focus: str,
+    conditioning_mode: str,
+    hyperparameters: dict[str, Any],
+    optimizer_steps: int,
+    seed: str,
+    reproducibility: dict[str, Any],
+    baseline_validation_loss: float,
+    lowest_validation_loss: float,
+    decoded_checkpoint_selection: dict[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    """Build the immutable evidence record for a run that wrote no checkpoint."""
+
+    return {
+        "schema": "polymath-muscriptor-training-rejection-v1",
+        "candidateWritten": False,
+        "reason": str(reason),
+        "baseCheckpoint": str(base_checkpoint),
+        "baseSha256": sha256_file(base_checkpoint),
+        "trainManifest": str(train_manifest),
+        "trainManifestSha256": sha256_file(train_manifest),
+        "validationManifest": str(validation_manifest),
+        "validationManifestSha256": sha256_file(validation_manifest),
+        "trainAudit": train_audit,
+        "validationAudit": validation_audit,
+        "instrumentFocus": str(instrument_focus),
+        "conditioningMode": str(conditioning_mode),
+        "hyperparameters": hyperparameters,
+        "optimizerSteps": int(optimizer_steps),
+        "seed": str(seed),
+        "reproducibility": reproducibility,
+        "baselineValidationLoss": float(baseline_validation_loss),
+        "lowestObservedValidationLoss": float(lowest_validation_loss),
+        "decodedCheckpointSelection": decoded_checkpoint_selection,
+        "commercialUseAllowed": False,
+        "productionMutationAllowed": False,
+    }
+
+
+def write_immutable_json_receipt(path: Path, payload: dict[str, Any]) -> str:
+    """Write JSON without permitting replacement and return its SHA-256 digest.
+
+    The temporary file and final hard-link live on the same filesystem. Creating
+    the hard-link is atomic and fails if the final receipt already exists, so a
+    rerun cannot silently replace the evidence from an earlier experiment.
+    """
+
+    destination = Path(path)
+    digest_path = destination.with_name(destination.name + ".sha256")
+    if destination.exists() or digest_path.exists():
+        raise TrainingError(f"Rejection receipt already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    digest = sha256_file(destination)
+    with digest_path.open("x", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"{digest}  {destination.name}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return digest
+
+
 def audit_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     songs: set[str] = set()
     instruments: set[str] = set()
@@ -534,6 +611,12 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         raise TrainingError("Output must be outside the immutable base-checkpoint directory")
     if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
         raise TrainingError(f"Output path must be a new or empty directory: {args.out}")
+    rejection_receipt = getattr(args, "rejection_receipt", None)
+    if rejection_receipt:
+        rejection_receipt = Path(rejection_receipt)
+        rejection_digest = rejection_receipt.with_name(rejection_receipt.name + ".sha256")
+        if rejection_receipt.exists() or rejection_digest.exists():
+            raise TrainingError(f"Rejection receipt already exists: {rejection_receipt}")
     conditioning_mode = str(
         getattr(args, "conditioning_mode", "instrument") or "instrument"
     ).strip().lower()
@@ -773,14 +856,90 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             # The periodic checkpoint happened exactly on the final update of
             # this epoch. Reuse it as the epoch summary without decoding twice.
             epoch_decisions.append(checkpoint_decisions[-1])
-    if best_state is None:
-        raise TrainingError(
-            "No evaluated checkpoint improved validation loss while passing decoded "
-            "multi-song note gates; "
-            "no candidate checkpoint was written"
-        )
     for decision in checkpoint_decisions:
         decision["selected"] = decision["checkpointIndex"] == best_checkpoint_index
+    reproducibility = {
+        "numericSeed": numeric_seed,
+        "torchVersion": str(torch.__version__),
+        "cudaRuntimeVersion": str(torch.version.cuda),
+        "gpu": torch.cuda.get_device_name(0),
+        "cublasWorkspaceConfig": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        "deterministicAlgorithms": True,
+        "cudnnBenchmark": False,
+        "cudnnDeterministic": True,
+        "allowTf32": False,
+    }
+    hyperparameters = {
+        "trainLastLayers": args.train_last_layers,
+        "learningRate": args.learning_rate,
+        "weightDecay": args.weight_decay,
+        "gradientAccumulation": args.gradient_accumulation,
+        "gradientClipNorm": args.gradient_clip_norm,
+        "timingTokenWeight": args.timing_token_weight,
+        "noteOnTokenWeight": args.note_on_token_weight,
+        "noteOffTokenWeight": args.note_off_token_weight,
+        "eosTokenWeight": args.eos_token_weight,
+        "epochs": args.epochs,
+        "validationIntervalSteps": validation_interval_steps,
+        "precision": args.precision,
+    }
+    decoded_checkpoint_selection = {
+        "schema": "polymath-decoded-checkpoint-selection-v2",
+        "ranking": [
+            "100ms.microF1",
+            "100ms.recall",
+            "250ms.microF1",
+            "250ms.recall",
+            "negativeValidationLoss",
+        ],
+        "selectedCheckpointIndex": best_checkpoint_index,
+        "selectedRank": list(best_selection_rank) if best_selection_rank else None,
+        "clipsPerSong": decoded_gate_clips_per_song,
+        "records": [
+            {
+                "clipId": str(record.get("clipId") or ""),
+                "songId": str(record.get("songId") or "unknown"),
+                "sourceStart": float(record.get("sourceStart") or 0),
+                "isNegativeExample": bool(record.get("isNegativeExample")),
+            }
+            for record in decoded_gate_records
+        ],
+        "instrumentConstraint": list(decoded_instruments or ()),
+        "baselineDecodedSource": baseline_decoded_source,
+        "baseline": baseline_decoded_metrics,
+        "bestCandidate": best_decoded_metrics,
+        "epochDecisions": epoch_decisions,
+        "checkpointDecisions": checkpoint_decisions,
+    }
+    if best_state is None:
+        reason = (
+            "No evaluated checkpoint improved validation loss while passing decoded "
+            "multi-song note gates; no candidate checkpoint was written"
+        )
+        if rejection_receipt:
+            receipt = build_rejection_receipt(
+                base_checkpoint=args.base,
+                train_manifest=args.train_manifest,
+                validation_manifest=args.validation_manifest,
+                train_audit=train_audit,
+                validation_audit=validation_audit,
+                instrument_focus=train_audit["instruments"][0],
+                conditioning_mode=conditioning_mode,
+                hyperparameters=hyperparameters,
+                optimizer_steps=optimizer_step,
+                seed=args.seed,
+                reproducibility=reproducibility,
+                baseline_validation_loss=baseline_validation_loss,
+                lowest_validation_loss=lowest_validation_loss,
+                decoded_checkpoint_selection=decoded_checkpoint_selection,
+                reason=reason,
+            )
+            digest = write_immutable_json_receipt(rejection_receipt, receipt)
+            if progress_callback:
+                progress_callback(
+                    f"Rejection receipt: {rejection_receipt} (sha256 {digest})"
+                )
+        raise TrainingError(reason)
     transcription._model.load_state_dict(best_state, strict=False)
     weight_delta = summarize_weight_delta(
         transcription._model,
@@ -797,59 +956,15 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "validationAudit": validation_audit,
         "instrumentFocus": train_audit["instruments"][0],
         "conditioningMode": conditioning_mode,
-        "trainLastLayers": args.train_last_layers,
-        "learningRate": args.learning_rate,
-        "timingTokenWeight": args.timing_token_weight,
-        "noteOnTokenWeight": args.note_on_token_weight,
-        "noteOffTokenWeight": args.note_off_token_weight,
-        "eosTokenWeight": args.eos_token_weight,
-        "epochs": args.epochs,
-        "validationIntervalSteps": validation_interval_steps,
+        **hyperparameters,
         "optimizerSteps": optimizer_step,
         "seed": args.seed,
-        "reproducibility": {
-            "numericSeed": numeric_seed,
-            "torchVersion": str(torch.__version__),
-            "cudaRuntimeVersion": str(torch.version.cuda),
-            "gpu": torch.cuda.get_device_name(0),
-            "cublasWorkspaceConfig": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
-            "deterministicAlgorithms": True,
-            "cudnnBenchmark": False,
-            "cudnnDeterministic": True,
-            "allowTf32": False,
-        },
+        "reproducibility": reproducibility,
         "baselineValidationLoss": baseline_validation_loss,
         "bestValidationLoss": selected_validation_loss,
         "selectedValidationLoss": selected_validation_loss,
         "lowestObservedValidationLoss": lowest_validation_loss,
-        "decodedCheckpointSelection": {
-            "schema": "polymath-decoded-checkpoint-selection-v2",
-            "ranking": [
-                "100ms.microF1",
-                "100ms.recall",
-                "250ms.microF1",
-                "250ms.recall",
-                "negativeValidationLoss",
-            ],
-            "selectedCheckpointIndex": best_checkpoint_index,
-            "selectedRank": list(best_selection_rank) if best_selection_rank else None,
-            "clipsPerSong": decoded_gate_clips_per_song,
-            "records": [
-                {
-                    "clipId": str(record.get("clipId") or ""),
-                    "songId": str(record.get("songId") or "unknown"),
-                    "sourceStart": float(record.get("sourceStart") or 0),
-                    "isNegativeExample": bool(record.get("isNegativeExample")),
-                }
-                for record in decoded_gate_records
-            ],
-            "instrumentConstraint": list(decoded_instruments or ()),
-            "baselineDecodedSource": baseline_decoded_source,
-            "baseline": baseline_decoded_metrics,
-            "bestCandidate": best_decoded_metrics,
-            "epochDecisions": epoch_decisions,
-            "checkpointDecisions": checkpoint_decisions,
-        },
+        "decodedCheckpointSelection": decoded_checkpoint_selection,
         "weightDelta": weight_delta,
         "commercialUseAllowed": False,
         "note": "Candidate only. Promotion requires frozen note-F1 tests and manual listening.",
@@ -864,6 +979,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-manifest", type=Path, required=True)
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--rejection-receipt",
+        type=Path,
+        help=(
+            "Write immutable structured evidence here if every checkpoint fails "
+            "the frozen selection gates. The rejected model itself is never saved."
+        ),
+    )
     parser.add_argument(
         "--baseline-decoded-evaluation",
         type=Path,
@@ -917,6 +1040,8 @@ def main() -> None:
     args.validation_manifest = args.validation_manifest.resolve()
     args.base = args.base.resolve()
     args.out = args.out.resolve()
+    if args.rejection_receipt:
+        args.rejection_receipt = args.rejection_receipt.resolve()
     if args.baseline_decoded_evaluation:
         args.baseline_decoded_evaluation = args.baseline_decoded_evaluation.resolve()
     train_records = read_jsonl(args.train_manifest)
@@ -929,7 +1054,12 @@ def main() -> None:
     if not args.execute:
         print(json.dumps(audit, indent=2))
         return
-    print(json.dumps(train(args), indent=2))
+    print(
+        json.dumps(
+            train(args, progress_callback=lambda message: print(message, flush=True)),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

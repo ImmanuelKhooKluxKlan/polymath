@@ -7,14 +7,53 @@ from pathlib import Path
 from ml.training.train_muscriptor_piano import (
     TrainingError,
     audit_records,
+    build_rejection_receipt,
     configure_trainable_parameters,
     conditioning_group,
     load_cached_decoded_metrics,
     should_run_periodic_validation,
+    write_immutable_json_receipt,
 )
 
 
 class TrainingAuditTests(unittest.TestCase):
+    def test_rejection_receipt_records_hashes_and_cannot_be_replaced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "model.safetensors"
+            train_manifest = root / "train.jsonl"
+            validation_manifest = root / "validation.jsonl"
+            receipt_path = root / "evidence" / "rejection.json"
+            base.write_bytes(b"immutable-base")
+            train_manifest.write_text('{"clipId":"train"}\n', encoding="utf-8")
+            validation_manifest.write_text('{"clipId":"validation"}\n', encoding="utf-8")
+            receipt = build_rejection_receipt(
+                base_checkpoint=base,
+                train_manifest=train_manifest,
+                validation_manifest=validation_manifest,
+                train_audit={"clips": 1},
+                validation_audit={"clips": 1},
+                instrument_focus="acoustic_piano",
+                conditioning_mode="unconditioned",
+                hyperparameters={"noteOnTokenWeight": 1.15},
+                optimizer_steps=4,
+                seed="held-constant-seed",
+                reproducibility={"deterministicAlgorithms": True},
+                baseline_validation_loss=0.9,
+                lowest_validation_loss=0.8,
+                decoded_checkpoint_selection={"checkpointDecisions": []},
+                reason="frozen gate failed",
+            )
+            digest = write_immutable_json_receipt(receipt_path, receipt)
+            stored = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(stored["schema"], "polymath-muscriptor-training-rejection-v1")
+            self.assertFalse(stored["candidateWritten"])
+            self.assertEqual(stored["hyperparameters"]["noteOnTokenWeight"], 1.15)
+            self.assertEqual(len(digest), 64)
+            self.assertIn(digest, Path(str(receipt_path) + ".sha256").read_text())
+            with self.assertRaisesRegex(TrainingError, "already exists"):
+                write_immutable_json_receipt(receipt_path, receipt)
+
     def test_cached_baseline_decode_is_identity_checked_and_rescored(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
