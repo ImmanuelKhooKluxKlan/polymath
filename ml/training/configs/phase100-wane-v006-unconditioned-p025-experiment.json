@@ -1,0 +1,75 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase100-v006-unconditioned-p025",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "targetMilestone": {
+    "route": "full-mix-piano-reduction",
+    "openedDevelopmentSong": "we-are-never-getting-back-together",
+    "metric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "currentOpenedSongBaseline": 0.341204,
+    "developmentTarget": 0.70,
+    "certificationTarget": 0.90
+  },
+  "hypothesis": "The p050 route-matched candidates modestly improved aggregate F1 but lost recall. Adding the already-reviewed p025 WANE domain bridge increases exposure to a harder vocal-mix input without changing the immutable base, validation songs, conditioning, seed, optimizer, token weights, or epoch count.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-100-wane-p025-v001",
+    "trainClips": 1931,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "trainManifestSha256": "22348f7df462d603cddb5e1d5a14a69d6b045e863adce2a6e895e844ee3029ea",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+    "targetSongLeakageBlocked": true,
+    "role": "opened development and model selection; never sealed certification"
+  },
+  "control": {
+    "candidateId": "phase100-v003-unconditioned",
+    "datasetId": "phase-100-wane-p050-v001",
+    "result": "rejected-by-decoded-note-safety-gate",
+    "reasonForControl": "v003 has the identical model, route, optimizer, seed, and token weights; only the p025 curriculum addition changes."
+  },
+  "singleChangedVariable": {
+    "name": "trainingManifest",
+    "control": "phase-100-wane-p050-v001",
+    "candidate": "phase-100-wane-p025-v001",
+    "addedEvidence": "65 reviewed WANE p025 domain-bridge clips, retained under the same composition identity"
+  },
+  "listeningCanary": {
+    "manifest": "ml/training/configs/phase100-wane-v006-unconditioned-p025-opening-runpod.json",
+    "manifestSha256": "ad6cc282011e86c0480e6be0c60f730b1009d349a3010c4290ba9bd166b86437",
+    "audioSha256": "919d37b0481805ef0f5a0e31a5b07c500492160db5d5abe57afb9bfc58b1e3dd",
+    "role": "opened-development-listening-only"
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "unconditioned",
+    "precision": "bf16",
+    "seed": "polymath-phase100-v003-unconditioned"
+  },
+  "gates": [
+    "training loss must beat the immutable base on unconditioned validation",
+    "the internal decoded unconditioned multi-song panel must pass without recall regression",
+    "full 258-clip unconditioned micro-F1 must not regress at 100 ms or 250 ms",
+    "no validation song may lose more than 0.005 absolute 100 ms F1",
+    "duration, cutoff, overlong-note, frame, and rapid-retrigger limits must pass",
+    "the WANE trusted opening must improve after the frozen production-v004 arranger",
+    "manual blind listening must confirm cleaner phrasing before any deployment"
+  ],
+  "rejectionPolicy": "If any gate fails, preserve a hashed rejection receipt but no model checkpoint; do not deploy and do not change production routing.",
+  "validationGate": "ml/training/configs/phase100-v006-unconditioned-p025-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase100_v006_unconditioned_p025.sh"
+}
