@@ -1,0 +1,68 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v008-balanced-visual-labels",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "targetMilestone": {
+    "route": "full-mix-piano-reduction",
+    "openedDevelopmentSong": "we-are-never-getting-back-together",
+    "metric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "currentOpenedSongBaselineAgainstVisualReference": 0.339465,
+    "developmentTarget": 0.70,
+    "certificationTarget": 0.90
+  },
+  "hypothesis": "v007 proved that independent visual labels improve aggregate exact-note F1, but WANE carried 48.26% of effective corpus weight and damaged recall on an unrelated song. Scaling all four WANE audio variants by 0.15 restores a 12.27% effective share, close to the song's 13.46% clip share, while preserving relative curriculum weights.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-103-wane-visual-labels-v003",
+    "trainClips": 1931,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "relabelledWaneClips": 260,
+    "waneEffectiveWeight": 31.6875,
+    "otherEffectiveWeight": 226.5,
+    "waneEffectiveShare": 0.122731,
+    "waneClipShare": 0.134645,
+    "trainManifestSha256": "e20a0eb3d54a45c438aa70a86e78c5af6fc571eb9cb7d3a7bdb3a0fed39a92d3",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"
+  },
+  "control": {
+    "candidateId": "phase103-v007-visual-labels",
+    "result": "rejected-by-decoded-note-safety-gate",
+    "observedDeltas": {
+      "aggregate100msF1": 0.013055,
+      "aggregate100msRecall": -0.007788,
+      "babySlakh100msF1": -0.027072
+    }
+  },
+  "singleChangedVariable": {
+    "name": "WANE example-weight multiplier",
+    "control": 1.0,
+    "candidate": 0.15,
+    "labelsMutated": false,
+    "audioMutated": false,
+    "validationMutated": false
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "unconditioned",
+    "precision": "bf16",
+    "seed": "polymath-phase100-v003-unconditioned"
+  },
+  "rejectionPolicy": "Preserve evidence but never mutate production when any automatic or manual gate fails.",
+  "validationGate": "ml/training/configs/phase103-v008-balanced-visual-labels-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase103_v008_balanced_visual_labels.sh"
+}

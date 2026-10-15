@@ -77,6 +77,22 @@ def test_visually_confirmed_notes_convert_old_negative_to_positive(tmp_path: Pat
     assert result[0]["relabeling"]["previousNegativeExample"] is True
 
 
+def test_target_weight_multiplier_preserves_domain_bridge_ratio(tmp_path: Path) -> None:
+    package_path = tmp_path / "labels.json"
+    package_path.write_text(json.dumps(package()), encoding="utf-8")
+    source = record("target")
+    source["domainBridge"] = {"weightMultiplier": 0.5}
+    result, summary = relabel(
+        [source],
+        package(),
+        target_song_id="target",
+        package_path=package_path,
+        target_weight_multiplier=0.15,
+    )
+    assert result[0]["exampleWeight"] == pytest.approx(0.075)
+    assert summary["targetWeightMultiplier"] == 0.15
+
+
 def test_fails_closed_on_review_window(tmp_path: Path) -> None:
     package_path = tmp_path / "labels.json"
     package_path.write_text(json.dumps(package("review")), encoding="utf-8")

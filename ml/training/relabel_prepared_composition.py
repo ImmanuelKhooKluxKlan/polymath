@@ -61,6 +61,7 @@ def relabel(
     *,
     target_song_id: str,
     package_path: Path,
+    target_weight_multiplier: float = 1.0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if package.get("schema") != SCHEMA:
         raise ValueError(f"replacement package schema must be {SCHEMA!r}")
@@ -71,6 +72,8 @@ def relabel(
         raise ValueError("replacement package has no notes")
     if not isinstance(windows, list) or not windows:
         raise ValueError("replacement package has no alignment quality windows")
+    if not 0.0 < target_weight_multiplier <= 1.0:
+        raise ValueError("target_weight_multiplier must be within (0, 1]")
 
     output: list[dict[str, Any]] = []
     touched = 0
@@ -103,7 +106,7 @@ def relabel(
         if not replacement:
             raise ValueError(f"{source.get('clipId')}: replacement produced no labels")
         bridge = source.get("domainBridge")
-        positive_weight = (
+        positive_weight = target_weight_multiplier * (
             float(bridge.get("weightMultiplier", 1.0))
             if isinstance(bridge, dict)
             else 1.0
@@ -140,6 +143,7 @@ def relabel(
         "notesBefore": before_notes,
         "notesAfter": after_notes,
         "noteDelta": after_notes - before_notes,
+        "targetWeightMultiplier": target_weight_multiplier,
     }
 
 
@@ -149,6 +153,7 @@ def main() -> None:
     parser.add_argument("--validation-manifest", type=Path, required=True)
     parser.add_argument("--supervision-package", type=Path, required=True)
     parser.add_argument("--target-song-id", required=True)
+    parser.add_argument("--target-weight-multiplier", type=float, default=1.0)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     sources = {
@@ -162,6 +167,7 @@ def main() -> None:
         package,
         target_song_id=args.target_song_id.strip(),
         package_path=sources["supervisionPackage"],
+        target_weight_multiplier=args.target_weight_multiplier,
     )
     validation = read_jsonl(sources["validationManifest"])
     destination = args.out.resolve()
