@@ -1,0 +1,80 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase100-v005-unconditioned-noteon135",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "targetMilestone": {
+    "route": "full-mix-piano-reduction",
+    "metric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "developmentTarget": 0.70,
+    "certificationTarget": 0.90
+  },
+  "hypothesis": "v004 improved aggregate F1 and recovered part of v003's recall loss when note-on weight increased from 1.00 to 1.15. Raising only note-on token weight to 1.35, which previously helped the direct-piano Phase 94 experiment, may recover enough omitted onsets to pass the frozen recall gate without changing timing, release, data, seed, or optimization.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-100-wane-p050-v001",
+    "trainClips": 1866,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "trainManifestSha256": "733bf64496c858fd88d5d92f98aa447dd0234008328501387e9b1a55df31f1d6",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+    "targetSongLeakageBlocked": true,
+    "role": "opened development and model selection; never sealed certification"
+  },
+  "control": {
+    "candidateId": "phase100-v004-unconditioned-noteon115",
+    "result": "rejected-by-decoded-note-safety-gate",
+    "baseline100msMicroF1": 0.598145,
+    "candidate100msMicroF1": 0.606886,
+    "candidate100msPrecision": 0.624383,
+    "candidate100msRecall": 0.590343,
+    "aggregate100msRecallDelta": -0.012461,
+    "worstSong100msF1Delta": -0.027072,
+    "candidateWritten": false
+  },
+  "singleChangedVariable": {
+    "name": "noteOnTokenWeight",
+    "control": 1.15,
+    "candidate": 1.35
+  },
+  "heldConstant": {
+    "conditioningMode": "unconditioned",
+    "seed": "polymath-phase100-v003-unconditioned",
+    "reasonForSeedReuse": "Changing the seed would confound the isolated note-on-weight experiment."
+  },
+  "listeningCanary": {
+    "manifest": "ml/training/configs/phase100-wane-v005-unconditioned-noteon135-opening-runpod.json",
+    "manifestSha256": "42d619217d580cf8405f137220ba818bd664d19173dfe295da328470eb5bbeff",
+    "audioSha256": "919d37b0481805ef0f5a0e31a5b07c500492160db5d5abe57afb9bfc58b1e3dd",
+    "role": "opened-development-listening-only"
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.35,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "precision": "bf16"
+  },
+  "gates": [
+    "training loss must beat the immutable base on unconditioned validation",
+    "the internal decoded unconditioned multi-song panel must pass without recall regression",
+    "full 258-clip unconditioned micro-F1 must not regress at 100 ms or 250 ms",
+    "no validation song may lose more than 0.005 absolute 100 ms F1",
+    "duration, cutoff, overlong-note, frame, and rapid-retrigger limits must pass",
+    "the WANE trusted opening must improve after the frozen production-v004 arranger",
+    "manual blind listening must confirm cleaner phrasing before any deployment"
+  ],
+  "rejectionPolicy": "If any gate fails, preserve a hashed rejection receipt but no model checkpoint; do not deploy, do not advance curriculum, and do not change production routing.",
+  "validationGate": "ml/training/configs/phase100-v005-unconditioned-noteon135-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase100_v005_unconditioned_noteon135.sh"
+}
