@@ -1,0 +1,89 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v007-visual-labels",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "targetMilestone": {
+    "route": "full-mix-piano-reduction",
+    "openedDevelopmentSong": "we-are-never-getting-back-together",
+    "metric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "currentOpenedSongBaselineAgainstVisualReference": 0.339465,
+    "developmentTarget": 0.70,
+    "certificationTarget": 0.90
+  },
+  "hypothesis": "The earlier WANE curriculum reused a model-generated Pianella target and therefore reinforced its own omissions and hallucinations. Replacing only those labels with notes extracted independently from the Pianella falling-key video should improve the opened song without changing audio, validation, optimizer, seed, or checkpoint initialization.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-103-wane-visual-labels-v002",
+    "trainClips": 1931,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "relabelledWaneClips": 260,
+    "oldWaneNoteInstances": 11836,
+    "newWaneNoteInstances": 10948,
+    "trainManifestSha256": "05cc023be3362dc4c3f55b51a775abe071ce4f16dcfe9f4b76a7547aaf8b0932",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+    "targetSongLeakageBlocked": true,
+    "role": "opened development and model selection; never sealed certification"
+  },
+  "independentReference": {
+    "method": "fixed-camera falling-note video geometry plus audio-chroma timeline alignment",
+    "visualNotes": 1485,
+    "visualReferenceSha256": "287a0b3f51cf5fd4bdab9e9349cabc460d2cde35332f63c3774b5698dfa488e8",
+    "alignmentReportSha256": "f12d8864c3907f218d11ef5761d89640f609e70aa18f756f5ead6112142c88c6",
+    "alignedSupervisionSha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e",
+    "trustedAlignedNotes": 1381,
+    "trustedWindows": 35,
+    "reviewWindows": 3,
+    "unsafeWindows": 2,
+    "trainingPolicy": "trusted-windows-only"
+  },
+  "control": {
+    "candidateId": "phase100-v006-unconditioned-p025",
+    "result": "rejected-by-decoded-note-safety-gate",
+    "reasonForControl": "v006 has the same base model, audio curriculum, validation panel, optimizer, seed, and token weights; only WANE labels change."
+  },
+  "singleChangedVariable": {
+    "name": "WANE supervision labels",
+    "control": "old model-generated Pianella transcription",
+    "candidate": "independent visual Pianella notes aligned to the original-song clock",
+    "audioMutated": false,
+    "validationMutated": false
+  },
+  "labelIntegrityAudit": {
+    "contradictoryNegativeClips": 0,
+    "positiveExamples": 1889,
+    "negativeExamples": 42,
+    "identicalLabelsAcrossFourWaneAudioVariants": true
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "unconditioned",
+    "precision": "bf16",
+    "seed": "polymath-phase100-v003-unconditioned"
+  },
+  "gates": [
+    "training loss must beat the immutable base on unconditioned validation",
+    "the decoded independent multi-song panel must pass without recall regression",
+    "no validation song may lose more than 0.005 absolute 100 ms F1",
+    "duration, cutoff, overlong-note, frame, and rapid-retrigger limits must pass",
+    "WANE must improve against the frozen independent visual reference",
+    "manual blind listening must confirm cleaner phrasing before deployment"
+  ],
+  "rejectionPolicy": "Preserve evidence but never mutate production when any automatic or manual gate fails.",
+  "validationGate": "ml/training/configs/phase103-v007-visual-labels-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase103_v007_visual_labels.sh"
+}
