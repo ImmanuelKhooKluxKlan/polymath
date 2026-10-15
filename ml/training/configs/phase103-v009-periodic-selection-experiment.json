@@ -1,0 +1,64 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v009-periodic-selection",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "targetMilestone": {
+    "route": "full-mix-piano-reduction",
+    "openedDevelopmentSong": "we-are-never-getting-back-together",
+    "metric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "currentOpenedSongBaselineAgainstVisualReference": 0.339465,
+    "developmentTarget": 0.70,
+    "certificationTarget": 0.90
+  },
+  "hypothesis": "v007 and v008 both improved aggregate exact-note F1 at the final optimizer step but lost recall and repeated the same unrelated-song regression. The deterministic training trajectory may contain an earlier safe checkpoint. Decode every 20 optimizer steps and retain only the best snapshot that beats baseline loss and passes every frozen note gate.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-103-wane-visual-labels-v003",
+    "trainClips": 1931,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "waneEffectiveShare": 0.122731,
+    "trainManifestSha256": "e20a0eb3d54a45c438aa70a86e78c5af6fc571eb9cb7d3a7bdb3a0fed39a92d3",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"
+  },
+  "control": {
+    "candidateId": "phase103-v008-balanced-visual-labels",
+    "result": "rejected-by-decoded-note-safety-gate",
+    "rejectionReceiptSha256": "95d0ee285edcd1151fa92544feebf1ee2fd3641c2a2f443fdc5d793635a76758",
+    "optimizerSteps": 242,
+    "observedDeltas": {
+      "aggregate100msF1": 0.008255,
+      "aggregate100msRecall": -0.012461,
+      "babySlakh100msF1": -0.027072
+    }
+  },
+  "singleChangedVariable": {
+    "name": "decoded validation interval in optimizer steps",
+    "control": 0,
+    "candidate": 20,
+    "trainingTrajectoryExpectedToRemainIdentical": true
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "unconditioned",
+    "precision": "bf16",
+    "seed": "polymath-phase100-v003-unconditioned"
+  },
+  "rejectionPolicy": "Preserve evidence but never mutate production when no intermediate checkpoint passes all frozen gates.",
+  "validationGate": "ml/training/configs/phase103-v009-periodic-selection-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase103_v009_periodic_selection.sh"
+}
