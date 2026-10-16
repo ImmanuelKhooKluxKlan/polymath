@@ -31,8 +31,8 @@ function parseArguments(argv) {
 
 function validateVersion(value) {
   const version = String(value || '').trim();
-  if (!/^phase\d+-v\d{3,}$/.test(version)) {
-    throw new Error('Checkpoint must look like phase46-v008; original is never archivable here');
+  if (!/^phase\d+-v\d{3,}(?:-[a-z0-9]+)*$/.test(version)) {
+    throw new Error('Checkpoint must look like phase46-v008 or phase103-v010-safe-step020; original is never archivable here');
   }
   if (PROTECTED_VERSIONS.has(version)) {
     throw new Error(`Checkpoint ${version} is protected and cannot be removed by this tool`);
