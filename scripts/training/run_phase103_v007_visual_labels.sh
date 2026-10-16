@@ -28,6 +28,8 @@ BASE_CANARY_MANIFEST="${POLYMATH_BASE_CANARY_MANIFEST:-ml/training/configs/phase
 CANDIDATE_CANARY_MANIFEST="${POLYMATH_CANDIDATE_CANARY_MANIFEST:-ml/training/configs/phase103-v007-wane-candidate-runpod.json}"
 VALIDATION_INTERVAL_STEPS="${POLYMATH_VALIDATION_INTERVAL_STEPS:-0}"
 MAX_OPTIMIZER_STEPS="${POLYMATH_MAX_OPTIMIZER_STEPS:-0}"
+HIGH_NOTE_ON_WEIGHT="${POLYMATH_HIGH_NOTE_ON_WEIGHT:-1.0}"
+HIGH_NOTE_MIN_MIDI="${POLYMATH_HIGH_NOTE_MIN_MIDI:-60}"
 
 for absent in "$OUTPUT_DIR" "$REJECTION_RECEIPT" "$REJECTION_RECEIPT.sha256" "$STATUS_PATH" "$LOG_PATH" "$REPO_PATH"; do
   test ! -e "$absent"
@@ -82,6 +84,8 @@ echo PHASE103_V007_STAGE_TRAIN_VISUAL_LABELS
   --max-optimizer-steps "$MAX_OPTIMIZER_STEPS" \
   --timing-token-weight 1.15 \
   --note-on-token-weight 1.0 \
+  --high-note-on-weight "$HIGH_NOTE_ON_WEIGHT" \
+  --high-note-min-midi "$HIGH_NOTE_MIN_MIDI" \
   --note-off-token-weight 1.25 \
   --eos-token-weight 1.20 \
   --conditioning-mode unconditioned \

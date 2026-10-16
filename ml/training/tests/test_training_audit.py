@@ -13,8 +13,10 @@ from ml.training.train_muscriptor_piano import (
     load_cached_decoded_metrics,
     optimizer_step_limit_reached,
     should_run_periodic_validation,
+    target_token_weights,
     write_immutable_json_receipt,
 )
+from ml.training.muscriptor_tokens import EOS_ID, PITCH_BASE, VELOCITY_BASE
 
 
 class TrainingAuditTests(unittest.TestCase):
@@ -177,6 +179,34 @@ class TrainingAuditTests(unittest.TestCase):
         self.assertIsNone(conditioning_group("acoustic_piano", "unconditioned"))
         with self.assertRaises(TrainingError):
             conditioning_group("acoustic_piano", "mismatched")
+
+    def test_high_note_weight_only_targets_high_note_on_pitch_tokens(self):
+        tokens = [
+            VELOCITY_BASE + 1,
+            PITCH_BASE + 59,
+            PITCH_BASE + 60,
+            VELOCITY_BASE,
+            PITCH_BASE + 72,
+            EOS_ID,
+        ]
+        weights = target_token_weights(
+            tokens,
+            timing_weight=1.0,
+            note_off_weight=1.0,
+            eos_weight=1.0,
+            note_on_weight=1.0,
+            high_note_on_weight=2.0,
+            high_note_min_midi=60,
+        )
+        self.assertAlmostEqual(weights[2] / weights[1], 2.0)
+        self.assertAlmostEqual(weights[4] / weights[1], 1.0)
+
+    def test_high_note_weight_validation_fails_closed(self):
+        tokens = [VELOCITY_BASE + 1, PITCH_BASE + 60, EOS_ID]
+        with self.assertRaisesRegex(TrainingError, "positive"):
+            target_token_weights(tokens, high_note_on_weight=0.0)
+        with self.assertRaisesRegex(TrainingError, "between 0 and 127"):
+            target_token_weights(tokens, high_note_min_midi=128)
 
     def test_composed_manifest_can_preflight_through_local_copy(self):
         with tempfile.TemporaryDirectory() as directory:

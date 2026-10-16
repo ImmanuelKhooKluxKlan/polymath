@@ -71,6 +71,8 @@ def target_token_weights(
     note_off_weight: float = 1.25,
     eos_weight: float = 1.20,
     note_on_weight: float = 1.0,
+    high_note_on_weight: float = 1.0,
+    high_note_min_midi: int = 60,
 ) -> list[float]:
     """Rebalance onset, timing, and stopping errors without changing clip scale.
 
@@ -83,8 +85,16 @@ def target_token_weights(
     *which* errors matter inside a clip, not the clip's overall learning rate.
     """
 
-    if min(timing_weight, note_off_weight, eos_weight, note_on_weight) <= 0:
+    if min(
+        timing_weight,
+        note_off_weight,
+        eos_weight,
+        note_on_weight,
+        high_note_on_weight,
+    ) <= 0:
         raise TrainingError("Token-loss weights must be positive")
+    if not 0 <= int(high_note_min_midi) <= 127:
+        raise TrainingError("highNoteMinMidi must be between 0 and 127")
     velocity_state: int | None = None
     weights: list[float] = []
     for token in tokens:
@@ -102,7 +112,10 @@ def target_token_weights(
         elif PITCH_BASE <= token < VELOCITY_BASE and velocity_state == 0:
             weight = note_off_weight
         elif PITCH_BASE <= token < VELOCITY_BASE and velocity_state == 1:
-            weight = note_on_weight
+            midi = token - PITCH_BASE
+            weight = note_on_weight * (
+                high_note_on_weight if midi >= high_note_min_midi else 1.0
+            )
         elif token == TIE_ID:
             weight = timing_weight
         weights.append(weight)
@@ -434,6 +447,8 @@ def clip_loss(
     note_off_weight: float = 1.25,
     eos_weight: float = 1.20,
     note_on_weight: float = 1.0,
+    high_note_on_weight: float = 1.0,
+    high_note_min_midi: int = 60,
     conditioning_mode: str = "instrument",
 ):
     import torch
@@ -475,6 +490,8 @@ def clip_loss(
             note_off_weight,
             eos_weight,
             note_on_weight,
+            high_note_on_weight,
+            high_note_min_midi,
         ),
         dtype=per_token_loss.dtype,
         device=device,
@@ -840,6 +857,8 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     note_off_weight=args.note_off_token_weight,
                     eos_weight=args.eos_token_weight,
                     note_on_weight=args.note_on_token_weight,
+                    high_note_on_weight=args.high_note_on_weight,
+                    high_note_min_midi=args.high_note_min_midi,
                     conditioning_mode=conditioning_mode,
                 ) / args.gradient_accumulation
             loss.backward()
@@ -903,6 +922,8 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "gradientClipNorm": args.gradient_clip_norm,
         "timingTokenWeight": args.timing_token_weight,
         "noteOnTokenWeight": args.note_on_token_weight,
+        "highNoteOnWeight": args.high_note_on_weight,
+        "highNoteMinMidi": args.high_note_min_midi,
         "noteOffTokenWeight": args.note_off_token_weight,
         "eosTokenWeight": args.eos_token_weight,
         "epochs": args.epochs,
@@ -1049,6 +1070,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--timing-token-weight", type=float, default=1.15)
     parser.add_argument("--note-on-token-weight", type=float, default=1.0)
+    parser.add_argument(
+        "--high-note-on-weight",
+        type=float,
+        default=1.0,
+        help=(
+            "Additional multiplier for note-on pitch tokens at or above "
+            "--high-note-min-midi. The default 1.0 preserves historical training."
+        ),
+    )
+    parser.add_argument("--high-note-min-midi", type=int, default=60)
     parser.add_argument("--note-off-token-weight", type=float, default=1.25)
     parser.add_argument("--eos-token-weight", type=float, default=1.20)
     parser.add_argument(
