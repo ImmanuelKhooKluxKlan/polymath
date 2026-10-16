@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_ROOT"
+PYTHON="${POLYMATH_PYTHON:-/workspace/polymath-phase100-v006-venv/bin/python}"
+test -x "$PYTHON"
 
 CANDIDATE_ID="${1:?Usage: evaluate_phase103_wane_production_route.sh CANDIDATE_ID}"
 MODEL_DIR="/runpod-volume/models/muscriptor-tester/$CANDIDATE_ID"
@@ -32,7 +34,7 @@ node scripts/training/replayPianoRoute.mjs \
   --input "$BASE_RAW" \
   --output "$OUTPUT_DIR/base-cleaned.json" \
   --mode full
-python server/piano_arranger_pipeline.py \
+"$PYTHON" server/piano_arranger_pipeline.py \
   --input "$OUTPUT_DIR/base-cleaned.json" \
   --output "$BASELINE_DIR/wane-arranged.json" \
   --mode full
@@ -41,12 +43,12 @@ node scripts/training/replayPianoRoute.mjs \
   --input "$CANDIDATE_RAW" \
   --output "$OUTPUT_DIR/candidate-cleaned.json" \
   --mode full
-python server/piano_arranger_pipeline.py \
+"$PYTHON" server/piano_arranger_pipeline.py \
   --input "$OUTPUT_DIR/candidate-cleaned.json" \
   --output "$CANDIDATE_DIR/wane.json" \
   --mode full
 
-python -m ml.training.evaluate_piano_arranger \
+"$PYTHON" -m ml.training.evaluate_piano_arranger \
   --manifest "$MANIFEST" \
   --baseline-dir "$BASELINE_DIR" \
   --candidate-dir "$CANDIDATE_DIR" \
