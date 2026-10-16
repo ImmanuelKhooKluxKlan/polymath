@@ -1,0 +1,62 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v011-narrow-step-search",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "targetMilestone": {
+    "route": "full-mix-piano-reduction",
+    "openedDevelopmentSong": "we-are-never-getting-back-together",
+    "metric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "currentOpenedSongBaselineAgainstVisualReference": 0.339465,
+    "developmentTarget": 0.70,
+    "certificationTarget": 0.90
+  },
+  "hypothesis": "The deterministic v009 trajectory was unchanged at step 20 and improved F1 but exceeded the recall allowance by step 40. Decode every five updates through step 40 to locate the first discrete output change and retain it only if all frozen multi-song safety checks pass.",
+  "priorEvidence": {
+    "sourceRun": "phase103-v009-periodic-selection",
+    "step20": {
+      "aggregate100msF1Delta": 0.0,
+      "aggregate250msRecallDelta": 0.0,
+      "passed": true
+    },
+    "step40": {
+      "aggregate100msF1Delta": 0.009868,
+      "aggregate250msRecallDelta": -0.003116,
+      "passed": false
+    },
+    "searchInterval": [5, 10, 15, 20, 25, 30, 35, 40],
+    "interpretation": "This is development-set checkpoint selection. Any winner still requires complete-song scoring, blind listening, and a separate untouched holdout."
+  },
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-103-wane-visual-labels-v003",
+    "trainClips": 1931,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "trainManifestSha256": "e20a0eb3d54a45c438aa70a86e78c5af6fc571eb9cb7d3a7bdb3a0fed39a92d3",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "maxOptimizerSteps": 40,
+    "validationIntervalSteps": 5,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "unconditioned",
+    "precision": "bf16",
+    "seed": "polymath-phase100-v003-unconditioned"
+  },
+  "validationGate": "ml/training/configs/phase103-v011-narrow-step-search-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase103_v011_narrow_step_search.sh"
+}
