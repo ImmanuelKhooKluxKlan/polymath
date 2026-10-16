@@ -84,6 +84,7 @@ def build_split(
     target_development_song_id: str,
     source_media: str,
     development_starts: list[float],
+    maximum_target_training_end: float | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     if not target_song_id or not target_development_song_id:
         raise ValueError("Target and target-development song IDs are required")
@@ -99,6 +100,12 @@ def build_split(
         raise ValueError("Development starts must be finite and non-negative")
     if len(set(development_starts)) != len(development_starts):
         raise ValueError("Development starts must be unique")
+    if maximum_target_training_end is not None:
+        if (
+            not math.isfinite(maximum_target_training_end)
+            or maximum_target_training_end <= 0
+        ):
+            raise ValueError("maximum_target_training_end must be finite and positive")
 
     existing_song_ids = {
         str(row.get("songId") or "") for row in [*train, *validation]
@@ -133,6 +140,14 @@ def build_split(
         duration = float(source.get("durationSeconds") or 0)
         if not 0 < duration <= 5.001:
             raise ValueError(f"Invalid reference duration at {start}: {duration}")
+        if (
+            maximum_target_training_end is not None
+            and start + duration > maximum_target_training_end + 1e-9
+        ):
+            raise ValueError(
+                f"Development interval at {start} extends beyond the trusted "
+                f"target-label cutoff ({maximum_target_training_end})"
+            )
         clip_id = f"target-original-dev-{start_label(start)}"
         record = dict(source)
         record.update({
@@ -156,19 +171,31 @@ def build_split(
         development_intervals.append((start, duration))
 
     kept: list[dict[str, Any]] = []
-    removed: list[dict[str, Any]] = []
+    removed_overlapping: list[dict[str, Any]] = []
+    removed_after_cutoff: list[dict[str, Any]] = []
     for row in train:
         if str(row.get("songId") or "") != target_song_id:
             kept.append(row)
             continue
         start = float(row.get("sourceStart") or 0)
         duration = float(row.get("durationSeconds") or 0)
+        if not math.isfinite(start) or not math.isfinite(duration) or duration <= 0:
+            raise ValueError(
+                f"Invalid target training interval for {row.get('clipId')}: "
+                f"start={start}, duration={duration}"
+            )
+        if (
+            maximum_target_training_end is not None
+            and start + duration > maximum_target_training_end + 1e-9
+        ):
+            removed_after_cutoff.append(row)
+            continue
         overlaps = any(
             intervals_overlap(start, duration, dev_start, dev_duration)
             for dev_start, dev_duration in development_intervals
         )
         if overlaps:
-            removed.append(row)
+            removed_overlapping.append(row)
         else:
             kept.append(row)
 
@@ -186,9 +213,14 @@ def build_split(
     if leaking:
         raise ValueError("Temporal leakage remained after filtering: " + ", ".join(leaking[:5]))
 
-    removed_starts = sorted({float(row.get("sourceStart") or 0) for row in removed})
+    removed_overlap_starts = sorted(
+        {float(row.get("sourceStart") or 0) for row in removed_overlapping}
+    )
+    removed_cutoff_starts = sorted(
+        {float(row.get("sourceStart") or 0) for row in removed_after_cutoff}
+    )
     summary = {
-        "schema": "polymath-target-development-split-receipt-v1",
+        "schema": "polymath-target-development-split-receipt-v2",
         "targetTrainingSongId": target_song_id,
         "targetDevelopmentSongId": target_development_song_id,
         "referenceVariantPrefix": reference_variant_prefix,
@@ -201,8 +233,11 @@ def build_split(
         "targetTrainClipsAfter": sum(
             str(row.get("songId") or "") == target_song_id for row in kept
         ),
-        "removedOverlappingClips": len(removed),
-        "removedSourceStarts": removed_starts,
+        "removedOverlappingClips": len(removed_overlapping),
+        "removedOverlappingSourceStarts": removed_overlap_starts,
+        "maximumTargetTrainingEnd": maximum_target_training_end,
+        "removedAfterTrustedCutoffClips": len(removed_after_cutoff),
+        "removedAfterTrustedCutoffSourceStarts": removed_cutoff_starts,
         "validationClips": len(validation),
         "temporalOverlapCountAfterFiltering": 0,
         "intervalConvention": "half-open [start,start+duration)",
@@ -223,6 +258,14 @@ def main() -> None:
     parser.add_argument("--target-development-song-id", required=True)
     parser.add_argument("--source-media", required=True)
     parser.add_argument("--development-start", type=float, action="append", required=True)
+    parser.add_argument(
+        "--maximum-target-training-end",
+        type=float,
+        help=(
+            "Exclude every target-song clip whose half-open interval extends past this "
+            "trusted-label boundary. Other compositions are unaffected."
+        ),
+    )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
         "--runtime-root",
@@ -247,6 +290,7 @@ def main() -> None:
         target_development_song_id=args.target_development_song_id.strip(),
         source_media=args.source_media.strip(),
         development_starts=args.development_start,
+        maximum_target_training_end=args.maximum_target_training_end,
     )
 
     destination = args.out.resolve()

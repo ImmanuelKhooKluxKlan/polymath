@@ -61,3 +61,49 @@ def test_build_split_refuses_missing_reference_start():
             source_media="/runpod-volume/original.wav",
             development_starts=[0.0, 5.0],
         )
+
+
+def test_build_split_enforces_trusted_label_cutoff_only_for_target_song():
+    train = [row("other-late", "other-song", 200)]
+    for start in (0, 5, 145, 147.5, 150):
+        train.append(row(f"ref-{start}", "target", start, prefix=True))
+        train.append(row(f"bridge-{start}", "target", start))
+
+    kept, development, summary = build_split(
+        train,
+        [row("validation", "validation-song", 0)],
+        target_song_id="target",
+        reference_variant_prefix="ideal-",
+        target_development_song_id="target-original-development",
+        source_media="/runpod-volume/original.wav",
+        development_starts=[0.0, 145.0],
+        maximum_target_training_end=150.0,
+    )
+
+    assert [item["clipId"] for item in kept] == [
+        "mix-other-late",
+        "ideal-ref-5",
+        "mix-bridge-5",
+    ]
+    assert [item["sourceStart"] for item in development] == [0.0, 145.0]
+    assert summary["removedOverlappingClips"] == 4
+    assert summary["removedAfterTrustedCutoffClips"] == 4
+    assert summary["removedAfterTrustedCutoffSourceStarts"] == [147.5, 150.0]
+    assert summary["maximumTargetTrainingEnd"] == 150.0
+
+
+def test_build_split_refuses_development_window_after_trusted_cutoff():
+    with pytest.raises(ValueError, match="extends beyond the trusted"):
+        build_split(
+            [
+                row("ref-0", "target", 0, prefix=True),
+                row("ref-147.5", "target", 147.5, prefix=True),
+            ],
+            [row("validation", "validation-song", 0)],
+            target_song_id="target",
+            reference_variant_prefix="ideal-",
+            target_development_song_id="target-original-development",
+            source_media="/runpod-volume/original.wav",
+            development_starts=[0.0, 147.5],
+            maximum_target_training_end=150.0,
+        )
