@@ -23,6 +23,9 @@ EVALUATION_PATH="$OUTPUT_DIR/evaluation-unconditioned-$CANDIDATE_ID.json"
 BASE_TIMELINE_PATH="$OUTPUT_DIR/evaluation-unconditioned-baseline-continuous.json"
 CANDIDATE_TIMELINE_PATH="$OUTPUT_DIR/evaluation-unconditioned-candidate-continuous.json"
 GATE_RESULT_PATH="$OUTPUT_DIR/route-matched-validation-gate.json"
+FULL_BASELINE_EVALUATION="${POLYMATH_FULL_BASELINE_EVALUATION:-}"
+FULL_BASELINE_EVALUATION_SHA256="${POLYMATH_FULL_BASELINE_EVALUATION_SHA256:-}"
+CANDIDATE_SINGLE_EVALUATION_PATH="$OUTPUT_DIR/evaluation-unconditioned-$CANDIDATE_ID-single.json"
 GATE_CONFIG="${POLYMATH_GATE_CONFIG:-ml/training/configs/phase103-v007-visual-labels-validation-gate.json}"
 BASE_CANARY_MANIFEST="${POLYMATH_BASE_CANARY_MANIFEST:-ml/training/configs/phase103-v007-wane-base-runpod.json}"
 CANDIDATE_CANARY_MANIFEST="${POLYMATH_CANDIDATE_CANARY_MANIFEST:-ml/training/configs/phase103-v007-wane-candidate-runpod.json}"
@@ -55,6 +58,13 @@ printf '%s  %s\n' "$BASE_SHA256" "$BASE_PATH" | sha256sum --check --strict -
 printf '%s  %s\n' "$TRAIN_SHA256" "$TRAIN_MANIFEST" | sha256sum --check --strict -
 printf '%s  %s\n' "$VALIDATION_SHA256" "$VALIDATION_MANIFEST" | sha256sum --check --strict -
 printf '%s  %s\n' "$WANE_AUDIO_SHA256" "$WANE_AUDIO" | sha256sum --check --strict -
+if [[ -n "$FULL_BASELINE_EVALUATION" ]]; then
+  test -n "$FULL_BASELINE_EVALUATION_SHA256"
+  test -f "$FULL_BASELINE_EVALUATION"
+  printf '%s  %s\n' \
+    "$FULL_BASELINE_EVALUATION_SHA256" \
+    "$FULL_BASELINE_EVALUATION" | sha256sum --check --strict -
+fi
 
 echo PHASE103_V007_STAGE_CHECKOUT
 git clone --filter=blob:none https://github.com/ImmanuelKhooKluxKlan/polymath.git "$REPO_PATH"
@@ -93,7 +103,19 @@ echo PHASE103_V007_STAGE_TRAIN_VISUAL_LABELS
   --seed polymath-phase100-v003-unconditioned
 
 echo PHASE103_V007_STAGE_FULL_UNCONDITIONED_EVALUATION
-"$PYTHON" - <<'PY'
+if [[ -n "$FULL_BASELINE_EVALUATION" ]]; then
+  echo PHASE103_V007_REUSE_FROZEN_FULL_BASELINE
+  "$PYTHON" -m ml.training.evaluate_checkpoint \
+    --checkpoint "$OUTPUT_DIR/model.safetensors" \
+    --validation-manifest "$VALIDATION_MANIFEST" \
+    --unconditioned \
+    --out "$CANDIDATE_SINGLE_EVALUATION_PATH"
+  "$PYTHON" -m ml.training.compose_checkpoint_comparison \
+    --baseline-evaluation "$FULL_BASELINE_EVALUATION" \
+    --candidate-evaluation "$CANDIDATE_SINGLE_EVALUATION_PATH" \
+    --out "$EVALUATION_PATH"
+else
+  "$PYTHON" - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -116,6 +138,7 @@ print(json.dumps({
     "candidateMinusBaselineMicroF1": result["candidateMinusBaselineMicroF1"],
 }, indent=2), flush=True)
 PY
+fi
 
 echo PHASE103_V007_STAGE_CONTINUOUS_SONG_RESCORE
 "$PYTHON" -m ml.training.rescore_song_timelines \
