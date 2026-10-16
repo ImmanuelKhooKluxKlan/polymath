@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 export POLYMATH_CANDIDATE_ID="phase103-v013-original-domain-p000"
 export POLYMATH_DATASET_ID="phase-103-wane-visual-labels-v005"
-export POLYMATH_VALIDATION_MANIFEST="/runpod-volume/training/phase-103-wane-visual-labels-v005/prepared-validation.jsonl"
-export POLYMATH_REPO_PATH="/workspace/polymath-phase103-v013"
+export POLYMATH_VALIDATION_MANIFEST="/runpod-volume/training/phase-103-wane-visual-labels-v003/prepared-validation.jsonl"
+export POLYMATH_REPO_PATH="/workspace/polymath-phase103-v013-r2"
 export POLYMATH_TRAIN_SHA256="3033a2086d559abb574bc9d786da36179dc1740573bc865dda976ee909b8e9c7"
 export POLYMATH_GATE_CONFIG="ml/training/configs/phase103-v013-original-domain-validation-gate.json"
 export POLYMATH_BASE_CANARY_MANIFEST="ml/training/configs/phase103-v013-wane-base-runpod.json"
