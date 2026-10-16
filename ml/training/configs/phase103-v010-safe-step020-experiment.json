@@ -1,0 +1,55 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v010-safe-step020",
+  "status": "frozen-reproduction-of-observed-safe-intermediate",
+  "productionMutationAllowed": false,
+  "targetMilestone": {
+    "route": "full-mix-piano-reduction",
+    "openedDevelopmentSong": "we-are-never-getting-back-together",
+    "metric": "continuous-song strict exact-pitch onset micro-F1 at 100 ms",
+    "currentOpenedSongBaselineAgainstVisualReference": 0.339465,
+    "developmentTarget": 0.70,
+    "certificationTarget": 0.90
+  },
+  "hypothesis": "The interrupted deterministic v009 trajectory evaluated optimizer steps 20 through 220. Step 20 was the sole snapshot to improve frozen validation loss without regressing any decoded-note safety metric. Reproduce exactly that preselected step, persist it, and subject it to the complete route-matched evaluation and manual listening gates.",
+  "selectionDisclosure": {
+    "sourceRun": "phase103-v009-periodic-selection",
+    "sourceRunStatus": "operator-interrupted-after-step-220",
+    "observedSafeOptimizerStep": 20,
+    "laterEvaluatedSteps": [40, 60, 80, 100, 120, 140, 160, 180, 200, 220],
+    "laterSafeSteps": [],
+    "interpretation": "This is a development-set checkpoint selection, not an independent accuracy estimate. A separate untouched holdout remains mandatory."
+  },
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
+  },
+  "dataset": {
+    "id": "phase-103-wane-visual-labels-v003",
+    "trainClips": 1931,
+    "validationClips": 258,
+    "trainCompositions": 20,
+    "validationCompositions": 3,
+    "trainManifestSha256": "e20a0eb3d54a45c438aa70a86e78c5af6fc571eb9cb7d3a7bdb3a0fed39a92d3",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"
+  },
+  "frozenHyperparameters": {
+    "trainLastLayers": 1,
+    "epochs": 1,
+    "maxOptimizerSteps": 20,
+    "validationIntervalSteps": 20,
+    "learningRate": 5e-7,
+    "weightDecay": 0.01,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1.0,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1.0,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "conditioningMode": "unconditioned",
+    "precision": "bf16",
+    "seed": "polymath-phase100-v003-unconditioned"
+  },
+  "validationGate": "ml/training/configs/phase103-v010-safe-step020-validation-gate.json",
+  "preparedRunner": "scripts/training/run_phase103_v010_safe_step020.sh"
+}

@@ -11,6 +11,7 @@ from ml.training.train_muscriptor_piano import (
     configure_trainable_parameters,
     conditioning_group,
     load_cached_decoded_metrics,
+    optimizer_step_limit_reached,
     should_run_periodic_validation,
     write_immutable_json_receipt,
 )
@@ -162,6 +163,14 @@ class TrainingAuditTests(unittest.TestCase):
         self.assertTrue(should_run_periodic_validation(8, 4))
         with self.assertRaises(TrainingError):
             should_run_periodic_validation(1, -1)
+
+    def test_optimizer_step_limit_is_explicit_and_zero_means_unbounded(self):
+        self.assertFalse(optimizer_step_limit_reached(20, 0))
+        self.assertFalse(optimizer_step_limit_reached(19, 20))
+        self.assertTrue(optimizer_step_limit_reached(20, 20))
+        self.assertTrue(optimizer_step_limit_reached(21, 20))
+        with self.assertRaises(TrainingError):
+            optimizer_step_limit_reached(1, -1)
 
     def test_conditioning_mode_matches_route_contract(self):
         self.assertEqual(conditioning_group("acoustic_piano", "instrument"), "0")

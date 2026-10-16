@@ -325,6 +325,19 @@ def should_run_periodic_validation(optimizer_step: int, interval_steps: int) -> 
     return interval_steps > 0 and optimizer_step > 0 and optimizer_step % interval_steps == 0
 
 
+def optimizer_step_limit_reached(optimizer_step: int, maximum_steps: int) -> bool:
+    """Return whether a reproducible, explicitly bounded run should stop.
+
+    A value of zero preserves the original full-epoch behaviour.  The limit is
+    expressed in optimizer updates (not clips), matching periodic validation
+    and remaining invariant when gradient accumulation changes.
+    """
+
+    if maximum_steps < 0:
+        raise TrainingError("Maximum optimizer steps cannot be negative")
+    return maximum_steps > 0 and optimizer_step >= maximum_steps
+
+
 def decoded_selection_rank(
     metrics: dict[str, Any],
     validation_loss: float,
@@ -643,6 +656,9 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     validation_interval_steps = int(getattr(args, "validation_interval_steps", 0))
     if validation_interval_steps < 0:
         raise TrainingError("Validation interval steps cannot be negative")
+    max_optimizer_steps = int(getattr(args, "max_optimizer_steps", 0))
+    if max_optimizer_steps < 0:
+        raise TrainingError("Maximum optimizer steps cannot be negative")
 
     device = "cuda"
     transcription = TranscriptionModel.load_model(args.base, device=device)
@@ -808,6 +824,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         return decision
 
     optimizer.zero_grad(set_to_none=True)
+    stop_after_update = False
     for epoch in range(args.epochs):
         transcription._model.train()
         epoch_records = list(train_records)
@@ -838,6 +855,13 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     optimizer_step, validation_interval_steps
                 ):
                     assess_candidate(epoch + 1, "optimizer-interval")
+                if optimizer_step_limit_reached(optimizer_step, max_optimizer_steps):
+                    stop_after_update = True
+                    if progress_callback:
+                        progress_callback(
+                            f"Reached frozen optimizer-step limit: {max_optimizer_steps}"
+                        )
+                    break
         if accumulated:
             torch.nn.utils.clip_grad_norm_(parameters, args.gradient_clip_norm)
             optimizer.step()
@@ -856,6 +880,8 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             # The periodic checkpoint happened exactly on the final update of
             # this epoch. Reuse it as the epoch summary without decoding twice.
             epoch_decisions.append(checkpoint_decisions[-1])
+        if stop_after_update:
+            break
     for decision in checkpoint_decisions:
         decision["selected"] = decision["checkpointIndex"] == best_checkpoint_index
     reproducibility = {
@@ -881,6 +907,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "eosTokenWeight": args.eos_token_weight,
         "epochs": args.epochs,
         "validationIntervalSteps": validation_interval_steps,
+        "maxOptimizerSteps": max_optimizer_steps,
         "precision": args.precision,
     }
     decoded_checkpoint_selection = {
@@ -1008,6 +1035,16 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Run frozen loss and decoded-note gates every N optimizer updates; "
             "zero keeps epoch-only validation."
+        ),
+    )
+    parser.add_argument(
+        "--max-optimizer-steps",
+        type=int,
+        default=0,
+        help=(
+            "Stop after exactly this many optimizer updates; zero trains every "
+            "requested epoch. Use only when the stopping point was frozen before "
+            "the bounded candidate run."
         ),
     )
     parser.add_argument("--timing-token-weight", type=float, default=1.15)

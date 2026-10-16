@@ -1,0 +1,37 @@
+{
+  "schema": "polymath-route-matched-validation-gate-v1",
+  "candidateVersion": "phase103-v010-safe-step020",
+  "status": "frozen-before-reproduction-run",
+  "productionMutationAllowed": false,
+  "immutableInputs": {
+    "baseCheckpointSha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0",
+    "trainManifestSha256": "e20a0eb3d54a45c438aa70a86e78c5af6fc571eb9cb7d3a7bdb3a0fed39a92d3",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"
+  },
+  "route": {
+    "conditioningMode": "unconditioned",
+    "instrumentConstraint": []
+  },
+  "requiredChecks": {
+    "minimumCompleteSongs": 3,
+    "clipLocal100msF1MaximumRegression": 0.0,
+    "clipLocal250msF1MaximumRegression": 0.0,
+    "continuous100msF1MinimumImprovement": 0.0,
+    "continuous100msPrecisionMaximumRegression": 0.005,
+    "continuous100msRecallMaximumRegression": 0.0,
+    "continuous250msF1MaximumRegression": 0.0,
+    "songBootstrapLower95MaximumRegression": 0.0,
+    "maximumPerSong100msF1Regression": 0.005,
+    "onsetAndOffsetF1MaximumRegression": 0.003,
+    "frameF1MaximumRegression": 0.003,
+    "cutOffPer1000MatchedMaximumIncrease": 2.0,
+    "overlongPer1000MatchedMaximumIncrease": 2.0,
+    "rapidRetriggersPer1000PredictedMaximumIncrease": 0.25
+  },
+  "manualGatesStillRequired": [
+    "WANE must improve against the independent visual reference after the same arranger",
+    "blind listening must prefer the candidate without audible blockers",
+    "a separate rights-cleared holdout must reproduce the result before commercial production"
+  ],
+  "interpretation": "Passing authorizes a listening candidate only. It does not certify 70 or 90 percent accuracy and does not authorize production deployment."
+}

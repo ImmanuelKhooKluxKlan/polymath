@@ -27,6 +27,7 @@ GATE_CONFIG="${POLYMATH_GATE_CONFIG:-ml/training/configs/phase103-v007-visual-la
 BASE_CANARY_MANIFEST="${POLYMATH_BASE_CANARY_MANIFEST:-ml/training/configs/phase103-v007-wane-base-runpod.json}"
 CANDIDATE_CANARY_MANIFEST="${POLYMATH_CANDIDATE_CANARY_MANIFEST:-ml/training/configs/phase103-v007-wane-candidate-runpod.json}"
 VALIDATION_INTERVAL_STEPS="${POLYMATH_VALIDATION_INTERVAL_STEPS:-0}"
+MAX_OPTIMIZER_STEPS="${POLYMATH_MAX_OPTIMIZER_STEPS:-0}"
 
 for absent in "$OUTPUT_DIR" "$REJECTION_RECEIPT" "$REJECTION_RECEIPT.sha256" "$STATUS_PATH" "$LOG_PATH" "$REPO_PATH"; do
   test ! -e "$absent"
@@ -78,6 +79,7 @@ echo PHASE103_V007_STAGE_TRAIN_VISUAL_LABELS
   --gradient-accumulation 8 \
   --gradient-clip-norm 1.0 \
   --validation-interval-steps "$VALIDATION_INTERVAL_STEPS" \
+  --max-optimizer-steps "$MAX_OPTIMIZER_STEPS" \
   --timing-token-weight 1.15 \
   --note-on-token-weight 1.0 \
   --note-off-token-weight 1.25 \
