@@ -26,6 +26,9 @@ GATE_RESULT_PATH="$OUTPUT_DIR/route-matched-validation-gate.json"
 FULL_BASELINE_EVALUATION="${POLYMATH_FULL_BASELINE_EVALUATION:-}"
 FULL_BASELINE_EVALUATION_SHA256="${POLYMATH_FULL_BASELINE_EVALUATION_SHA256:-}"
 CANDIDATE_SINGLE_EVALUATION_PATH="$OUTPUT_DIR/evaluation-unconditioned-$CANDIDATE_ID-single.json"
+WANE_BASE_RAW_CACHE="${POLYMATH_WANE_BASE_RAW_CACHE:-}"
+WANE_BASE_RAW_CACHE_SHA256="${POLYMATH_WANE_BASE_RAW_CACHE_SHA256:-}"
+WANE_BASE_RAW_OUTPUT="$OUTPUT_DIR/wane-full-base-raw.json"
 GATE_CONFIG="${POLYMATH_GATE_CONFIG:-ml/training/configs/phase103-v007-visual-labels-validation-gate.json}"
 BASE_CANARY_MANIFEST="${POLYMATH_BASE_CANARY_MANIFEST:-ml/training/configs/phase103-v007-wane-base-runpod.json}"
 CANDIDATE_CANARY_MANIFEST="${POLYMATH_CANDIDATE_CANARY_MANIFEST:-ml/training/configs/phase103-v007-wane-candidate-runpod.json}"
@@ -64,6 +67,13 @@ if [[ -n "$FULL_BASELINE_EVALUATION" ]]; then
   printf '%s  %s\n' \
     "$FULL_BASELINE_EVALUATION_SHA256" \
     "$FULL_BASELINE_EVALUATION" | sha256sum --check --strict -
+fi
+if [[ -n "$WANE_BASE_RAW_CACHE" ]]; then
+  test -n "$WANE_BASE_RAW_CACHE_SHA256"
+  test -f "$WANE_BASE_RAW_CACHE"
+  printf '%s  %s\n' \
+    "$WANE_BASE_RAW_CACHE_SHA256" \
+    "$WANE_BASE_RAW_CACHE" | sha256sum --check --strict -
 fi
 
 echo PHASE103_V007_STAGE_CHECKOUT
@@ -153,11 +163,20 @@ echo PHASE103_V007_STAGE_CONTINUOUS_SONG_RESCORE
   --out "$CANDIDATE_TIMELINE_PATH"
 
 echo PHASE103_V007_STAGE_WANE_FULL_BASE
-"$PYTHON" -m ml.training.transcribe_batch \
-  --manifest "$BASE_CANARY_MANIFEST" \
-  --model "$BASE_PATH" \
-  --model-id phase46-v017 \
-  --provider "Polymath immutable experiment base"
+if [[ -n "$WANE_BASE_RAW_CACHE" ]]; then
+  echo PHASE103_V007_REUSE_FROZEN_WANE_BASE
+  test ! -e "$WANE_BASE_RAW_OUTPUT"
+  cp -- "$WANE_BASE_RAW_CACHE" "$WANE_BASE_RAW_OUTPUT"
+  printf '%s  %s\n' \
+    "$WANE_BASE_RAW_CACHE_SHA256" \
+    "$WANE_BASE_RAW_CACHE" > "$OUTPUT_DIR/wane-full-base-raw.reused.sha256"
+else
+  "$PYTHON" -m ml.training.transcribe_batch \
+    --manifest "$BASE_CANARY_MANIFEST" \
+    --model "$BASE_PATH" \
+    --model-id phase46-v017 \
+    --provider "Polymath immutable experiment base"
+fi
 
 echo PHASE103_V007_STAGE_WANE_FULL_CANDIDATE
 "$PYTHON" -m ml.training.transcribe_batch \
