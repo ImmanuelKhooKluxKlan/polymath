@@ -13,6 +13,10 @@ BASE_PATH="/runpod-volume/models/muscriptor-tester/phase46-v017/model.safetensor
 OUTPUT_DIR="/runpod-volume/models/muscriptor-tester/$CANDIDATE_ID"
 TRAIN_MANIFEST="$DATASET_DIR/prepared-train.jsonl"
 VALIDATION_MANIFEST="$DATASET_DIR/prepared-validation.jsonl"
+TARGET_DEVELOPMENT_MANIFEST="${POLYMATH_TARGET_DEVELOPMENT_MANIFEST:-}"
+TARGET_DEVELOPMENT_SHA256="${POLYMATH_TARGET_DEVELOPMENT_SHA256:-}"
+BASELINE_TARGET_DEVELOPMENT_EVALUATION="${POLYMATH_BASELINE_TARGET_DEVELOPMENT_EVALUATION:-}"
+BASELINE_TARGET_DEVELOPMENT_EVALUATION_SHA256="${POLYMATH_BASELINE_TARGET_DEVELOPMENT_EVALUATION_SHA256:-}"
 WANE_AUDIO="/runpod-volume/jobs/phase45-foundation-eval-20260916/wane-gbt-original.wav"
 REPO_COMMIT="${POLYMATH_REPO_COMMIT:?Set POLYMATH_REPO_COMMIT to the immutable commit containing this experiment}"
 BASE_SHA256="a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
@@ -75,6 +79,26 @@ if [[ -n "$WANE_BASE_RAW_CACHE" ]]; then
     "$WANE_BASE_RAW_CACHE_SHA256" \
     "$WANE_BASE_RAW_CACHE" | sha256sum --check --strict -
 fi
+if [[ -n "$TARGET_DEVELOPMENT_MANIFEST" ]]; then
+  test -n "$TARGET_DEVELOPMENT_SHA256"
+  test -f "$TARGET_DEVELOPMENT_MANIFEST"
+  printf '%s  %s\n' \
+    "$TARGET_DEVELOPMENT_SHA256" \
+    "$TARGET_DEVELOPMENT_MANIFEST" | sha256sum --check --strict -
+fi
+if [[ -n "$FULL_BASELINE_EVALUATION" ]]; then
+  TRAINING_COMMAND+=(
+    --baseline-decoded-evaluation "$FULL_BASELINE_EVALUATION"
+  )
+fi
+if [[ -n "$BASELINE_TARGET_DEVELOPMENT_EVALUATION" ]]; then
+  test -n "$TARGET_DEVELOPMENT_MANIFEST"
+  test -n "$BASELINE_TARGET_DEVELOPMENT_EVALUATION_SHA256"
+  test -f "$BASELINE_TARGET_DEVELOPMENT_EVALUATION"
+  printf '%s  %s\n' \
+    "$BASELINE_TARGET_DEVELOPMENT_EVALUATION_SHA256" \
+    "$BASELINE_TARGET_DEVELOPMENT_EVALUATION" | sha256sum --check --strict -
+fi
 
 echo PHASE103_V007_STAGE_CHECKOUT
 git clone --filter=blob:none https://github.com/ImmanuelKhooKluxKlan/polymath.git "$REPO_PATH"
@@ -85,7 +109,8 @@ PYTHON="$VENV_PATH/bin/python"
 export BASE_PATH OUTPUT_DIR VALIDATION_MANIFEST EVALUATION_PATH CANDIDATE_ID
 
 echo PHASE103_V007_STAGE_TRAIN_VISUAL_LABELS
-"$PYTHON" -m ml.training.train_muscriptor_piano \
+TRAINING_COMMAND=(
+  "$PYTHON" -m ml.training.train_muscriptor_piano \
   --train-manifest "$TRAIN_MANIFEST" \
   --validation-manifest "$VALIDATION_MANIFEST" \
   --base "$BASE_PATH" \
@@ -111,6 +136,27 @@ echo PHASE103_V007_STAGE_TRAIN_VISUAL_LABELS
   --conditioning-mode unconditioned \
   --precision bf16 \
   --seed polymath-phase100-v003-unconditioned
+)
+if [[ -n "$TARGET_DEVELOPMENT_MANIFEST" ]]; then
+  TRAINING_COMMAND+=(
+    --target-development-manifest "$TARGET_DEVELOPMENT_MANIFEST"
+    --target-development-minimum-100ms-f1-improvement \
+      "${POLYMATH_TARGET_DEVELOPMENT_MINIMUM_100MS_F1_IMPROVEMENT:-0.0}"
+    --target-development-minimum-100ms-recall-improvement \
+      "${POLYMATH_TARGET_DEVELOPMENT_MINIMUM_100MS_RECALL_IMPROVEMENT:-0.0}"
+    --target-development-maximum-250ms-f1-regression \
+      "${POLYMATH_TARGET_DEVELOPMENT_MAXIMUM_250MS_F1_REGRESSION:-0.0}"
+    --target-development-maximum-250ms-recall-regression \
+      "${POLYMATH_TARGET_DEVELOPMENT_MAXIMUM_250MS_RECALL_REGRESSION:-0.0}"
+  )
+fi
+if [[ -n "$BASELINE_TARGET_DEVELOPMENT_EVALUATION" ]]; then
+  TRAINING_COMMAND+=(
+    --baseline-target-development-evaluation \
+      "$BASELINE_TARGET_DEVELOPMENT_EVALUATION"
+  )
+fi
+"${TRAINING_COMMAND[@]}"
 
 echo PHASE103_V007_STAGE_FULL_UNCONDITIONED_EVALUATION
 if [[ -n "$FULL_BASELINE_EVALUATION" ]]; then

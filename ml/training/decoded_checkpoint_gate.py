@@ -171,3 +171,89 @@ def decoded_checkpoint_gate(
         "checks": checks,
         "failedChecks": failed,
     }
+
+
+def decoded_target_development_gate(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    minimum_100ms_f1_improvement: float = 0.0,
+    minimum_100ms_recall_improvement: float = 0.0,
+    maximum_250ms_f1_regression: float = 0.0,
+    maximum_250ms_recall_regression: float = 0.0,
+) -> dict[str, Any]:
+    """Require a target-domain development panel to improve without collapse.
+
+    The ordinary decoded checkpoint gate protects the broad, composition-
+    disjoint safety panel.  It cannot select a useful checkpoint when a small
+    target-domain curriculum moves in the opposite direction.  This second
+    gate is deliberately explicit: strict-onset F1 and recall must improve by
+    the frozen margins, while the more forgiving 250 ms scores may not regress
+    beyond their separately frozen allowances.
+
+    The development panel is *not* a certification set.  It may guide model
+    selection, so a later rights-cleared, untouched holdout is still required.
+    """
+
+    policy_values = (
+        minimum_100ms_f1_improvement,
+        minimum_100ms_recall_improvement,
+        maximum_250ms_f1_regression,
+        maximum_250ms_recall_regression,
+    )
+    if any(value < 0 for value in policy_values):
+        raise ValueError("Target-development gate margins cannot be negative")
+
+    raw_deltas = {
+        "100ms": {
+            "microF1": _metric(candidate, 100, "microF1")
+            - _metric(baseline, 100, "microF1"),
+            "recall": _metric(candidate, 100, "recall")
+            - _metric(baseline, 100, "recall"),
+        },
+        "250ms": {
+            "microF1": _metric(candidate, 250, "microF1")
+            - _metric(baseline, 250, "microF1"),
+            "recall": _metric(candidate, 250, "recall")
+            - _metric(baseline, 250, "recall"),
+        },
+    }
+    deltas = {
+        tolerance: {
+            name: round(value, 6)
+            for name, value in values.items()
+        }
+        for tolerance, values in raw_deltas.items()
+    }
+    checks = {
+        "target_100ms_f1_improvement": (
+            raw_deltas["100ms"]["microF1"] >= minimum_100ms_f1_improvement
+        ),
+        "target_100ms_recall_improvement": (
+            raw_deltas["100ms"]["recall"] >= minimum_100ms_recall_improvement
+        ),
+        "target_250ms_f1_non_regression": (
+            raw_deltas["250ms"]["microF1"] >= -maximum_250ms_f1_regression
+        ),
+        "target_250ms_recall_non_regression": (
+            raw_deltas["250ms"]["recall"] >= -maximum_250ms_recall_regression
+        ),
+    }
+    failed = sorted(name for name, passed in checks.items() if not passed)
+    return {
+        "schema": "polymath-decoded-target-development-gate-v1",
+        "passed": not failed,
+        "policy": {
+            "minimum100msF1Improvement": minimum_100ms_f1_improvement,
+            "minimum100msRecallImprovement": minimum_100ms_recall_improvement,
+            "maximum250msF1Regression": maximum_250ms_f1_regression,
+            "maximum250msRecallRegression": maximum_250ms_recall_regression,
+        },
+        "candidateMinusBaseline": deltas,
+        "checks": checks,
+        "failedChecks": failed,
+        "interpretation": (
+            "Development-only selection evidence; not an untouched holdout or "
+            "production certification."
+        ),
+    }

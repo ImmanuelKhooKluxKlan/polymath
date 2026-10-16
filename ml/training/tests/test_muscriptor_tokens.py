@@ -60,6 +60,29 @@ class MuScriptorTokenTests(unittest.TestCase):
         with self.assertRaisesRegex(TrainingError, "must be finite"):
             decoded_selection_rank(invalid, 1.20)
 
+    def test_target_development_quality_outranks_broad_panel_gain(self):
+        broad_better = {
+            "100ms": {"microF1": 0.92, "recall": 0.91},
+            "250ms": {"microF1": 0.94, "recall": 0.93},
+        }
+        broad_worse = {
+            "100ms": {"microF1": 0.90, "recall": 0.89},
+            "250ms": {"microF1": 0.92, "recall": 0.91},
+        }
+        target_worse = {
+            "100ms": {"microF1": 0.35, "recall": 0.34},
+            "250ms": {"microF1": 0.41, "recall": 0.40},
+        }
+        target_better = {
+            "100ms": {"microF1": 0.36, "recall": 0.35},
+            "250ms": {"microF1": 0.42, "recall": 0.41},
+        }
+
+        self.assertGreater(
+            decoded_selection_rank(broad_worse, 1.20, target_better),
+            decoded_selection_rank(broad_better, 1.10, target_worse),
+        )
+
     def test_training_seed_is_stable_and_label_specific(self):
         first = deterministic_seed("phase94-v002")
         self.assertEqual(first, deterministic_seed("phase94-v002"))

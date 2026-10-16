@@ -2,6 +2,7 @@ import pytest
 
 from ml.training.decoded_checkpoint_gate import (
     decoded_checkpoint_gate,
+    decoded_target_development_gate,
     select_decoded_gate_records,
 )
 
@@ -82,3 +83,41 @@ def test_gate_rejects_mismatched_song_sets():
     })
     with pytest.raises(ValueError, match="different songs"):
         decoded_checkpoint_gate(metrics(), candidate)
+
+
+def test_target_development_gate_requires_strict_f1_and_recall_improvement():
+    baseline = metrics(f1_100=0.35, recall_100=0.36, f1_250=0.41, recall_250=0.42)
+    candidate = metrics(f1_100=0.354, recall_100=0.361, f1_250=0.411, recall_250=0.421)
+
+    result = decoded_target_development_gate(
+        baseline,
+        candidate,
+        minimum_100ms_f1_improvement=0.003,
+        minimum_100ms_recall_improvement=0.001,
+    )
+
+    assert result["passed"] is True
+    assert result["candidateMinusBaseline"]["100ms"] == {
+        "microF1": 0.004,
+        "recall": 0.001,
+    }
+
+
+def test_target_development_gate_rejects_melody_recall_collapse():
+    baseline = metrics(f1_100=0.35, recall_100=0.36, f1_250=0.41, recall_250=0.42)
+    candidate = metrics(f1_100=0.36, recall_100=0.30, f1_250=0.42, recall_250=0.35)
+
+    result = decoded_target_development_gate(baseline, candidate)
+
+    assert result["passed"] is False
+    assert "target_100ms_recall_improvement" in result["failedChecks"]
+    assert "target_250ms_recall_non_regression" in result["failedChecks"]
+
+
+def test_target_development_gate_rejects_negative_policy_margins():
+    with pytest.raises(ValueError, match="cannot be negative"):
+        decoded_target_development_gate(
+            metrics(),
+            metrics(),
+            maximum_250ms_f1_regression=-0.1,
+        )

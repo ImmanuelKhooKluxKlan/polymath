@@ -354,25 +354,40 @@ def optimizer_step_limit_reached(optimizer_step: int, maximum_steps: int) -> boo
 def decoded_selection_rank(
     metrics: dict[str, Any],
     validation_loss: float,
-) -> tuple[float, float, float, float, float]:
+    target_development_metrics: dict[str, Any] | None = None,
+) -> tuple[float, ...]:
     """Rank safe checkpoints by decoded music quality, then token loss.
 
     Teacher-forced loss remains an eligibility gate, but it is only a proxy for
     the product output.  Once a checkpoint passes the decoded safety gate, the
-    strict 100 ms note F1 and recall select the winner.  The 250 ms values and
-    lower validation loss break exact ties deterministically.
+    strict 100 ms note F1 and recall select the winner.  When an explicitly
+    separated target-development panel is present, its strict scores rank
+    first; the broad safety panel then breaks ties.  The target panel is model-
+    selection evidence only and never substitutes for an untouched holdout.
     """
 
     try:
         at_100 = metrics["100ms"]
         at_250 = metrics["250ms"]
-        values = (
+        safety_values = (
             float(at_100["microF1"]),
             float(at_100["recall"]),
             float(at_250["microF1"]),
             float(at_250["recall"]),
             -float(validation_loss),
         )
+        if target_development_metrics is None:
+            values = safety_values
+        else:
+            target_100 = target_development_metrics["100ms"]
+            target_250 = target_development_metrics["250ms"]
+            values = (
+                float(target_100["microF1"]),
+                float(target_100["recall"]),
+                float(target_250["microF1"]),
+                float(target_250["recall"]),
+                *safety_values,
+            )
     except (KeyError, TypeError, ValueError) as exc:
         raise TrainingError("Decoded checkpoint metrics are incomplete") from exc
     if not all(math.isfinite(value) for value in values):
@@ -614,6 +629,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     from muscriptor import TranscriptionModel
     from ml.training.decoded_checkpoint_gate import (
         decoded_checkpoint_gate,
+        decoded_target_development_gate,
         select_decoded_gate_records,
     )
     from ml.training.evaluate_checkpoint import evaluate_loaded_transcription
@@ -654,8 +670,19 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         raise TrainingError("conditioningMode must be instrument or unconditioned")
     train_records = read_jsonl(args.train_manifest)
     validation_records = read_jsonl(args.validation_manifest)
+    target_development_manifest = getattr(args, "target_development_manifest", None)
+    target_development_records = (
+        read_jsonl(target_development_manifest)
+        if target_development_manifest
+        else []
+    )
     train_audit = audit_records(train_records)
     validation_audit = audit_records(validation_records)
+    target_development_audit = (
+        audit_records(target_development_records)
+        if target_development_records
+        else None
+    )
     if len(train_audit["instruments"]) != 1:
         raise TrainingError(
             "One checkpoint run must target exactly one instrument; found "
@@ -663,6 +690,29 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         )
     if validation_audit["instruments"] != train_audit["instruments"]:
         raise TrainingError("Training and validation instrument focus must match")
+    if target_development_audit:
+        if target_development_audit["instruments"] != train_audit["instruments"]:
+            raise TrainingError(
+                "Target-development and training instrument focus must match"
+            )
+        if len(target_development_records) < 2:
+            raise TrainingError("Target-development panel needs at least two clips")
+        train_clip_ids = {str(record.get("clipId") or "") for record in train_records}
+        validation_clip_ids = {
+            str(record.get("clipId") or "") for record in validation_records
+        }
+        target_clip_ids = [
+            str(record.get("clipId") or "")
+            for record in target_development_records
+        ]
+        if len(set(target_clip_ids)) != len(target_clip_ids):
+            raise TrainingError("Target-development panel repeats a clipId")
+        overlap = set(target_clip_ids) & (train_clip_ids | validation_clip_ids)
+        if overlap:
+            raise TrainingError(
+                "Target-development clipIds overlap train/validation: "
+                + ", ".join(sorted(overlap)[:5])
+            )
     if train_audit["songs"] < args.minimum_train_songs:
         raise TrainingError(
             f"Only {train_audit['songs']} training songs; minimum is {args.minimum_train_songs}. "
@@ -676,6 +726,18 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     max_optimizer_steps = int(getattr(args, "max_optimizer_steps", 0))
     if max_optimizer_steps < 0:
         raise TrainingError("Maximum optimizer steps cannot be negative")
+    target_gate_margins = (
+        float(getattr(args, "target_development_minimum_100ms_f1_improvement", 0.0)),
+        float(getattr(args, "target_development_minimum_100ms_recall_improvement", 0.0)),
+        float(getattr(args, "target_development_maximum_250ms_f1_regression", 0.0)),
+        float(getattr(args, "target_development_maximum_250ms_recall_regression", 0.0)),
+    )
+    if any(value < 0 for value in target_gate_margins):
+        raise TrainingError("Target-development gate margins cannot be negative")
+    if not target_development_records and any(target_gate_margins):
+        raise TrainingError(
+            "Target-development gate margins require --target-development-manifest"
+        )
 
     device = "cuda"
     transcription = TranscriptionModel.load_model(args.base, device=device)
@@ -737,9 +799,44 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             decoded_instruments,
         )
         baseline_decoded_source = "decoded-live"
+    baseline_target_development_metrics = None
+    baseline_target_development_source = None
+    if target_development_records:
+        cached_target_evaluation = getattr(
+            args, "baseline_target_development_evaluation", None
+        )
+        if cached_target_evaluation:
+            baseline_target_development_metrics = load_cached_decoded_metrics(
+                Path(cached_target_evaluation),
+                target_development_records,
+                base_checkpoint=args.base,
+                validation_manifest=target_development_manifest,
+                instruments=tuple(decoded_instruments or ()),
+            )
+            baseline_target_development_source = str(
+                Path(cached_target_evaluation)
+            )
+            if progress_callback:
+                progress_callback(
+                    "Reused the frozen target-development baseline decode"
+                )
+        else:
+            if progress_callback:
+                progress_callback(
+                    "Decoding the target-development baseline panel: "
+                    f"{len(target_development_records)} clips"
+                )
+            baseline_target_development_metrics = evaluate_loaded_transcription(
+                transcription,
+                target_development_records,
+                progress_callback,
+                decoded_instruments,
+            )
+            baseline_target_development_source = "decoded-live"
     selected_validation_loss = baseline_validation_loss
     lowest_validation_loss = baseline_validation_loss
     best_decoded_metrics = None
+    best_target_development_metrics = None
     best_selection_rank = None
     best_checkpoint_index = None
     best_state = None
@@ -754,7 +851,8 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         """Evaluate one reversible snapshot against loss and decoded-note gates."""
 
         nonlocal selected_validation_loss, lowest_validation_loss
-        nonlocal best_decoded_metrics, best_selection_rank, best_checkpoint_index
+        nonlocal best_decoded_metrics, best_target_development_metrics
+        nonlocal best_selection_rank, best_checkpoint_index
         nonlocal best_state
         nonlocal last_validation_optimizer_step
 
@@ -805,9 +903,36 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                 ),
             )
             decision["decodedGate"] = gate
-            if gate["passed"]:
+            target_candidate_metrics = None
+            target_gate = None
+            if gate["passed"] and target_development_records:
+                if progress_callback:
+                    progress_callback(
+                        f"Checkpoint {decision['checkpointIndex']}: broad safety passed; "
+                        "decoding the target-development panel"
+                    )
+                target_candidate_metrics = evaluate_loaded_transcription(
+                    transcription,
+                    target_development_records,
+                    progress_callback,
+                    decoded_instruments,
+                )
+                target_gate = decoded_target_development_gate(
+                    baseline_target_development_metrics,
+                    target_candidate_metrics,
+                    minimum_100ms_f1_improvement=target_gate_margins[0],
+                    minimum_100ms_recall_improvement=target_gate_margins[1],
+                    maximum_250ms_f1_regression=target_gate_margins[2],
+                    maximum_250ms_recall_regression=target_gate_margins[3],
+                )
+                decision["targetDevelopmentGate"] = target_gate
+            if gate["passed"] and (target_gate is None or target_gate["passed"]):
                 decision["eligible"] = True
-                rank = decoded_selection_rank(candidate_decoded_metrics, validation_loss)
+                rank = decoded_selection_rank(
+                    candidate_decoded_metrics,
+                    validation_loss,
+                    target_candidate_metrics,
+                )
                 decision["selectionRank"] = list(rank)
                 decision["becameSelectionLeader"] = (
                     best_selection_rank is None or rank > best_selection_rank
@@ -817,6 +942,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     best_checkpoint_index = decision["checkpointIndex"]
                     selected_validation_loss = validation_loss
                     best_decoded_metrics = candidate_decoded_metrics
+                    best_target_development_metrics = target_candidate_metrics
                     best_state = {
                         name: parameter.detach().cpu().clone()
                         for name, parameter in transcription._model.state_dict().items()
@@ -825,7 +951,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             else:
                 decision["eligible"] = False
                 decision["becameSelectionLeader"] = False
-                decision["rejectionReason"] = "decoded-note safety gate failed"
+                decision["rejectionReason"] = (
+                    "target-development gate failed"
+                    if gate["passed"] and target_gate is not None
+                    else "decoded-note safety gate failed"
+                )
         else:
             decision["eligible"] = False
             decision["becameSelectionLeader"] = False
@@ -931,15 +1061,58 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "maxOptimizerSteps": max_optimizer_steps,
         "precision": args.precision,
     }
+    target_development_evidence = None
+    if target_development_records:
+        target_development_evidence = {
+            "manifest": str(target_development_manifest),
+            "manifestSha256": sha256_file(target_development_manifest),
+            "audit": target_development_audit,
+            "baselineDecodedSource": baseline_target_development_source,
+            "baseline": baseline_target_development_metrics,
+            "bestCandidate": best_target_development_metrics,
+            "gatePolicy": {
+                "minimum100msF1Improvement": target_gate_margins[0],
+                "minimum100msRecallImprovement": target_gate_margins[1],
+                "maximum250msF1Regression": target_gate_margins[2],
+                "maximum250msRecallRegression": target_gate_margins[3],
+            },
+            "records": [
+                {
+                    "clipId": str(record.get("clipId") or ""),
+                    "songId": str(record.get("songId") or "unknown"),
+                    "sourceStart": float(record.get("sourceStart") or 0),
+                    "isNegativeExample": bool(record.get("isNegativeExample")),
+                }
+                for record in target_development_records
+            ],
+            "interpretation": (
+                "Opened development evidence used for checkpoint selection; "
+                "not an untouched holdout or production certification."
+            ),
+        }
     decoded_checkpoint_selection = {
         "schema": "polymath-decoded-checkpoint-selection-v2",
-        "ranking": [
-            "100ms.microF1",
-            "100ms.recall",
-            "250ms.microF1",
-            "250ms.recall",
-            "negativeValidationLoss",
-        ],
+        "ranking": (
+            [
+                "targetDevelopment.100ms.microF1",
+                "targetDevelopment.100ms.recall",
+                "targetDevelopment.250ms.microF1",
+                "targetDevelopment.250ms.recall",
+                "safety.100ms.microF1",
+                "safety.100ms.recall",
+                "safety.250ms.microF1",
+                "safety.250ms.recall",
+                "negativeValidationLoss",
+            ]
+            if target_development_records
+            else [
+                "100ms.microF1",
+                "100ms.recall",
+                "250ms.microF1",
+                "250ms.recall",
+                "negativeValidationLoss",
+            ]
+        ),
         "selectedCheckpointIndex": best_checkpoint_index,
         "selectedRank": list(best_selection_rank) if best_selection_rank else None,
         "clipsPerSong": decoded_gate_clips_per_song,
@@ -956,13 +1129,15 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "baselineDecodedSource": baseline_decoded_source,
         "baseline": baseline_decoded_metrics,
         "bestCandidate": best_decoded_metrics,
+        "targetDevelopment": target_development_evidence,
         "epochDecisions": epoch_decisions,
         "checkpointDecisions": checkpoint_decisions,
     }
     if best_state is None:
         reason = (
             "No evaluated checkpoint improved validation loss while passing decoded "
-            "multi-song note gates; no candidate checkpoint was written"
+            "multi-song safety and target-development gates; no candidate checkpoint "
+            "was written"
         )
         if rejection_receipt:
             receipt = build_rejection_receipt(
@@ -1002,6 +1177,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "validationManifest": str(args.validation_manifest),
         "trainAudit": train_audit,
         "validationAudit": validation_audit,
+        "targetDevelopment": target_development_evidence,
         "instrumentFocus": train_audit["instruments"][0],
         "conditioningMode": conditioning_mode,
         **hyperparameters,
@@ -1025,6 +1201,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-manifest", type=Path, required=True)
     parser.add_argument("--validation-manifest", type=Path, required=True)
+    parser.add_argument(
+        "--target-development-manifest",
+        type=Path,
+        help=(
+            "Optional opened target-domain panel used for checkpoint selection. "
+            "It must be clip-disjoint from train/validation and is never reported "
+            "as an untouched holdout."
+        ),
+    )
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
@@ -1039,6 +1224,14 @@ def parse_args() -> argparse.Namespace:
         "--baseline-decoded-evaluation",
         type=Path,
         help="Reuse raw original predictions from a matching frozen full-validation evaluation.",
+    )
+    parser.add_argument(
+        "--baseline-target-development-evaluation",
+        type=Path,
+        help=(
+            "Reuse raw base predictions from an evaluation of the exact frozen "
+            "target-development manifest."
+        ),
     )
     parser.add_argument("--execute", action="store_true", help="Allow optimizer updates; otherwise audit only")
     parser.add_argument("--rights-acknowledgement", default="")
@@ -1099,6 +1292,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decoded-gate-max-aggregate-f1-regression", type=float, default=0.001)
     parser.add_argument("--decoded-gate-max-aggregate-recall-regression", type=float, default=0.002)
     parser.add_argument("--decoded-gate-max-per-song-f1-regression", type=float, default=0.010)
+    parser.add_argument(
+        "--target-development-minimum-100ms-f1-improvement",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--target-development-minimum-100ms-recall-improvement",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--target-development-maximum-250ms-f1-regression",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--target-development-maximum-250ms-recall-regression",
+        type=float,
+        default=0.0,
+    )
     return parser.parse_args()
 
 
@@ -1106,18 +1319,34 @@ def main() -> None:
     args = parse_args()
     args.train_manifest = args.train_manifest.resolve()
     args.validation_manifest = args.validation_manifest.resolve()
+    if args.target_development_manifest:
+        args.target_development_manifest = args.target_development_manifest.resolve()
     args.base = args.base.resolve()
     args.out = args.out.resolve()
     if args.rejection_receipt:
         args.rejection_receipt = args.rejection_receipt.resolve()
     if args.baseline_decoded_evaluation:
         args.baseline_decoded_evaluation = args.baseline_decoded_evaluation.resolve()
+    if args.baseline_target_development_evaluation:
+        args.baseline_target_development_evaluation = (
+            args.baseline_target_development_evaluation.resolve()
+        )
     train_records = read_jsonl(args.train_manifest)
     validation_records = read_jsonl(args.validation_manifest)
+    target_development_records = (
+        read_jsonl(args.target_development_manifest)
+        if args.target_development_manifest
+        else []
+    )
     audit = {
         "mode": "execute" if args.execute else "audit-only",
         "train": audit_records(train_records),
         "validation": audit_records(validation_records),
+        "targetDevelopment": (
+            audit_records(target_development_records)
+            if target_development_records
+            else None
+        ),
     }
     if not args.execute:
         print(json.dumps(audit, indent=2))
