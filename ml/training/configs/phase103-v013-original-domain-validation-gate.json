@@ -1,0 +1,45 @@
+{
+  "schema": "polymath-route-matched-validation-gate-v1",
+  "candidateVersion": "phase103-v013-original-domain-p000",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "immutableInputs": {
+    "baseCheckpointSha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0",
+    "trainManifestSha256": "3033a2086d559abb574bc9d786da36179dc1740573bc865dda976ee909b8e9c7",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+    "targetDevelopmentSplitReceiptSha256": "c9cb40dd5443c066ef881553a3a2d89ed7cf74b438515150ffd003a9e6d81ff8",
+    "originalDomainSupervisionReceiptSha256": "898f30643a59b40529c9292bbed3d466640edb09f3ddf414197f0290c1556105"
+  },
+  "route": {
+    "conditioningMode": "unconditioned",
+    "instrumentConstraint": []
+  },
+  "requiredChecks": {
+    "minimumCompleteSongs": 3,
+    "clipLocal100msF1MaximumRegression": 0.0,
+    "clipLocal250msF1MaximumRegression": 0.0,
+    "continuous100msF1MinimumImprovement": 0.0,
+    "continuous100msPrecisionMaximumRegression": 0.005,
+    "continuous100msRecallMaximumRegression": 0.0,
+    "continuous250msF1MaximumRegression": 0.0,
+    "songBootstrapLower95MaximumRegression": 0.0,
+    "maximumPerSong100msF1Regression": 0.005,
+    "onsetAndOffsetF1MaximumRegression": 0.003,
+    "frameF1MaximumRegression": 0.003,
+    "cutOffPer1000MatchedMaximumIncrease": 2.0,
+    "overlongPer1000MatchedMaximumIncrease": 2.0,
+    "rapidRetriggersPer1000PredictedMaximumIncrease": 0.25
+  },
+  "checkpointSelectionChecks": {
+    "wholeSongContextHeldOut100msF1MinimumImprovement": 0.002,
+    "wholeSongContextHeldOut100msRecallMinimumImprovement": 0.0,
+    "wholeSongContextHeldOut250msF1MaximumRegression": 0.0,
+    "wholeSongContextHeldOut250msRecallMaximumRegression": 0.0
+  },
+  "manualGatesStillRequired": [
+    "WANE must improve against the complete independent visual reference after the exact production route",
+    "blind listening must prefer the candidate without audible blockers",
+    "a separate rights-cleared composition-disjoint holdout must reproduce the result before commercial production"
+  ],
+  "interpretation": "Passing authorizes a listening candidate only. It does not certify 70 or 90 percent accuracy and does not authorize production deployment."
+}
