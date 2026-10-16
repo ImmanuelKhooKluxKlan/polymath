@@ -633,6 +633,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         select_decoded_gate_records,
     )
     from ml.training.evaluate_checkpoint import evaluate_loaded_transcription
+    from ml.training.full_song_target_development import (
+        baseline_score as full_song_baseline_score,
+        load_config as load_full_song_target_config,
+        transcribe_and_score as transcribe_and_score_full_song_target,
+    )
 
     numeric_seed = deterministic_seed(args.seed)
     random.seed(numeric_seed)
@@ -671,10 +676,42 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     train_records = read_jsonl(args.train_manifest)
     validation_records = read_jsonl(args.validation_manifest)
     target_development_manifest = getattr(args, "target_development_manifest", None)
+    full_song_target_config_path = getattr(
+        args, "full_song_target_development_config", None
+    )
+    if target_development_manifest and full_song_target_config_path:
+        raise TrainingError(
+            "Use either clip-local or full-song target development, not both"
+        )
     target_development_records = (
         read_jsonl(target_development_manifest)
         if target_development_manifest
         else []
+    )
+    full_song_target_config = None
+    full_song_target_artifact_directory = None
+    if full_song_target_config_path:
+        try:
+            full_song_target_config = load_full_song_target_config(
+                Path(full_song_target_config_path)
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise TrainingError(f"Invalid full-song target-development config: {exc}") from exc
+        artifact_value = getattr(
+            args, "full_song_target_development_artifact_dir", None
+        )
+        if not artifact_value:
+            raise TrainingError(
+                "Full-song target development requires an artifact directory"
+            )
+        full_song_target_artifact_directory = Path(artifact_value)
+        if full_song_target_artifact_directory.exists():
+            raise TrainingError(
+                "Full-song target-development artifact directory must not exist: "
+                f"{full_song_target_artifact_directory}"
+            )
+    target_development_enabled = bool(
+        target_development_records or full_song_target_config
     )
     train_audit = audit_records(train_records)
     validation_audit = audit_records(validation_records)
@@ -734,9 +771,9 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     )
     if any(value < 0 for value in target_gate_margins):
         raise TrainingError("Target-development gate margins cannot be negative")
-    if not target_development_records and any(target_gate_margins):
+    if not target_development_enabled and any(target_gate_margins):
         raise TrainingError(
-            "Target-development gate margins require --target-development-manifest"
+            "Target-development gate margins require a target-development input"
         )
 
     device = "cuda"
@@ -801,7 +838,23 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         baseline_decoded_source = "decoded-live"
     baseline_target_development_metrics = None
     baseline_target_development_source = None
-    if target_development_records:
+    if full_song_target_config:
+        try:
+            baseline_target_development_metrics = full_song_baseline_score(
+                full_song_target_config
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise TrainingError(
+                f"Could not score the frozen full-song target baseline: {exc}"
+            ) from exc
+        baseline_target_development_source = str(
+            full_song_target_config["resolvedPaths"]["baselineRaw"]
+        )
+        if progress_callback:
+            progress_callback(
+                "Reused the frozen full-song target-development baseline"
+            )
+    elif target_development_records:
         cached_target_evaluation = getattr(
             args, "baseline_target_development_evaluation", None
         )
@@ -905,18 +958,33 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             decision["decodedGate"] = gate
             target_candidate_metrics = None
             target_gate = None
-            if gate["passed"] and target_development_records:
+            target_artifact = None
+            if gate["passed"] and target_development_enabled:
                 if progress_callback:
                     progress_callback(
                         f"Checkpoint {decision['checkpointIndex']}: broad safety passed; "
                         "decoding the target-development panel"
                     )
-                target_candidate_metrics = evaluate_loaded_transcription(
-                    transcription,
-                    target_development_records,
-                    progress_callback,
-                    decoded_instruments,
-                )
+                if full_song_target_config:
+                    target_candidate_metrics, target_artifact = (
+                        transcribe_and_score_full_song_target(
+                            transcription,
+                            full_song_target_config,
+                            candidate_id=str(
+                                getattr(args, "candidate_id", "candidate")
+                            ),
+                            optimizer_step=optimizer_step,
+                            artifact_directory=full_song_target_artifact_directory,
+                        )
+                    )
+                    decision["targetDevelopmentArtifact"] = target_artifact
+                else:
+                    target_candidate_metrics = evaluate_loaded_transcription(
+                        transcription,
+                        target_development_records,
+                        progress_callback,
+                        decoded_instruments,
+                    )
                 target_gate = decoded_target_development_gate(
                     baseline_target_development_metrics,
                     target_candidate_metrics,
@@ -1062,11 +1130,47 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "precision": args.precision,
     }
     target_development_evidence = None
-    if target_development_records:
+    if target_development_enabled:
         target_development_evidence = {
-            "manifest": str(target_development_manifest),
-            "manifestSha256": sha256_file(target_development_manifest),
-            "audit": target_development_audit,
+            "mode": (
+                "full-song-context-held-out-windows"
+                if full_song_target_config
+                else "isolated-development-clips"
+            ),
+            "manifest": (
+                str(target_development_manifest)
+                if target_development_manifest
+                else None
+            ),
+            "manifestSha256": (
+                sha256_file(target_development_manifest)
+                if target_development_manifest
+                else None
+            ),
+            "fullSongConfig": (
+                str(full_song_target_config_path)
+                if full_song_target_config_path
+                else None
+            ),
+            "fullSongConfigSha256": (
+                sha256_file(Path(full_song_target_config_path))
+                if full_song_target_config_path
+                else None
+            ),
+            "artifactDirectory": (
+                str(full_song_target_artifact_directory)
+                if full_song_target_artifact_directory
+                else None
+            ),
+            "audit": (
+                target_development_audit
+                if target_development_audit
+                else {
+                    "windows": full_song_target_config["windows"],
+                    "audio": full_song_target_config["resolvedPaths"]["audio"],
+                    "splitReceipt": full_song_target_config["resolvedPaths"]["splitReceipt"],
+                }
+            ),
             "baselineDecodedSource": baseline_target_development_source,
             "baseline": baseline_target_development_metrics,
             "bestCandidate": best_target_development_metrics,
@@ -1104,7 +1208,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                 "safety.250ms.recall",
                 "negativeValidationLoss",
             ]
-            if target_development_records
+            if target_development_enabled
             else [
                 "100ms.microF1",
                 "100ms.recall",
@@ -1210,6 +1314,20 @@ def parse_args() -> argparse.Namespace:
             "as an untouched holdout."
         ),
     )
+    parser.add_argument(
+        "--full-song-target-development-config",
+        type=Path,
+        help=(
+            "Optional frozen config that transcribes a complete song while scoring "
+            "only temporally held-out development windows."
+        ),
+    )
+    parser.add_argument(
+        "--full-song-target-development-artifact-dir",
+        type=Path,
+        help="New directory for per-checkpoint full-song raw and score evidence.",
+    )
+    parser.add_argument("--candidate-id", default="candidate")
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
@@ -1321,6 +1439,14 @@ def main() -> None:
     args.validation_manifest = args.validation_manifest.resolve()
     if args.target_development_manifest:
         args.target_development_manifest = args.target_development_manifest.resolve()
+    if args.full_song_target_development_config:
+        args.full_song_target_development_config = (
+            args.full_song_target_development_config.resolve()
+        )
+    if args.full_song_target_development_artifact_dir:
+        args.full_song_target_development_artifact_dir = (
+            args.full_song_target_development_artifact_dir.resolve()
+        )
     args.base = args.base.resolve()
     args.out = args.out.resolve()
     if args.rejection_receipt:
@@ -1338,6 +1464,24 @@ def main() -> None:
         if args.target_development_manifest
         else []
     )
+    if args.target_development_manifest and args.full_song_target_development_config:
+        raise TrainingError(
+            "Use either clip-local or full-song target development, not both"
+        )
+    full_song_target_audit = None
+    if args.full_song_target_development_config:
+        from ml.training.full_song_target_development import load_config
+
+        try:
+            config = load_config(args.full_song_target_development_config)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise TrainingError(f"Invalid full-song target-development config: {exc}") from exc
+        full_song_target_audit = {
+            "config": str(args.full_song_target_development_config),
+            "configSha256": sha256_file(args.full_song_target_development_config),
+            "windows": config["windows"],
+            "resolvedPaths": config["resolvedPaths"],
+        }
     audit = {
         "mode": "execute" if args.execute else "audit-only",
         "train": audit_records(train_records),
@@ -1345,7 +1489,7 @@ def main() -> None:
         "targetDevelopment": (
             audit_records(target_development_records)
             if target_development_records
-            else None
+            else full_song_target_audit
         ),
     }
     if not args.execute:

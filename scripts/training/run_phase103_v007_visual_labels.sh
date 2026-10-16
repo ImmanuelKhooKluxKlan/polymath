@@ -12,9 +12,12 @@ VENV_PATH="/workspace/polymath-phase100-v006-venv"
 BASE_PATH="/runpod-volume/models/muscriptor-tester/phase46-v017/model.safetensors"
 OUTPUT_DIR="/runpod-volume/models/muscriptor-tester/$CANDIDATE_ID"
 TRAIN_MANIFEST="$DATASET_DIR/prepared-train.jsonl"
-VALIDATION_MANIFEST="$DATASET_DIR/prepared-validation.jsonl"
+VALIDATION_MANIFEST="${POLYMATH_VALIDATION_MANIFEST:-$DATASET_DIR/prepared-validation.jsonl}"
 TARGET_DEVELOPMENT_MANIFEST="${POLYMATH_TARGET_DEVELOPMENT_MANIFEST:-}"
 TARGET_DEVELOPMENT_SHA256="${POLYMATH_TARGET_DEVELOPMENT_SHA256:-}"
+FULL_SONG_TARGET_DEVELOPMENT_CONFIG="${POLYMATH_FULL_SONG_TARGET_DEVELOPMENT_CONFIG:-}"
+FULL_SONG_TARGET_DEVELOPMENT_CONFIG_SHA256="${POLYMATH_FULL_SONG_TARGET_DEVELOPMENT_CONFIG_SHA256:-}"
+FULL_SONG_TARGET_DEVELOPMENT_ARTIFACT_DIR="${POLYMATH_FULL_SONG_TARGET_DEVELOPMENT_ARTIFACT_DIR:-}"
 BASELINE_TARGET_DEVELOPMENT_EVALUATION="${POLYMATH_BASELINE_TARGET_DEVELOPMENT_EVALUATION:-}"
 BASELINE_TARGET_DEVELOPMENT_EVALUATION_SHA256="${POLYMATH_BASELINE_TARGET_DEVELOPMENT_EVALUATION_SHA256:-}"
 WANE_AUDIO="/runpod-volume/jobs/phase45-foundation-eval-20260916/wane-gbt-original.wav"
@@ -86,10 +89,11 @@ if [[ -n "$TARGET_DEVELOPMENT_MANIFEST" ]]; then
     "$TARGET_DEVELOPMENT_SHA256" \
     "$TARGET_DEVELOPMENT_MANIFEST" | sha256sum --check --strict -
 fi
-if [[ -n "$FULL_BASELINE_EVALUATION" ]]; then
-  TRAINING_COMMAND+=(
-    --baseline-decoded-evaluation "$FULL_BASELINE_EVALUATION"
-  )
+if [[ -n "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG" ]]; then
+  test -z "$TARGET_DEVELOPMENT_MANIFEST"
+  test -n "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG_SHA256"
+  test -n "$FULL_SONG_TARGET_DEVELOPMENT_ARTIFACT_DIR"
+  test ! -e "$FULL_SONG_TARGET_DEVELOPMENT_ARTIFACT_DIR"
 fi
 if [[ -n "$BASELINE_TARGET_DEVELOPMENT_EVALUATION" ]]; then
   test -n "$TARGET_DEVELOPMENT_MANIFEST"
@@ -105,6 +109,15 @@ git clone --filter=blob:none https://github.com/ImmanuelKhooKluxKlan/polymath.gi
 cd "$REPO_PATH"
 git checkout --detach "$REPO_COMMIT"
 test "$(git rev-parse HEAD)" = "$REPO_COMMIT"
+if [[ -n "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG" ]]; then
+  if [[ "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG" != /* ]]; then
+    FULL_SONG_TARGET_DEVELOPMENT_CONFIG="$REPO_PATH/$FULL_SONG_TARGET_DEVELOPMENT_CONFIG"
+  fi
+  test -f "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG"
+  printf '%s  %s\n' \
+    "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG_SHA256" \
+    "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG" | sha256sum --check --strict -
+fi
 PYTHON="$VENV_PATH/bin/python"
 export BASE_PATH OUTPUT_DIR VALIDATION_MANIFEST EVALUATION_PATH CANDIDATE_ID
 
@@ -115,6 +128,7 @@ TRAINING_COMMAND=(
   --validation-manifest "$VALIDATION_MANIFEST" \
   --base "$BASE_PATH" \
   --out "$OUTPUT_DIR" \
+  --candidate-id "$CANDIDATE_ID" \
   --rejection-receipt "$REJECTION_RECEIPT" \
   --execute \
   --rights-acknowledgement I_HAVE_TRAINING_RIGHTS \
@@ -148,6 +162,27 @@ if [[ -n "$TARGET_DEVELOPMENT_MANIFEST" ]]; then
       "${POLYMATH_TARGET_DEVELOPMENT_MAXIMUM_250MS_F1_REGRESSION:-0.0}"
     --target-development-maximum-250ms-recall-regression \
       "${POLYMATH_TARGET_DEVELOPMENT_MAXIMUM_250MS_RECALL_REGRESSION:-0.0}"
+  )
+fi
+if [[ -n "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG" ]]; then
+  TRAINING_COMMAND+=(
+    --full-song-target-development-config \
+      "$FULL_SONG_TARGET_DEVELOPMENT_CONFIG"
+    --full-song-target-development-artifact-dir \
+      "$FULL_SONG_TARGET_DEVELOPMENT_ARTIFACT_DIR"
+    --target-development-minimum-100ms-f1-improvement \
+      "${POLYMATH_TARGET_DEVELOPMENT_MINIMUM_100MS_F1_IMPROVEMENT:-0.0}"
+    --target-development-minimum-100ms-recall-improvement \
+      "${POLYMATH_TARGET_DEVELOPMENT_MINIMUM_100MS_RECALL_IMPROVEMENT:-0.0}"
+    --target-development-maximum-250ms-f1-regression \
+      "${POLYMATH_TARGET_DEVELOPMENT_MAXIMUM_250MS_F1_REGRESSION:-0.0}"
+    --target-development-maximum-250ms-recall-regression \
+      "${POLYMATH_TARGET_DEVELOPMENT_MAXIMUM_250MS_RECALL_REGRESSION:-0.0}"
+  )
+fi
+if [[ -n "$FULL_BASELINE_EVALUATION" ]]; then
+  TRAINING_COMMAND+=(
+    --baseline-decoded-evaluation "$FULL_BASELINE_EVALUATION"
   )
 fi
 if [[ -n "$BASELINE_TARGET_DEVELOPMENT_EVALUATION" ]]; then
