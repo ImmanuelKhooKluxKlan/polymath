@@ -3,7 +3,27 @@ import copy
 import numpy as np
 import pytest
 
-from ml.training.audit_curriculum_gradients import PREFIXES, cosine, gradient_summary, paired_groups
+from ml.training.audit_curriculum_gradients import PREFIXES, cosine, gradient_summary, paired_groups, teacher_forced_program_summary
+from ml.training.muscriptor_tokens import EOS_ID, INITIAL_TOKEN_ID, PITCH_BASE, PROGRAM_BASE, TIE_ID
+
+
+def test_program_audit_distinguishes_teacher_forcing_from_free_running_notes():
+    tokens = [TIE_ID, PROGRAM_BASE, PITCH_BASE + 60, EOS_ID]
+    logits = np.zeros((4, INITIAL_TOKEN_ID))
+    logits[1, PROGRAM_BASE + 4] = 2
+    report = teacher_forced_program_summary(tokens, logits, [1, 1, 1, 1])
+    assert report["programTokens"] == 1
+    assert report["programPredictions"][0]["predictedToken"] == PROGRAM_BASE + 4
+    assert report["programPredictions"][0]["targetRank"] == 2
+    assert not report["programPredictions"][0]["top1Correct"]
+    assert 0 < report["programWeightedLossShare"] < 1
+    assert "not autoregressive note accuracy" in report["interpretation"]
+
+
+def test_negative_examples_do_not_invent_a_program_loss():
+    report = teacher_forced_program_summary([TIE_ID, EOS_ID], np.zeros((2, INITIAL_TOKEN_ID)), [1, 1])
+    assert report["programTokens"] == 0
+    assert report["programWeightedLossShare"] == 0
 
 
 def records():

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .muscriptor_tokens import encode_instrument_clip
+from .muscriptor_tokens import DRUM_BASE, PROGRAM_BASE, encode_instrument_clip
 
 
 PREFIXES = {
@@ -82,6 +82,26 @@ def gradient_summary(original, synthetic):
     }
 
 
+def teacher_forced_program_summary(tokens, logits, weights):
+    logits = np.asarray(logits, dtype=np.float64)
+    tokens, weights = np.asarray(tokens, dtype=int), np.asarray(weights, dtype=np.float64)
+    if logits.ndim != 2 or logits.shape[0] != len(tokens) or weights.shape != tokens.shape or not np.isfinite(logits).all():
+        raise ValueError("Invalid captured teacher-forced logits")
+    maximum = logits.max(axis=1)
+    log_normalizer = maximum + np.log(np.exp(logits - maximum[:, None]).sum(axis=1))
+    losses = log_normalizer - logits[np.arange(len(tokens)), tokens]
+    predicted = logits.argmax(axis=1)
+    indices = np.flatnonzero((tokens >= PROGRAM_BASE) & (tokens < DRUM_BASE))
+    total = float(np.dot(losses, weights))
+    return {
+        "programTokens": len(indices),
+        "programWeightedLossShare": float(np.dot(losses[indices], weights[indices]) / total) if total > 0 else 0.0,
+        "overallTeacherForcedTokenTop1Accuracy": float(np.mean(predicted == tokens)),
+        "programPredictions": [{"position": int(i), "targetToken": int(tokens[i]), "predictedToken": int(predicted[i]), "targetProbability": float(np.exp(-losses[i])), "targetRank": int(np.sum(logits[i] > logits[i, tokens[i]])) + 1, "top1Correct": bool(predicted[i] == tokens[i])} for i in indices],
+        "interpretation": "Teacher-forced token accuracy is not autoregressive note accuracy. Earlier correct target tokens are supplied during this forward pass.",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experiment", required=True, type=Path)
@@ -98,7 +118,7 @@ def main():
     data = Path("/runpod-volume/training") / config["dataset"]["id"]
     base = Path("/runpod-volume/models/muscriptor-tester/phase46-v017/model.safetensors")
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    from .train_muscriptor_piano import audit_records, clip_loss, read_jsonl, sha256_file
+    from .train_muscriptor_piano import audit_records, clip_loss, read_jsonl, sha256_file, target_token_weights
     from .run_piano_task_vector_experiment import audit_separation, verify
     from .full_song_target_development import load_config
     from .evaluate_checkpoint import configure_piano_task_evaluation_runtime
@@ -128,6 +148,8 @@ def main():
         # Eval mode removes dropout noise. Gradients are still enabled; this
         # is a local diagnostic at the unchanged base, not minibatch replay.
         model._model.eval()
+        captured = []
+        capture_hook = model._model.register_forward_hook(lambda _module, _inputs, output: captured.append(output.detach()))
         torch.cuda.reset_peak_memory_stats()
         allowed = {id(parameter) for parameter in parameters}
         pair_reports, aggregate_original, aggregate_synthetic = [], None, None
@@ -135,9 +157,16 @@ def main():
             vectors, variant_reports = {}, {}
             for name, row in variants.items():
                 model._model.zero_grad(set_to_none=True)
+                captured.clear()
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     loss = clip_loss(model, row, "cuda", apply_example_weight=False, conditioning_mode="unconditioned", timing_weight=hyper["timingTokenWeight"], note_on_weight=hyper["noteOnTokenWeight"], note_off_weight=hyper["noteOffTokenWeight"], eos_weight=hyper["eosTokenWeight"])
                 loss.backward()
+                if len(captured) != 1:
+                    raise ValueError("Expected one captured full-sequence model forward")
+                tokens = encode_instrument_clip(row["notes"], duration_seconds=float(row["durationSeconds"]), instrument=row["instrumentFocus"])
+                token_weights = target_token_weights(tokens, timing_weight=hyper["timingTokenWeight"], note_on_weight=hyper["noteOnTokenWeight"], note_off_weight=hyper["noteOffTokenWeight"], eos_weight=hyper["eosTokenWeight"])
+                program_report = teacher_forced_program_summary(tokens, captured[0][0].float().cpu().numpy(), token_weights)
+                captured.clear()
                 if any(parameter.grad is not None for parameter in model._model.parameters() if id(parameter) not in allowed):
                     raise ValueError("A frozen foundation parameter received a gradient")
                 if any(parameter.grad is None or not torch.isfinite(parameter.grad).all() for parameter in parameters):
@@ -146,7 +175,7 @@ def main():
                 if np.linalg.norm(vector) <= 0:
                     raise ValueError("No adapter gradient")
                 vectors[name] = vector
-                variant_reports[name] = {"clipId": row["clipId"], "audioSha256": sha256_file(Path(row["audioClip"])), "unweightedLoss": float(loss.detach()), "exampleWeight": float(row.get("exampleWeight", 1.0)), "unweightedGradientNorm": float(np.linalg.norm(vector)), "cosineVersusOriginal": None}
+                variant_reports[name] = {"clipId": row["clipId"], "audioSha256": sha256_file(Path(row["audioClip"])), "unweightedLoss": float(loss.detach()), "exampleWeight": float(row.get("exampleWeight", 1.0)), "unweightedGradientNorm": float(np.linalg.norm(vector)), "cosineVersusOriginal": None, "teacherForcedProgramDiagnostics": program_report}
                 del loss
             for name, vector in vectors.items():
                 variant_reports[name]["cosineVersusOriginal"] = cosine(vectors["original"], vector)
@@ -158,6 +187,7 @@ def main():
             pair_reports.append(report)
             print(json.dumps({"completedPairs": len(pair_reports), "totalPairs": len(groups), "sourceStart": start, "cosine": report["cosineOriginalVersusSynthetic"]}), flush=True)
         model._model.zero_grad(set_to_none=True)
+        capture_hook.remove()
         deltas = attention_lora_deltas(handles)
         if any(row["changedEffectiveParameters"] != 0 for row in deltas):
             raise ValueError("A no-optimizer gradient diagnostic changed the effective model")
