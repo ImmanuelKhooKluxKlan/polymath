@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-curriculum-gradient-plan-v1",
+  "status": "frozen-before-gradient-observation",
+  "experiment": "ml/training/configs/phase108-v001-attention-lora-experiment.json",
+  "optimizerCreationAllowed": false,
+  "checkpointWritesAllowed": false,
+  "productionMutationAllowed": false,
+  "pairedPositions": 6,
+  "sourceStartsSeconds": [12.5, 50.0, 100.0, 130.0, 160.0, 190.0],
+  "minimumNotes": 5,
+  "minimumDurationSeconds": 4.0,
+  "selection": "Evenly spaced, complete same-token WANE training pairs. Hold-out windows and compositions remain excluded; the existing Kiss Me cutoff audit is mandatory.",
+  "variantCountAtEachPosition": 5,
+  "targetTrainingMode": "Last-layer rank-8 alpha-8 attention LoRA, with all original weights frozen",
+  "gradientMode": "Eval-mode BF16 teacher forcing removes dropout noise. Compute unweighted gradients first, then combine using the actual frozen example weights.",
+  "hypothesis": "The generated-domain examples might pull in a different direction from the corresponding original music-video examples, despite identical desired piano notes. Measure this instead of assuming that changing weights or doing more updates will help.",
+  "interpretation": "First-order evidence only; not Adam trajectory, note accuracy, generalization or proof of curriculum failure. No reference is available to inference and no model is updated by this audit."
+}
