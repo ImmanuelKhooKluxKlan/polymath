@@ -344,6 +344,15 @@ def validate_full_song_decoder_route(
         raise TrainingError("Full-song source-conditioning mode differs from the training/validation decoder route")
 
 
+def should_decode_target_development(*, target_enabled: bool, broad_safety_passed: bool, diagnose_rejected: bool = False) -> bool:
+    """Diagnostics may inspect rejected checkpoints, never make them eligible."""
+    return bool(target_enabled and (broad_safety_passed or diagnose_rejected))
+
+
+def combined_checkpoint_gates_passed(broad_gate: dict[str, Any], target_gate: dict[str, Any] | None) -> bool:
+    return broad_gate["passed"] is True and (target_gate is None or target_gate["passed"] is True)
+
+
 def should_run_periodic_validation(optimizer_step: int, interval_steps: int) -> bool:
     """Return whether this optimizer update is a requested safety checkpoint.
 
@@ -1018,10 +1027,14 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             target_candidate_metrics = None
             target_gate = None
             target_artifact = None
-            if gate["passed"] and target_development_enabled:
+            diagnose_rejected = bool(getattr(args, "target_development_diagnostics_on_rejection", False))
+            if should_decode_target_development(target_enabled=target_development_enabled, broad_safety_passed=gate["passed"], diagnose_rejected=diagnose_rejected):
+                decision["targetDecodedForDiagnosisOnly"] = not gate["passed"]
                 if progress_callback:
                     progress_callback(
-                        f"Checkpoint {decision['checkpointIndex']}: broad safety passed; "
+                        f"Checkpoint {decision['checkpointIndex']}: "
+                        + ("broad safety passed; " if gate["passed"] else "broad safety failed, diagnosis only; ")
+                        +
                         "decoding the target-development panel"
                     )
                 if full_song_target_config:
@@ -1053,7 +1066,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     maximum_250ms_recall_regression=target_gate_margins[3],
                 )
                 decision["targetDevelopmentGate"] = target_gate
-            if gate["passed"] and (target_gate is None or target_gate["passed"]):
+            if combined_checkpoint_gates_passed(gate, target_gate):
                 decision["eligible"] = True
                 rank = decoded_selection_rank(
                     candidate_decoded_metrics,
@@ -1199,6 +1212,8 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     }
     if decoder_piano_output_only:
         hyperparameters["decoderMode"] = "source-unconditioned-piano-output-v1"
+    if bool(getattr(args, "target_development_diagnostics_on_rejection", False)):
+        hyperparameters["targetDevelopmentDiagnosticsOnRejection"] = True
     if task_vector_metadata is not None:
         hyperparameters["pianoTaskVector"] = task_vector_metadata
         hyperparameters["pianoTaskVectorFinalDelta"] = task_vector_final_delta
@@ -1358,6 +1373,8 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "baseSha256": sha256_file(args.base),
         "trainManifest": str(args.train_manifest),
         "validationManifest": str(args.validation_manifest),
+        "trainManifestSha256": sha256_file(args.train_manifest),
+        "validationManifestSha256": sha256_file(args.validation_manifest),
         "trainAudit": train_audit,
         "validationAudit": validation_audit,
         "targetDevelopment": target_development_evidence,
@@ -1437,6 +1454,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decoder-piano-output-only", action="store_true", help="Keep source conditioning unset while decoding with the piano output-program mask")
     parser.add_argument("--train-piano-task-vector", action="store_true", help="Tune only the observed instrument-task embedding row, in addition to explicitly selected layers/head")
     parser.add_argument("--piano-task-vector-learning-rate", type=float, default=5e-5)
+    parser.add_argument("--target-development-diagnostics-on-rejection", action="store_true", help="Also decode target evidence for loss-improving checkpoints that failed broad safety; these checkpoints remain ineligible")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--learning-rate", type=float, default=2e-6)
     parser.add_argument("--weight-decay", type=float, default=0.01)

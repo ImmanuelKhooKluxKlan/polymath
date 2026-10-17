@@ -53,6 +53,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-commit", required=True)
     parser.add_argument("--preflight-sha256", required=True)
+    parser.add_argument("--experiment", type=Path, default=Path("ml/training/configs/phase105-v001-piano-task-vector-experiment.json"))
+    parser.add_argument("--gate", type=Path, default=Path("ml/training/configs/phase105-v001-piano-task-vector-validation-gate.json"))
     args = parser.parse_args()
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     repo = Path(__file__).resolve().parents[2]
@@ -60,9 +62,12 @@ def main() -> None:
     actual_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if actual_commit != args.repo_commit:
         raise ValueError("The checked-out implementation is not the frozen experiment commit")
-    config_path = repo / "ml/training/configs/phase105-v001-piano-task-vector-experiment.json"
-    gate_path = repo / "ml/training/configs/phase105-v001-piano-task-vector-validation-gate.json"
+    config_path = (repo / args.experiment).resolve()
+    gate_path = (repo / args.gate).resolve()
     config = json.loads(config_path.read_text())
+    gate_config = json.loads(gate_path.read_text())
+    if gate_config["candidateVersion"] != config["candidateId"]:
+        raise ValueError("Gate and experiment candidate identities differ")
     candidate_id, dataset_id = config["candidateId"], config["dataset"]["id"]
     if not all(re.fullmatch(r"[a-zA-Z0-9-]+", name) for name in (candidate_id, dataset_id)):
         raise ValueError("Invalid experiment identifier")
@@ -113,6 +118,8 @@ def main() -> None:
             selection, hyper = config["selection"], config["frozenHyperparameters"]
             target_artifacts = data / f"{candidate_id}-full-song-target-development"
             command = [sys.executable, "-m", "ml.training.train_muscriptor_piano", "--train-manifest", str(train_path), "--validation-manifest", str(val_path), "--base", str(BASE), "--out", str(output), "--candidate-id", candidate_id, "--rejection-receipt", str(receipt), "--execute", "--rights-acknowledgement", "I_HAVE_TRAINING_RIGHTS", "--minimum-train-songs", "20", "--train-last-layers", "0", "--decoder-piano-output-only", "--train-piano-task-vector", "--conditioning-mode", "unconditioned", "--precision", hyper["precision"], "--seed", hyper["seed"], "--full-song-target-development-config", str(full_config_path), "--full-song-target-development-artifact-dir", str(target_artifacts)]
+            if config.get("diagnoseTargetWhenBroadSafetyFails") is True:
+                command.append("--target-development-diagnostics-on-rejection")
             for flag, key in (("epochs", "epochs"), ("learning-rate", "headLearningRate"), ("piano-task-vector-learning-rate", "taskVectorLearningRate"), ("weight-decay", "headWeightDecay"), ("gradient-accumulation", "gradientAccumulation"), ("gradient-clip-norm", "gradientClipNorm"), ("validation-interval-steps", "validationIntervalSteps"), ("max-optimizer-steps", "maxOptimizerSteps"), ("timing-token-weight", "timingTokenWeight"), ("note-on-token-weight", "noteOnTokenWeight"), ("note-off-token-weight", "noteOffTokenWeight"), ("eos-token-weight", "eosTokenWeight")):
                 command += [f"--{flag}", str(hyper[key])]
             for flag, key in (("decoded-gate-max-aggregate-f1-regression", "maximumBroadPanelAggregateF1Regression"), ("decoded-gate-max-aggregate-recall-regression", "maximumBroadPanelAggregateRecallRegression"), ("decoded-gate-max-per-song-f1-regression", "maximumBroadPanelPerSongF1Regression"), ("target-development-minimum-100ms-f1-improvement", "minimumHeldOut100msF1Improvement"), ("target-development-minimum-100ms-recall-improvement", "minimumHeldOut100msRecallImprovement"), ("target-development-maximum-250ms-f1-regression", "maximumHeldOut250msF1Regression"), ("target-development-maximum-250ms-recall-regression", "maximumHeldOut250msRecallRegression")):

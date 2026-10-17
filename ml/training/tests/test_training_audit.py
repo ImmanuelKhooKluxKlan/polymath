@@ -13,6 +13,8 @@ from ml.training.train_muscriptor_piano import (
     load_cached_decoded_metrics,
     optimizer_step_limit_reached,
     should_run_periodic_validation,
+    should_decode_target_development,
+    combined_checkpoint_gates_passed,
     target_token_weights,
     validate_full_song_decoder_route,
     write_immutable_json_receipt,
@@ -21,6 +23,19 @@ from ml.training.muscriptor_tokens import EOS_ID, PITCH_BASE, VELOCITY_BASE
 
 
 class TrainingAuditTests(unittest.TestCase):
+    def test_passing_target_diagnosis_cannot_bypass_failed_broad_safety(self):
+        self.assertFalse(combined_checkpoint_gates_passed({"passed": False}, {"passed": True}))
+        self.assertFalse(combined_checkpoint_gates_passed({"passed": True}, {"passed": False}))
+        self.assertFalse(combined_checkpoint_gates_passed({"passed": "true"}, {"passed": True}))
+        self.assertTrue(combined_checkpoint_gates_passed({"passed": True}, {"passed": True}))
+        self.assertTrue(combined_checkpoint_gates_passed({"passed": True}, None))
+
+    def test_target_diagnosis_is_opt_in_and_requires_target_evidence(self):
+        self.assertFalse(should_decode_target_development(target_enabled=True, broad_safety_passed=False))
+        self.assertTrue(should_decode_target_development(target_enabled=True, broad_safety_passed=False, diagnose_rejected=True))
+        self.assertFalse(should_decode_target_development(target_enabled=False, broad_safety_passed=False, diagnose_rejected=True))
+        self.assertTrue(should_decode_target_development(target_enabled=True, broad_safety_passed=True))
+
     def test_full_song_source_and_output_routes_must_both_match(self):
         validate_full_song_decoder_route({}, conditioning_mode="unconditioned", piano_output_only=False, instrument="acoustic_piano")
         special = {"instrumentConstraint": ["acoustic_piano"], "decoderMode": "source-unconditioned-piano-output-v1"}

@@ -1,0 +1,21 @@
+{
+  "schema": "polymath-instrument-task-vector-experiment-v1",
+  "candidateId": "phase105-v002-early-task-vector",
+  "status": "frozen-before-optimizer-run",
+  "productionMutationAllowed": false,
+  "pairedControl": "phase105-v001-piano-task-vector",
+  "hypothesis": "The 50-update checkpoint improved 100ms F1 on the small panel by 0.012383 while losing two 250ms matches; subsequent training worsened decoded recall. Inspect the previously unobserved 10-40 update interval without relaxing any acceptance threshold.",
+  "experimentScope": "Same audited dataset, example weights, initialization, optimizer, trainable parts, seed and decoder route. Change only the frozen training/validation schedule. Diagnostic target decoding on rejected checkpoints affects evidence collection, never eligibility.",
+  "baseCheckpoint": {"id": "phase46-v017", "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0", "immutable": true},
+  "existingBroadRaw": {"path": "/runpod-volume/training/phase-103-decoder-baseline-audit-v001/fresh-baseline-full-raw.json", "sha256": "1aa8a996d36a36f99aad1b7c83fee9fe7890375520b483028fd0e7a9d14b294e", "events": 4867},
+  "dataset": {"id": "phase-105-piano-task-vector-v001", "trainClips": 1906, "trainCompositions": 20, "validationClips": 258, "validationCompositions": 3, "originalWaneClips": 47, "waneSyntheticClips": 188, "originalWaneExampleWeight": 0.5, "trainManifestSha256": "53e68be733d4061236be478d38bf6fe667ebe506d96ef08c92203280a2631d12", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", "weightReceiptSha256": "dc27c76fc8e3b11a65a930dc5ff9da33098db6f0c3673027c9a04eb286cac644", "coherentAudioReceiptSha256": "70914690496f5cfd9ab2c781a21c46ad6fff0cddcc5b24abe17e9fbee11b7562"},
+  "decoderRoute": {"sourceConditioning": "unconditioned", "outputInstruments": ["acoustic_piano"], "mode": "source-unconditioned-piano-output-v1", "referenceAtInference": false},
+  "trainableParts": {"transformerLayers": 0, "outputNormalizationAndProjection": true, "instrumentConditioningRows": 1, "inactiveRows": "Zero gradient, zero weight decay, and bitwise equality checks."},
+  "frozenHyperparameters": {"epochs": 1, "expectedOptimizerSteps": 40, "maxOptimizerSteps": 40, "headLearningRate": 5e-7, "taskVectorLearningRate": 5e-5, "headWeightDecay": 0.01, "taskVectorWeightDecay": 0.0, "gradientAccumulation": 8, "gradientClipNorm": 1.0, "timingTokenWeight": 1.15, "noteOnTokenWeight": 1.0, "noteOffTokenWeight": 1.25, "eosTokenWeight": 1.2, "precision": "bf16", "seed": "polymath-phase100-v003-unconditioned", "validationIntervalSteps": 10},
+  "gradientPreflight": {"optimizerCreated": false, "maximumPeakGpuFraction": 0.90, "reusedPreflightSha256": "0c31488a8f1a6c49091e71bafe7d443d4d978d3332152fc62416439be900365f", "reason": "The dataset and task-vector training implementation are unchanged. The full v001 run also verified that all inactive conditioning rows stayed bitwise unchanged."},
+  "selection": {"minimumHeldOut100msF1Improvement": 0.002, "minimumHeldOut100msRecallImprovement": 0.0, "maximumHeldOut250msF1Regression": 0.0, "maximumHeldOut250msRecallRegression": 0.0, "maximumBroadPanelAggregateF1Regression": 0.0, "maximumBroadPanelAggregateRecallRegression": 0.0, "maximumBroadPanelPerSongF1Regression": 0.005},
+  "diagnoseTargetWhenBroadSafetyFails": true,
+  "endToEndRequirements": {"fullValidationClips": 258, "existingOpenedWanePianoProcessing100msF1": 0.343056, "developmentTarget100msF1": 0.70, "sourceAudioDynamicsRequired": true, "existingBroadRouteMustBeBeaten": true, "durationAndRetriggerChecksRequired": true, "otherSongTransferAndListeningRequired": true},
+  "fullSongTargetConfig": "ml/training/configs/phase105-v001-full-song-target-development.json",
+  "interpretation": "Opened development selection. A target transcription produced for diagnosis after broad safety fails is not an eligible model, even if WANE alone improves. Never deploy from this runner."
+}
