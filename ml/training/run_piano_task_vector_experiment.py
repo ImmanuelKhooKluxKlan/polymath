@@ -1,4 +1,4 @@
-"""Run the frozen Phase 105 piano task experiment; never deploy its weights.
+"""Run a frozen piano task-vector or attention-adapter experiment; never deploy.
 
 All optimizer work is gated by an independently saved gradient/memory preflight.
 The final comparison also checks the existing broad-route piano output, not
@@ -49,6 +49,29 @@ def run_stage(stage: str, command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
+def adaptation_flags(config: dict) -> tuple[list[str], list[str]]:
+    mode = config.get("trainingMode", "task-vector")
+    if mode == "attention-lora":
+        hyper = config["frozenHyperparameters"]
+        return (["--attention-lora-layers", str(hyper["attentionLoRALayers"]), "--attention-lora-rank", str(hyper["attentionLoRARank"]), "--attention-lora-alpha", str(hyper["attentionLoRAAlpha"])], ["--unconditioned", "--deterministic-runtime"])
+    if mode != "task-vector":
+        raise ValueError("Unknown frozen adaptation mode")
+    return (["--decoder-piano-output-only", "--train-piano-task-vector", "--piano-task-vector-learning-rate", str(config["frozenHyperparameters"]["taskVectorLearningRate"])], ["--piano-output-only"])
+
+
+def validate_preflight(preflight: dict, config: dict) -> None:
+    if not (preflight["verdict"] == "PASS" and preflight["optimizerCreated"] is False and preflight["weightsUpdated"] is False and preflight["baseCheckpointSha256"] == config["baseCheckpoint"]["sha256"] and preflight["trainManifestSha256"] == config["dataset"]["trainManifestSha256"] and preflight["otherFoundationGradientsAbsent"] is True):
+        raise ValueError("Preflight did not prove frozen-base training feasibility")
+    if config.get("trainingMode", "task-vector") == "attention-lora":
+        hyper = config["frozenHyperparameters"]
+        adapter = preflight["adapter"]
+        expected_matrices = 2 * int(hyper["attentionLoRALayers"])
+        if not (adapter["lastLayers"] == hyper["attentionLoRALayers"] and adapter["rank"] == hyper["attentionLoRARank"] and adapter["alpha"] == hyper["attentionLoRAAlpha"] and preflight["fullSongReproduction"]["identical"] is True and len(preflight["panelReproduction"]) == 18 and all(row["identical"] is True for row in preflight["panelReproduction"].values()) and len(preflight["zeroUpdateMatrixDeltas"]) == expected_matrices and all(row["changedEffectiveParameters"] == 0 for row in preflight["zeroUpdateMatrixDeltas"]) and len(preflight["gradientEvidence"]) == expected_matrices and all(row["BGradientNorm"] > 0 and row["AInitialGradientExactlyZero"] is True for row in preflight["gradientEvidence"]) and preflight["peakGradientGpuFraction"] < config["gradientPreflight"]["maximumPeakGpuFraction"]):
+            raise ValueError("Attention-adapter fidelity/memory preflight did not pass")
+    elif not (preflight["inactiveGradientRowsZero"] is True and preflight["taskVectorGradientNorm"] > 0 and preflight["peakGpuFraction"] < config["gradientPreflight"]["maximumPeakGpuFraction"]):
+        raise ValueError("Task-vector gradient/memory preflight did not pass")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-commit", required=True)
@@ -65,6 +88,7 @@ def main() -> None:
     config_path = (repo / args.experiment).resolve()
     gate_path = (repo / args.gate).resolve()
     config = json.loads(config_path.read_text())
+    training_adaptation_flags, evaluation_route_flags = adaptation_flags(config)
     gate_config = json.loads(gate_path.read_text())
     if gate_config["candidateVersion"] != config["candidateId"]:
         raise ValueError("Gate and experiment candidate identities differ")
@@ -87,11 +111,11 @@ def main() -> None:
         code = 1
         try:
             train_path, val_path = data / "prepared-train.jsonl", data / "prepared-validation.jsonl"
-            for path, expected in ((BASE, config["baseCheckpoint"]["sha256"]), (train_path, config["dataset"]["trainManifestSha256"]), (val_path, config["dataset"]["validationManifestSha256"]), (data / "variant-weight-ablation-receipt.json", config["dataset"]["weightReceiptSha256"]), (data / "audio-rebuild-receipt.json", config["dataset"]["coherentAudioReceiptSha256"]), (RUNTIME_AUDIT, RUNTIME_AUDIT_HASH), (data / "task-vector-gradient-preflight.json", args.preflight_sha256)):
+            preflight_path = Path(config.get("preflightPath", data / "task-vector-gradient-preflight.json"))
+            for path, expected in ((BASE, config["baseCheckpoint"]["sha256"]), (train_path, config["dataset"]["trainManifestSha256"]), (val_path, config["dataset"]["validationManifestSha256"]), (data / "variant-weight-ablation-receipt.json", config["dataset"]["weightReceiptSha256"]), (data / "audio-rebuild-receipt.json", config["dataset"]["coherentAudioReceiptSha256"]), (RUNTIME_AUDIT, RUNTIME_AUDIT_HASH), (preflight_path, args.preflight_sha256)):
                 verify(path, expected)
-            preflight = json.loads((data / "task-vector-gradient-preflight.json").read_text())
-            if not (preflight["verdict"] == "PASS" and preflight["optimizerCreated"] is False and preflight["weightsUpdated"] is False and preflight["baseCheckpointSha256"] == config["baseCheckpoint"]["sha256"] and preflight["trainManifestSha256"] == config["dataset"]["trainManifestSha256"] and preflight["inactiveGradientRowsZero"] is True and preflight["otherFoundationGradientsAbsent"] is True and preflight["taskVectorGradientNorm"] > 0 and preflight["peakGpuFraction"] < config["gradientPreflight"]["maximumPeakGpuFraction"]):
-                raise ValueError("Gradient/memory preflight did not satisfy the frozen experiment")
+            preflight = json.loads(preflight_path.read_text())
+            validate_preflight(preflight, config)
             import muscriptor
             import torch
             from ml.training.audit_decoder_baseline import implementation_hashes
@@ -117,10 +141,12 @@ def main() -> None:
             print(json.dumps({"stage": "pre-optimizer-audits-passed", **audits}), flush=True)
             selection, hyper = config["selection"], config["frozenHyperparameters"]
             target_artifacts = data / f"{candidate_id}-full-song-target-development"
-            command = [sys.executable, "-m", "ml.training.train_muscriptor_piano", "--train-manifest", str(train_path), "--validation-manifest", str(val_path), "--base", str(BASE), "--out", str(output), "--candidate-id", candidate_id, "--rejection-receipt", str(receipt), "--execute", "--rights-acknowledgement", "I_HAVE_TRAINING_RIGHTS", "--minimum-train-songs", "20", "--train-last-layers", "0", "--decoder-piano-output-only", "--train-piano-task-vector", "--conditioning-mode", "unconditioned", "--precision", hyper["precision"], "--seed", hyper["seed"], "--full-song-target-development-config", str(full_config_path), "--full-song-target-development-artifact-dir", str(target_artifacts)]
+            command = [sys.executable, "-m", "ml.training.train_muscriptor_piano", "--train-manifest", str(train_path), "--validation-manifest", str(val_path), "--base", str(BASE), "--out", str(output), "--candidate-id", candidate_id, "--rejection-receipt", str(receipt), "--execute", "--rights-acknowledgement", "I_HAVE_TRAINING_RIGHTS", "--minimum-train-songs", "20", "--train-last-layers", "0", "--conditioning-mode", "unconditioned", "--precision", hyper["precision"], "--seed", hyper["seed"], "--full-song-target-development-config", str(full_config_path), "--full-song-target-development-artifact-dir", str(target_artifacts), *training_adaptation_flags]
             if config.get("diagnoseTargetWhenBroadSafetyFails") is True:
                 command.append("--target-development-diagnostics-on-rejection")
-            for flag, key in (("epochs", "epochs"), ("learning-rate", "headLearningRate"), ("piano-task-vector-learning-rate", "taskVectorLearningRate"), ("weight-decay", "headWeightDecay"), ("gradient-accumulation", "gradientAccumulation"), ("gradient-clip-norm", "gradientClipNorm"), ("validation-interval-steps", "validationIntervalSteps"), ("max-optimizer-steps", "maxOptimizerSteps"), ("timing-token-weight", "timingTokenWeight"), ("note-on-token-weight", "noteOnTokenWeight"), ("note-off-token-weight", "noteOffTokenWeight"), ("eos-token-weight", "eosTokenWeight")):
+            learning_rate_key = "learningRate" if config.get("trainingMode") == "attention-lora" else "headLearningRate"
+            decay_key = "weightDecay" if config.get("trainingMode") == "attention-lora" else "headWeightDecay"
+            for flag, key in (("epochs", "epochs"), ("learning-rate", learning_rate_key), ("weight-decay", decay_key), ("gradient-accumulation", "gradientAccumulation"), ("gradient-clip-norm", "gradientClipNorm"), ("validation-interval-steps", "validationIntervalSteps"), ("max-optimizer-steps", "maxOptimizerSteps"), ("timing-token-weight", "timingTokenWeight"), ("note-on-token-weight", "noteOnTokenWeight"), ("note-off-token-weight", "noteOffTokenWeight"), ("eos-token-weight", "eosTokenWeight")):
                 command += [f"--{flag}", str(hyper[key])]
             for flag, key in (("decoded-gate-max-aggregate-f1-regression", "maximumBroadPanelAggregateF1Regression"), ("decoded-gate-max-aggregate-recall-regression", "maximumBroadPanelAggregateRecallRegression"), ("decoded-gate-max-per-song-f1-regression", "maximumBroadPanelPerSongF1Regression"), ("target-development-minimum-100ms-f1-improvement", "minimumHeldOut100msF1Improvement"), ("target-development-minimum-100ms-recall-improvement", "minimumHeldOut100msRecallImprovement"), ("target-development-maximum-250ms-f1-regression", "maximumHeldOut250msF1Regression"), ("target-development-maximum-250ms-recall-regression", "maximumHeldOut250msRecallRegression")):
                 command += [f"--{flag}", str(selection[key])]
@@ -128,7 +154,7 @@ def main() -> None:
             run_stage(result["stage"], command)
             comparison = output / "evaluation-piano-task-full-validation.json"
             result["stage"] = "full-258-clip-validation"
-            run_stage(result["stage"], [sys.executable, "-m", "ml.training.evaluate_checkpoint", "--base", str(BASE), "--candidate", str(output / "model.safetensors"), "--validation-manifest", str(val_path), "--piano-output-only", "--out", str(comparison)])
+            run_stage(result["stage"], [sys.executable, "-m", "ml.training.evaluate_checkpoint", "--base", str(BASE), "--candidate", str(output / "model.safetensors"), "--validation-manifest", str(val_path), *evaluation_route_flags, "--out", str(comparison)])
             timelines = {}
             for side in ("baseline", "candidate"):
                 timelines[side] = output / f"evaluation-{side}-continuous.json"
@@ -143,7 +169,12 @@ def main() -> None:
             if metadata["optimizerSteps"] != hyper["expectedOptimizerSteps"]:
                 raise ValueError("The run did not complete its frozen one-epoch schedule")
             shutil.copyfile(broad_raw, output / "wane-full-base-raw.json")
-            shutil.copyfile(raw["path"], output / "wane-full-candidate-raw.json")
+            if config.get("trainingMode") == "attention-lora":
+                result["stage"] = "merged-checkpoint-whole-song-reproduction"
+                candidate_hash = json.loads(comparison.read_text())["candidateCheckpointSha256"]
+                run_stage(result["stage"], [sys.executable, "-m", "ml.training.reproduce_merged_attention_candidate", "--checkpoint", str(output / "model.safetensors"), "--checkpoint-sha256", candidate_hash, "--expected-raw", raw["path"], "--expected-raw-sha256", raw["sha256"], "--out", str(output / "wane-full-candidate-raw.json")])
+            else:
+                shutil.copyfile(raw["path"], output / "wane-full-candidate-raw.json")
             result["stage"] = "existing-route-source-aware-piano-comparison"
             run_stage(result["stage"], ["bash", "scripts/training/evaluate_phase103_wane_production_route.sh", candidate_id])
             production_replay = json.loads((output / "wane-production-route-evaluation/evaluation.json").read_text())

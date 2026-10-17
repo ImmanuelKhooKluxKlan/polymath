@@ -504,8 +504,11 @@ def main() -> None:
     )
     parser.add_argument("--validation-manifest", type=Path, required=True)
     parser.add_argument("--piano-output-only", action="store_true", help="Research route: keep source conditioning unset while restricting output programs to acoustic piano")
+    parser.add_argument("--deterministic-runtime", action="store_true", help="Use the same seed, TF32 and cuBLAS determinism settings as the frozen training audit")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.deterministic_runtime:
+        configure_piano_task_evaluation_runtime()
     if args.piano_output_only and args.unconditioned:
         parser.error("--piano-output-only and --unconditioned describe different output routes")
     instruments = None if args.unconditioned else PIANO_INSTRUMENTS
