@@ -1,0 +1,29 @@
+{
+  "schema": "polymath-role-coupling-research-summary-v1",
+  "status": "mechanism-localized-transfer-inconclusive-disabled",
+  "productionChanged": false,
+  "weightsChanged": false,
+  "waneDiagnostic": {
+    "path": "D:/Polymath Training/phase-111-role-coupling-audit-2026-10-17/role-counterfactuals-v001.json",
+    "sha256": "1705e9ccf737b2f285416ec46b94ebd5c428a769f3d6a4b032cec2439386e3f2",
+    "baseline": {"exact100msF1": 0.343056, "exact250msF1": 0.409722, "sixOpenedWindows100msF1": 0.355469, "physicalCutoffRate": 0.077681},
+    "harmonyOnlyCounterfactual": {"exact100msF1": 0.351209, "exact250msF1": 0.438836, "sixOpenedWindows100msF1": 0.366472, "physicalCutoffRate": 0.072062},
+    "bassOnlyCounterfactual": {"exact100msF1": 0.342123, "exact250msF1": 0.401623, "physicalCutoffRate": 0.1},
+    "uncontrolledAblation100msF1": 0.203344,
+    "mechanism": "Disabling bass thinning also changed conditional harmony voicing, lowering its median from MIDI62 to54. That widened the melody/harmony gap from7 to15 semitones and disabled the separate melody octave decision. Preserve baseline nonselected roles to isolate each downstream effect."
+  },
+  "transfer": {
+    "plan": "D:/Polymath Training/phase-112-harmony-role-transfer-2026-10-17/frozen-plan-v001.json",
+    "planSha256": "92c5bb2a90023eccaea376931a803f6870450a26229d39c00045f7e960854e2d",
+    "report": "D:/Polymath Training/phase-112-harmony-role-transfer-2026-10-17/evaluated-v002/transfer-results.json",
+    "reportSha256": "56cd118045aacdb03000e66977c0b4d8a45f2dd175c86c1e77f8d624b946c10d",
+    "songs": ["back-to-december", "mean", "the-way-i-loved-you", "you-need-to-calm-down", "kiss-me"],
+    "allNonRegressionChecksPassed": true,
+    "actualPlaybackChangedOnSongs": [],
+    "decision": "INCONCLUSIVE_NO_AFFECTED_TRANSFER_SONGS",
+    "kissMeReferenceEndSecondsExclusive": 150.0,
+    "kissMeMappedCandidateEndSecondsExclusive": 141.562443881,
+    "warning": "These five were note-identical safety controls. Do not misrepresent them as cross-song improvement or successful transfer. Older model-derived references are also weaker than independent annotated ground truth."
+  },
+  "interpretation": "This is a role-isolation arrangement diagnostic using existing model notes, not a better foundation checkpoint. The WANE mechanism is useful evidence but remains disabled. Neither this opened-song gain nor no-op controls achieve the70/90 percent goal. No answer-key notes enter inference."
+}

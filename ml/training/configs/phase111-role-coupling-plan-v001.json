@@ -1,0 +1,20 @@
+{
+  "schema": "polymath-arrangement-role-coupling-plan-v1",
+  "status": "frozen-before-counterfactual-scoring",
+  "productionMutationAllowed": false,
+  "baseline": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/compaction-probes-v001/unchanged-control.json", "sha256": "e125064508a517ea11192893ef13d662fb68ac41eee9c19f881cc285ce8dfb34"},
+  "ablation": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/compaction-probes-v001/no-bass-strike-thinning.json", "sha256": "b29f91b228c1ac43264e059cb09fad16c723c1ae975778e60addf3ed3f3f3800"},
+  "reference": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/aligned-training-labels.json", "sha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e"},
+  "alignment": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/alignment-report.json", "sha256": "f12d8864c3907f218d11ef5761d89640f609e70aa18f756f5ead6112142c88c6"},
+  "knownBaseline100msF1": 0.343056,
+  "openedDevelopmentWindows": [[20,25],[45,50],[90,95],[115,120],[145,150],[180,185]],
+  "variants": [
+    {"id": "unchanged-control", "takeRolesFromAblation": []},
+    {"id": "bass-only-restored", "takeRolesFromAblation": ["bass"]},
+    {"id": "harmony-only-restored", "takeRolesFromAblation": ["harmony"]},
+    {"id": "left-hand-restored-melody-fixed", "takeRolesFromAblation": ["bass","harmony"]},
+    {"id": "uncontrolled-no-thinning", "takeRolesFromAblation": ["bass","harmony","melody"]}
+  ],
+  "hypothesis": "The no-bass-thinning ablation also changed conditional harmony placement and disabled the melody octave gate. Isolate each role's effect before attributing the regression to restored bass notes.",
+  "interpretation": "Spliced roles are explanatory counterfactuals, not a deployable model or inference algorithm. No answer-key notes are inserted, no live profile changes, and no forced blanket transpose."
+}
