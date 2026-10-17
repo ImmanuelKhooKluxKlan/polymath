@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-register-source-feature-repair-plan-v1",
+  "status": "frozen-before-repair-and-refit",
+  "productionMutationAllowed": false,
+  "parentManifest": "D:/Polymath Training/phase-104-register-transfer-2026-10-17/manifest.json",
+  "sourceProofDirectory": "D:/Polymath Training/phase-92-accuracy-scorecard-2026-09-18/source-decision-audits-v002",
+  "songOverrides": {
+    "wane": {
+      "source": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/baseline-cleaned.json",
+      "candidate": "D:/Polymath Training/phase-103-rejected-evidence-2026-10-17/output-mask-probe/baseline/wane-arranged.json",
+      "reference": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/aligned-training-labels.json",
+      "alignment": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/alignment-report.json"
+    }
+  },
+  "hypothesis": "The register-router features often substituted an intermediate/arranged MIDI value for the original detected source key. Recover the actual value with exact sourceIndex joins, requiring unchanged playback plus matching source instrument and pitch class. This is a feature repair, not an improvement to model audio by itself.",
+  "frozenRefit": {"excludeSong": "wane", "validation": "complete-song leave-one-out over five non-WANE songs", "iterations": 1800, "seed": 1380271945, "toleranceSeconds": 0.1, "classBalance": 0.55, "pairingMode": "exact-preserving", "shiftLabelPolicy": "exact", "featureSets": ["legacy", "role-register-interactions"]},
+  "acceptance": "The unchanged strict cross-song policy selector must pass. Then measure whole-song output against the same reference/clock, including WANE transfer and listening. Do not enable a rejected profile.",
+  "interpretation": "Training and application receive the same repaired source feature. No reference coordinates are used in inference or feature repair, no forced blanket octave shift is introduced, and no production weights/profile are changed."
+}
