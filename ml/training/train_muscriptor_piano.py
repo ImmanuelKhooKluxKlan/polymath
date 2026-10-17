@@ -20,8 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from ml.training.muscriptor_tokens import (
+    DRUM_BASE,
     EOS_ID,
     PITCH_BASE,
+    PROGRAM_BASE,
     SHIFT_BASE,
     TIE_ID,
     VELOCITY_BASE,
@@ -73,6 +75,7 @@ def target_token_weights(
     note_on_weight: float = 1.0,
     high_note_on_weight: float = 1.0,
     high_note_min_midi: int = 60,
+    program_weight: float = 1.0,
 ) -> list[float]:
     """Rebalance onset, timing, and stopping errors without changing clip scale.
 
@@ -85,6 +88,8 @@ def target_token_weights(
     *which* errors matter inside a clip, not the clip's overall learning rate.
     """
 
+    if not math.isfinite(program_weight) or not 0 < program_weight <= 32:
+        raise TrainingError("Program-token loss weight must be finite and within (0, 32]")
     if min(
         timing_weight,
         note_off_weight,
@@ -118,6 +123,8 @@ def target_token_weights(
             )
         elif token == TIE_ID:
             weight = timing_weight
+        elif PROGRAM_BASE <= token < DRUM_BASE:
+            weight = program_weight
         weights.append(weight)
     average = sum(weights) / max(1, len(weights))
     return [weight / average for weight in weights]
@@ -499,6 +506,7 @@ def clip_loss(
     high_note_on_weight: float = 1.0,
     high_note_min_midi: int = 60,
     conditioning_mode: str = "instrument",
+    program_weight: float = 1.0,
 ):
     import torch
     import torch.nn.functional as functional
@@ -541,6 +549,7 @@ def clip_loss(
             note_on_weight,
             high_note_on_weight,
             high_note_min_midi,
+            program_weight,
         ),
         dtype=per_token_loss.dtype,
         device=device,
@@ -1148,6 +1157,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     high_note_on_weight=args.high_note_on_weight,
                     high_note_min_midi=args.high_note_min_midi,
                     conditioning_mode=conditioning_mode,
+                    program_weight=float(getattr(args, "program_token_weight", 1.0)),
                 ) / args.gradient_accumulation
             loss.backward()
             step += 1
@@ -1223,6 +1233,8 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "highNoteMinMidi": args.high_note_min_midi,
         "noteOffTokenWeight": args.note_off_token_weight,
         "eosTokenWeight": args.eos_token_weight,
+        "programTokenWeight": float(getattr(args, "program_token_weight", 1.0)),
+        "validationProgramTokenWeight": 1.0,
         "epochs": args.epochs,
         "validationIntervalSteps": validation_interval_steps,
         "maxOptimizerSteps": max_optimizer_steps,
@@ -1521,6 +1533,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--high-note-min-midi", type=int, default=60)
     parser.add_argument("--note-off-token-weight", type=float, default=1.25)
     parser.add_argument("--eos-token-weight", type=float, default=1.20)
+    parser.add_argument("--program-token-weight", type=float, default=1.0, help="Experimental training-only instrument program loss weight; fixed validation loss remains at 1")
     parser.add_argument(
         "--conditioning-mode",
         choices=sorted(CONDITIONING_MODES),

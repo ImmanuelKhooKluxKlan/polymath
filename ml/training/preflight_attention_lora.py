@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--dataset-dir", type=Path, default=Path("/runpod-volume/training/phase-105-piano-task-vector-v001"))
     parser.add_argument("--train-manifest-sha256", default="53e68be733d4061236be478d38bf6fe667ebe506d96ef08c92203280a2631d12")
     parser.add_argument("--audit-id", default="phase107-attention-preflight-v001")
+    parser.add_argument("--program-token-weight", type=float, default=1.0)
     args = parser.parse_args()
     if args.out.exists():
         raise FileExistsError("Attention-adapter preflight folder already exists")
@@ -45,7 +46,7 @@ def main():
     model._model.train()
     torch.cuda.reset_peak_memory_stats()
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        loss = clip_loss(model, chosen, "cuda", conditioning_mode="unconditioned")
+        loss = clip_loss(model, chosen, "cuda", conditioning_mode="unconditioned", program_weight=args.program_token_weight)
     loss.backward()
     gradients = []
     for _module, attribute, adapter, _hash in handles:
@@ -79,6 +80,7 @@ def main():
     report = {"schema": "polymath-attention-lora-preflight-v1", "optimizerCreated": False, "weightsUpdated": False, "baseCheckpointSha256": base_hash, "trainManifestSha256": sha256_file(train_path), "trainAudit": audit, "largestTokenClip": chosen["clipId"], "adapter": metadata, "gradientEvidence": gradients, "otherFoundationGradientsAbsent": True, "zeroUpdateMatrixDeltas": deltas, "fullSongReproduction": full_comparison, "panelReproduction": panel_comparisons, "peakGradientGpuBytes": peak, "peakGradientGpuFraction": peak / total, "gpu": torch.cuda.get_device_name(0), "verdict": "PASS" if passed else "REJECT_PREFLIGHT"}
     from ml.training.reference_region_policy import audit_reference_regions
     report["auditId"] = args.audit_id
+    report["programTokenWeight"] = args.program_token_weight
     report["referenceRegionAudit"] = audit_reference_regions(train)
     (args.out / "preflight.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)

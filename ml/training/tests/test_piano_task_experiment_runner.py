@@ -58,3 +58,12 @@ def test_attention_preflight_rejects_different_shapes_or_an_optimizer_update():
     preflight["weightsUpdated"] = True
     with pytest.raises(ValueError, match="frozen-base"):
         validate_preflight(preflight, config)
+
+
+def test_program_weighted_trial_requires_matching_gradient_preflight():
+    config, preflight = attention_fixture()
+    config["frozenHyperparameters"]["programTokenWeight"] = 8
+    with pytest.raises(ValueError, match="different program-token loss"):
+        validate_preflight(preflight, config)
+    preflight["programTokenWeight"] = 8
+    validate_preflight(preflight, config)

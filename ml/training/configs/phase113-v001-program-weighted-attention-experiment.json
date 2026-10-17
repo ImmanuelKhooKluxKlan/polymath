@@ -1,0 +1,92 @@
+{
+  "schema": "polymath-attention-lora-experiment-v1",
+  "candidateId": "phase113-v001-program-weighted-attention",
+  "trainingMode": "attention-lora",
+  "status": "frozen-before-program-weight-ablation",
+  "productionMutationAllowed": false,
+  "hypothesis": "Six paired training positions had positive real/synthetic gradient agreement (aggregate cosine 0.818951), but three original clips chose the wrong program under teacher forcing. Those errors comprised only 0.10 to 1.19 percent of clip loss. Test eight-fold program-token emphasis instead of increasing every learning signal.",
+  "experimentScope": "Keep base, data, initialization, architecture, LR, 40 updates, decoder, held-out clocks and gates fixed. Change program loss weight from 1 to 8. Validate at the predeclared final step instead of four times to reduce decoding expense; different validation cadence must not be claimed to preserve an identical RNG path.",
+  "baseCheckpoint": {
+    "id": "phase46-v017",
+    "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0",
+    "immutable": true
+  },
+  "existingBroadRaw": {
+    "path": "/runpod-volume/training/phase-103-decoder-baseline-audit-v001/fresh-baseline-full-raw.json",
+    "sha256": "1aa8a996d36a36f99aad1b7c83fee9fe7890375520b483028fd0e7a9d14b294e",
+    "events": 4867
+  },
+  "dataset": {
+    "id": "phase-108-reference-scope-clean-v001",
+    "trainClips": 1894,
+    "trainCompositions": 20,
+    "validationClips": 258,
+    "validationCompositions": 3,
+    "approvedKissMeClips": 20,
+    "excludedKissMeTailClips": 12,
+    "originalWaneClips": 47,
+    "waneSyntheticClips": 188,
+    "waneClipsUnchanged": true,
+    "originalWaneExampleWeight": 0.5,
+    "trainManifestSha256": "42082c3929efd9fecea84ed0431f3982041f5abf699febfe68ed20e4434416d9",
+    "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+    "weightReceiptSha256": "dc27c76fc8e3b11a65a930dc5ff9da33098db6f0c3673027c9a04eb286cac644",
+    "coherentAudioReceiptSha256": "70914690496f5cfd9ab2c781a21c46ad6fff0cddcc5b24abe17e9fbee11b7562",
+    "referenceRegionFilterReceiptSha256": "58a0df31e8d3b4812f958982fafa3ee0869751e842a1566122ae9ec8a52ddc5e"
+  },
+  "decoderRoute": {
+    "sourceConditioning": "unconditioned",
+    "outputInstruments": [],
+    "referenceAtInference": false
+  },
+  "frozenHyperparameters": {
+    "epochs": 1,
+    "expectedOptimizerSteps": 40,
+    "maxOptimizerSteps": 40,
+    "learningRate": 0.00002,
+    "weightDecay": 0,
+    "attentionLoRALayers": 1,
+    "attentionLoRARank": 8,
+    "attentionLoRAAlpha": 8,
+    "gradientAccumulation": 8,
+    "gradientClipNorm": 1,
+    "timingTokenWeight": 1.15,
+    "noteOnTokenWeight": 1,
+    "noteOffTokenWeight": 1.25,
+    "eosTokenWeight": 1.2,
+    "precision": "bf16",
+    "seed": "polymath-phase100-v003-unconditioned",
+    "validationIntervalSteps": 40,
+    "programTokenWeight": 8
+  },
+  "preflightPath": "/runpod-volume/training/phase-113-program-weight-preflight-v001/preflight.json",
+  "gradientPreflight": {
+    "maximumPeakGpuFraction": 0.9,
+    "fullSongAnd18ClipZeroUpdateReproductionRequired": true,
+    "digestRequiredAtLaunch": true
+  },
+  "selection": {
+    "minimumHeldOut100msF1Improvement": 0.002,
+    "minimumHeldOut100msRecallImprovement": 0,
+    "maximumHeldOut250msF1Regression": 0,
+    "maximumHeldOut250msRecallRegression": 0,
+    "maximumBroadPanelAggregateF1Regression": 0,
+    "maximumBroadPanelAggregateRecallRegression": 0,
+    "maximumBroadPanelPerSongF1Regression": 0.005
+  },
+  "diagnoseTargetWhenBroadSafetyFails": true,
+  "endToEndRequirements": {
+    "fullValidationClips": 258,
+    "existingOpenedWanePianoProcessing100msF1": 0.343056,
+    "developmentTarget100msF1": 0.7,
+    "sourceAudioDynamicsRequired": true,
+    "mergedSavedCheckpointMustReproduceInMemoryWholeSongEvents": true,
+    "existingBroadRouteMustBeBeaten": true,
+    "durationAndRetriggerChecksRequired": true,
+    "otherSongTransferAndListeningRequired": true
+  },
+  "fullSongTargetConfig": "ml/training/configs/phase113-v001-full-song-target-development.json",
+  "rejectionPolicy": "No model file unless strict internal selection passes; fresh merged-checkpoint validation and whole-song checks remain required. No automatic deployment.",
+  "interpretation": "Research-only opened development. Teacher-forced program correctness is not note accuracy. Lower validation loss or higher program probability alone cannot authorize promotion or prove the 70/90 percent goal.",
+  "parentRejectedTrial": "phase108-v001-attention-lora"
+}

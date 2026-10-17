@@ -62,6 +62,8 @@ def adaptation_flags(config: dict) -> tuple[list[str], list[str]]:
 def validate_preflight(preflight: dict, config: dict) -> None:
     if not (preflight["verdict"] == "PASS" and preflight["optimizerCreated"] is False and preflight["weightsUpdated"] is False and preflight["baseCheckpointSha256"] == config["baseCheckpoint"]["sha256"] and preflight["trainManifestSha256"] == config["dataset"]["trainManifestSha256"] and preflight["otherFoundationGradientsAbsent"] is True):
         raise ValueError("Preflight did not prove frozen-base training feasibility")
+    if preflight.get("programTokenWeight", 1.0) != config["frozenHyperparameters"].get("programTokenWeight", 1.0):
+        raise ValueError("Preflight used a different program-token loss weight")
     if config.get("trainingMode", "task-vector") == "attention-lora":
         hyper = config["frozenHyperparameters"]
         adapter = preflight["adapter"]
@@ -151,6 +153,8 @@ def main() -> None:
             command = [sys.executable, "-m", "ml.training.train_muscriptor_piano", "--train-manifest", str(train_path), "--validation-manifest", str(val_path), "--base", str(BASE), "--out", str(output), "--candidate-id", candidate_id, "--rejection-receipt", str(receipt), "--execute", "--rights-acknowledgement", "I_HAVE_TRAINING_RIGHTS", "--minimum-train-songs", "20", "--train-last-layers", "0", "--conditioning-mode", "unconditioned", "--precision", hyper["precision"], "--seed", hyper["seed"], "--full-song-target-development-config", str(full_config_path), "--full-song-target-development-artifact-dir", str(target_artifacts), *training_adaptation_flags]
             if config.get("diagnoseTargetWhenBroadSafetyFails") is True:
                 command.append("--target-development-diagnostics-on-rejection")
+            if "programTokenWeight" in hyper:
+                command += ["--program-token-weight", str(hyper["programTokenWeight"])]
             learning_rate_key = "learningRate" if config.get("trainingMode") == "attention-lora" else "headLearningRate"
             decay_key = "weightDecay" if config.get("trainingMode") == "attention-lora" else "headWeightDecay"
             for flag, key in (("epochs", "epochs"), ("learning-rate", learning_rate_key), ("weight-decay", decay_key), ("gradient-accumulation", "gradientAccumulation"), ("gradient-clip-norm", "gradientClipNorm"), ("validation-interval-steps", "validationIntervalSteps"), ("max-optimizer-steps", "maxOptimizerSteps"), ("timing-token-weight", "timingTokenWeight"), ("note-on-token-weight", "noteOnTokenWeight"), ("note-off-token-weight", "noteOffTokenWeight"), ("eos-token-weight", "eosTokenWeight")):
