@@ -43,6 +43,7 @@ VALIDATION_INTERVAL_STEPS="${POLYMATH_VALIDATION_INTERVAL_STEPS:-0}"
 MAX_OPTIMIZER_STEPS="${POLYMATH_MAX_OPTIMIZER_STEPS:-0}"
 HIGH_NOTE_ON_WEIGHT="${POLYMATH_HIGH_NOTE_ON_WEIGHT:-1.0}"
 HIGH_NOTE_MIN_MIDI="${POLYMATH_HIGH_NOTE_MIN_MIDI:-60}"
+TRAIN_LAST_LAYERS="${POLYMATH_TRAIN_LAST_LAYERS:-1}"
 
 for absent in "$OUTPUT_DIR" "$REJECTION_RECEIPT" "$REJECTION_RECEIPT.sha256" "$STATUS_PATH" "$LOG_PATH" "$REPO_PATH"; do
   test ! -e "$absent"
@@ -133,7 +134,7 @@ TRAINING_COMMAND=(
   --execute \
   --rights-acknowledgement I_HAVE_TRAINING_RIGHTS \
   --minimum-train-songs 20 \
-  --train-last-layers 1 \
+  --train-last-layers "$TRAIN_LAST_LAYERS" \
   --epochs 1 \
   --learning-rate 5e-7 \
   --weight-decay 0.01 \

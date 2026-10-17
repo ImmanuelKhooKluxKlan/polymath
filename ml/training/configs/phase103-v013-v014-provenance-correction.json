@@ -1,0 +1,10 @@
+{
+  "schema": "polymath-experiment-provenance-correction-v1",
+  "date": "2026-10-17",
+  "affectedCandidates": ["phase103-v013-original-domain-p000", "phase103-v014-p000-ablation-control"],
+  "incorrectClaim": "The user identified the WANE Pianella ending after 150 seconds as unsuitable supervision.",
+  "correctedClaim": "The user's 2:30 cutoff referred to Kiss Me. There is no corresponding user instruction declaring the WANE ending unsuitable.",
+  "dataEffect": "v013 and v014 used a limited WANE training region ending by 150 seconds and six pre-150-second development windows. The omitted WANE tail must not be called known-bad data.",
+  "evidencePolicy": "Keep the original dataset receipts, frozen configurations, and results intact. Interpret the experiments as limited-window diagnostics. Future full WANE datasets may include tail labels accepted by the alignment quality report.",
+  "v015Policy": "Use the same limited dataset for a paired architecture comparison. Preserve its six evaluation windows and describe the 150-second boundary only as an experimental training restriction."
+}

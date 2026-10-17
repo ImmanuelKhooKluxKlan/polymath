@@ -1,0 +1,15 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v015-head-only",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "hypothesis": "v013 step 5 and its exact-order p000-suppressed v014 control produced identical full-song note events and lost target recall. Updating only the final normalization and token projection may reduce decoder trajectory changes while still learning better output token probabilities.",
+  "pairedControl": "phase103-v013-original-domain-p000",
+  "singleChangedVariable": {"name": "trainLastLayers", "control": 1, "candidate": 0},
+  "baseCheckpoint": {"id": "phase46-v017", "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"},
+  "dataset": {"id": "phase-103-wane-visual-labels-v005", "trainClips": 1821, "validationClips": 258, "trainManifestSha256": "3033a2086d559abb574bc9d786da36179dc1740573bc865dda976ee909b8e9c7", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", "interpretation": "Limited-window research dataset; the WANE tail is omitted for this paired experiment and has not been declared bad by the user."},
+  "frozenHyperparameters": {"trainLastLayers": 0, "epochs": 1, "learningRate": 5e-7, "weightDecay": 0.01, "gradientAccumulation": 8, "gradientClipNorm": 1.0, "timingTokenWeight": 1.15, "noteOnTokenWeight": 1.0, "highNoteOnWeight": 1.0, "highNoteMinMidi": 72, "noteOffTokenWeight": 1.25, "eosTokenWeight": 1.2, "conditioningMode": "unconditioned", "precision": "bf16", "seed": "polymath-phase100-v003-unconditioned", "validationIntervalSteps": 5, "maxOptimizerSteps": 40},
+  "requiredSelection": {"minimum100msF1Improvement": 0.002, "minimum100msRecallImprovement": 0.0, "maximum250msF1Regression": 0.0, "maximum250msRecallRegression": 0.0},
+  "rejectionPolicy": "Preserve evidence; write no candidate weights unless every selection gate passes.",
+  "provenanceCorrection": "ml/training/configs/phase103-v013-v014-provenance-correction.json"
+}
