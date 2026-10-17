@@ -1,0 +1,22 @@
+{
+  "schema": "polymath-reference-scope-preflight-result-v1",
+  "verdict": "PASS",
+  "preflightSha256": "ac0dad9e169fc28c8b7d8121d0eb0267d816177ca5be0d8b4632690077e5621b",
+  "optimizerCreated": false,
+  "weightsUpdated": false,
+  "productionChanged": false,
+  "baseCheckpointSha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0",
+  "trainManifestSha256": "42082c3929efd9fecea84ed0431f3982041f5abf699febfe68ed20e4434416d9",
+  "referenceRegionAudit": {"checkedKissMeClips": 20, "violations": 0, "excludedLegacyTailClips": 12, "referenceClockCutoffSeconds": 150.0, "mappedTrainingSourceClockCutoffSeconds": 142.04341952957134, "waneCutoffIntroduced": false},
+  "trainClips": 1894,
+  "trainCompositions": 20,
+  "largestTokenClip": "wane-ideal-p100-curriculum-v001-00013",
+  "attentionAdapter": {"lastLayers": 1, "rank": 8, "alpha": 8, "scale": 1, "trainableParameters": 73728, "foundationGradientsAbsent": true, "initialEffectiveMatricesBitwiseUnchanged": true, "finiteNonzeroBGradients": true},
+  "peakGradientGpuFraction": 0.23953345204474347,
+  "zeroUpdateReproduction": {"fullSongEvents": 4867, "fullSongIdentical": true, "safetyPanelClips": 18, "allPanelClipsIdentical": true},
+  "evidenceArchives": [
+    {"classification": "scope-compliant zero-update preflight", "directory": "D:/Polymath Training/phase-108-reference-scope-clean-2026-10-17/preflight", "archive": "evidence.tar.gz", "sha256": "caaebda9dd8bba072383410287032b206647a4bfb6e1526f9221eececae9f735", "memberHashesVerified": 5},
+    {"classification": "quarantined prior run; not admissible for promotion", "directory": "D:/Polymath Training/phase-107-attention-lora-2026-10-17/quarantine", "archive": "evidence.tar.gz", "sha256": "64064cf030f743fd25fd8a8b089e2e6ae3e3ed54c4f53336b993e8e8bc3c7324", "memberHashesVerified": 5}
+  ],
+  "interpretation": "This proves data-scope enforcement and adapter feasibility, not an accuracy improvement. The excluded ending remains playable but is not an answer key. Filtering future training does not erase the base checkpoint's earlier exposure."
+}

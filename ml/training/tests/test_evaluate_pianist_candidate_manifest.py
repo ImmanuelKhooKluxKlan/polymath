@@ -1,9 +1,17 @@
 import unittest
 
-from ml.training.evaluate_pianist_candidate_manifest import error_ceiling, metric_gates
+from ml.training.evaluate_pianist_candidate_manifest import error_ceiling, metric_gates, weighted_delta
 
 
 class PianistCandidateManifestAuditTests(unittest.TestCase):
+    def test_unmeasurable_velocity_is_not_invented_as_zero_error(self):
+        rows = [
+            {"evaluation": {"referenceNotes": 100, "deltas": {"velocityMeanAbsoluteError": None}}},
+            {"evaluation": {"referenceNotes": 20, "deltas": {"velocityMeanAbsoluteError": 0.1}}},
+        ]
+        self.assertEqual(weighted_delta(rows, "velocityMeanAbsoluteError"), 0.1)
+        self.assertIsNone(weighted_delta(rows[:1], "velocityMeanAbsoluteError"))
+
     def test_metric_gates_accept_rounding_noise(self):
         gates = metric_gates(
             {

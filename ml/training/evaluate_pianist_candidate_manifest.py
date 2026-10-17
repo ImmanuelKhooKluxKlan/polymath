@@ -53,14 +53,15 @@ def metric_gates(deltas: dict[str, float], tolerance: float = 0.0005) -> dict[st
     }
 
 
-def weighted_delta(rows: list[dict[str, Any]], key: str) -> float:
-    denominator = sum(int(row["evaluation"]["referenceNotes"]) for row in rows)
+def weighted_delta(rows: list[dict[str, Any]], key: str) -> float | None:
+    comparable = [row for row in rows if row["evaluation"]["deltas"][key] is not None]
+    denominator = sum(int(row["evaluation"]["referenceNotes"]) for row in comparable)
     numerator = sum(
         int(row["evaluation"]["referenceNotes"])
         * float(row["evaluation"]["deltas"][key])
-        for row in rows
+        for row in comparable
     )
-    return round(numerator / max(1, denominator), 6)
+    return round(numerator / denominator, 6) if denominator else None
 
 
 def error_ceiling(metrics: dict[str, Any]) -> dict[str, float]:
@@ -175,6 +176,14 @@ def evaluate_manifest(
                 int(row["evaluation"]["referenceNotes"]) for row in rows
             ),
             "weightedDeltas": weighted,
+            "weightedDeltaReferenceNotes": {
+                key: sum(
+                    int(row["evaluation"]["referenceNotes"])
+                    for row in rows
+                    if row["evaluation"]["deltas"][key] is not None
+                )
+                for key in METRIC_KEYS
+            },
             "allSongsPass": all(bool(row["passes"]) for row in rows),
             "materialQualityImprovement": weighted["quality"] >= 0.001,
         },

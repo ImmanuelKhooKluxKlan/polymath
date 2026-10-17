@@ -38,6 +38,8 @@ def evaluate_pair(
         reference = [
             note for note in reference if float(note["time"]) < candidate_end_seconds
         ]
+    if not reference:
+        raise ValueError("No trusted reference notes remain inside the evaluation scope")
     baseline = compact_metrics(measure(reference, clip_candidate(baseline_payload, row, alignment)))
     candidate = compact_metrics(measure(reference, clip_candidate(candidate_payload, row, alignment)))
     return {
@@ -46,7 +48,13 @@ def evaluate_pair(
         "baseline": baseline,
         "candidate": candidate,
         "deltas": {
-            key: round(float(candidate[key]) - float(baseline[key]), 6)
+            # Velocity error is unmeasurable when there are no matched notes.
+            # Preserve that absence instead of crashing or inventing a gain.
+            key: (
+                round(float(candidate[key]) - float(baseline[key]), 6)
+                if candidate[key] is not None and baseline[key] is not None
+                else None
+            )
             for key in (
                 "quality",
                 "exactF1_100ms",
