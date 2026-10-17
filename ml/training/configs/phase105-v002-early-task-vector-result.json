@@ -1,0 +1,22 @@
+{
+  "schema": "polymath-controlled-checkpoint-result-v1",
+  "candidateId": "phase105-v002-early-task-vector",
+  "status": "rejected-no-target-gain",
+  "candidateWritten": false,
+  "productionModelWeightsChanged": false,
+  "trainingCommit": "3a56f8380ee66f730a95e4439f34bec0d55d9c51",
+  "optimizerSteps": 40,
+  "checkpointsEvaluated": [10, 20, 30, 40],
+  "eligibleCheckpoints": 0,
+  "baselineValidationLoss": 0.7923524713562441,
+  "lowestObservedValidationLoss": 0.7913956900466551,
+  "rejectionReceiptSha256": "13c28de47437275f7cb9f170f69ce8131840a7046f693243c4e4e4215039e9dc",
+  "launchLogSha256": "15ab29f8b1d4c2f1bf9199ac45ee07b5431f7bc561d6d5f5933c5c04dc897b1c",
+  "taskVectorFinalDelta": {"activeParametersChanged": 1536, "inactiveRowsBitwiseUnchanged": true, "rmsDelta": 0.0011541427811607718, "maximumAbsoluteDelta": 0.0019355826079845428},
+  "broadSafetyPassedAtSteps": [10, 20],
+  "wholeSongTarget": {"stepsDecoded": [10, 20, 30, 40], "eventsAtEveryStep": 2146, "physicalEventsExactlyMatchBaseAtSteps": [10, 20, 30], "step40WholeSongEventsChanged": true, "sameFrozenWindowsScoresAtEveryStep": true, "exact100msF1": 0.186441, "exact100msRecall": 0.22541, "exact250msF1": 0.220339, "exact250msRecall": 0.266393},
+  "scope": "Raw piano-output-mask decoder, six opened within-song windows with full-song context; not the original broad route or post-arrangement website accuracy.",
+  "localArchive": "D:/Polymath Training/phase-105-piano-task-vector-2026-10-17/run-v002",
+  "archiveSha256": "d01b39f5314add1b8d50a0cb940d2651e80b02f4fe50c9408d3c93167e87a9a5",
+  "interpretation": "Earlier stopping avoided broad-panel regressions but did not improve WANE. Diagnostic decoding after safety failure did not make any failed checkpoint eligible. Keep the existing accepted model."
+}
