@@ -9,6 +9,28 @@ CONFIGS = ROOT / "ml/training/configs"
 
 
 class CoherentHeadOnlyFreezeTests(unittest.TestCase):
+    def test_original_audio_weight_experiment_keeps_optimizer_and_gates_fixed(self):
+        control = json.loads((CONFIGS / "phase103-v016-coherent-audio-experiment.json").read_text())
+        candidate = json.loads((CONFIGS / "phase103-v018-p000-weight050-experiment.json").read_text())
+        self.assertEqual(candidate["frozenHyperparameters"], control["frozenHyperparameters"])
+        self.assertEqual(candidate["baseCheckpoint"], control["baseCheckpoint"])
+        self.assertEqual(candidate["singleChangedVariable"]["changedClips"], 30)
+        self.assertFalse(candidate["singleChangedVariable"]["labelsChanged"])
+        self.assertFalse(candidate["singleChangedVariable"]["audioChanged"])
+        gate = json.loads((CONFIGS / "phase103-v018-p000-weight050-validation-gate.json").read_text())
+        old_gate = json.loads((CONFIGS / "phase103-v016-coherent-audio-validation-gate.json").read_text())
+        self.assertEqual(gate["requiredChecks"], old_gate["requiredChecks"])
+        self.assertEqual(gate["checkpointSelectionChecks"], old_gate["checkpointSelectionChecks"])
+        self.assertEqual(gate["immutableInputs"]["trainManifestSha256"], candidate["dataset"]["trainManifestSha256"])
+        runner = (ROOT / "scripts/training/run_phase103_v018_p000_weight050.sh").read_text()
+        values = dict(re.findall(r'^export ([A-Z0-9_]+)="([^"]*)"$', runner, re.MULTILINE))
+        self.assertEqual(values["POLYMATH_CANDIDATE_ID"], candidate["candidateId"])
+        self.assertEqual(values["POLYMATH_TRAIN_SHA256"], candidate["dataset"]["trainManifestSha256"])
+        self.assertEqual(values["POLYMATH_TRAIN_LAST_LAYERS"], "1")
+        self.assertEqual(values["POLYMATH_MAX_OPTIMIZER_STEPS"], "40")
+        self.assertIn(candidate["dataset"]["weightReceiptSha256"], runner)
+        self.assertIn(candidate["baselineRuntimeAudit"]["sha256"], runner)
+
     def test_controlled_inputs_and_shared_updates_are_identical(self):
         control = json.loads((CONFIGS / "phase103-v016-coherent-audio-experiment.json").read_text())
         candidate = json.loads((CONFIGS / "phase103-v017-coherent-head-only-experiment.json").read_text())

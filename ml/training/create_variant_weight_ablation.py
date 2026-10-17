@@ -1,4 +1,4 @@
-"""Create an exact-order manifest control by suppressing one clip variant.
+"""Create an exact-order manifest control by reweighting one clip variant.
 
 The output preserves every record, clip ID, audio path, and row position. Only
 the selected examples' positive loss weight changes. This lets two deterministic
@@ -101,11 +101,19 @@ def reweight_variant(
         "matchingClips": len(matching_indices),
         "matchingRowIndicesZeroBased": matching_indices,
         "originalWeights": sorted(original_weights),
+        "weightMass": {
+            "selectedBefore": sum(float(rows[index].get("exampleWeight", 1.0)) for index in matching_indices),
+            "selectedAfter": replacement_weight * len(matching_indices),
+            "manifestBefore": sum(float(row.get("exampleWeight", 1.0)) for row in rows),
+            "manifestAfter": sum(float(row.get("exampleWeight", 1.0)) for row in output),
+        },
         "totalClips": len(output),
         "recordOrderPreserved": True,
         "interpretation": (
-            "Near-zero positive weight preserves the exact training row sequence and "
-            "batch boundaries while suppressing the selected supervision gradient."
+            "Only selected example weights change; row order, audio, labels, and batch "
+            "boundaries are preserved. Near-zero weight suppresses the supervision "
+            "signal, while a larger weight increases its loss contribution. Weight "
+            "mass is an exposure proxy, not a measurement of actual gradient norm."
         ),
     }
     return output, summary

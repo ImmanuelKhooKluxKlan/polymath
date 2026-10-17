@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v018-p000-weight050",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "pairedControl": "phase103-v016-coherent-audio",
+  "hypothesis": "The actual original-recording WANE examples have only 0.9245 percent of total example-weight mass. Increasing their contribution may teach the original full-mix to reviewed-piano mapping more effectively than the synthetic mixtures alone.",
+  "singleChangedVariable": {"name": "original-domain WANE exampleWeight", "control": 0.075, "candidate": 0.5, "changedClips": 30, "rowOrderChanged": false, "audioChanged": false, "labelsChanged": false, "trainingWindowsChanged": false},
+  "baseCheckpoint": {"id": "phase46-v017", "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"},
+  "dataset": {"id": "phase-103-wane-p000-weight050-v008", "trainClips": 1821, "validationClips": 258, "trainManifestSha256": "e15eeaa6c240f6fa2485d6176e4b9bdd74b2bb6694bcf40918f483255272e298", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", "weightReceiptSha256": "cd005750e1434eb31f0d2bb3d0aded01e6df7359e9735adba129274241d60b61", "coherentAudioReceiptSha256": "6fc65acce8e802775eb5f82bb6c1fe7c53626b1ff1719a0929afaaa28ca025aa", "interpretation": "Identical limited-window dataset to v016 except for the selected positive loss weights. No WANE tail-quality judgment is implied."},
+  "exposure": {"originalWeightMassBefore": 2.25, "originalWeightMassAfter": 15.0, "manifestWeightMassBefore": 243.375, "manifestWeightMassAfter": 256.125, "originalClipsSeenByStep": {"5": 1, "10": 1, "15": 1, "20": 2, "25": 5, "30": 5, "35": 5, "40": 6}, "interpretation": "Weight mass is a supervision-exposure proxy, not measured gradient norm. Only six of the thirty original-domain clips are seen within this frozen forty-update budget."},
+  "baselineRuntimeAudit": {"verdict": "CACHE_EVENT_REPRODUCTION_PASSED", "sha256": "d558cab2304a4f2c8122945f44cba5c5969e2b1dca4846582005c1c268beee81", "fullSongEventsReproducedExactly": 4867, "validationClipsReproducedExactly": 18, "optimizerUpdatesInAudit": 0},
+  "frozenHyperparameters": {"trainLastLayers": 1, "epochs": 1, "learningRate": 5e-7, "weightDecay": 0.01, "gradientAccumulation": 8, "gradientClipNorm": 1.0, "timingTokenWeight": 1.15, "noteOnTokenWeight": 1.0, "highNoteOnWeight": 1.0, "highNoteMinMidi": 72, "noteOffTokenWeight": 1.25, "eosTokenWeight": 1.2, "conditioningMode": "unconditioned", "precision": "bf16", "seed": "polymath-phase100-v003-unconditioned", "validationIntervalSteps": 5, "maxOptimizerSteps": 40},
+  "fullSongTargetDevelopmentConfig": "ml/training/configs/phase103-v016-full-song-target-development.json",
+  "requiredSelection": {"minimum100msF1Improvement": 0.002, "minimum100msRecallImprovement": 0.0, "maximum250msF1Regression": 0.0, "maximum250msRecallRegression": 0.0},
+  "rejectionPolicy": "No candidate weights unless the loss, broad decoded panel, and whole-song held-out-window checks pass. Then evaluate all validation clips, source-aware piano processing, other compositions, and listening before considering promotion.",
+  "interpretation": "Opened development experiment. More weight does not create new independent examples or certify 70/90 percent accuracy."
+}
