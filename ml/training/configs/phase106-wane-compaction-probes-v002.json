@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-piano-compaction-probes-v1",
+  "status": "frozen-before-follow-up-probe",
+  "productionMutationAllowed": false,
+  "weightsUpdated": false,
+  "referenceAvailableAtInference": false,
+  "reasonForFollowUp": "v001 changed the outer harmony-window setting, but WANE used the independently configured cyclic decoder fallback, whose window stayed at 300ms. Its note events were identical. Change the actual fallback parameter explicitly. Bass-strike compression remains enabled because disabling it changed the whole-song register-separation gate and significantly worsened melody pitch accuracy.",
+  "source": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/baseline-cleaned.json", "sha256": "25489f90e1822d0bebd0765fc7b951753befc28043afcfe2c4ec8a25c57dc9c9"},
+  "reference": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/aligned-training-labels.json", "sha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e"},
+  "alignment": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/alignment-report.json", "sha256": "f12d8864c3907f218d11ef5761d89640f609e70aa18f756f5ead6112142c88c6"},
+  "variants": [
+    {"id": "fallback-300ms-control", "harmonyWindowSeconds": 0.30, "cyclicFallbackHarmonyWindowSeconds": 0.30, "bassCompressionEnabled": true},
+    {"id": "fallback-160ms", "harmonyWindowSeconds": 0.30, "cyclicFallbackHarmonyWindowSeconds": 0.16, "bassCompressionEnabled": true},
+    {"id": "fallback-120ms", "harmonyWindowSeconds": 0.30, "cyclicFallbackHarmonyWindowSeconds": 0.12, "bassCompressionEnabled": true}
+  ],
+  "selection": "Same frozen whole-song and development-window scores; duration/retrigger and other-song transfer required. No production mutation from this diagnostic.",
+  "interpretation": "Opened development. Do not attribute v001's no-op trial to an actual narrower-grouping algorithm or claim that removed bass strikes alone caused its downstream register change."
+}

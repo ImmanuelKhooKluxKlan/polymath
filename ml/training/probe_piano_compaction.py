@@ -36,13 +36,15 @@ def main():
         full_mix = profile["decoder"]["defaultFullMix"]
         full_mix["harmonyWindowSeconds"] = float(variant["harmonyWindowSeconds"])
         full_mix["bassGestureCompression"]["enabled"] = bool(variant["bassCompressionEnabled"])
+        if "cyclicFallbackHarmonyWindowSeconds" in variant:
+            full_mix["sourceSupportedCyclicHarmony"]["fallbackHarmonyWindowSeconds"] = float(variant["cyclicFallbackHarmonyWindowSeconds"])
         # Preserve the production profile ID: renaming it may change dispatch.
         payload, diagnostics = run_pipeline(copy.deepcopy(source), "full", profile, recovery, register)
         observed = notes_inside_ranges(normalize_notes(payload), trusted_source_ranges(alignment))
         metrics = evaluate(reference, observed)
         path = args.out / f"{variant['id']}.json"
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-        result = {"id": variant["id"], "parameters": variant, "output": str(path), "sha256": sha256_file(path), "metrics": metrics, "cyclicTextureApplied": bool(payload["pianoArrangement"]["sourceSupportedCyclicHarmony"].get("applied")), "bassNotesRemoved": payload["pianoArrangement"]["bassGestureCompression"].get("removedNotes", 0)}
+        result = {"id": variant["id"], "parameters": variant, "output": str(path), "sha256": sha256_file(path), "metrics": metrics, "cyclicTextureApplied": bool(payload["pianoArrangement"]["sourceSupportedCyclicHarmony"].get("applied")), "bassNotesRemoved": payload["pianoArrangement"]["bassGestureCompression"].get("removedNotes", 0), "adaptiveRegisterShifts": diagnostics["adaptiveRegister"]["shifts"], "melodyHarmonyMedianGapSemitones": diagnostics["adaptiveRegister"].get("melodyHarmonyMedianGapSemitones")}
         results.append(result)
         print(json.dumps({"id": result["id"], "exact100ms": metrics["exactPitchOnset100ms"], "exact250ms": metrics["exactPitchOnset250ms"], "notes": len(observed), "bassNotesRemoved": result["bassNotesRemoved"]}), flush=True)
     report = {"schema": "polymath-piano-compaction-probe-results-v1", "configSha256": sha256_file(args.config), "profileInputs": [{"path": str(path), "sha256": sha256_file(path)} for path in profiles], "productionChanged": False, "weightsUpdated": False, "results": results}
