@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-program-weighted-attention-result-v1",
+  "candidateId": "phase113-v001-program-weighted-attention",
+  "decision": "REJECT_NO_DECODED_NOTE_IMPROVEMENT",
+  "productionChanged": false,
+  "acceptedCheckpointWritten": false,
+  "originalBaseFilesChanged": false,
+  "optimizerSteps": 40,
+  "programTokenTrainingWeight": 8.0,
+  "programTokenValidationWeight": 1.0,
+  "preflight": {"verdict": "PASS", "sha256": "1c6c371393180b56c122d74aa05eb852d1273256c92af7b2072119b601b253d8", "all4867EventsReproducedBeforeUpdates": true, "all18SafetyClipsReproducedBeforeUpdates": true, "approvedKissMeClipsChecked": 20, "referenceRegionViolations": 0},
+  "rejectionReceiptSha256": "49b20b63917a68decf116b75fe09b8729f4ddde76db1772db5d54b46d48f9a62",
+  "fixedWeightValidationLoss": {"baseline": 0.7923524713562441, "candidate": 0.792022705078125},
+  "decodedEvidence": {"finalOptimizerStep": 40, "wholeSongEvents": 4867, "allWholeSongEventsIdenticalToBase": true, "broadSafetyPanelNonRegressing": true, "heldOut100msF1": 0.181644, "heldOut250msF1": 0.202677, "heldOutF1Improvement": 0.0, "targetGatePassed": false},
+  "existingSourceAwarePianoRoute100msF1Unchanged": 0.343056,
+  "evidence": {"directory": "D:/Polymath Training/phase-113-program-weight-trial-2026-10-17", "archiveSha256": "70416ffc685a880c4cce7291cd1d7960583e63352cce6a0d69ea2e6d74549fa1", "memberHashesVerified": 12},
+  "nextResearchBoundary": "Neither this bounded ablation nor the default-loss 40-update adapter changed the decoded whole-song events. Do not repeat these settings or claim progress from loss alone. A separately frozen optimization-capacity or longer-exposure study needs actual decoded gains, unchanged cutoff policy, cross-song safety and independent listening before any production promotion.",
+  "interpretation": "The rare-program-loss hypothesis motivated a valid experiment but did not improve its measured note output at this dose. No 70/90 percent accuracy target was reached, no listening sample is represented as improved, and no rejected model replaces the live checkpoint."
+}
