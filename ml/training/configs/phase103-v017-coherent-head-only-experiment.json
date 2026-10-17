@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v017-coherent-head-only",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "pairedControl": "phase103-v016-coherent-audio",
+  "hypothesis": "The last-transformer-layer updates in v016 prune correct melody events along with false positives. Freezing every transformer layer and updating only the output normalization and projection may preserve acoustic evidence while changing token probabilities.",
+  "singleChangedVariable": {"name": "trainLastLayers", "control": 1, "candidate": 0},
+  "baseCheckpoint": {"id": "phase46-v017", "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"},
+  "dataset": {"id": "phase-103-wane-coherent-audio-v006", "trainClips": 1821, "validationClips": 258, "trainManifestSha256": "0ba5607880617f3389d96c48ea119609d4b8106449ce863225e4e07967a12791", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", "audioRebuildReceiptSha256": "6fc65acce8e802775eb5f82bb6c1fe7c53626b1ff1719a0929afaaa28ca025aa", "interpretation": "Identical limited-window data, labels, weights, and shuffle order to v016. The WANE tail is not declared unsuitable."},
+  "frozenHyperparameters": {"trainLastLayers": 0, "epochs": 1, "learningRate": 5e-7, "weightDecay": 0.01, "gradientAccumulation": 8, "gradientClipNorm": 1.0, "timingTokenWeight": 1.15, "noteOnTokenWeight": 1.0, "highNoteOnWeight": 1.0, "highNoteMinMidi": 72, "noteOffTokenWeight": 1.25, "eosTokenWeight": 1.2, "conditioningMode": "unconditioned", "precision": "bf16", "seed": "polymath-phase100-v003-unconditioned", "validationIntervalSteps": 5, "maxOptimizerSteps": 20},
+  "budget": {"maximumOptimizerSteps": 20, "pairedComparisonSteps": [5, 10, 15, 20], "interpretation": "Compare with these same v016 steps only. The shorter predeclared run budget is not evidence about v016 steps 25-40."},
+  "fullSongTargetDevelopmentConfig": "ml/training/configs/phase103-v016-full-song-target-development.json",
+  "requiredSelection": {"minimum100msF1Improvement": 0.002, "minimum100msRecallImprovement": 0.0, "maximum250msF1Regression": 0.0, "maximum250msRecallRegression": 0.0},
+  "requiredFollowUp": ["Full 258-clip validation if a checkpoint passes selection", "Paired piano-processing replay with the same source audio and onset-clock treatment", "Other-composition regression checks and listening"],
+  "rejectionPolicy": "Preserve evidence; write no candidate weights unless every selection gate passes. A lower token loss is not an accuracy improvement.",
+  "deferredExperiment": {"candidateId": "phase103-v015-head-only", "executed": false, "reason": "Superseded before execution because its synthetic audio was rendered from obsolete labels."},
+  "interpretation": "Opened development experiment, not a sealed accuracy estimate or production promotion."
+}

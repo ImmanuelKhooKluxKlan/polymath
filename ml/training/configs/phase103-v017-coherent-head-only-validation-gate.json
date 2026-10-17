@@ -1,0 +1,12 @@
+{
+  "schema": "polymath-route-matched-validation-gate-v1",
+  "candidateVersion": "phase103-v017-coherent-head-only",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "immutableInputs": {"baseCheckpointSha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0", "trainManifestSha256": "0ba5607880617f3389d96c48ea119609d4b8106449ce863225e4e07967a12791", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", "audioRebuildReceiptSha256": "6fc65acce8e802775eb5f82bb6c1fe7c53626b1ff1719a0929afaaa28ca025aa"},
+  "route": {"conditioningMode": "unconditioned", "instrumentConstraint": []},
+  "requiredChecks": {"minimumCompleteSongs": 3, "clipLocal100msF1MaximumRegression": 0.0, "clipLocal250msF1MaximumRegression": 0.0, "continuous100msF1MinimumImprovement": 0.0, "continuous100msPrecisionMaximumRegression": 0.005, "continuous100msRecallMaximumRegression": 0.0, "continuous250msF1MaximumRegression": 0.0, "songBootstrapLower95MaximumRegression": 0.0, "maximumPerSong100msF1Regression": 0.005, "onsetAndOffsetF1MaximumRegression": 0.003, "frameF1MaximumRegression": 0.003, "cutOffPer1000MatchedMaximumIncrease": 2.0, "overlongPer1000MatchedMaximumIncrease": 2.0, "rapidRetriggersPer1000PredictedMaximumIncrease": 0.25},
+  "checkpointSelectionChecks": {"wholeSongContextHeldOut100msF1MinimumImprovement": 0.002, "wholeSongContextHeldOut100msRecallMinimumImprovement": 0.0, "wholeSongContextHeldOut250msF1MaximumRegression": 0.0, "wholeSongContextHeldOut250msRecallMaximumRegression": 0.0},
+  "manualGatesStillRequired": ["Evaluate the source-audio-aware piano processing route across all approved WANE regions", "Inspect note recovery and losses separately by piano register", "Listen and reproduce gains on other compositions before promotion"],
+  "interpretation": "Research selection only; no production deployment authorization."
+}
