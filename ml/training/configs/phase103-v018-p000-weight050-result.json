@@ -1,0 +1,30 @@
+{
+  "schema": "polymath-controlled-checkpoint-result-v1",
+  "candidateId": "phase103-v018-p000-weight050",
+  "status": "rejected-correct-note-recall-regressed",
+  "candidateWritten": false,
+  "productionModelWeightsChanged": false,
+  "trainingCommit": "9aadffeb62103387f2e7284870ff5e6865004221",
+  "optimizerSteps": 40,
+  "checkpointsEvaluated": [5, 10, 15, 20, 25, 30, 35, 40],
+  "eligibleCheckpoints": 0,
+  "baselineValidationLoss": 0.7923524713562441,
+  "lowestObservedValidationLoss": 0.7902782090340358,
+  "rejectionReceiptSha256": "4cbf57f2aff1f8a5acfac9fc55f88bddea7cf643870a691befce85252fde46fa",
+  "logSha256": "daa61047c6a9b262c4204ec571ab2329f98d2a3771348e975268eda71be343cd",
+  "weightReceiptSha256": "cd005750e1434eb31f0d2bb3d0aded01e6df7359e9735adba129274241d60b61",
+  "singleChangedVariable": "Thirty original-recording training clips increased from exampleWeight 0.075 to 0.5 relative to the coherent-audio v016 control.",
+  "wholeSongChecks": {
+    "stepsWithBroadSafetyPass": [5, 10, 15],
+    "eventsAtTheseSteps": 3964,
+    "physicalEventsIdenticalToV016Step5": true,
+    "100msF1Delta": 0.002239,
+    "100msRecallDelta": -0.044715,
+    "250msF1Delta": -0.001145,
+    "250msRecallDelta": -0.056911,
+    "remainingSteps": "Broad decoded-note safety failed; full-song target decoding was not run."
+  },
+  "localArchive": "D:/Polymath Training/phase-103-rejected-evidence-2026-10-17/run-v018",
+  "archiveSha256": "cecffa0004fbd9259cd8e7c53e401dbb7cab7f869659cd7c7d9c5da0d462f30b",
+  "conclusion": "Stronger original-audio weighting alone did not fix this bounded decoder failure. Reduced token loss cannot justify losing correct notes."
+}

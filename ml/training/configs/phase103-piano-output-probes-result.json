@@ -1,0 +1,31 @@
+{
+  "schema": "polymath-inference-only-piano-probes-result-v1",
+  "status": "all-probes-rejected",
+  "weightsUpdated": false,
+  "productionRoutingChanged": false,
+  "referenceAtInference": false,
+  "scope": "One opened WANE development recording, source-audio dynamics plus frozen piano cleanup/arrangement. This is not full worker-pipeline or website-wide accuracy.",
+  "existingBroadRoute": {"exactPitchOnset100msF1": 0.343056, "exactPitchOnset250msF1": 0.409722},
+  "pianoOutputOnly": {
+    "sourceConditioning": null,
+    "allowedOutputInstruments": ["acoustic_piano"],
+    "rawNotes": 2146,
+    "rawSha256": "3dd867020b11910f55dde10ff0ca661978781958f0e6fbab384b1cf3a92a449e",
+    "evaluationSha256": "b74ce962f01a1bef677763838bf3e14296726f97c9cf6fd297ec71c3e519650f",
+    "exactPitchOnset100msF1": 0.188471,
+    "exactPitchOnset250msF1": 0.235416
+  },
+  "corroboratedSourceTags": {
+    "source": "The same recording's independent broad-route raw note events; never the desired piano reference.",
+    "mutations": "Source instrument tags only; piano note pitches, starts, durations and velocities unchanged.",
+    "onsetToleranceSeconds": 0.08,
+    "voice-exact": {"taggedNotes": 432, "exact100msF1": 0.210339, "exact250msF1": 0.265954},
+    "voice-one-octave": {"taggedNotes": 449, "exact100msF1": 0.210489, "exact250msF1": 0.266143},
+    "pitched-exact": {"taggedNotes": 1743, "exact100msF1": 0.166483, "exact250msF1": 0.213628},
+    "summarySha256": "54576ec1b30c92510c6c5197e6eb7a370ee1835837f1deff314960dbef32d1a3"
+  },
+  "localArchive": "D:/Polymath Training/phase-103-rejected-evidence-2026-10-17",
+  "archiveSha256": "cecffa0004fbd9259cd8e7c53e401dbb7cab7f869659cd7c7d9c5da0d462f30b",
+  "archivedFilesHashVerified": 32,
+  "conclusion": "Restricting the base model's output instruments is not sufficient to create a good piano arrangement. Retagging some notes as vocals did not restore the missing or misplaced notes."
+}

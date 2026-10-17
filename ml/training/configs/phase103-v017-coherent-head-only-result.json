@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-controlled-checkpoint-result-v1",
+  "candidateId": "phase103-v017-coherent-head-only",
+  "status": "rejected-no-note-improvement",
+  "candidateWritten": false,
+  "productionModelWeightsChanged": false,
+  "trainingCommit": "ccc6522de82e1c09e68d04643f3f2ea4a73cd7f1",
+  "optimizerSteps": 20,
+  "checkpointsEvaluated": [5, 10, 15, 20],
+  "eligibleCheckpoints": 0,
+  "baselineValidationLoss": 0.7923524713562441,
+  "lowestObservedValidationLoss": 0.7923053025968315,
+  "rejectionReceiptSha256": "0d1cc02eaf189eb9ef114ef6741a59708aabed9f2a4b7ec2fab77a9db6bd24b2",
+  "logSha256": "af157effbfaa9aa091a3ca5fe0f9dda7bfb5218fde4de825634cdcd7ecd9dec1",
+  "wholeSongEvents": {"base": 4867, "eachCandidate": 4867, "physicalEventsIdenticalToBase": true, "comparedFields": ["instrument", "midi", "time", "duration"]},
+  "heldOutWindowMetricChanges": {"100msF1": 0.0, "100msRecall": 0.0, "250msF1": 0.0, "250msRecall": 0.0},
+  "localArchive": "D:/Polymath Training/phase-103-coherent-audio-v006-2026-10-17/run-v017",
+  "conclusion": "A tiny reduction in token loss did not change the decoded piano notes. This bounded head-only trial is not an accuracy gain."
+}
