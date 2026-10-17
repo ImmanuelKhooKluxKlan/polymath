@@ -1,0 +1,16 @@
+{
+  "schema": "polymath-inference-route-probe-v1",
+  "status": "frozen-before-probe",
+  "productionMutationAllowed": false,
+  "weightsUpdated": false,
+  "hypothesis": "The public instrument constraint couples source-class conditioning and allowed output programs. The existing unconditioned piano-arrangement supervision may be more accessible when input conditioning remains unset but output programs are restricted to acoustic piano.",
+  "singleChangedVariable": "piano output-program mask; source conditioning remains the verified baseline's null class",
+  "baseCheckpointSha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0",
+  "audioSha256": "c1cb84e5b11ae5314c297e96f82469e88922add794d3f9c111122ecb8278b142",
+  "runtimeAuditSha256": "d558cab2304a4f2c8122945f44cba5c5969e2b1dca4846582005c1c268beee81",
+  "sourceConditioning": null,
+  "allowedOutputInstruments": ["acoustic_piano"],
+  "referenceAtInference": false,
+  "evaluation": "Complete-song decoding, source-audio-aware piano cleanup/arrangement, and the unchanged exact-pitch onset/offset scorer on the existing independent visual reference.",
+  "interpretation": "Isolated private-API research probe only. No gain is assumed, no installed package file is changed, and no live routing change is authorized."
+}

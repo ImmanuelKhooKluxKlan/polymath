@@ -1,0 +1,17 @@
+{
+  "schema": "polymath-register-label-audit-experiment-v1",
+  "status": "frozen-before-candidate-fit",
+  "productionMutationAllowed": false,
+  "manifest": "D:/Polymath Training/phase-104-register-transfer-2026-10-17/manifest.json",
+  "excludedSong": "wane",
+  "purpose": "Test whether ambiguous octave-layer pairing and clamped out-of-action target labels damaged the training signal for the conservative register router.",
+  "frozenParameters": {"toleranceSeconds": 0.1, "iterations": 1800, "seed": 1380271945, "classBalance": 0.55, "validation": "complete-song leave-one-out over five non-WANE songs"},
+  "comparisons": [
+    {"id": "nearest-exact-labels", "pairingMode": "nearest-onset", "shiftLabelPolicy": "exact", "purpose": "Keep onset pairing and remove false success labels caused by clamping three-octave errors to two octaves."},
+    {"id": "exact-preserving-exact-labels", "pairingMode": "exact-preserving", "shiftLabelPolicy": "exact", "purpose": "Protect existing exact-key matches before assigning the remaining pitch-class octave labels."}
+  ],
+  "unchangedAccuracyEvaluator": true,
+  "predeclaredContextFollowUp": {"featureSet": "role-register-interactions", "pairedControl": "exact-preserving-exact-labels", "pairingMode": "exact-preserving", "shiftLabelPolicy": "exact", "allOtherParametersUnchanged": true, "hypothesis": "The same register requires different corrections for bass, harmony, melody, and source families. Explicit role-by-register interactions allow different slopes rather than only family-specific intercepts.", "referenceCoordinatesAtInference": false},
+  "requiredFollowUp": "A safe cross-song label-policy result must still improve actual whole-song output under the unchanged scorer, including a separate WANE transfer check. Label counts or easier paired populations alone are not a model improvement.",
+  "interpretation": "Research-only. No foundation weights or production arranger profile are changed by this test."
+}

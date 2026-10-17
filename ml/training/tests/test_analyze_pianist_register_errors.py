@@ -2,6 +2,7 @@ from ml.training.analyze_pianist_register_errors import (
     decorate_gestures,
     duplicate_layer_summary,
     proportion_rows,
+    register_training_pairs,
     shift_band,
 )
 
@@ -44,3 +45,17 @@ def test_proportion_rows_counts_exact_octaves():
     summary = proportion_rows(rows, lambda item: item["group"])
     assert summary[0]["pairedNotes"] == 2
     assert summary[0]["exactOctaveRate"] == 0.5
+
+
+def test_exact_preserving_pairing_does_not_cross_correct_octave_layers():
+    reference = [{"time": 1.0, "midi": 48}, {"time": 1.04, "midi": 60}]
+    candidate = [{"time": 1.0, "midi": 60}, {"time": 1.04, "midi": 48}]
+    assert register_training_pairs(reference, candidate, 0.1) == [(0, 0), (1, 1)]
+    assert register_training_pairs(reference, candidate, 0.1, pairing_mode="exact-preserving") == [(0, 1), (1, 0)]
+    assert candidate[0]["midi"] == 60
+
+
+def test_exact_preserving_pairing_retains_real_octave_errors_as_training_examples():
+    reference = [{"time": 1.0, "midi": 72}]
+    candidate = [{"time": 1.02, "midi": 60}]
+    assert register_training_pairs(reference, candidate, 0.1, pairing_mode="exact-preserving") == [(0, 0)]

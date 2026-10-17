@@ -2,10 +2,12 @@ import numpy as np
 
 from ml.training.fit_pianist_register_router import (
     FEATURE_NAMES,
+    CONTEXT_FEATURE_NAMES,
     policy_metrics,
     record_features,
     route_predictions,
     rounded_shift,
+    training_shift_label,
 )
 
 
@@ -60,3 +62,24 @@ def test_rounded_shift_clamps_to_supported_octaves():
     assert rounded_shift(11) == 12
     assert rounded_shift(-38) == -24
     assert rounded_shift(37) == 24
+
+
+def test_training_labels_do_not_claim_a_two_octave_move_fixes_three_octaves():
+    assert training_shift_label(36) == 36
+    assert training_shift_label(-36) == -36
+    assert training_shift_label(36, "legacy-clamped") == 24
+    metrics = policy_metrics([{"label": training_shift_label(36)}], np.asarray([24]))
+    assert metrics["correctChanges"] == 0
+    assert metrics["routedExactRate"] == 0.0
+
+
+def test_context_features_keep_legacy_prefix_and_add_role_specific_register_axes():
+    record = {"candidateMidi": 48, "sourceMidi": 36, "candidateRole": "bass", "sourceFamily": "guitar"}
+    legacy = record_features(record)
+    contextual = record_features(record, feature_set="role-register-interactions")
+    assert contextual[:len(FEATURE_NAMES)] == legacy
+    assert len(contextual) == len(CONTEXT_FEATURE_NAMES)
+    named = dict(zip(CONTEXT_FEATURE_NAMES, contextual))
+    assert named["role_bass__candidate_midi_centered"] == named["candidate_midi_centered"]
+    assert named["role_melody__candidate_midi_centered"] == 0.0
+    assert named["family_guitar__source_midi_centered"] == named["source_midi_centered"]

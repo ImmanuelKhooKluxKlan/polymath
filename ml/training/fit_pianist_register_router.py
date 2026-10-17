@@ -62,6 +62,25 @@ FEATURE_NAMES = (
     "band_high",
     *(f"pitch_class_{value:02d}" for value in range(12)),
 )
+CONTEXT_FLAGS = (
+    "role_bass", "role_harmony", "role_melody",
+    "family_voice", "family_guitar", "family_bass", "family_piano", "family_strings", "family_other",
+)
+CONTEXT_AXES = (
+    "candidate_midi_centered", "candidate_midi_squared", "source_midi_centered",
+    "candidate_source_interval", "gesture_pitch_rank",
+)
+CONTEXT_FEATURE_NAMES = FEATURE_NAMES + tuple(
+    f"{flag}__{axis}" for flag in CONTEXT_FLAGS for axis in CONTEXT_AXES
+)
+
+
+def feature_names_for_set(feature_set: str) -> tuple[str, ...]:
+    if feature_set == "legacy":
+        return FEATURE_NAMES
+    if feature_set == "role-register-interactions":
+        return CONTEXT_FEATURE_NAMES
+    raise ValueError(f"Unsupported register feature set: {feature_set}")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -76,7 +95,24 @@ def rounded_shift(value: Any) -> int:
     return max(SHIFT_CLASSES[0], min(SHIFT_CLASSES[-1], semitones))
 
 
-def record_features(record: dict[str, Any]) -> list[float]:
+def training_shift_label(value: Any, policy: str = "exact") -> int:
+    if policy == "legacy-clamped":
+        return rounded_shift(value)
+    if policy != "exact":
+        raise ValueError(f"Unsupported register shift-label policy: {policy}")
+    semitones = float(value)
+    if not np.isfinite(semitones):
+        raise ValueError("Register training labels must be finite octave differences")
+    rounded = int(round(semitones))
+    if abs(semitones - rounded) > 1e-7 or rounded % 12:
+        raise ValueError("Register training labels must be exact octave differences")
+    # A +/-36 label is outside the available correction actions. Keeping its
+    # actual value makes every one-v-rest target false and prevents a +/-24
+    # prediction from being falsely scored as a successful correction.
+    return rounded
+
+
+def record_features(record: dict[str, Any], *, feature_set: str = "legacy") -> list[float]:
     midi = int(record["candidateMidi"])
     source_midi = int(record.get("sourceMidi", midi))
     centered = (midi - 69.0) / 24.0
@@ -86,7 +122,7 @@ def record_features(record: dict[str, Any]) -> list[float]:
     family = str(record.get("sourceFamily") or "other")
     band = str(record.get("candidatePitchBand") or "")
     pitch_class = midi % 12
-    return [
+    values = [
         1.0,
         centered,
         centered * centered,
@@ -115,6 +151,12 @@ def record_features(record: dict[str, Any]) -> list[float]:
         float(band == "high->=C6"),
         *(float(pitch_class == value) for value in range(12)),
     ]
+    feature_names_for_set(feature_set)
+    if feature_set == "role-register-interactions":
+        named = dict(zip(FEATURE_NAMES, values, strict=True))
+        named["family_other"] = float(family == "other")
+        values.extend(named[flag] * named[axis] for flag in CONTEXT_FLAGS for axis in CONTEXT_AXES)
+    return values
 
 
 def balanced_weights(
@@ -150,8 +192,12 @@ def fit_models(
     class_balance: float,
     iterations: int,
     seed: int,
+    feature_set: str = "legacy",
 ) -> dict[str, Any]:
     features = np.asarray([record["features"] for record in records], dtype=np.float64)
+    feature_names = feature_names_for_set(feature_set)
+    if features.ndim != 2 or features.shape[1] != len(feature_names):
+        raise ValueError("Register training features do not match the selected contract")
     labels = np.asarray([int(record["label"]) for record in records], dtype=np.int64)
     sample_weights = balanced_weights(records, class_balance)
     training_mask = np.ones(len(records), dtype=bool)
@@ -175,8 +221,9 @@ def fit_models(
             "finalTrainingLoss": history[-1]["weightedBinaryCrossEntropy"],
         }
     return {
-        "type": "one-v-rest-standardized-logistic-register-router-v1",
-        "featureNames": list(FEATURE_NAMES),
+        "type": "one-v-rest-standardized-logistic-register-router-v1" if feature_set == "legacy" else "one-v-rest-standardized-logistic-register-router-v2",
+        "featureSet": feature_set,
+        "featureNames": list(feature_names),
         "shiftClasses": list(SHIFT_CLASSES),
         "classBalance": round(class_balance, 4),
         "classes": classes,
@@ -237,12 +284,14 @@ def policy_metrics(
 
 
 def load_records(
-    rows: Iterable[dict[str, Any]], tolerance: float
+    rows: Iterable[dict[str, Any]], tolerance: float,
+    *, pairing_mode: str = "nearest-onset", shift_label_policy: str = "exact",
+    feature_set: str = "legacy",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     records: list[dict[str, Any]] = []
     descriptions: list[dict[str, Any]] = []
     for row in rows:
-        analysis = analyze_song(row, tolerance)
+        analysis = analyze_song(row, tolerance, pairing_mode=pairing_mode)
         descriptions.append(
             {
                 "id": analysis["id"],
@@ -255,8 +304,8 @@ def load_records(
                 {
                     **item,
                     "songId": analysis["id"],
-                    "label": rounded_shift(item["requiredShiftSemitones"]),
-                    "features": record_features(item),
+                    "label": training_shift_label(item["requiredShiftSemitones"], shift_label_policy),
+                    "features": record_features(item, feature_set=feature_set),
                 }
             )
     return records, descriptions
@@ -341,6 +390,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0x52454749)
     parser.add_argument("--class-balance", type=float, default=0.55)
     parser.add_argument("--exclude-song", action="append", default=[])
+    parser.add_argument("--pairing-mode", choices=("nearest-onset", "exact-preserving"), default="nearest-onset")
+    parser.add_argument("--shift-label-policy", choices=("exact", "legacy-clamped"), default="exact")
+    parser.add_argument("--feature-set", choices=("legacy", "role-register-interactions"), default="legacy")
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest).resolve()
@@ -353,7 +405,11 @@ def main() -> None:
     ]
     if len(rows) < 3:
         raise ValueError("At least three complete songs are required.")
-    records, descriptions = load_records(rows, max(0.01, args.tolerance_seconds))
+    records, descriptions = load_records(
+        rows, max(0.01, args.tolerance_seconds),
+        pairing_mode=args.pairing_mode, shift_label_policy=args.shift_label_policy,
+        feature_set=args.feature_set,
+    )
     song_ids = sorted({str(record["songId"]) for record in records})
     folds: dict[str, dict[str, Any]] = {}
     for fold_index, held_out in enumerate(song_ids):
@@ -364,6 +420,7 @@ def main() -> None:
             class_balance=args.class_balance,
             iterations=max(200, args.iterations),
             seed=args.seed + fold_index * 1009,
+            feature_set=args.feature_set,
         )
         features = np.asarray(
             [record["features"] for record in validation], dtype=np.float64
@@ -384,6 +441,7 @@ def main() -> None:
         class_balance=args.class_balance,
         iterations=max(200, args.iterations),
         seed=args.seed,
+        feature_set=args.feature_set,
     )
     profile = {
         "schema": "polymath-pianist-register-router-v1",
@@ -402,6 +460,9 @@ def main() -> None:
             "manifest": str(manifest_path),
             "excludedSongs": sorted(excluded),
             "method": "complete-song leave-one-out conservative octave routing",
+            "pairingMode": args.pairing_mode,
+            "shiftLabelPolicy": args.shift_label_policy,
+            "featureSet": args.feature_set,
             "commercialUseAllowed": False,
             "decision": "CANDIDATE_FOR_APPLICATION_TEST" if best["safe"] else "REJECT_OR_RESEARCH_ONLY",
         },
@@ -418,6 +479,10 @@ def main() -> None:
         ),
         "manifest": str(manifest_path),
         "excludedSongs": sorted(excluded),
+        "pairingMode": args.pairing_mode,
+        "shiftLabelPolicy": args.shift_label_policy,
+        "featureSet": args.feature_set,
+        "outsideSupportedActionLabels": sum(record["label"] not in SHIFT_CLASSES for record in records),
         "dataset": descriptions,
         "shiftCounts": dict(Counter(str(record["label"]) for record in records)),
         "bestPolicy": best,

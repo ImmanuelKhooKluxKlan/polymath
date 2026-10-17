@@ -2,6 +2,16 @@ from ml.training.apply_pianist_register_router import apply_router, feature_reco
 from ml.training.fit_pianist_register_router import FEATURE_NAMES, SHIFT_CLASSES
 
 
+def test_rejected_disabled_router_does_not_touch_notes_or_load_a_model():
+    payload = {"notes": [{"midi": 48, "time": 1.0, "duration": 0.4}]}
+    profile = {"schema": "polymath-pianist-register-router-v1", "id": "rejected", "enabled": False}
+    output, diagnostics = apply_router(payload, profile)
+    assert output["notes"] == payload["notes"]
+    assert output["notes"] is not payload["notes"]
+    assert diagnostics["acceptedChanges"] == 0
+    assert diagnostics["reason"] == "profile-disabled"
+
+
 def test_feature_records_preserve_payload_indices_and_gesture_positions():
     payload = {
         "notes": [

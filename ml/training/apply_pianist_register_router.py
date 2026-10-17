@@ -17,6 +17,7 @@ try:  # Package and direct-script execution.
     from .fit_pianist_register_router import (
         FEATURE_NAMES,
         SHIFT_CLASSES,
+        feature_names_for_set,
         model_probabilities,
         record_features,
         route_predictions,
@@ -27,6 +28,7 @@ except ImportError:  # pragma: no cover
     from fit_pianist_register_router import (  # type: ignore
         FEATURE_NAMES,
         SHIFT_CLASSES,
+        feature_names_for_set,
         model_probabilities,
         record_features,
         route_predictions,
@@ -81,12 +83,23 @@ def apply_router(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if profile.get("schema") != "polymath-pianist-register-router-v1":
         raise ValueError("Unsupported register-router profile.")
+    if profile.get("enabled") is False:
+        output = copy.deepcopy(payload)
+        diagnostics = {
+            "profile": profile.get("id"),
+            "reason": "profile-disabled",
+            "proposedChanges": 0,
+            "acceptedChanges": 0,
+        }
+        output.setdefault("diagnostics", {})["pianistRegisterRouter"] = diagnostics
+        return output, diagnostics
     model = profile.get("model") or {}
-    if tuple(model.get("featureNames") or ()) != FEATURE_NAMES:
+    feature_set = str(model.get("featureSet") or "legacy")
+    if tuple(model.get("featureNames") or ()) != feature_names_for_set(feature_set):
         raise ValueError("Register-router feature contract mismatch.")
     policy = profile.get("policy") or {}
     records, indices = feature_records(payload)
-    features = np.asarray([record_features(record) for record in records], dtype=float)
+    features = np.asarray([record_features(record, feature_set=feature_set) for record in records], dtype=float)
     probabilities = model_probabilities(model, features)
     predictions = route_predictions(
         probabilities,

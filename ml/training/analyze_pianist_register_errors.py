@@ -48,6 +48,39 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def register_training_pairs(
+    reference: list[dict[str, Any]],
+    candidate: list[dict[str, Any]],
+    tolerance: float,
+    *,
+    pairing_mode: str = "nearest-onset",
+) -> list[tuple[int, int]]:
+    """Optionally protect exact keys before assigning octave-correction labels.
+
+    Nearest-onset pitch-class pairing can cross two correctly played octave
+    layers when their onsets differ slightly. Exact-preserving pairing avoids
+    teaching opposite octave moves in that case. It is a training-label policy,
+    not a change to the frozen accuracy evaluator or a maximum-cardinality claim.
+    """
+    if pairing_mode == "nearest-onset":
+        return greedy_match_indices(reference, candidate, tolerance, octave_equivalent=True)
+    if pairing_mode != "exact-preserving":
+        raise ValueError(f"Unsupported register pairing mode: {pairing_mode}")
+    exact = greedy_match_indices(reference, candidate, tolerance)
+    used_reference = {left for left, _right in exact}
+    used_candidate = {right for _left, right in exact}
+    reference_indices = [index for index in range(len(reference)) if index not in used_reference]
+    candidate_indices = [index for index in range(len(candidate)) if index not in used_candidate]
+    remaining = greedy_match_indices(
+        [reference[index] for index in reference_indices],
+        [candidate[index] for index in candidate_indices],
+        tolerance, octave_equivalent=True,
+    )
+    return sorted(exact + [
+        (reference_indices[left], candidate_indices[right]) for left, right in remaining
+    ])
+
+
 def finite(value: Any, fallback: float = 0.0) -> float:
     try:
         number = float(value)
@@ -187,6 +220,8 @@ def analyze_song(
     tolerance: float,
     candidate_dir: Path | None = None,
     reference_transpose_override: int | None = None,
+    *,
+    pairing_mode: str = "nearest-onset",
 ) -> dict[str, Any]:
     reference_path = Path(str(row["reference"])).resolve()
     alignment_path = Path(str(row["alignment"])).resolve()
@@ -228,8 +263,8 @@ def analyze_song(
         if inside_ranges(float(note["time"]), ranges)
     ]
     decorations = decorate_gestures(candidate)
-    pairs = greedy_match_indices(
-        reference, candidate, tolerance, octave_equivalent=True
+    pairs = register_training_pairs(
+        reference, candidate, tolerance, pairing_mode=pairing_mode,
     )
     records: list[dict[str, Any]] = []
     for reference_index, candidate_index in pairs:
@@ -275,6 +310,7 @@ def analyze_song(
     )
     return {
         "id": str(row.get("id") or candidate_path.stem),
+        "registerPairingMode": pairing_mode,
         "inputs": {
             "reference": str(reference_path),
             "alignment": str(alignment_path),
