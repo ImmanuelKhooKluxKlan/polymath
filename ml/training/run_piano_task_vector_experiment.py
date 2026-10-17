@@ -114,6 +114,13 @@ def main() -> None:
             preflight_path = Path(config.get("preflightPath", data / "task-vector-gradient-preflight.json"))
             for path, expected in ((BASE, config["baseCheckpoint"]["sha256"]), (train_path, config["dataset"]["trainManifestSha256"]), (val_path, config["dataset"]["validationManifestSha256"]), (data / "variant-weight-ablation-receipt.json", config["dataset"]["weightReceiptSha256"]), (data / "audio-rebuild-receipt.json", config["dataset"]["coherentAudioReceiptSha256"]), (RUNTIME_AUDIT, RUNTIME_AUDIT_HASH), (preflight_path, args.preflight_sha256)):
                 verify(path, expected)
+            filter_hash = config["dataset"].get("referenceRegionFilterReceiptSha256")
+            if filter_hash:
+                filter_path = data / "reference-region-filter-receipt.json"
+                verify(filter_path, filter_hash)
+                filtered = json.loads(filter_path.read_text())
+                if filtered["trainManifestSha256"] != config["dataset"]["trainManifestSha256"] or filtered["validationManifestSha256"] != config["dataset"]["validationManifestSha256"] or filtered["regionAudit"]["violations"] != 0:
+                    raise ValueError("Reference-region filtering receipt is not bound to this dataset")
             preflight = json.loads(preflight_path.read_text())
             validate_preflight(preflight, config)
             import muscriptor

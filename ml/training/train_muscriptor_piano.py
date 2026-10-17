@@ -227,6 +227,11 @@ def write_immutable_json_receipt(path: Path, payload: dict[str, Any]) -> str:
 
 
 def audit_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+    from ml.training.reference_region_policy import ReferenceRegionError, audit_reference_regions
+    try:
+        audit_reference_regions(records)
+    except ReferenceRegionError as exc:
+        raise TrainingError(str(exc)) from exc
     songs: set[str] = set()
     instruments: set[str] = set()
     token_counts: list[int] = []

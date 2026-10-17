@@ -1,0 +1,17 @@
+{
+  "schema": "polymath-attention-adapter-preflight-plan-v1",
+  "status": "frozen-before-filtered-dataset-preflight",
+  "optimizerUpdatesAuthorizedByThisPlan": false,
+  "productionMutationAllowed": false,
+  "reason": "Repeat implementation/memory checks against the filtered, owner-scope-compliant dataset; do not relabel the old receipt as a new measurement.",
+  "datasetId": "phase-108-reference-scope-clean-v001",
+  "trainManifestSha256": "42082c3929efd9fecea84ed0431f3982041f5abf699febfe68ed20e4434416d9",
+  "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+  "referenceRegionFilterReceiptSha256": "58a0df31e8d3b4812f958982fafa3ee0869751e842a1566122ae9ec8a52ddc5e",
+  "trainClips": 1894,
+  "approvedKissMeClips": 20,
+  "waneClipsUnchanged": 235,
+  "adapter": {"lastLayers": 1, "rank": 8, "alpha": 8, "expectedTrainableParameters": 73728, "baseMatricesFrozen": true, "outputHeadFrozen": true, "conditioningFrozen": true},
+  "requiredChecks": ["Reference-region policy audit passes for all remaining Kiss Me clips", "Largest-token clip gives finite nonzero B gradients and no foundation gradients", "No optimizer is created and effective matrices stay unchanged", "Gradient peak memory remains below 90 percent", "All 4867 full-song events and all 18 safety-panel clips reproduce the verified base"],
+  "interpretation": "A preflight pass proves feasibility/fidelity only. Subsequent training must still pass the unchanged note, whole-song, duration, transfer and listening gates."
+}

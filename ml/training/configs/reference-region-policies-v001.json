@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-reference-region-policies-v1",
+  "policies": [
+    {
+      "id": "kiss-me-pianella-pre150-v1",
+      "songIdPrefixes": ["kiss-me", "kissme"],
+      "referenceEndSeconds": 150.0,
+      "reason": "The owner rejected the later Pianella Kiss Me passage. This restriction is specific to Kiss Me and must never truncate WANE or another composition.",
+      "approvedSourceClocks": [
+        {
+          "sourcePackageSha256": "8b1cc326b8baad0978f0da472614c282a5770a1a19fba8da30833784cce240eb",
+          "sourceEndSeconds": 142.04341952957134,
+          "mapping": "Linear interpolation at referenceTime=150 using this package's frozen alignment anchors."
+        }
+      ]
+    }
+  ]
+}

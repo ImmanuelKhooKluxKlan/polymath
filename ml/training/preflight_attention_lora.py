@@ -12,16 +12,19 @@ from ml.training.muscriptor_tokens import encode_instrument_clip
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--dataset-dir", type=Path, default=Path("/runpod-volume/training/phase-105-piano-task-vector-v001"))
+    parser.add_argument("--train-manifest-sha256", default="53e68be733d4061236be478d38bf6fe667ebe506d96ef08c92203280a2631d12")
+    parser.add_argument("--audit-id", default="phase107-attention-preflight-v001")
     args = parser.parse_args()
     if args.out.exists():
         raise FileExistsError("Attention-adapter preflight folder already exists")
     base = Path("/runpod-volume/models/muscriptor-tester/phase46-v017/model.safetensors")
     base_hash = "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"
-    data = Path("/runpod-volume/training/phase-105-piano-task-vector-v001")
+    data = args.dataset_dir
     train_path, val_path = data / "prepared-train.jsonl", data / "prepared-validation.jsonl"
     cached = Path("/runpod-volume/training/phase-103-decoder-baseline-audit-v001")
     audio = Path("/runpod-volume/jobs/phase45-foundation-eval-20260916/wane-gbt-original.wav")
-    hashes = {base: base_hash, train_path: "53e68be733d4061236be478d38bf6fe667ebe506d96ef08c92203280a2631d12", val_path: "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", cached / "fresh-baseline-full-raw.json": "1aa8a996d36a36f99aad1b7c83fee9fe7890375520b483028fd0e7a9d14b294e", cached / "fresh-baseline-panel.json": "a6f0ced022400aff6eb3b458c16381709dc5ca6b2bacdc343614cf8dd6088f6a", audio: "c1cb84e5b11ae5314c297e96f82469e88922add794d3f9c111122ecb8278b142"}
+    hashes = {base: base_hash, train_path: args.train_manifest_sha256, val_path: "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", cached / "fresh-baseline-full-raw.json": "1aa8a996d36a36f99aad1b7c83fee9fe7890375520b483028fd0e7a9d14b294e", cached / "fresh-baseline-panel.json": "a6f0ced022400aff6eb3b458c16381709dc5ca6b2bacdc343614cf8dd6088f6a", audio: "c1cb84e5b11ae5314c297e96f82469e88922add794d3f9c111122ecb8278b142"}
     for path, expected in hashes.items():
         if sha256_file(path) != expected:
             raise ValueError(f"Attention preflight input changed: {path}")
@@ -61,7 +64,7 @@ def main():
     model._model.eval()
     args.out.mkdir(parents=True)
     print(json.dumps({"stage": "zero-update-full-song-reproduction", "peakGradientMemoryFraction": peak / total}), flush=True)
-    raw = transcribe_one(model, audio, title="Zero-update attention-adapter fidelity preflight", instruments=None, model_id="phase107-attention-preflight-v001", provider="Polymath no-optimizer research audit")
+    raw = transcribe_one(model, audio, title="Zero-update attention-adapter fidelity preflight", instruments=None, model_id=args.audit_id, provider="Polymath no-optimizer research audit")
     (args.out / "zero-update-full-raw.json").write_text(json.dumps(raw, indent=2) + "\n")
     full_comparison = compare_events(json.loads((cached / "fresh-baseline-full-raw.json").read_text())["notes"], raw["notes"])
     records = select_decoded_gate_records(validation, maximum_per_song=6)
@@ -74,6 +77,9 @@ def main():
     unchanged = all(row["changedEffectiveParameters"] == 0 for row in deltas)
     passed = full_comparison["identical"] and all(row["identical"] for row in panel_comparisons.values()) and unchanged and peak / total < .90
     report = {"schema": "polymath-attention-lora-preflight-v1", "optimizerCreated": False, "weightsUpdated": False, "baseCheckpointSha256": base_hash, "trainManifestSha256": sha256_file(train_path), "trainAudit": audit, "largestTokenClip": chosen["clipId"], "adapter": metadata, "gradientEvidence": gradients, "otherFoundationGradientsAbsent": True, "zeroUpdateMatrixDeltas": deltas, "fullSongReproduction": full_comparison, "panelReproduction": panel_comparisons, "peakGradientGpuBytes": peak, "peakGradientGpuFraction": peak / total, "gpu": torch.cuda.get_device_name(0), "verdict": "PASS" if passed else "REJECT_PREFLIGHT"}
+    from ml.training.reference_region_policy import audit_reference_regions
+    report["auditId"] = args.audit_id
+    report["referenceRegionAudit"] = audit_reference_regions(train)
     (args.out / "preflight.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2), flush=True)
     if not passed:

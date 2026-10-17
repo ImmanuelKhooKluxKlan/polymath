@@ -1,0 +1,12 @@
+{
+  "schema": "polymath-reference-region-correction-v1",
+  "status": "legacy-training-exposure-quarantined",
+  "productionModelWeightsChanged": false,
+  "confirmedAffectedTrials": ["phase105-v001-piano-task-vector", "phase105-v002-early-task-vector", "phase107-v001-attention-lora"],
+  "affectedDataset": {"id": "phase-105-piano-task-vector-v001", "trainManifestSha256": "53e68be733d4061236be478d38bf6fe667ebe506d96ef08c92203280a2631d12", "legacyKissMeClips": 32, "outOfOwnerApprovedRegion": 12},
+  "policy": {"composition": "Kiss Me, Pianella reference", "referenceEndSeconds": 150.0, "sourcePackageSha256": "8b1cc326b8baad0978f0da472614c282a5770a1a19fba8da30833784cce240eb", "mappedSourceEndSeconds": 142.04341952957134, "waneCutoffIntroduced": false},
+  "activeTrialIntervention": {"candidateId": "phase107-v001-attention-lora", "quarantineReceiptSha256": "530580f2dd1b1d49eedefa60a552a2be9489e09ae483bccca89d92f13b472254", "processGroup": 12442, "verifiedWorkingDirectory": "/workspace/polymath-phase107-attention-run-v001", "candidateWeightsWritten": false, "reason": "The disallowed kiss-me-phase2-reviewed-00069 clip was among the first 80 optimizer examples. Stop this isolated run; retain its logs as inadmissible diagnostic evidence."},
+  "filteredCopy": {"localDirectory": "D:/Polymath Training/phase-108-reference-scope-clean-2026-10-17/inputs-complete-v001", "trainClips": 1894, "removedClips": 12, "remainingKissMeClips": 20, "maximumRemainingKissMeSourceStartSeconds": 135.0, "waneClips": 235, "waneClipsUnchanged": true, "trainManifestSha256": "42082c3929efd9fecea84ed0431f3982041f5abf699febfe68ed20e4434416d9", "filterReceiptSha256": "58a0df31e8d3b4812f958982fafa3ee0869751e842a1566122ae9ec8a52ddc5e", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"},
+  "guard": "Training audits now reject a region-restricted composition without a verified reference-to-source clock proof, or a clip crossing that proof's cutoff. The Kiss Me limit is never applied to WANE.",
+  "interpretation": "Prior trials were already rejected and wrote no accepted model. Their numerical measurements are preserved, but training on these legacy rows is not admissible under the owner's exclusion. Filtering future data does not erase exposure from the existing base checkpoint's earlier history."
+}
