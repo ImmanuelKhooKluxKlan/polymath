@@ -1,0 +1,23 @@
+{
+  "schema": "polymath-controlled-checkpoint-result-v1",
+  "candidateId": "phase105-v001-piano-task-vector",
+  "status": "rejected",
+  "candidateWritten": false,
+  "productionModelWeightsChanged": false,
+  "trainingCommit": "3b78dc4d5480a0dd1a959738928766208a333b60",
+  "optimizerSteps": 239,
+  "checkpointsEvaluated": [50, 100, 150, 200, 239],
+  "eligibleCheckpoints": 0,
+  "baselineValidationLoss": 0.7923524713562441,
+  "lowestObservedValidationLoss": 0.7819896029496147,
+  "rejectionReceiptSha256": "b514169d0f437e9bac5cc61d899424226df437054ab87cd0c40f043d7933c961",
+  "launchLogSha256": "208664e5097eeffe32833ba983b9e030ff0b68b1637ac062d051458b81e5d82c",
+  "taskVectorFinalDelta": {"activeParametersChanged": 1536, "inactiveRowsBitwiseUnchanged": true, "rmsDelta": 0.007747194264084101, "maximumAbsoluteDelta": 0.013654481619596481},
+  "firstCheckpoint": {"step": 50, "safetyPanel100msF1Delta": 0.012383, "safetyPanel100msRecallDelta": 0.0, "safetyPanel250msRecallDelta": -0.003115, "accepted": false},
+  "finalCheckpoint": {"step": 239, "safetyPanel100msF1Delta": -0.018511, "safetyPanel100msRecallDelta": -0.006231, "safetyPanel250msF1Delta": -0.024735, "accepted": false},
+  "targetFullSongDecoded": false,
+  "targetNotDecodedReason": "All broad safety checks failed; the frozen v001 runner did not decode WANE for ineligible checkpoints.",
+  "localArchive": "D:/Polymath Training/phase-105-piano-task-vector-2026-10-17/run-v001",
+  "archiveSha256": "f9a275f57abb93282419a144f634948e5da3ca04dad8ce7be1b7f56e3703a813",
+  "interpretation": "Lower teacher-forced loss did not establish better decoded music. This was a research-only piano-output-mask experiment, not the existing broad production route. No website-wide accuracy claim follows."
+}

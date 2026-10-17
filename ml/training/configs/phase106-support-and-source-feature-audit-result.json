@@ -1,0 +1,41 @@
+{
+  "schema": "polymath-piano-error-localization-result-v1",
+  "status": "data-defects-repaired-no-candidate-promoted",
+  "productionChanged": false,
+  "foundationWeightsUpdated": false,
+  "supportAuditSha256": "e77a46da0e11b30cd879682355c41529fb67d16927dfaca320f7182c9481bf28",
+  "openedWane": {
+    "approvedReferenceNotes": 1381,
+    "rawNotesInApprovedRanges": 4698,
+    "arrangedNotesInApprovedRanges": 1499,
+    "existingArrangedExact100msF1": 0.343056,
+    "rawExact100msSupportRecall": 0.364229,
+    "rawOraclePitchClass100msSupportRecall": 0.726285,
+    "oracleWarning": "The pitch-class figure ignores octave errors and uses the answer key. It is not model accuracy.",
+    "pairedExactSupportLostAfterProcessing": 246,
+    "pairedExactSupportGainedAfterProcessing": 237,
+    "referenceVelocity": {"distinctValues": 1, "constantValue": 0.78, "measuredPianistDynamicsAvailable": false},
+    "nearestMatchingExactUndercount": 0
+  },
+  "compactionProbes": {
+    "v001ResultsSha256": "c12609cd0ea8610bab8dd1d92738fb03c2c14f977745bdedeb4af4c728099305",
+    "v002ResultsSha256": "8bf37b1055facbc995f825854f0aec5e8f2cb494261b97ce85690a5adddb1790c",
+    "outerWindowChange": "No played-note change: WANE used a separate cyclic-decoder fallback-window parameter.",
+    "bassThinningDisabled": {"exact100msF1": 0.203344, "decision": "rejected", "importantSideEffect": "The harmony register changed, which disabled the separate one-octave melody-separation gate. This is not a pure 79-note addition effect."},
+    "actualFallbackWindow120Or160ms": {"exact100msF1": 0.351745, "exact250msF1": 0.40122, "physicalCutoffRate": 0.098291, "baselinePhysicalCutoffRate": 0.077681, "decision": "rejected: wider-tolerance F1 and cutoff rate worsened"}
+  },
+  "sourceFeatureRepair": {
+    "repairReceiptSha256": "e4530150987a05b1a206c7dad84fc90d0ad51ecd3aa5b0a9bfcd0a7c8e06819f",
+    "repairedManifestSha256": "32c8d9c1a6214330624a1b838032738411fd21a335b3e21ac691c00c4db43b80",
+    "method": "Exact immutable sourceIndex; require matching instrument and pitch class, and unchanged played-note fields.",
+    "changedInferredFeaturesAcrossFiveTrainingSongs": 1898,
+    "changedInferredFeaturesInSeparateWaneTransferInput": 638,
+    "playedNotesChanged": false,
+    "refits": [
+      {"featureSet": "legacy", "reportSha256": "066d2e069958d6e34fa51a1e777f155240358654f94e0b21315cc28086518faf", "safePolicies": 0, "pairedExactRateDelta": 0.001159, "correctionPrecision": 0.454545, "worstSongDelta": -0.002183, "decision": "rejected"},
+      {"featureSet": "role-register-interactions", "reportSha256": "a582c182a181fb60f85598c2b41897123821a30ca120bfe1813a494464ddfa51", "safePolicies": 0, "pairedExactRateDelta": -0.020866, "correctionPrecision": 0.139535, "worstSongDelta": -0.075314, "decision": "rejected"}
+    ]
+  },
+  "localEvidence": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17",
+  "interpretation": "Correcting source features was necessary for a valid experiment, but it did not by itself yield an accepted octave router. Keep both fitted profiles disabled and the production arrangement unchanged."
+}

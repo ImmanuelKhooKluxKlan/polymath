@@ -705,6 +705,9 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     decoder_piano_output_only = bool(getattr(args, "decoder_piano_output_only", False))
     train_piano_task_vector = bool(getattr(args, "train_piano_task_vector", False))
     task_vector_learning_rate = float(getattr(args, "piano_task_vector_learning_rate", 5e-5))
+    attention_lora_layers = int(getattr(args, "attention_lora_layers", 0))
+    if attention_lora_layers < 0 or (attention_lora_layers and (args.train_last_layers != 0 or train_piano_task_vector)):
+        raise TrainingError("Attention-only LoRA requires --train-last-layers 0 and cannot be combined with task-vector tuning")
     if decoder_piano_output_only and conditioning_mode != "unconditioned":
         raise TrainingError("Piano-output-only decoding requires unconditioned source input")
     if train_piano_task_vector and not decoder_piano_output_only:
@@ -826,7 +829,17 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
 
     device = "cuda"
     transcription = TranscriptionModel.load_model(args.base, device=device)
-    parameters = configure_trainable_parameters(transcription._model, args.train_last_layers)
+    attention_lora_handles = None
+    attention_lora_metadata = None
+    if attention_lora_layers:
+        from ml.training.attention_lora import enable_attention_lora
+        parameters, attention_lora_handles, attention_lora_metadata = enable_attention_lora(
+            transcription._model, last_layers=attention_lora_layers,
+            rank=int(getattr(args, "attention_lora_rank", 8)),
+            alpha=float(getattr(args, "attention_lora_alpha", 8.0)),
+        )
+    else:
+        parameters = configure_trainable_parameters(transcription._model, args.train_last_layers)
     task_vector_parameter = None
     task_vector_hook = None
     task_vector_metadata = None
@@ -1217,6 +1230,10 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     if task_vector_metadata is not None:
         hyperparameters["pianoTaskVector"] = task_vector_metadata
         hyperparameters["pianoTaskVectorFinalDelta"] = task_vector_final_delta
+    if attention_lora_handles is not None:
+        from ml.training.attention_lora import attention_lora_deltas
+        hyperparameters["attentionLoRA"] = attention_lora_metadata
+        hyperparameters["attentionLoRAFinalMatrixDeltas"] = attention_lora_deltas(attention_lora_handles)
     target_development_evidence = None
     if target_development_enabled:
         target_development_evidence = {
@@ -1367,6 +1384,9 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         baseline_trainable_state,
         trainable_names,
     )
+    if attention_lora_handles is not None:
+        from ml.training.attention_lora import merge_attention_lora
+        hyperparameters["attentionLoRAMerge"] = merge_attention_lora(transcription._model, attention_lora_handles)
     metadata = {
         "schema": "polymath-muscriptor-training-run-v1",
         "baseCheckpoint": str(args.base),
@@ -1455,6 +1475,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-piano-task-vector", action="store_true", help="Tune only the observed instrument-task embedding row, in addition to explicitly selected layers/head")
     parser.add_argument("--piano-task-vector-learning-rate", type=float, default=5e-5)
     parser.add_argument("--target-development-diagnostics-on-rejection", action="store_true", help="Also decode target evidence for loss-improving checkpoints that failed broad safety; these checkpoints remain ineligible")
+    parser.add_argument("--attention-lora-layers", type=int, default=0, help="Research only: freeze the head and base weights; tune rank-limited attention adapters in this many final layers (1-4)")
+    parser.add_argument("--attention-lora-rank", type=int, default=8)
+    parser.add_argument("--attention-lora-alpha", type=float, default=8.0)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--learning-rate", type=float, default=2e-6)
     parser.add_argument("--weight-decay", type=float, default=0.01)

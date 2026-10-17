@@ -1,0 +1,16 @@
+{
+  "schema": "polymath-attention-adapter-preflight-plan-v1",
+  "status": "frozen-before-gpu-preflight",
+  "optimizerUpdatesAuthorizedByThisPlan": false,
+  "productionMutationAllowed": false,
+  "hypothesis": "A task cue and output-head update did not improve the target. A small learned attention residual may adapt source-to-piano relationships without globally updating a full transformer layer or rewriting the existing output classifier.",
+  "baseCheckpointSha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0",
+  "trainManifestSha256": "53e68be733d4061236be478d38bf6fe667ebe506d96ef08c92203280a2631d12",
+  "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117",
+  "adapter": {"lastLayers": 1, "rank": 8, "alpha": 8, "scale": 1, "expectedTrainableParameters": 73728, "targetMatrices": ["attention in_proj_weight", "attention out_proj.weight"], "baseMatrices": "frozen", "conditioning": "frozen", "outputHead": "frozen", "initialB": "exactly zero", "effectiveWeightMath": "FP32, independent of surrounding autocast", "merge": "On the same model device; verify bitwise effective-matrix equality and restore ordinary checkpoint keys"},
+  "decoder": {"sourceConditioning": "unconditioned", "outputInstruments": [], "pianoOutputMask": false},
+  "requiredChecks": ["Finite nonzero gradients reach B in both attention adapters", "Initial A gradients are exactly zero because B starts at zero", "No foundation-weight gradient exists", "No optimizer is created and no effective weight changes", "Largest-token training example uses less than 90 percent GPU memory", "Full WANE note events exactly reproduce the verified unchanged base", "All 18 frozen safety-panel clips exactly reproduce the verified unchanged base"],
+  "proposedBoundedFollowUpIfPreflightPasses": {"maximumOptimizerSteps": 40, "validationIntervalSteps": 10, "learningRate": 2e-5, "weightDecay": 0.0, "gradientAccumulation": 8, "precision": "bf16", "seed": "polymath-phase100-v003-unconditioned", "safetyThresholds": "Unchanged strict decoded-note and whole-song development gates", "productionEligible": false},
+  "implementationReferences": ["https://docs.pytorch.org/docs/2.9/generated/torch.nn.utils.parametrize.register_parametrization.html", "https://docs.pytorch.org/docs/2.9/generated/torch.nn.utils.parametrize.remove_parametrizations.html"],
+  "interpretation": "A passing preflight proves implementation fidelity and feasibility, not improved transcription. Do not train or promote on the basis of architecture claims alone."
+}
