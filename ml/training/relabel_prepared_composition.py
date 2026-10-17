@@ -1,8 +1,10 @@
 """Replace one prepared composition's labels without touching its audio.
 
 This is useful when a stronger, independently reviewed supervision package is
-created after expensive curriculum audio has already been rendered.  Every
-matching clip keeps its immutable audio path, split, identity, and weight.  A
+created for recorded source audio. Synthetic audio rendered from the old
+labels must be rebuilt; provenance-marked synthetic clips receive an explicit
+blocking flag until that rebuild completes. Every matching clip keeps its
+audio path, split, and identity. A
 clip is relabelled only when its complete time range remains inside approved
 quality windows in the replacement package; otherwise the command fails
 closed.
@@ -79,6 +81,8 @@ def relabel(
     touched = 0
     before_notes = 0
     after_notes = 0
+    rebuild_required = 0
+    package_digest = sha256(package_path)
     for source in records:
         if str(source.get("songId") or "") != target_song_id:
             output.append(dict(source))
@@ -118,6 +122,12 @@ def relabel(
         before_notes += len(source.get("notes") or [])
         after_notes += len(replacement)
         touched += 1
+        coherence = source.get("audioLabelCoherence")
+        needs_rebuild = bool(source.get("audioRebuildRequired")) or (
+            isinstance(coherence, dict)
+            and coherence.get("labelSourceSha256") != package_digest
+        )
+        rebuild_required += int(needs_rebuild)
         output.append({
             **source,
             "notes": replacement,
@@ -126,9 +136,10 @@ def relabel(
             "exampleWeight": positive_weight,
             "qualityWindowIds": [window.get("id") for window in overlap],
             "supervisionPackage": str(package_path.resolve()),
+            "audioRebuildRequired": needs_rebuild,
             "relabeling": {
                 "schema": "polymath-prepared-composition-relabel-v1",
-                "replacementSupervisionSha256": sha256(package_path),
+                "replacementSupervisionSha256": package_digest,
                 "audioReused": True,
                 "previousTargetState": source.get("targetState"),
                 "previousNegativeExample": bool(source.get("isNegativeExample")),
@@ -144,6 +155,7 @@ def relabel(
         "notesAfter": after_notes,
         "noteDelta": after_notes - before_notes,
         "targetWeightMultiplier": target_weight_multiplier,
+        "syntheticClipsRequiringAudioRebuild": rebuild_required,
     }
 
 

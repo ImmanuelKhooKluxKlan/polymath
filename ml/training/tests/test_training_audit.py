@@ -20,6 +20,18 @@ from ml.training.muscriptor_tokens import EOS_ID, PITCH_BASE, VELOCITY_BASE
 
 
 class TrainingAuditTests(unittest.TestCase):
+    def test_training_rejects_stale_synthetic_audio_before_model_loading(self):
+        record = {
+            "clipId": "synthetic-001",
+            "audioLabelCoherence": {"labelSourceSha256": "a" * 64},
+            "relabeling": {"replacementSupervisionSha256": "b" * 64},
+        }
+        with self.assertRaisesRegex(TrainingError, "rendered from different labels"):
+            audit_records([record])
+        record["audioRebuildRequired"] = True
+        with self.assertRaisesRegex(TrainingError, "must be rebuilt"):
+            audit_records([record])
+
     def test_rejection_receipt_records_hashes_and_cannot_be_replaced(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

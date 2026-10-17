@@ -44,6 +44,7 @@ def rebuild_rows(
         record["sourceMedia"] = variants[prefix]
         record.pop("audioClip", None)
         record.pop("localAudioSource", None)
+        record["audioRebuildRequired"] = False
         record["audioLabelCoherence"] = {
             "schema": "polymath-curriculum-audio-label-coherence-v1",
             "labelSourceSha256": label_source_sha256,

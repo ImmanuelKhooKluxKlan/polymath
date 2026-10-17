@@ -138,6 +138,9 @@ def build_original_domain_rows(
         })
         record.pop("audioClip", None)
         record.pop("localAudioSource", None)
+        # Original recordings are independent of a synthetic reference render.
+        record.pop("audioLabelCoherence", None)
+        record.pop("audioRebuildRequired", None)
         variants.append(record)
 
     generated_ids = [str(row["clipId"]) for row in variants]

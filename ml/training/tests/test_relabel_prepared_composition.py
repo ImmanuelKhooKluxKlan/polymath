@@ -103,3 +103,15 @@ def test_fails_closed_on_review_window(tmp_path: Path) -> None:
             target_song_id="target",
             package_path=package_path,
         )
+
+
+def test_changed_synthetic_labels_require_audio_rebuild(tmp_path: Path) -> None:
+    package_path = tmp_path / "labels.json"
+    package_path.write_text(json.dumps(package()), encoding="utf-8")
+    source = record("target")
+    source["audioLabelCoherence"] = {"labelSourceSha256": "a" * 64}
+    result, summary = relabel(
+        [source], package(), target_song_id="target", package_path=package_path,
+    )
+    assert result[0]["audioRebuildRequired"] is True
+    assert summary["syntheticClipsRequiringAudioRebuild"] == 1

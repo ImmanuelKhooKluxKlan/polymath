@@ -234,6 +234,14 @@ def audit_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     negative_examples = 0
     for index, record in enumerate(records):
         clip_id = str(record.get("clipId") or f"clip-{index}")
+        if record.get("audioRebuildRequired"):
+            raise TrainingError(f"{clip_id}: synthetic training audio must be rebuilt after relabeling")
+        coherence = record.get("audioLabelCoherence")
+        if isinstance(coherence, dict):
+            rendered_labels = coherence.get("labelSourceSha256")
+            current_labels = (record.get("relabeling") or {}).get("replacementSupervisionSha256")
+            if not rendered_labels or rendered_labels != current_labels:
+                raise TrainingError(f"{clip_id}: synthetic audio was rendered from different labels")
         audio = Path(str(record.get("audioClip") or "")).resolve()
         local_audio = Path(str(record.get("localAudioSource") or "")).resolve()
         if (not audio.is_file() or audio.stat().st_size <= 44) and local_audio.is_file():

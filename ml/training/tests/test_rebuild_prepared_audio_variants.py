@@ -17,6 +17,7 @@ def row(clip_id):
 
 def test_audio_rebuild_preserves_labels_weights_and_training_order():
     original = [row("unrelated"), row("p100-a"), row("p075-a")]
+    original[1]["audioRebuildRequired"] = True
     selected, counts = rebuild_rows(
         original, {"p100-": "/new/piano.wav", "p075-": "/new/mix.wav"},
         label_source_sha256="a" * 64,
@@ -30,6 +31,7 @@ def test_audio_rebuild_preserves_labels_weights_and_training_order():
     assert [r["exampleWeight"] for r in merged] == [r["exampleWeight"] for r in original]
     assert merged[0] == original[0]
     assert merged[1]["sourceMedia"] == "/new/piano.wav"
+    assert merged[1]["audioRebuildRequired"] is False
 
 
 def test_audio_rebuild_rejects_label_source_mismatch_and_ambiguous_prefix():

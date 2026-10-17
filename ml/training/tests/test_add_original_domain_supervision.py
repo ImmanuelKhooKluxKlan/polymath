@@ -25,6 +25,8 @@ def test_build_original_domain_rows_copies_exact_labels_and_changes_audio_domain
         row("ideal-p100-005", 5),
         row("unrelated", 0, song="other"),
     ]
+    train[0]["audioLabelCoherence"] = {"labelSourceSha256": "a" * 64}
+    train[0]["audioRebuildRequired"] = True
 
     variants, summary = build_original_domain_rows(
         train,
@@ -45,6 +47,8 @@ def test_build_original_domain_rows_copies_exact_labels_and_changes_audio_domain
     assert all(item["exampleWeight"] == 0.075 for item in variants)
     assert all("audioClip" not in item for item in variants)
     assert all("localAudioSource" not in item for item in variants)
+    assert all("audioLabelCoherence" not in item for item in variants)
+    assert all("audioRebuildRequired" not in item for item in variants)
     assert variants[0]["notes"] == train[0]["notes"]
     assert variants[0]["notes"] is not train[0]["notes"]
     assert summary["originalDomainClips"] == 2
