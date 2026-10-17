@@ -1,0 +1,19 @@
+{
+  "schema": "polymath-piano-compaction-probes-v1",
+  "status": "frozen-before-local-probe",
+  "productionMutationAllowed": false,
+  "weightsUpdated": false,
+  "hypothesis": "The existing full-mix harmony reducer merges events within 300ms and snaps their starts to a single chord onset. WANE did not pass the cyclic-texture gate, so this compact fallback ran. Its bass strike compressor also removed 79 notes. Narrower grouping and removal of that strike thinning may preserve genuine arpeggio timing, but can also introduce extra notes; each must be evaluated separately.",
+  "referenceAvailableAtInference": false,
+  "source": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/baseline-cleaned.json", "sha256": "25489f90e1822d0bebd0765fc7b951753befc28043afcfe2c4ec8a25c57dc9c9"},
+  "reference": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/aligned-training-labels.json", "sha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e"},
+  "alignment": {"path": "D:/Polymath Training/phase-106-piano-support-audit-2026-10-17/inputs/alignment-report.json", "sha256": "f12d8864c3907f218d11ef5761d89640f609e70aa18f756f5ead6112142c88c6"},
+  "variants": [
+    {"id": "unchanged-control", "harmonyWindowSeconds": 0.30, "bassCompressionEnabled": true},
+    {"id": "harmony-window-120ms", "harmonyWindowSeconds": 0.12, "bassCompressionEnabled": true},
+    {"id": "no-bass-strike-thinning", "harmonyWindowSeconds": 0.30, "bassCompressionEnabled": false},
+    {"id": "combined-timing-preservation", "harmonyWindowSeconds": 0.12, "bassCompressionEnabled": false}
+  ],
+  "selection": "Research diagnostics only. A WANE gain must recur in the six previously frozen development windows, survive other-song transfer and duration/retrigger checks, and be preferred in listening. Do not lower the frozen score thresholds.",
+  "interpretation": "Opened WANE development experiment, not an untouched generalization test. No blanket octave transposition, song-identity inference rule, or answer-key note injection is allowed."
+}
