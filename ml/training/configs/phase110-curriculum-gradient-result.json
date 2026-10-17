@@ -1,0 +1,20 @@
+{
+  "schema": "polymath-curriculum-gradient-audit-summary-v1",
+  "status": "paired-gradient-agreement-positive-program-error-exposure-measured",
+  "optimizerCreated": false,
+  "weightsUpdated": false,
+  "productionChanged": false,
+  "reportSha256": "2699fd06511db02148a9322e54515cb2f0c851cf2867705f536c693c6729da3a",
+  "pairs": 6,
+  "audioClips": 30,
+  "sourceStartsSeconds": [12.5,50.0,100.0,130.0,160.0,190.0],
+  "allFiveVariantsAtEachPositionHaveIdenticalEncodedTargets": true,
+  "actualExampleWeights": {"original": 0.5, "p100": 0.15, "p075": 0.15, "p050": 0.1125, "p025": 0.075},
+  "cosinesOriginalVersusWeightedSyntheticAtEachPosition": [0.5678834721741447,0.8150069734767956,0.8382046241525226,0.6493810808830004,0.8454506467827515,0.834646180710417],
+  "aggregate": {"cosine": 0.8189510816420236, "firstOrderDirectionalConflictObserved": false, "syntheticToOriginalWeightedGradientNormRatio": 0.8279032358426457, "combinedProjectionOntoOriginal": 1.6780122504882664},
+  "originalVideoProgramDiagnostics": {"wrongTop1Programs": 3, "clips": 6, "wrongAtSourceStartsSeconds": [12.5,130.0,190.0], "programLossShareMinimum": 0.0009751665758368284, "programLossShareMaximum": 0.01185772988778594, "teacherForcedNotFreeRunningAccuracy": true},
+  "noUpdateProof": {"allFoundationGradientsAbsent": true, "effectiveAttentionMatrixChanges": 0, "peakGpuFraction": 0.24110237647783592},
+  "evidence": {"directory": "D:/Polymath Training/phase-110-curriculum-gradient-2026-10-17", "archiveSha256": "8e1ceccd587a721118908e504ed7a52e90314ff3c1121ab8be4183ac36394527", "memberHashesVerified": 3},
+  "nextHypothesis": "Test program-token loss emphasis in a separately frozen trial, preserving fixed-weight validation loss, actual note scoring, the source clock, held-out windows, all non-regression gates and the Kiss Me exclusion.",
+  "interpretation": "Six opened training pairs at one unchanged base/adapter initialization. Gradient agreement is not an Adam trajectory or a general curriculum guarantee; program prediction statistics are not note accuracy. These measurements motivate an ablation, not a production change."
+}

@@ -1,0 +1,21 @@
+{
+  "schema": "polymath-attention-lora-trial-result-v1",
+  "candidateId": "phase108-v001-attention-lora",
+  "decision": "REJECT_NO_DECODED_IMPROVEMENT",
+  "productionChanged": false,
+  "acceptedCheckpointWritten": false,
+  "originalBaseFilesChanged": false,
+  "transientAdapterParametersUpdated": true,
+  "optimizerSteps": 40,
+  "trainingRecords": 1894,
+  "approvedKissMeTrainingClips": 20,
+  "rejectedKissMeTailClipsRemoved": 12,
+  "preflightSha256": "ac0dad9e169fc28c8b7d8121d0eb0267d816177ca5be0d8b4632690077e5621b",
+  "rejectionReceiptSha256": "4390a6313ae1e774853e4e01855634f1132038e19c78a0b955f766c4b4fa2e6e",
+  "validationLoss": {"baseline": 0.7923524713562441, "lowestObserved": 0.7919535996038611, "warning": "A lower teacher-forced loss is not decoded-note accuracy."},
+  "decodedChecks": {"evaluatedOptimizerSteps": [10,20,30,40], "allSafetyPanelsNonRegressing": true, "fullSongEventsAtEveryStep": 4867, "allFullSongEventsIdenticalToUnchangedBase": true, "heldOut100msF1AtEveryStep": 0.181644, "heldOut250msF1AtEveryStep": 0.202677, "noTargetGatePassed": true},
+  "finalEffectiveAttentionMatrixRelativeRmsDeltas": {"inProjection": 0.0007483277590376935, "outProjection": 0.001218030704701788},
+  "existingSourceAwarePianoRoute100msF1Unchanged": 0.343056,
+  "evidence": {"directory": "D:/Polymath Training/phase-108-reference-scope-clean-2026-10-17/run-v001", "archiveSha256": "74befab9afdd269a2209d76681470eacd8348a1d1fe3babe5f6eefb0620c9e0c", "memberHashesVerified": 13},
+  "interpretation": "All four independently decoded whole-song outputs were note-identical to the verified base. Do not offer a listening sample as if its notes improved, promote a rejected checkpoint, or report lower loss as progress toward70/90 percent accuracy."
+}
