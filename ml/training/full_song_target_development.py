@@ -72,11 +72,25 @@ def load_config(path: Path) -> dict[str, Any]:
         if current["start"] < previous["end"]:
             raise ValueError("Full-song target windows cannot overlap")
     config = dict(config)
+    constraint = config.get("instrumentConstraint", [])
+    if constraint not in ([], ["acoustic_piano"]):
+        raise ValueError("Full-song piano development supports only an empty or acoustic-piano output constraint")
+    config["instrumentConstraint"] = list(constraint)
     config["windows"] = normalized
     config["resolvedPaths"] = {
         name: str(_verified_path(config, name))
         for name in ("audio", "baselineRaw", "reference", "alignmentReport", "splitReceipt")
     }
+    if config.get("decoderMode") == "source-unconditioned-piano-output-v1":
+        payload = json.loads(Path(config["resolvedPaths"]["baselineRaw"]).read_text())
+        provenance = payload.get("researchProvenance") or {}
+        if (
+            "sourceConditioning" not in provenance
+            or provenance["sourceConditioning"] is not None
+            or provenance.get("allowedOutputInstruments") != ["acoustic_piano"]
+            or provenance.get("sourceAudioSha256") != config["audio"]["sha256"]
+        ):
+            raise ValueError("Full-song baseline lacks verified source-unconditioned piano-output provenance")
     return config
 
 
@@ -160,7 +174,7 @@ def transcribe_and_score(
         transcription,
         Path(config["resolvedPaths"]["audio"]),
         title=f"{candidate_id} target development step {optimizer_step}",
-        instruments=None,
+        instruments=config.get("instrumentConstraint") or None,
         model_id=f"{candidate_id}-step-{optimizer_step:04d}",
         provider="Polymath frozen full-song target-development gate",
     )

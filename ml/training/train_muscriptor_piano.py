@@ -332,6 +332,18 @@ def configure_trainable_parameters(model, train_last_layers: int) -> list[Any]:
     return [parameter for parameter in model.parameters() if parameter.requires_grad]
 
 
+def validate_full_song_decoder_route(
+    config: dict[str, Any], *, conditioning_mode: str,
+    piano_output_only: bool, instrument: str,
+) -> None:
+    expected = [instrument] if piano_output_only or conditioning_mode == "instrument" else []
+    if config.get("instrumentConstraint", []) != expected:
+        raise TrainingError("Full-song output instruments differ from the training/validation decoder route")
+    special_mode = config.get("decoderMode") == "source-unconditioned-piano-output-v1"
+    if special_mode != piano_output_only:
+        raise TrainingError("Full-song source-conditioning mode differs from the training/validation decoder route")
+
+
 def should_run_periodic_validation(optimizer_step: int, interval_steps: int) -> bool:
     """Return whether this optimizer update is a requested safety checkpoint.
 
@@ -681,6 +693,17 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     ).strip().lower()
     if conditioning_mode not in CONDITIONING_MODES:
         raise TrainingError("conditioningMode must be instrument or unconditioned")
+    decoder_piano_output_only = bool(getattr(args, "decoder_piano_output_only", False))
+    train_piano_task_vector = bool(getattr(args, "train_piano_task_vector", False))
+    task_vector_learning_rate = float(getattr(args, "piano_task_vector_learning_rate", 5e-5))
+    if decoder_piano_output_only and conditioning_mode != "unconditioned":
+        raise TrainingError("Piano-output-only decoding requires unconditioned source input")
+    if train_piano_task_vector and not decoder_piano_output_only:
+        raise TrainingError("Piano task-vector tuning requires the explicit piano-output-only decoder route")
+    if train_piano_task_vector and not 0 < task_vector_learning_rate <= 1e-3:
+        raise TrainingError("Piano task-vector learning rate must be within (0, 1e-3]")
+    if decoder_piano_output_only and getattr(args, "baseline_decoded_evaluation", None):
+        raise TrainingError("The piano-output-only route requires a live baseline panel, not a legacy conditioning cache")
     train_records = read_jsonl(args.train_manifest)
     validation_records = read_jsonl(args.validation_manifest)
     target_development_manifest = getattr(args, "target_development_manifest", None)
@@ -723,6 +746,14 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     )
     train_audit = audit_records(train_records)
     validation_audit = audit_records(validation_records)
+    if decoder_piano_output_only and train_audit["instruments"] != ["acoustic_piano"]:
+        raise TrainingError("The piano-output-only route supports acoustic-piano targets only")
+    if full_song_target_config:
+        validate_full_song_decoder_route(
+            full_song_target_config, conditioning_mode=conditioning_mode,
+            piano_output_only=decoder_piano_output_only,
+            instrument=train_audit["instruments"][0],
+        )
     target_development_audit = (
         audit_records(target_development_records)
         if target_development_records
@@ -787,6 +818,19 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
     device = "cuda"
     transcription = TranscriptionModel.load_model(args.base, device=device)
     parameters = configure_trainable_parameters(transcription._model, args.train_last_layers)
+    task_vector_parameter = None
+    task_vector_hook = None
+    task_vector_metadata = None
+    head_parameters = list(parameters)
+    if train_piano_task_vector:
+        from ml.training.instrument_task_vector import enable_instrument_task_vector
+        task_vector_parameter, task_vector_hook, task_vector_metadata = enable_instrument_task_vector(transcription, None)
+        task_vector_metadata["learningRate"] = task_vector_learning_rate
+        parameters = [*parameters, task_vector_parameter]
+    decoded_transcription = transcription
+    if decoder_piano_output_only:
+        from ml.training.probe_piano_output_constraint import PianoOutputOnlyProbe
+        decoded_transcription = PianoOutputOnlyProbe(transcription)
     trainable_names = {
         name for name, parameter in transcription._model.named_parameters()
         if parameter.requires_grad
@@ -796,7 +840,14 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         for name, parameter in transcription._model.state_dict().items()
         if name in trainable_names
     }
-    optimizer = torch.optim.AdamW(parameters, lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = (
+        torch.optim.AdamW([
+            {"params": head_parameters, "lr": args.learning_rate, "weight_decay": args.weight_decay},
+            {"params": [task_vector_parameter], "lr": task_vector_learning_rate, "weight_decay": 0.0},
+        ])
+        if train_piano_task_vector
+        else torch.optim.AdamW(parameters, lr=args.learning_rate, weight_decay=args.weight_decay)
+    )
     dtype = torch.bfloat16 if args.precision == "bf16" else torch.float16
     baseline_validation_loss = evaluate_loss(
         transcription,
@@ -814,7 +865,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         validation_records,
         maximum_per_song=decoded_gate_clips_per_song,
     )
-    decoded_instruments = (
+    decoded_instruments = ("acoustic_piano",) if decoder_piano_output_only else (
         None
         if conditioning_mode == "unconditioned"
         else (train_audit["instruments"][0],)
@@ -838,7 +889,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             progress_callback("Reused the frozen full-validation baseline decode")
     else:
         baseline_decoded_metrics = evaluate_loaded_transcription(
-            transcription,
+            decoded_transcription,
             decoded_gate_records,
             progress_callback,
             decoded_instruments,
@@ -888,7 +939,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     f"{len(target_development_records)} clips"
                 )
             baseline_target_development_metrics = evaluate_loaded_transcription(
-                transcription,
+                decoded_transcription,
                 target_development_records,
                 progress_callback,
                 decoded_instruments,
@@ -945,7 +996,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     "decoding the multi-song safety panel",
                 )
             candidate_decoded_metrics = evaluate_loaded_transcription(
-                transcription,
+                decoded_transcription,
                 decoded_gate_records,
                 progress_callback,
                 decoded_instruments,
@@ -976,7 +1027,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                 if full_song_target_config:
                     target_candidate_metrics, target_artifact = (
                         transcribe_and_score_full_song_target(
-                            transcription,
+                            decoded_transcription,
                             full_song_target_config,
                             candidate_id=str(
                                 getattr(args, "candidate_id", "candidate")
@@ -988,7 +1039,7 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                     decision["targetDevelopmentArtifact"] = target_artifact
                 else:
                     target_candidate_metrics = evaluate_loaded_transcription(
-                        transcription,
+                        decoded_transcription,
                         target_development_records,
                         progress_callback,
                         decoded_instruments,
@@ -1109,6 +1160,15 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
             break
     for decision in checkpoint_decisions:
         decision["selected"] = decision["checkpointIndex"] == best_checkpoint_index
+    task_vector_final_delta = None
+    if task_vector_hook is not None:
+        task_vector_hook.remove()
+        from ml.training.instrument_task_vector import task_vector_delta
+        task_vector_final_delta = task_vector_delta(
+            task_vector_parameter,
+            baseline_trainable_state[task_vector_metadata["parameter"]],
+            task_vector_metadata["activeRow"],
+        )
     reproducibility = {
         "numericSeed": numeric_seed,
         "torchVersion": str(torch.__version__),
@@ -1137,6 +1197,11 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
         "maxOptimizerSteps": max_optimizer_steps,
         "precision": args.precision,
     }
+    if decoder_piano_output_only:
+        hyperparameters["decoderMode"] = "source-unconditioned-piano-output-v1"
+    if task_vector_metadata is not None:
+        hyperparameters["pianoTaskVector"] = task_vector_metadata
+        hyperparameters["pianoTaskVectorFinalDelta"] = task_vector_final_delta
     target_development_evidence = None
     if target_development_enabled:
         target_development_evidence = {
@@ -1276,6 +1341,12 @@ def train(args: argparse.Namespace, progress_callback=None) -> dict[str, Any]:
                 )
         raise TrainingError(reason)
     transcription._model.load_state_dict(best_state, strict=False)
+    if task_vector_metadata is not None:
+        hyperparameters["pianoTaskVectorSelectedDelta"] = task_vector_delta(
+            task_vector_parameter,
+            baseline_trainable_state[task_vector_metadata["parameter"]],
+            task_vector_metadata["activeRow"],
+        )
     weight_delta = summarize_weight_delta(
         transcription._model,
         baseline_trainable_state,
@@ -1363,6 +1434,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rights-acknowledgement", default="")
     parser.add_argument("--minimum-train-songs", type=int, default=20)
     parser.add_argument("--train-last-layers", type=int, default=1)
+    parser.add_argument("--decoder-piano-output-only", action="store_true", help="Keep source conditioning unset while decoding with the piano output-program mask")
+    parser.add_argument("--train-piano-task-vector", action="store_true", help="Tune only the observed instrument-task embedding row, in addition to explicitly selected layers/head")
+    parser.add_argument("--piano-task-vector-learning-rate", type=float, default=5e-5)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--learning-rate", type=float, default=2e-6)
     parser.add_argument("--weight-decay", type=float, default=0.01)

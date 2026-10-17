@@ -14,12 +14,22 @@ from ml.training.train_muscriptor_piano import (
     optimizer_step_limit_reached,
     should_run_periodic_validation,
     target_token_weights,
+    validate_full_song_decoder_route,
     write_immutable_json_receipt,
 )
 from ml.training.muscriptor_tokens import EOS_ID, PITCH_BASE, VELOCITY_BASE
 
 
 class TrainingAuditTests(unittest.TestCase):
+    def test_full_song_source_and_output_routes_must_both_match(self):
+        validate_full_song_decoder_route({}, conditioning_mode="unconditioned", piano_output_only=False, instrument="acoustic_piano")
+        special = {"instrumentConstraint": ["acoustic_piano"], "decoderMode": "source-unconditioned-piano-output-v1"}
+        validate_full_song_decoder_route(special, conditioning_mode="unconditioned", piano_output_only=True, instrument="acoustic_piano")
+        with self.assertRaisesRegex(TrainingError, "source-conditioning"):
+            validate_full_song_decoder_route(special, conditioning_mode="instrument", piano_output_only=False, instrument="acoustic_piano")
+        with self.assertRaisesRegex(TrainingError, "output instruments"):
+            validate_full_song_decoder_route({}, conditioning_mode="unconditioned", piano_output_only=True, instrument="acoustic_piano")
+
     def test_training_rejects_stale_synthetic_audio_before_model_loading(self):
         record = {
             "clipId": "synthetic-001",

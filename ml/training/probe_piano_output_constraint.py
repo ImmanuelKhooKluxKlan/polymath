@@ -28,6 +28,10 @@ class PianoOutputOnlyProbe:
         if "instrument_group" not in inspect.signature(transcription._build_conditions).parameters:
             raise ValueError("Unsupported MuScriptor conditioning signature")
 
+    @property
+    def _model(self):
+        return self.transcription._model
+
     def transcribe(self, audio: Any, *, instruments: list[str] | None = None) -> Iterator[Any]:
         if instruments != ["acoustic_piano"]:
             raise ValueError("This probe requires the acoustic-piano output mask")
