@@ -1,0 +1,16 @@
+{
+  "schema": "polymath-full-song-target-development-v1",
+  "status": "frozen-before-candidate-run",
+  "purpose": "Test corrected synthetic training audio against the identical six WANE development windows used by v013, preserving complete-song decoding context.",
+  "commercialUseAllowed": false,
+  "audio": {"path": "/runpod-volume/jobs/phase45-foundation-eval-20260916/wane-gbt-original.wav", "sha256": "c1cb84e5b11ae5314c297e96f82469e88922add794d3f9c111122ecb8278b142"},
+  "baselineRaw": {"path": "/runpod-volume/training/phase-103-wane-visual-labels-v003/baseline-wane-full-raw-phase46-v017.json", "sha256": "b7c615b1738390e27889f7ad234e67ade67d981abb9f082c1f5e4f11fb64f6e2"},
+  "reference": {"path": "/runpod-volume/training/phase-103-wane-visual-labels-v002/evidence/aligned-training-labels.json", "sha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e"},
+  "alignmentReport": {"path": "/runpod-volume/training/phase-103-wane-visual-labels-v002/evidence/alignment-report.json", "sha256": "f12d8864c3907f218d11ef5761d89640f609e70aa18f756f5ead6112142c88c6"},
+  "splitReceipt": {"path": "/runpod-volume/training/phase-103-wane-visual-labels-v005-core/development-split-receipt.json", "sha256": "c9cb40dd5443c066ef881553a3a2d89ed7cf74b438515150ffd003a9e6d81ff8"},
+  "referenceAlreadyAligned": true,
+  "referenceTransposeSemitones": 0,
+  "windows": [{"start": 20.0, "end": 25.0}, {"start": 45.0, "end": 50.0}, {"start": 80.0, "end": 85.0}, {"start": 90.0, "end": 95.0}, {"start": 115.0, "end": 120.0}, {"start": 145.0, "end": 150.0}],
+  "knownBaseline": {"referenceNotes": 246, "predictedNotes": 663, "100ms": {"matchedNotes": 85, "precision": 0.128205, "recall": 0.345528, "microF1": 0.187019}, "250ms": {"matchedNotes": 97, "precision": 0.146305, "recall": 0.394309, "microF1": 0.213421}},
+  "interpretation": "Opened development evidence. These windows are held out by audio interval for this experiment, not an untouched composition holdout. The WANE tail restriction is experimental and unrelated to the user's Kiss Me cutoff."
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "polymath-controlled-checkpoint-experiment-v1",
+  "candidateId": "phase103-v016-coherent-audio",
+  "status": "frozen-before-candidate-run",
+  "productionMutationAllowed": false,
+  "pairedControl": "phase103-v013-original-domain-p000",
+  "hypothesis": "Reusing synthetic tracks rendered from obsolete model-generated labels contradicts the independent visual targets. Re-rendering those tracks from the current visual labels with the exact historical renderer should produce more coherent training gradients.",
+  "singleChangedVariable": {"name": "WANE synthetic curriculum audio", "rebuiltClips": 120, "labelsChanged": false, "weightsChanged": false, "shuffleOrderChanged": false, "validationChanged": false, "architectureChanged": false},
+  "reproductionProof": {"oldTargetSha256": "8f6734afa8966e71241723148fe70632aca6fc8e07e151248d4cd8acf83439f5", "originalAudioSha256": "db089a513a72a1dfe126fb733aab7bec61855733bad496e5e11932907cc5ef5f", "reproducedAudioSha256": "db089a513a72a1dfe126fb733aab7bec61855733bad496e5e11932907cc5ef5f", "rendererGitRevision": "8d53951", "currentVisualTargetSha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e", "coherentPianoAudioSha256": "4b07b76d5f795d60283f65af610184e9d1ff9160f5caf60598f45b2ff6c098ac"},
+  "baseCheckpoint": {"id": "phase46-v017", "sha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0"},
+  "dataset": {"id": "phase-103-wane-coherent-audio-v006", "trainClips": 1821, "validationClips": 258, "trainManifestSha256": "0ba5607880617f3389d96c48ea119609d4b8106449ce863225e4e07967a12791", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117", "audioRebuildReceiptSha256": "6fc65acce8e802775eb5f82bb6c1fe7c53626b1ff1719a0929afaaa28ca025aa", "interpretation": "Same limited training windows as v013 to isolate audio-label coherence. The WANE tail has not been declared unsuitable by the user."},
+  "frozenHyperparameters": {"trainLastLayers": 1, "epochs": 1, "learningRate": 5e-7, "weightDecay": 0.01, "gradientAccumulation": 8, "gradientClipNorm": 1.0, "timingTokenWeight": 1.15, "noteOnTokenWeight": 1.0, "highNoteOnWeight": 1.0, "highNoteMinMidi": 72, "noteOffTokenWeight": 1.25, "eosTokenWeight": 1.2, "conditioningMode": "unconditioned", "precision": "bf16", "seed": "polymath-phase100-v003-unconditioned", "validationIntervalSteps": 5, "maxOptimizerSteps": 40},
+  "deferredExperiment": {"candidateId": "phase103-v015-head-only", "executed": false, "reason": "Repair the verified audio-label inconsistency before interpreting an architecture change."},
+  "interpretation": "Research selection only; a reduced token loss alone cannot establish better transcription."
+}
