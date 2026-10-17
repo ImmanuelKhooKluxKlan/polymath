@@ -82,6 +82,21 @@ def gate():
 
 
 class RouteMatchedValidationGateTests(unittest.TestCase):
+    def test_explicit_decoder_route_must_match_training_and_evaluation(self):
+        baseline = timeline(f1=0.61, precision=0.63, recall=0.59, song_b=0.60)
+        candidate = timeline()
+        policy = gate()
+        policy["route"]["decoderMode"] = "source-unconditioned-piano-output-v1"
+        scores, receipt = comparison(), training()
+        for value in (scores, receipt):
+            value["decoderMode"] = policy["route"]["decoderMode"]
+        self.assertTrue(evaluate_gate(scores, baseline, candidate, receipt, policy)["automatedResearchGatePassed"])
+        for value in (scores, receipt):
+            expected = value.pop("decoderMode")
+            result = evaluate_gate(scores, baseline, candidate, receipt, policy)
+            self.assertIn("decoder_mode_matches_frozen_route", result["failedChecks"])
+            value["decoderMode"] = expected
+
     def test_route_matched_balanced_improvement_passes_research_gate(self):
         baseline = timeline(f1=0.61, precision=0.63, recall=0.59, song_b=0.60)
         candidate = timeline(f1=0.62, precision=0.64, recall=0.60, song_b=0.61)

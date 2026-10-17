@@ -178,6 +178,13 @@ def transcribe_and_score(
         model_id=f"{candidate_id}-step-{optimizer_step:04d}",
         provider="Polymath frozen full-song target-development gate",
     )
+    if config.get("decoderMode") == "source-unconditioned-piano-output-v1":
+        payload.setdefault("researchProvenance", {}).update({
+            "decoderMode": config["decoderMode"],
+            "sourceConditioning": None,
+            "allowedOutputInstruments": ["acoustic_piano"],
+            "sourceAudioSha256": config["audio"]["sha256"],
+        })
     score = score_payload(payload, config)
     temporary_raw = raw_path.with_suffix(".json.partial")
     temporary_score = score_path.with_suffix(".json.partial")

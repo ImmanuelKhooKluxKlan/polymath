@@ -12,12 +12,39 @@ import hashlib
 import json
 import argparse
 import random
+import os
 from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable
 
 from ml.training.evaluate_predictions import analyze_errors, evaluate, normalize_notes
 from ml.training.train_muscriptor_piano import read_jsonl
+
+
+def piano_task_decoder(transcription, instruments, enabled: bool):
+    if not enabled:
+        return transcription
+    if tuple(instruments or ()) != PIANO_INSTRUMENTS:
+        raise ValueError("Piano-output-only evaluation requires the acoustic-piano output mask")
+    from ml.training.probe_piano_output_constraint import PianoOutputOnlyProbe
+    return PianoOutputOnlyProbe(transcription)
+
+
+def configure_piano_task_evaluation_runtime() -> None:
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    import numpy as np
+    import torch
+    from ml.training.train_muscriptor_piano import deterministic_seed
+    seed = deterministic_seed("polymath-phase100-v003-unconditioned")
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.use_deterministic_algorithms(True)
 
 
 DEFAULT_TOLERANCES = (0.05, 0.10, 0.25)
@@ -349,6 +376,7 @@ def evaluate_checkpoint(
     progress_callback: Callable[[str], None] | None = None,
     instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
     include_raw_predictions: bool = False,
+    *, piano_output_only: bool = False,
 ) -> dict[str, Any]:
     """Load one checkpoint, decode every frozen clip, and calculate note scores."""
 
@@ -356,14 +384,15 @@ def evaluate_checkpoint(
     from muscriptor import TranscriptionModel
 
     transcription = TranscriptionModel.load_model(checkpoint, device="cuda")
+    decoded = piano_task_decoder(transcription, instruments, piano_output_only)
     metrics = evaluate_loaded_transcription(
-        transcription,
+        decoded,
         records,
         progress_callback,
         instruments,
         include_raw_predictions,
     )
-    del transcription
+    del decoded, transcription
     gc.collect()
     torch.cuda.empty_cache()
     return metrics
@@ -375,17 +404,23 @@ def compare_checkpoints(
     validation_manifest: Path,
     progress_callback: Callable[[str], None] | None = None,
     instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
+    *, piano_output_only: bool = False,
 ) -> dict[str, Any]:
     records = read_jsonl(validation_manifest)
+    if piano_output_only:
+        configure_piano_task_evaluation_runtime()
+    decoder_options = {"piano_output_only": True} if piano_output_only else {}
     if progress_callback:
         progress_callback("Decoding frozen validation clips with the original checkpoint")
     baseline = evaluate_checkpoint(
         base, records, progress_callback, instruments, include_raw_predictions=True,
+        **decoder_options,
     )
     if progress_callback:
         progress_callback("Decoding the same clips with the Phase candidate")
     candidate_metrics = evaluate_checkpoint(
         candidate, records, progress_callback, instruments, include_raw_predictions=True,
+        **decoder_options,
     )
     deltas = {
         key: round(candidate_metrics[key]["microF1"] - baseline[key]["microF1"], 6)
@@ -400,6 +435,7 @@ def compare_checkpoints(
         "validationManifest": str(validation_manifest),
         "clips": len(records),
         "instrumentConstraint": list(instruments) if instruments else [],
+        **({"decoderMode": "source-unconditioned-piano-output-v1"} if piano_output_only else {}),
         "baseline": baseline,
         "candidate": candidate_metrics,
         "candidateMinusBaselineMicroF1": deltas,
@@ -411,10 +447,13 @@ def evaluate_single_checkpoint(
     validation_manifest: Path,
     progress_callback: Callable[[str], None] | None = None,
     instruments: tuple[str, ...] | None = PIANO_INSTRUMENTS,
+    *, piano_output_only: bool = False,
 ) -> dict[str, Any]:
     """Decode one frozen manifest without wasting a second baseline pass."""
 
     records = read_jsonl(validation_manifest)
+    if piano_output_only:
+        configure_piano_task_evaluation_runtime()
     if progress_callback:
         progress_callback(
             f"Decoding {len(records)} frozen clips with {checkpoint.name}"
@@ -425,6 +464,7 @@ def evaluate_single_checkpoint(
         progress_callback,
         instruments,
         include_raw_predictions=True,
+        **({"piano_output_only": True} if piano_output_only else {}),
     )
     return {
         "schema": "polymath-checkpoint-evaluation-v1",
@@ -433,6 +473,7 @@ def evaluate_single_checkpoint(
         "validationManifest": str(validation_manifest),
         "clips": len(records),
         "instrumentConstraint": list(instruments) if instruments else [],
+        **({"decoderMode": "source-unconditioned-piano-output-v1"} if piano_output_only else {}),
         "metrics": metrics,
     }
 
@@ -462,8 +503,11 @@ def main() -> None:
         ),
     )
     parser.add_argument("--validation-manifest", type=Path, required=True)
+    parser.add_argument("--piano-output-only", action="store_true", help="Research route: keep source conditioning unset while restricting output programs to acoustic piano")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+    if args.piano_output_only and args.unconditioned:
+        parser.error("--piano-output-only and --unconditioned describe different output routes")
     instruments = None if args.unconditioned else PIANO_INSTRUMENTS
 
     def report(message: str) -> None:
@@ -477,6 +521,7 @@ def main() -> None:
             args.validation_manifest.resolve(),
             progress_callback=report,
             instruments=instruments,
+            **({"piano_output_only": True} if args.piano_output_only else {}),
         )
     else:
         if not args.base or not args.candidate:
@@ -487,6 +532,7 @@ def main() -> None:
             args.validation_manifest.resolve(),
             progress_callback=report,
             instruments=instruments,
+            **({"piano_output_only": True} if args.piano_output_only else {}),
         )
     destination = args.out.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)

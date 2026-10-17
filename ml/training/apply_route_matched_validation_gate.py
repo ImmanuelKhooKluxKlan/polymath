@@ -180,6 +180,11 @@ def evaluate_gate(
             + float(policy["rapidRetriggersPer1000PredictedMaximumIncrease"])
         ),
     }
+    if "decoderMode" in route:
+        checks["decoder_mode_matches_frozen_route"] = (
+            comparison.get("decoderMode") == route["decoderMode"]
+            and training.get("decoderMode") == route["decoderMode"]
+        )
     failed = [name for name, passed in checks.items() if not passed]
     automated_pass = not failed
     return {
