@@ -1,0 +1,18 @@
+{
+  "schema": "polymath-register-label-audit-result-v1",
+  "status": "data-defects-corrected-candidates-rejected",
+  "productionModelWeightsChanged": false,
+  "foundationWeightsUpdatedByThisCpuExperiment": false,
+  "manifestSha256": "52115438cf3d1ff8c277cec5ab60898d9783d34dfe6352f110fc86c90e637f9b",
+  "excludedSong": "wane",
+  "pairingAudit": {"oldPairs": 2590, "newPairs": 2588, "oldExactPairs": 1511, "newExactPairs": 1587, "oldNonzeroLabelsReassignedToExactMatches": 77, "changedTargetsAmongSharedCandidates": 85, "oldLabelsOutsideCorrectionActions": 34, "newLabelsOutsideCorrectionActions": 31},
+  "labelFixes": ["Protect existing exact keys before assigning remaining octave-equivalent matches", "Do not call a two-octave move correct when the true error is three octaves"],
+  "trials": [
+    {"id": "nearest-exact-labels", "safePolicies": 0, "pairedExactRateDelta": 0.001544, "changes": 7, "correctionPrecision": 0.571429, "decision": "rejected"},
+    {"id": "exact-preserving-exact-labels", "safePolicies": 0, "pairedExactRateDelta": 0.001932, "changes": 72, "correctionPrecision": 0.333333, "worstSongPairedExactRateDelta": -0.019651, "decision": "rejected"},
+    {"id": "role-register-interactions", "safePolicies": 0, "pairedExactRateDelta": -0.026275, "changes": 114, "correctionPrecision": 0.149123, "worstSongPairedExactRateDelta": -0.09484, "decision": "rejected"}
+  ],
+  "safetyChange": "An explicitly disabled register profile now returns unchanged notes without loading or applying its learned correction model.",
+  "localEvidence": "D:/Polymath Training/phase-104-register-label-audit-v002-2026-10-17",
+  "interpretation": "The higher exact-pair count after fixing label assignment is not improved model audio or accuracy. The frozen whole-song accuracy scorer was not changed. Every fitted correction candidate failed the cross-song acceptance checks and remains disabled."
+}

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from ml.training.fit_pianist_register_router import (
     FEATURE_NAMES,
@@ -83,3 +84,10 @@ def test_context_features_keep_legacy_prefix_and_add_role_specific_register_axes
     assert named["role_bass__candidate_midi_centered"] == named["candidate_midi_centered"]
     assert named["role_melody__candidate_midi_centered"] == 0.0
     assert named["family_guitar__source_midi_centered"] == named["source_midi_centered"]
+
+
+def test_exact_training_shift_policy_rejects_non_octaves_and_nonfinite_values():
+    with pytest.raises(ValueError, match="exact octave"):
+        training_shift_label(11)
+    with pytest.raises(ValueError, match="finite"):
+        training_shift_label(float("nan"))

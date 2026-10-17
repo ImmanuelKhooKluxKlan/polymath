@@ -277,4 +277,17 @@ echo PHASE103_V007_STAGE_FAIL_CLOSED_ROUTE_GATE
   --out "$GATE_RESULT_PATH" \
   --fail-on-rejection
 
+echo PHASE103_STAGE_SOURCE_AWARE_PIANO_PROCESSING_GATE
+bash scripts/training/evaluate_phase103_wane_production_route.sh "$CANDIDATE_ID"
+"$PYTHON" - "$OUTPUT_DIR/wane-production-route-evaluation/evaluation.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+report = json.loads(Path(sys.argv[1]).read_text())
+gates = report.get("promotionGates")
+if report.get("decision") != "PROMOTE" or not isinstance(gates, dict) or not gates or not all(value is True for value in gates.values()):
+    raise SystemExit("Source-aware piano-processing checks rejected the candidate; no production promotion is authorized.")
+print("Source-aware piano-processing checks passed. Other-song transfer, listening, and rights review remain required.", flush=True)
+PY
+
 echo PHASE103_V007_COMPLETE

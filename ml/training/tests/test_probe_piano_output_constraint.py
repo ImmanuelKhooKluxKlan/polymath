@@ -49,3 +49,12 @@ def test_probe_rejects_unsupported_output_constraints_before_modifying_model():
     with pytest.raises(ValueError, match="output mask"):
         list(PianoOutputOnlyProbe(model).transcribe("audio", instruments=["voice"]))
     assert "_build_conditions" not in vars(model)
+
+
+def test_probe_restores_an_existing_instance_override_exactly():
+    model = FakeTranscription()
+    original = lambda wav, instrument_group=None: model.conditions.append(instrument_group)
+    model._build_conditions = original
+    list(PianoOutputOnlyProbe(model).transcribe("audio", instruments=["acoustic_piano"]))
+    assert model._build_conditions is original
+    assert model.conditions == [None]

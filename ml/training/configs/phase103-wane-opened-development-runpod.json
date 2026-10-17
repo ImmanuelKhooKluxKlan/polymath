@@ -1,6 +1,6 @@
 {
   "schema": "polymath-piano-arranger-evaluation-manifest-v1",
-  "purpose": "Opened-development WANE comparison after the exact production piano route. This is not an untouched certification holdout.",
+  "purpose": "Opened-development WANE comparison after piano cleanup and arrangement. Source-audio dynamics must be included; worker tempo-clock correction and optional focused-pass fusion are represented only when already present in the raw input. This is not an untouched certification holdout.",
   "commercialUseAllowed": false,
   "immutableInputs": {
     "targetSha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e",
