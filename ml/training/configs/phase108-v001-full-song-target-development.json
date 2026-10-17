@@ -1,0 +1,17 @@
+{
+  "schema": "polymath-full-song-target-development-v1",
+  "candidateId": "phase108-v001-attention-lora",
+  "status": "frozen-before-optimizer-run",
+  "productionMutationAllowed": false,
+  "instrumentConstraint": [],
+  "audio": {"path": "/runpod-volume/jobs/phase45-foundation-eval-20260916/wane-gbt-original.wav", "sha256": "c1cb84e5b11ae5314c297e96f82469e88922add794d3f9c111122ecb8278b142"},
+  "baselineRaw": {"path": "/runpod-volume/training/phase-103-decoder-baseline-audit-v001/fresh-baseline-full-raw.json", "sha256": "1aa8a996d36a36f99aad1b7c83fee9fe7890375520b483028fd0e7a9d14b294e"},
+  "reference": {"path": "/runpod-volume/training/phase-103-wane-visual-labels-v002/evidence/aligned-training-labels.json", "sha256": "193d1c4a85fc39bb301a35169c261b27909e92e44f63c06241fee5285601d34e"},
+  "alignmentReport": {"path": "/runpod-volume/training/phase-103-wane-visual-labels-v002/evidence/alignment-report.json", "sha256": "f12d8864c3907f218d11ef5761d89640f609e70aa18f756f5ead6112142c88c6"},
+  "splitReceipt": {"path": "/runpod-volume/training/phase-103-wane-visual-labels-v004/development-split-receipt.json", "sha256": "ece35a594d8c5c3c6a123830cbfce0407e7fd0657df97825e70b4db61c5bbed7"},
+  "referenceAlreadyAligned": true,
+  "referenceTransposeSemitones": 0,
+  "windows": [{"start": 20.0, "end": 25.0}, {"start": 45.0, "end": 50.0}, {"start": 90.0, "end": 95.0}, {"start": 115.0, "end": 120.0}, {"start": 145.0, "end": 150.0}, {"start": 180.0, "end": 185.0}],
+  "knownBaseline": {"referenceNotes": 244, "predictedNotes": 802, "100ms": {"matchedNotes": 95, "precision": 0.118454, "recall": 0.389344, "microF1": 0.181644}, "250ms": {"matchedNotes": 106, "precision": 0.13217, "recall": 0.434426, "microF1": 0.202677}},
+  "interpretation": "Unchanged WANE clock, windows and scorer. The Kiss Me exclusion must not change this benchmark or remove its later windows. Post-arrangement piano output must still beat the existing 0.343056 result."
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "polymath-route-matched-validation-gate-v1",
+  "candidateVersion": "phase108-v001-attention-lora",
+  "status": "frozen-before-optimizer-run",
+  "productionMutationAllowed": false,
+  "immutableInputs": {"baseCheckpointSha256": "a078a3a3dfdf35b2641de676ab9026b3475af6c009e4042a0d704b2cdd38afe0", "trainManifestSha256": "42082c3929efd9fecea84ed0431f3982041f5abf699febfe68ed20e4434416d9", "validationManifestSha256": "c48aa0b292f4baaa8b63412e2bacd0c56572ed659010289f790a4eff24ccb117"},
+  "route": {"conditioningMode": "unconditioned", "instrumentConstraint": []},
+  "requiredChecks": {"minimumCompleteSongs": 3, "clipLocal100msF1MaximumRegression": 0.0, "clipLocal250msF1MaximumRegression": 0.0, "continuous100msF1MinimumImprovement": 0.0, "continuous100msPrecisionMaximumRegression": 0.005, "continuous100msRecallMaximumRegression": 0.0, "continuous250msF1MaximumRegression": 0.0, "songBootstrapLower95MaximumRegression": 0.0, "maximumPerSong100msF1Regression": 0.005, "onsetAndOffsetF1MaximumRegression": 0.003, "frameF1MaximumRegression": 0.003, "cutOffPer1000MatchedMaximumIncrease": 2.0, "overlongPer1000MatchedMaximumIncrease": 2.0, "rapidRetriggersPer1000PredictedMaximumIncrease": 0.25},
+  "manualGatesStillRequired": ["Saved merged checkpoint must reproduce in-memory events", "Source-aware piano processing must beat the existing broad route", "Other-song transfer", "Blind listening", "Rights-cleared untouched evaluation"],
+  "interpretation": "Thresholds are unchanged from the quarantined run; data-policy repair does not lower the acceptance bar or authorize deployment."
+}
