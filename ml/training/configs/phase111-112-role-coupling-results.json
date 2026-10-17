@@ -1,13 +1,14 @@
 {
   "schema": "polymath-role-coupling-research-summary-v1",
-  "status": "mechanism-localized-transfer-inconclusive-disabled",
+  "status": "mechanism-localized-duration-tradeoff-and-transfer-inconclusive-disabled",
   "productionChanged": false,
   "weightsChanged": false,
   "waneDiagnostic": {
     "path": "D:/Polymath Training/phase-111-role-coupling-audit-2026-10-17/role-counterfactuals-v001.json",
     "sha256": "1705e9ccf737b2f285416ec46b94ebd5c428a769f3d6a4b032cec2439386e3f2",
-    "baseline": {"exact100msF1": 0.343056, "exact250msF1": 0.409722, "sixOpenedWindows100msF1": 0.355469, "physicalCutoffRate": 0.077681},
-    "harmonyOnlyCounterfactual": {"exact100msF1": 0.351209, "exact250msF1": 0.438836, "sixOpenedWindows100msF1": 0.366472, "physicalCutoffRate": 0.072062},
+    "baseline": {"exact100msF1": 0.343056, "exact250msF1": 0.409722, "sixOpenedWindows100msF1": 0.355469, "physicalCutoffRate": 0.077681, "physicalOnsetAndOffset250msF1": 0.427083},
+    "harmonyOnlyCounterfactual": {"exact100msF1": 0.351209, "exact250msF1": 0.438836, "sixOpenedWindows100msF1": 0.366472, "physicalCutoffRate": 0.072062, "physicalOnsetAndOffset250msF1": 0.421311},
+    "additionalDurationReview": "Physical onset-plus-offset F1 worsened by0.005772 despite the narrower cutoff-rate improvement. A gain in one duration statistic is not proof that holds improved; do not promote this counterfactual.",
     "bassOnlyCounterfactual": {"exact100msF1": 0.342123, "exact250msF1": 0.401623, "physicalCutoffRate": 0.1},
     "uncontrolledAblation100msF1": 0.203344,
     "mechanism": "Disabling bass thinning also changed conditional harmony voicing, lowering its median from MIDI62 to54. That widened the melody/harmony gap from7 to15 semitones and disabled the separate melody octave decision. Preserve baseline nonselected roles to isolate each downstream effect."
