@@ -1,0 +1,24 @@
+{
+  "schema": "polymath-visual-audio-timing-audit-result-v1",
+  "status": "exploratory-self-consistency-check-no-reference-changes",
+  "composition": "wane-gbt-pianella",
+  "productionChanged": false,
+  "referenceCoordinatesChanged": false,
+  "weightsChanged": false,
+  "audioSha256": "5855701390b508f4298cd6d2dd9fc2e2e2f0239b9ab15bf96de576fcabf1da4f",
+  "audioProvenance": "Fresh 16kHz mono extraction of the original screen recording is byte-identical to the reference audio already used by frozen DTW alignment.",
+  "visualReferenceSha256": "287a0b3f51cf5fd4bdab9e9349cabc460d2cde35332f63c3774b5698dfa488e8",
+  "diagnosticImplementationSha256": "51901c83cab879a3d046f25a1efbe8ceb91519592567771cbfb83efd14b7225a",
+  "authoritativeDiagnostic": {
+    "path": "D:/Polymath Training/phase-109-visual-audio-timing-audit-2026-10-17/linear-flux-input-audio-check-v003.json",
+    "sha256": "0a6b90beeea37862243cb86b2a39b798cf80d308d86f18f55e9fbd2a0cf44803",
+    "notesChecked": 1481,
+    "globalBestLagSeconds": 0.05,
+    "minuteBlockBestLagsSeconds": [0.02, 0.05, 0.06, 0.07],
+    "pitchShufflePermutations": 64,
+    "observedPeakExceedsAllPitchShuffles": true
+  },
+  "assayCalibration": "Known synthetic note attacks exposed saturation/early-edge bias in the first exploratory frontend. The final method uses linear-magnitude flux and active-only normalization, with a bounded-latency synthetic regression test. Earlier log-flux v001/v002 reports are retained but superseded.",
+  "kissMeSafety": "The diagnostic requires an explicit composition id and native, unwarped visual labels. The registry caps Kiss Me at 150 reference-clock seconds even if a larger or no cutoff is requested. WANE remains unrestricted.",
+  "interpretation": "This is not accuracy or a certified audio/video offset measurement. Windowing, piano attack envelopes, chords and repeated rhythms can shift peaks by tens of milliseconds. The result does not support a large clock error; do not change the frozen benchmark or labels from these exploratory peaks."
+}
